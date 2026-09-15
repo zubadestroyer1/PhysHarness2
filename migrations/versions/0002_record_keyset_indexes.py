@@ -31,6 +31,8 @@ def upgrade():
             "kind",
             payload["artifact_id"].as_string(),
             payload["review_id"].as_string(),
+            payload["status"].as_string(),
+            payload["assurance"].as_string(),
         ],
     )
 

@@ -111,6 +111,13 @@ def test_postgresql_offline_migration_generates_real_sql(monkeypatch):
     assert "CREATE INDEX records_project_kind_keyset ON records (project_id, kind, id)" in sql
     assert "CREATE INDEX records_project_kind_experiment_keyset" in sql
     assert "CAST(payload ->> 'experiment_id' AS VARCHAR)" in sql
+    assert (
+        "CREATE INDEX records_project_kind_artifact_review ON records "
+        "(project_id, kind, (CAST(payload ->> 'artifact_id' AS VARCHAR)), "
+        "(CAST(payload ->> 'review_id' AS VARCHAR)), "
+        "(CAST(payload ->> 'status' AS VARCHAR)), "
+        "(CAST(payload ->> 'assurance' AS VARCHAR)))"
+    ) in sql
 
 
 def load_validator():
