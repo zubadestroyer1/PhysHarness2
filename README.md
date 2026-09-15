@@ -15,8 +15,9 @@ acceptance.
 > **Development implementation. Every implementation wave remains unqualified.**
 > Local tests, a local Temporal integration, synthetic accounting checks, and Linux CI have run.
 > CI includes an application-container build and a live PostgreSQL migration test.
-> Hosted-model research, live VM fleets, Lean kernel acceptance, reviewed physics benchmarks,
-> and new scientific results have not been demonstrated. The
+> Real Linux Lean and independent-kernel engineering checks now pass two reference proofs and
+> seven seeded attacks in each mode. Hosted-model research, live VM fleets, reviewed physics
+> benchmarks, production sandbox qualification and new scientific results remain outstanding. The
 > [evidence ledger](docs/IMPLEMENTATION_STATUS.md) records what has been checked and what remains.
 
 ## What the system is for
@@ -48,7 +49,7 @@ The distributed worker currently integrates the **OpenAI Responses API loop**, w
 workspace tools. Codex, Claude, and OpenHands SDK adapters exist separately and still require
 controller integration and live qualification. Installing an SDK or adding an API key does not
 complete that qualification. See [runtime capabilities](docs/EXECUTION.md) and
-[deployment inputs](docs/DEPLOYMENT.md) before launching a paid experiment.
+[the first live-run guide](docs/FIRST_LIVE_RUN.md) before launching a paid experiment.
 
 The architectural boundaries are:
 
@@ -157,8 +158,9 @@ acceptance, trusted definitions, credentials, or result promotion require indepe
 Report security concerns through the [security policy](SECURITY.md).
 
 The [roadmap](docs/ROADMAP.md) organizes work into twelve implementation waves. The immediate
-qualification priorities are a compatible pinned Lean environment, reviewed scientific tasks,
-and real independent acceptance runs. The [approved implementation specification](docs/IMPLEMENTATION_PLAN.md)
+qualification priorities are the full physics-library build, expert-reviewed scientific tasks,
+deployment-boundary review, and a real model proof followed by accepted-lemma reuse.
+The [approved implementation specification](docs/IMPLEMENTATION_PLAN.md)
 preserves the full scope: heterogeneous research teams, adaptive search, certified computation,
 managed and self-hosted fleets, learning from verified experience, and sustained open-problem
 campaigns. Shipping components does not close a wave's scientific or operational gates.

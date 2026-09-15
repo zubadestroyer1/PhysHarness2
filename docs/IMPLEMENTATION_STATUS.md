@@ -28,11 +28,38 @@ live migration/repository path; it does not establish managed-database recovery 
 
 ## Wave progress and remaining gates
 
+The research-loop implementation adds a real pinned Linux checker image, source-pinned
+Mathlib/Physlib/QuantumInfo build, a 27-declaration source inventory, exact target/source/theorem
+and review binding, multiple trusted target bundles, typed live-run preparation, and a bounded
+canonical team runner. The current delivery evidence is in
+[the implementation record](../work/research-loop-implementation.md),
+[formal environment report](../work/formal-environment-report.md),
+[acceptance report](../work/acceptance-integration-report.md), and
+[execution report](../work/research-execution-report.md).
+
+- Real core image: two algebraic positive cases and seven seeded nonacceptance cases passed
+  with Lean replay, and again with nanoda independent replay. All 18 observations also passed
+  an offline causal-diagnostic audit. These are engineering observations, not expert-reviewed
+  physics or complete containment qualification.
+- A PostgreSQL concurrency test reproduced a review update crossing receipt creation; the
+  row-lock fix passed the live regression and adjacent migration/integration checks.
+- Real Temporal tests exercise task completion, blocked verification, duplicate identity,
+  experiment startup and cancellation. The engine rejected the initial signal-with-start
+  conflict-policy implementation; the corrected ordinary-start path passed.
+- Real local CLI preparation using measured image metadata produced a pending target and
+  immutable bundle. Preflight reported all four missing scientific/live inputs; no review or
+  model call was created.
+- Model transport/coordination tests remain explicitly mocked. They cover overlapping workers,
+  delegation, canonical receipt waiting/reuse, fencing, cancellation, uncertain calls and context
+  preservation. They do not establish live scientific throughput or a qualified fleet.
+- Optional additional initializer-probe coverage is blocked/incomplete and excluded from pass
+  counts. An unrelated syntax error cannot satisfy a negative case's required causal diagnosis.
+
 | Wave | Implemented engineering | Required before the wave can qualify |
 |---|---|---|
-| 0 | Repository, pinned Python/frontend environments, schemas, two program inventories, 60 provenance-bearing tiny algebra fixtures | Declaration-level library audit, compatible pinned Lean/Mathlib/physics build, expert review of 40 valid targets and 20 negative cases; fixtures currently pending review/uncompiled |
-| 1 | Trusted bundles, isolated Comparator launcher/driver, independent-kernel policy, canonical receipts, attack tests and target review | Real pinned Linux build and kernel/adversarial runs; expert semantic-review process; complete dependency export compatibility |
-| 2 | API/CLI/MCP, Responses loop and canonical tool/accounting integration, optional VM shell/file/checkpoint tools; standalone Codex adapter; accepted-source retrieval | Live automated accepted proof plus subsequent lemma reuse in each program; qualified Lean environment and optional research skills |
+| 0 | Repository, pinned Python/frontend environments, schemas, two program inventories, 60 provenance-bearing tiny algebra fixtures; exact formal source/toolchain locks and 27-declaration inventory | Review the recorded physics build/declaration evidence; expert review of 40 valid targets and 20 negative cases; benchmark inventory remains pending review/uncompiled |
+| 1 | Trusted bundles and registry, isolated Comparator, actual Lean/nanoda engineering runs, source/theorem/review-bound receipts, causal negative-case diagnostics and PostgreSQL review locking | Production containment qualification, expert semantic-review process, and larger proof/dependency replay compatibility |
+| 2 | API/CLI/MCP, typed Responses loop, canonical tool/accounting integration, finite single/team supervisor, optional VM tools, live-run preparation/preflight; standalone Codex adapter and accepted-source retrieval | Live automated accepted proof plus subsequent lemma reuse in each program; approved execution deployment and optional research skills |
 | 3 | Temporal/outbox/leases/reservations, canonical VM broker with shared slots, external checkpoints, S3 adapter, E2B lifecycle and managed deployment configuration | Actual managed deployment, safe lease adoption/reconnect, uncertain-operation reconciliation, live fault injection and qualified recovery |
 | 4 | Helpers/collaborators/competing branches, nested queues, sharing policy, Claude/OpenHands adapters, evidence-preserving portable memory, VM-only JS runner; mixed-SDK sandbox regressions | Mixed-runtime controller integration, automatic compaction/native continuation and safe restart integration, subscription/orphan qualification |
 | 5 | Markdown/LaTeX source spans, canonical lexical/type-token search, hash-checked accepted lemma source bundles, provenance models | PDF/paper ingestion, semantic/type-directed indexing, library tracing, source-to-formal review UI, held-out applicability and accepted autoformalization |
@@ -68,10 +95,13 @@ live migration/repository path; it does not establish managed-database recovery 
 
 ## Environmental and publication blockers
 
-This Mac has no running Docker daemon, no installed default Lean toolchain, and no dedicated
-PostgreSQL endpoint. Hosted-model identifiers, credentials, qualified E2B templates, Linux proof
-bundles, cloud deployment inputs and explicit live experiment envelopes remain operator inputs.
-Expert meaning/novelty decisions cannot be supplied by this implementation agent.
+A dedicated local Colima VM was used for real Linux builds and proof tests; its lifecycle and
+final image preservation are recorded in the delivery report. Lean candidate execution stays
+inside that Linux boundary, not the Mac's default environment. The temporary PostgreSQL container
+and tunnel were removed after the concurrency test. Hosted-model identifiers, credentials,
+qualified E2B templates, reviewed proof bundles, cloud inputs and explicit live experiment
+envelopes remain operator inputs. Expert meaning/novelty decisions cannot be supplied by this
+implementation agent. Use [the first live-run guide](FIRST_LIVE_RUN.md) for the pending inputs.
 
 These are separate from engineering gaps above. Resolving credentials alone will not qualify the
 system; implement and exercise the remaining contracts before promoting a wave.

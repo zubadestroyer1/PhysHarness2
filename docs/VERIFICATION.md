@@ -1,194 +1,161 @@
 # Independent verification boundary
 
-**Status: implemented protocol and fail-closed launcher; Linux/kernel qualification is blocked.**
-The development Mac has Docker and elan launchers but no running Docker daemon and no configured
-Lean toolchain. No candidate in this repository has received a real kernel receipt. The smoke
-fixtures have not been compiled or reviewed by a domain expert. Protocol tests use controlled
-transports exclusively inside tests and cannot establish kernel correctness or sandbox containment.
+The real Linux engineering suite passed on 2026-09-15: two algebraic fixtures passed Lean replay and seven adversarial fixtures were blocked, in both single-kernel and independent nanoda modes. The complete outputs, executable pins, runtime observation and hashes are archived in [acceptance evidence](../work/acceptance-evidence/index.json). No expert scientific review or production sandbox qualification is claimed by these results. The application defaults to `UnavailableVerifier` until an operator supplies an independently approved deployment configuration.
 
-## Service interface and trust
+## Scientific acceptance and engineering observations
 
-`physharness.verification` exports synchronous `Verifier.verify(VerificationRequest) -> VerificationOutcome`,
-`UnavailableVerifier`, `ComparatorVerifier`, `ComparatorConfig`, `LinuxQualification`, `driver_digest`, `launcher_digest`, and `seccomp_digest`.
-The application constructs requests from immutable stored revisions and recorded expert review.
-The public candidate API must not accept caller-controlled target/environment selection, semantic
-review flags, qualification records, or verification outcomes as authority. A digest names bytes;
-it never establishes mathematical truth. Only a trusted application service should persist an
-acceptance receipt after checking the returned status and binding all three digests to the request.
+`ComparatorVerifier.verify(VerificationRequest)` is the scientific acceptance interface. Its service-owned `ComparatorConfig` requires a `LinuxQualification` record. The service constructs requests from stored problem, review and artifact records; public clients cannot supply authoritative checker outcomes or semantic-review flags.
 
-A request includes revision id, target/environment/candidate SHA256, UTF-8 candidate source,
-semantic review, definition-hole flag, and publication flag. Outcomes distinguish `verified`,
-`rejected`, and `blocked`; only verified outcomes carry `kernel` or `independent_kernel` assurance.
-Every outcome includes remediation, identity digests, checker versions, axioms and diagnostics.
-Candidate digest mismatches reject before any process launch. Unreviewed targets and definition
-holes block. Definition holes require a newly reviewed concrete target; this adapter cannot approve
-fillable definitions.
+A scientific request binds:
 
-`UnavailableVerifier` is the safe deployment default. `ComparatorVerifier()` without config is
-also blocked. Config is service-owned and **not an API request**. Its qualification record is an
-operator's archived qualification-evidence reference, not a worker claim or an automatic certificate.
-There is deliberately no arbitrary checker command, shell template, or worker-receipt transport.
-The Docker CLI on the service PATH, daemon, image store and qualification administration belong
-to the trusted computing base. Do not expose the Docker socket or service storage to workers.
+- `problem_revision_id`: immutable scientific revision identifier.
+- `target_digest`: canonical digest of the complete problem metadata, including assumptions, source text, environment and selected theorem.
+- `target_theorem`: exactly the selected theorem in the reviewed problem. The bundle must select `[target_theorem]`.
+- `challenge_sha256`: SHA-256 of the exact UTF-8 `formal_statement`, which becomes `Challenge.lean` without newline normalization.
+- `environment_digest`: SHA-256 of the exact `environment.json` bytes.
+- `candidate_sha256`: SHA-256 of the submitted UTF-8 candidate artifact.
 
-## Pinned bundle
+The submission receipt also captures `review_id`. The acceptance worker checks the original review, all identities, source digest, definition-hole flag and publication requirement before calling the checker. A replacement review or changed source/environment blocks the queued check. It rechecks revision identity before atomically persisting the receipt and creating its claim. Artifact-read failure, checker identity mismatch and publication assurance downgrade retain distinct blocked codes. Failed persistence rolls back both claim and receipt; retries cannot create duplicate claims.
 
-Configure `ComparatorConfig(bundle_directory=Path(...), manifest_sha256=..., qualification=...)`.
-Use an immutable directory administered by the verifier service. The service reads and hashes
-files before copying their bytes into a fresh staging directory, never reusing candidate build caches.
-Symlinks, path traversal, reserved candidate/build files, oversized files, missing hashes and
-revision/digest disagreement fail closed.
+Unreviewed target meaning and definition holes block acceptance. A trusted `Challenge.lean` may have theorem proof holes for the candidate to fill; this is distinct from unreviewed definitions. Only the allowed theorem declaration selected by the reviewed problem is checked. Changing theorem selection requires a new reviewed scientific revision.
 
-The bundle contains these UTF-8 files:
+`EngineeringVerifier.run(EngineeringRequest)` is a separate interface. Its `EngineeringConfig` has `ExecutionPins`, but no qualification-report hash. Engineering requests cannot contain semantic-review fields. Results are wrapped as `EngineeringResult(purpose="engineering_smoke", outcome=...)`. This object is not a `VerificationOutcome`, and the engineering verifier has no `verify` method that the acceptance service can call. Its nested outcome records observed kernel behavior; it does not create or approve a scientific target, review, receipt or claim.
+
+`ComparatorVerifier.preflight(request)` checks review and bundle pins without launching a candidate. A structurally configured deployment returns `blocked/configured_unprobed` with no assurance. Missing independent-kernel configuration blocks publication preflight. Preflight never qualifies the runtime or verifies a proof.
+
+## Preparing trusted bundles
+
+`create_bundle` writes an exclusive new directory from service-controlled bytes and returns the manifest SHA-256 to pin in configuration. It rejects reserved/traversing paths, missing project configuration and missing executable pins; it never constructs a review or executes Lean.
+
+```python
+from pathlib import Path
+from physharness.verification import create_bundle
+
+manifest_sha256 = create_bundle(
+    Path("/srv/verifier/bundles/new-revision"),
+    problem_revision_id=problem["id"],
+    target_digest=problem["target_digest"],
+    challenge_source=problem["formal_statement"],
+    theorem_names=[problem["target_theorem"]],
+    image_digest=image_metadata["image"],
+    checker_versions=image_metadata["checker_versions"],
+    binaries=image_metadata["binaries"],
+    project_files={
+        "lakefile.toml": trusted_lakefile_bytes,
+        "lean-toolchain": trusted_toolchain_bytes,
+    },
+)
+```
+
+A v2 manifest has this schema:
 
 ```json
-// manifest.json (remove this comment for actual JSON)
 {
+  "protocol": "physharness-comparator-v2",
   "problem_revision_id": "stored-revision-id",
-  "target_digest": "SHA256 of Challenge.lean bytes",
-  "environment_digest": "SHA256 of environment.json bytes",
-  "theorem_names": ["reviewed_theorem_name"]
+  "target_digest": "canonical scientific revision SHA-256",
+  "challenge_sha256": "Challenge.lean byte SHA-256",
+  "environment_digest": "environment.json byte SHA-256",
+  "theorem_names": ["ReviewedNamespace.target"]
 }
 ```
 
-```json
-// environment.json (replace placeholders; remove this comment)
-{
-  "image": "sha256:<64 lowercase hex digits>",
-  "checker_versions": {
-    "lean": "exact release and source commit",
-    "comparator": "exact source commit",
-    "landrun": "exact source commit",
-    "lean4export": "exact source commit",
-    "nanoda": "exact source commit, if qualified"
-  },
-  "binaries": {
-    "lean": "SHA256", "lake": "SHA256", "comparator": "SHA256",
-    "lean4export": "SHA256", "landrun": "SHA256", "nanoda": "SHA256 if publication"
-  },
-  "files": {
-    "lakefile.toml": "SHA256", "lean-toolchain": "SHA256"
-  }
-}
-```
+`environment.json` pins an immutable Docker image ID, checker version/source identities, every trusted project file and the executable hashes for `lean`, `lake`, `comparator`, `lean4export`, `landrun`, and `nanoda` for publication. Its `files` map is computed by the bundle builder. Dependencies must already be built in read-only paths of the pinned image and referenced by the trusted Lake configuration and manifest. The full dependency/build closure belongs in the image's archived build records. Checking has no network access and cannot fetch dependencies.
 
-`files` must include all project configuration and reviewed dependency sources used by the target.
-For larger libraries, install immutable audited dependencies in the pinned image and reference
-those fixed paths in the trusted Lake configuration; retain their full source/build manifest with
-the qualification report. The image also pins Lean libraries, dynamic libraries and runtime tools.
-No network fetch is permitted during checking. `Challenge.lean` is hashed separately and must
-use the default prelude, as required by Comparator. Bundle generation is an administrative step;
-this repository deliberately ships no invented qualification digests or expert-review records.
+Configure `ComparatorConfig(bundle_directory=Path(...), manifest_sha256=..., qualification=...)`. `LinuxQualification` binds image digest, archived qualification-report SHA-256, current `driver_digest()`, `launcher_digest()`, `seccomp_digest()`, `linux_boundary="docker-landlock-seccomp-v1"` and the explicit independent-kernel capability. These are operator-managed evidence references, not certificates minted by this code. Runtime upgrades require operational requalification.
 
-`LinuxQualification` requires image digest, SHA256 of the archived qualification report, current
-`driver_sha256=driver_digest()`, `launcher_sha256=launcher_digest()`,
-`seccomp_sha256=seccomp_digest()`, `linux_boundary="docker-landlock-seccomp-v1"`, and an explicit
-`independent_kernel` boolean. Changing the driver, host launcher source, or serialized seccomp policy invalidates prior qualification. The image
-must match both the environment and qualification pins. Archive the actual report and its build
-inputs before deploying this config; filling in plausible hashes does not qualify anything.
+**Migration:** v1 conflated canonical scientific revision identity with Lean source bytes. It cannot represent the current contract. Regenerate bundles from stored revisions with the explicit v2 protocol and `challenge_sha256`; do not relabel old digests. Old manifests and responses fail closed. Submit fresh verification receipts for revisions whose receipts predate source/review binding. Legacy CI case requests must now be engineering requests with no semantic-review fields and explicit expected codes.
 
-## Fixed runner and upstream protocol
+## Actual execution and checker protocol
 
-The host only launches Docker. The image entrypoint is fixed to Python running
-`/opt/physharness/container_driver.py`. Docker runs with no network, read-only root, all capabilities
-dropped, no new privileges, nonroot UID/GID 65532, CPU/memory/PID limits, writable size-limited
-`/work` and `/tmp`, and separate read-only `/trusted` and `/candidate` bind mounts. A seccomp policy
-denies all `socket` and `socketpair` calls (including AF_UNIX), all three `io_uring` syscalls,
-ptrace and several privileged calls. Blocking only socket syscalls is insufficient because
-`IORING_OP_SOCKET` can create sockets inside the kernel without those syscalls.
-This custom seccomp profile is not a claim of equivalence to Docker's default profile; qualify its
-actual attack surface with the image, kernel, runtime and Landrun versions in use.
+The host launches only the service-owned Docker CLI. Candidate execution happens in the Linux image at the fixed entrypoint `/usr/bin/python3 /opt/physharness/container_driver.py`. Docker applies no network, read-only root, nonroot UID/GID 65532, dropped capabilities, no-new-privileges, bounded CPU/memory/PIDs, size-limited `/work` and `/tmp`, and distinct read-only trusted/candidate mounts. Docker itself and its socket, service PATH, trusted storage and image store remain part of the trusted computing base.
 
-Inside Linux, the driver checks nonroot status, Landlock ABI >= 3, no-new-privileges, and failed
-AF_UNIX/AF_INET socket probes, seccomp filter mode, and explicit EPERM results from
-`io_uring_setup`, `io_uring_enter`, and `io_uring_register` probes. Unsupported architectures other than x86_64/aarch64 block.
-It verifies the driver, mounted seccomp policy, checker binaries, candidate, target and environment hashes. Mount roots and files receive explicit permissions, independent of the service umask,
-while the outer staging directory stays private. Project inputs
-are read-only links to trusted mounts. Candidate source is only a link to the separate candidate
-mount; the initially empty build workspace prevents tainted cached oleans. Comparator alone
-controls elaboration and export under Landrun. The driver does not compile candidates beforehand.
+The seccomp policy denies `socket`, `socketpair`, all three `io_uring` syscalls, ptrace and specified privileged syscalls. The driver probes Linux architecture, nonroot status, Landlock ABI >= 3, no-new-privileges, seccomp filtering, denied AF_UNIX/AF_INET sockets, and explicit `EPERM` from `io_uring_setup`, `io_uring_enter` and `io_uring_register`. It checks its own bytes, seccomp policy, executables and mounted inputs against the pins. Fresh build directories avoid candidate-supplied caches. Explicit file and directory modes work even when the service has a private umask.
 
-The exact upstream invocation is:
+The pinned Comparator `3927ad383f208ae977c340a91c48ac9b497d2097` runs with this upstream-supported invocation:
 
 ```text
 /opt/lean/bin/lake env /opt/verifier/bin/comparator /work/config.json
 ```
 
-Trusted JSON config fixes `challenge_module=Challenge`, `solution_module=Solution`, reviewed
-`theorem_names`, and `permitted_axioms=[propext, Quot.sound, Classical.choice]`. Publication sets
-upstream `enable_nanoda=true`. Fixed environment variables `COMPARATOR_LANDRUN`,
-`COMPARATOR_LEAN4EXPORT`, and `COMPARATOR_NANODA` name pinned executable paths. The adapter uses
-no invented Comparator CLI flags. Image binaries must reside at `/opt/lean/bin/{lean,lake}` and
-`/opt/verifier/bin/{comparator,lean4export,landrun,nanoda_bin}`. Python3 must be `/usr/bin/python3`.
+The JSON configuration contains `challenge_module=Challenge`, `solution_module=Solution`, trusted `theorem_names`, `permitted_axioms=[propext, Quot.sound, Classical.choice]`, and `enable_nanoda` for publication. `COMPARATOR_LANDRUN`, `COMPARATOR_LEAN4EXPORT` and `COMPARATOR_NANODA` point to the pinned executables. No invented CLI flags or fake Landrun wrapper is used. Comparator itself uses real Landrun with its upstream `--best-effort` behavior; the outer Docker/seccomp boundary is essential, and still needs full production containment review.
 
-Comparator checks statement dependency definitions, allowed transitive axioms, and replays the
-exported solution environment in the Lean kernel. This is the basis for acceptance, not stdout
-text or a source regex. Every nonzero exit blocks because upstream exit codes do not reliably distinguish failed proof
-checking from infrastructure failure. Signal termination has a distinct code and signal diagnostics.
-Process failure, unsupported sandbox, malformed response, timeout and output overflow also block.
-These results must not be used as negative mathematical evidence. **The `axioms` outcome is the enforced allowed-set
-upper bound, not a measured minimal axiom closure.** The diagnostics always label this distinction.
-Minimal closure extraction is not implemented; disallowed dependencies are checked by Comparator.
+Comparator builds and exports the trusted challenge first, then builds and exports the candidate under Landrun. It compares the selected theorem type and its dependency definitions, requires theorem declaration kind, checks the transitive axiom closure and replays the exported environment into a fresh Lean kernel. Publication also replays through nanoda. Allowed axioms are enforced by the checker. The receipt's `axioms` list is the allowed-set upper bound, explicitly labeled `axioms_are_policy_upper_bound`; minimal axiom-closure extraction is not implemented.
 
-Only the trusted driver emits the `physharness-comparator-v1` JSON response after capturing
-Comparator stdout/stderr. Worker output is opaque diagnostics, never parsed as a receipt. Host
-validation checks response schema, every digest, pinned versions, axiom policy and publication
-replay. Publication requires the separately qualified nanoda binary and successful Comparator
-execution with nanoda enabled. Single-kernel acceptance never becomes publication assurance.
+Only exit zero establishes checker success. Upstream returns the same nonzero exit for mathematical checking failures and infrastructure/build errors. The adapter therefore records these as `blocked/comparator_failed`, never as negative mathematical evidence; signals have a separate `comparator_terminated` code. Candidate byte mismatch can be `rejected`, but is not a theorem refutation.
 
-Host output is bounded to 256 KB by default, total run time to 120 s. Driver Comparator output is
-bounded to 100 KB and time to 110 s. Killing the Docker client does not kill the container, so the
-host also removes its uniquely named container in a `finally` block. Automatic Docker `--rm` is
-disabled so explicit cleanup has a deterministic result. If removal fails, a successful exact-name
-container listing with no entries confirms absence. Otherwise verification is blocked with cleanup
-errors, bounded outputs, the container name and the original failure. Successful outcomes also
-record cleanup diagnostics. Operators must reconcile lingering containers after daemon recovery.
+Candidate and Comparator stdout/stderr are captured as opaque diagnostics. The host accepts only the trusted driver's single v2 response, validating schema, source/revision/environment/candidate identity, checker provenance, axiom policy and assurance. A candidate's forged JSON was exercised in the real suite and did not become a receipt.
 
-## Reproduction and qualification
+Timeout and output bounds apply at host and driver. The host explicitly removes each uniquely named container in `finally`; success requires confirmed removal or an authoritative empty exact-name listing. Unconfirmed cleanup blocks acceptance and preserves the original failure and container name. The archived final suites confirmed 18 explicit removals. Report checkpoints use atomic replacement, file fsync and directory fsync. A checkpoint failure ends the run as blocked when storage is writable; an unwritable report destination raises rather than announcing success.
 
-The inspected upstream README and Lean toolchain on 2026-09-14 identify Lean `v4.34.0`.
-`formal/lean-toolchain` pins that release for the smoke fixtures. Comparator, lean4export, Landrun
-and nanoda **are not yet provisioned or source-commit pinned here**. Thus the formal layer remains
-unqualified, even if Python tests pass. Before operating it:
+## Reproducing engineering evidence
 
-1. Resolve and record exact compatible upstream source commits, toolchain archives and compiler
-   hashes on an isolated Linux image builder. Build real Landrun (never `fake-landrun.sh`),
-   Comparator, matching lean4export, and publication nanoda. Archive lockfiles and binary hashes.
-2. Audit read-only trusted dependency closure and install fixed paths above. Build the final image
-   using `formal/Dockerfile` from repository root, supplying a digest-pinned
-   `QUALIFIED_TOOLCHAIN_IMAGE`. Record the **final** image digest, `driver_digest()`, `launcher_digest()`, and `seccomp_digest()`.
-3. Run live containment probes and adversarial Lean cases through the same Docker flags: target
-   overwrite, `.lake` cache manipulation, AF_UNIX/socket and `IORING_OP_SOCKET` escape attempts,
-   all io_uring entrypoints, process attacks, forged stdout,
-   changed definitions, `sorry`, extra axioms and native-computation trust. Include hangs and
-   excessive output. Do not call this profile qualified merely because startup probes pass.
-4. For each `formal/smoke/{quantum,classical}` fixture, assemble separate fresh trusted bundles
-   with `Challenge.lean`, the root formal lakefile/toolchain, and the correct theorem name. Submit
-   `Solution.lean` only as candidate bytes. Run kernel and publication checks, independently
-   verifying rejection of the attacks. Obtain and record expert semantic review separately.
-5. Archive exact commands, images, kernel/runtime versions, positive/negative results and
-   independent-kernel compatibility evidence; sign off qualification outside worker authority.
-   Only then configure the resulting image/report digests in the service.
+Build the real toolchain using the pinned [formal environment](../formal/README.md), then extract its image metadata. The engineering runner uses that metadata directly, avoiding a circular requirement for a qualification report before generating any evidence:
 
-The quantum fixture tests bit-flip involution on an abstract two-basis vector. The classical
-fixture tests composition of discrete translations. These are tiny algebraic prerequisites,
-not novel physics results, full program benchmarks, or expert-reviewed claims.
+```sh
+export DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock
+export TMPDIR="$PWD/.state/tmp"
+mkdir -p "$TMPDIR"
+.venv/bin/python infra/run_qualified_lean.py \
+  --engineering-image-metadata .state/formal/image-metadata.json \
+  --output .state/formal/engineering-kernel-report.json
+.venv/bin/python infra/run_qualified_lean.py \
+  --engineering-image-metadata .state/formal/image-metadata.json \
+  --output .state/formal/engineering-independent-report.json --publication
+```
 
-Primary sources inspected:
-[Comparator README](https://github.com/leanprover/comparator/blob/master/README.md),
-[upstream toolchain](https://github.com/leanprover/comparator/blob/master/lean-toolchain).
-The current README additionally documents an AF_UNIX sandbox issue and a systemd restriction;
-this launcher denies every socket syscall instead and still requires deployment qualification.
-The README's development fake sandbox is explicitly unsuitable for acceptance.
+Use a service-controlled local Docker endpoint and a shared bind-mount directory appropriate to the runner. The documented endpoint is the dedicated development Colima VM, not a production deployment. The host may be macOS; candidate execution and the boundary probes still run only in Linux. The legacy qualification-environment mode deliberately requires a Linux CI host.
 
+The default fixture manifest is [formal/adversarial/cases.json](../formal/adversarial/cases.json). `--fixtures` selects another versioned engineering suite. A suite must contain an actual `verified/kernel_checked` positive and a `blocked/comparator_failed` attack. Exact status, code and comparator exit evidence must match; missing Docker, preflight rejection, timeout or a malformed response cannot count as a passed attack. Every negative case must also specify `required_diagnostic_substrings`: a nonempty list whose entries must all appear in the recorded Comparator output. For example, the `sorry` fixture requires the complete `Illegal axiom detected: 'sorryAx'` diagnostic; a generic syntax error or challenge warning cannot satisfy it. Expected markers are copied into each new report. These checks improve fixed-fixture reporting; diagnostic text remains untrusted and grants no scientific acceptance authority. Every report retains `expert_review=not_provided` and `production_qualified=false`, including reports with `status=passed`.
 
-## Audit hardening and limits
+An [offline diagnostic audit](../work/acceptance-evidence/offline-diagnostic-audit.json) applied these stricter expectations to all 18 archived core results and checked their exact source/candidate hashes. It executed no new candidates. A separate optional initializer probe remains blocked/incomplete: its syntax failure does not satisfy the initializer execution marker. The original reports and their hashes remain unchanged.
 
-The independent acceptance audit identified an io_uring policy gap, swallowed cleanup errors,
-umask-sensitive mounts, and ambiguous checker exits. Regression tests now cover these findings,
-including stale host-launcher and seccomp qualification pins. Host policy bytes are hashed separately
-from the driver; startup checks verify the mounted policy identity and effective denial probes.
-The profile still defaults to allow and remains unqualified: passing these probes alone does not
-prove Linux containment. Qualification must record and approve the actual kernel, Docker/runtime,
-Landrun, image and policy versions. Runtime upgrades require operational requalification; this
-adapter does not automatically authenticate the kernel/runtime identity against the report hash.
+The archived core run used Linux 6.8.0-117 on aarch64, Docker 29.5.2, Lean 4.33.0, the pinned Comparator/exporter, real Landrun and nanoda. It verified translation composition and bit-flip involution, and blocked `sorry`, an extra transitive axiom, forged stdout, target/config writes, changed definitions and `native_decide`'s extra axiom. These are algebraic prerequisites and engineering attacks, not novel physics results or exhaustive sandbox qualification. Genuine Physlib/QuantumInfo import checks use the separately provisioned library image and its own recorded evidence.
+
+Source protocol and closure checks were inspected directly at the pinned commits:
+[Comparator main](https://github.com/leanprover/comparator/blob/3927ad383f208ae977c340a91c48ac9b497d2097/Main.lean),
+[axiom closure](https://github.com/leanprover/comparator/blob/3927ad383f208ae977c340a91c48ac9b497d2097/Comparator/Axioms.lean),
+[Comparator trust assumptions](https://github.com/leanprover/comparator/blob/3927ad383f208ae977c340a91c48ac9b497d2097/README.md).
+
+## Multiple target bundles
+
+Set `PHYSHARNESS_VERIFICATION_REGISTRY` to an operator-owned JSON file to route several reviewed revisions through one acceptance service. It is mutually exclusive with the existing `PHYSHARNESS_VERIFICATION_BUNDLE`, `PHYSHARNESS_VERIFICATION_MANIFEST_SHA256` and `PHYSHARNESS_VERIFICATION_QUALIFICATION` settings. The existing single-bundle configuration remains supported.
+
+A registry has `protocol="physharness-verifier-registry-v1"` and an `entries` array. Each entry contains a unique `problem_revision_id` and a complete `ComparatorConfig` JSON object with an absolute `bundle_directory`, `manifest_sha256` and `qualification`. For example, build the file from already approved configurations:
+
+```python
+registry = {
+    "protocol": "physharness-verifier-registry-v1",
+    "entries": [
+        {"problem_revision_id": lemma_problem["id"],
+         "config": lemma_config.model_dump(mode="json")},
+        {"problem_revision_id": next_problem["id"],
+         "config": next_config.model_dump(mode="json")},
+    ],
+}
+```
+
+`VerifierRegistry.from_file(path)` validates every manifest/revision, source, environment, project file, image and qualification code pin at startup without executing a candidate. Duplicate revisions, unsupported engineering configurations and invalid pins fail startup. Each verification still revalidates its selected bundle. An unknown revision returns `blocked/verifier_revision_unconfigured`; there is no first-entry or single-bundle fallback. The router accepts only scientific verification requests.
+
+Several targets can share identical `environment.json` bytes while having distinct canonical metadata digests, source digests and selected theorems. The source, revision identity and theorem selection live in each target's manifest. The same accepted lemma may therefore be referenced when composing a proof for another target without changing the pinned toolchain environment. The new proof still requires full independent replay and its own exact reviewed target.
+
+Administrative helpers support preparation before expert review:
+
+```python
+environment_bytes = prepare_environment(
+    image_metadata_path,
+    image_metadata_sha256=recorded_metadata_sha256,
+    project_directory=trusted_project_directory,
+    project_files=["lakefile.toml", "lean-toolchain"],
+)
+manifest_sha256 = create_problem_bundle(
+    new_bundle_directory,
+    problem=canonical_problem_record,
+    environment_bytes=environment_bytes,
+    project_directory=trusted_project_directory,
+)
+```
+
+Both functions are exported by `physharness.verification`. Environment preparation bounds and hashes the metadata and project files, rejects symlinks/reserved paths and emits canonical bytes. Bundle preparation checks the stored `ProblemCreate` digest, exact environment digest, selected theorem, source and copied project files before and after creation. The canonical problem's environment digest must already match those bytes. These helpers create no review, qualification record, receipt or claim; a pending target remains pending.
+
+The final acceptance commit locks and refreshes the canonical problem row with `SELECT FOR UPDATE` on PostgreSQL before comparing its review and identity. This serializes concurrent review updates with the receipt/claim commit. A real two-transaction PostgreSQL regression reproduced the previous race and passed after the fix; SQLite alone cannot exercise that race because it serializes writes globally.

@@ -198,3 +198,123 @@ initialization and is refused. Temporal workers use
 `physharness.orchestration.sandbox.workflow_runner()` to share only Beartype's global
 import machinery; ordinary workflow module isolation and file/network/time restrictions
 remain active. See [OpenHands runtime compatibility](OPENHANDS_RUNTIME.md#temporal-import-compatibility).
+
+## Finite research teams
+
+`ResearchTeamRunner` executes existing canonical tasks, with one manifest governing the
+supervisor's concurrency, task count, verification count, and elapsed time:
+
+```python
+from physharness.orchestration.research_worker import (
+    ResearchTaskExecutor, ResearchTeamRunner, TeamRunManifest,
+)
+
+executor = ResearchTaskExecutor(service, prices=recorded_prices)
+report = await ResearchTeamRunner(service, executor=executor).run(
+    TeamRunManifest(
+        project_id=project_id,
+        experiment_id=experiment_id,
+        task_ids=[root_task_id],
+        mode="live",
+        max_concurrency=2,
+        max_tasks=8,
+        timeout_seconds=300,
+        include_delegated=True,
+        process_verifications=True,
+        max_verifications=8,
+    )
+)
+```
+
+The experiment must already exist and have been explicitly started against its reviewed
+problem. Live mode requires `OPENAI_API_KEY` and the ordinary Responses executor. Replay mode
+requires an explicitly injected provider fixture; it cannot silently select the paid provider.
+The executor reads each branch's exact recorded model and parameters. It does not prescribe a
+mathematical method. Manifest and report artifacts retain the mode and run identity. A report's
+`completed` status means its selected tasks finished; scientific acceptance is established
+separately through canonical receipts and reviews.
+
+The supervisor discovers helper, collaborator, and competing descendant branches, including
+children created by a running model, and starts their tasks only when their canonical dependency
+tasks are completed. A failed parent does not cancel independently runnable children. Every
+worker uses the experiment's shared ledger and its own task lease. Repeated dispatch of a
+completed task returns its canonical status without another model request. A running task with
+prior native state requires explicit reconciliation and is never silently restarted.
+
+The local supervisor does not replace Temporal or a distributed process manager. Its loss leaves
+canonical child tasks, artifacts, checkpoints, reservations, and receipts available to another
+controller. An abruptly lost process can leave worker slots and model requests reserved until
+operator reconciliation; absence of a process does not prove a remote request or VM stopped.
+The report lists queued tasks left by a task-count limit or unmet dependencies.
+
+When enabled, one independent verification worker at a time calls the existing canonical
+`process_verification` route under a verifier identity. It handles receipts on the selected
+branches and is separately bounded by `max_verifications`. Models can use
+`wait_for_verification(receipt_id, timeout_seconds)` for an interruptible wait of at most 30
+seconds without another model generation. The wait returns the actual canonical receipt,
+including `queued` when the deadline expires. Verifier dispatch errors are reported separately;
+they cannot manufacture a receipt status.
+
+A supervisor timeout cancels local model coroutines and preserves unresolved monetary/token
+reservations. Python cannot terminate an already running verifier thread. In that case the
+report explicitly sets `verification_worker_continues=true` and lists pending receipt IDs.
+The underlying checker must have its own bounded execution and containment; Python process
+shutdown can wait for that checker. This report does not claim that the verifier stopped.
+Temporal's independently supervised verification activities remain the deployment path for
+process isolation and durable delivery.
+
+## Continuation, duplicate calls, and authority
+
+Responses checkpoints are independent snapshots. Every continuation saves `running` before
+awaiting input-token preflight. The in-process active-session guard prevents concurrent calls
+through one adapter, and canonical research workers additionally acquire a durable task lease.
+Custom shared runtime stores must provide controller-side serialization; the generic
+`RuntimeStore` protocol is not a distributed lock.
+
+A provider function-call ID binds its name, arguments, and committed result in native state.
+Repeating the same ID reuses the saved result; changing its intent raises `COMMAND_MISMATCH`.
+The Responses adapter attaches its durable generation operation ID as `X-Client-Request-Id` for
+correlation. This header is not a provider idempotency guarantee. Provider retries remain
+disabled, and ambiguous requests remain blocked.
+
+The pending generation marker clears only after usage settlement succeeds. A failed accounting
+hook retains the response, actual usage, and correlation ID for reconciliation. Explicit resume
+can reopen a local interruption with no pending external operation, preserving cumulative token
+and turn limits. Running or uncertain checkpoints cannot resume automatically.
+
+Every model tool executes within a controller-issued `worker_effects` binding. The service
+checks its task/identity/lease and active experiment in the same transaction before replaying
+an idempotent result and again before committing mutations. A stale lease or cancelled
+experiment stops the model loop. Operator checkpoint writes have the narrow exception of
+retaining final uncertain evidence after cancellation; they still require the current fence.
+Monetary settlement and failure evidence remain possible after cancellation.
+
+Temporal delivery validates canonical memo identity for both active and completed duplicate
+workflow IDs. Active experiment signals are sent only after that validation; task workflows
+with uncertain provider effects do not receive automatic activity retries.
+
+Model-facing `verify_candidate` requests the service's `publication=True` assurance tier so
+actual successful checks can produce independently replayed, reusable lemma evidence. That
+legacy flag selects the independent-kernel check; it does not approve publication, novelty,
+or scientific interpretation. Missing independent-checker configuration blocks acceptance and
+never falls back to ordinary kernel assurance for this tool.
+
+## Responses parameter preflight
+
+`execution.parameters.validate_responses_parameters(dict)` is shared by launch preflight,
+worker allocation, and the runtime. It returns independent JSON values containing only supplied
+fields; invalid input raises `ExecutionError(code="INVALID_CONFIG")` without echoing unknown
+keys, parameter values, or schema contents. `ResponsesParameters` defines the typed structure.
+Runtime start validates before saving a checkpoint, and the research worker validates before
+reserving a slot or leasing a task. Continuation validates older checkpoint parameters too.
+
+The contract follows the installed OpenAI SDK's reasoning context/effort/summary fields, its
+open string reasoning mode, text format/verbosity, optional instructions, service tiers, and
+finite temperature/top-p ranges. Nested protocol fields reject unknown keys. A JSON Schema
+format retains general JSON schema values and extension keywords. Provider support for a
+particular model, reasoning mode, or structured-output schema remains provider-checked; this
+validation does not infer model capabilities.
+
+`TeamRunLimits(max_concurrency=..., max_tasks=..., timeout_seconds=...)` validates supervisor
+limits before task IDs exist. `TeamRunManifest` inherits those fields. Invalid or nonfinite
+elapsed-time limits are rejected before seeding a team.
