@@ -1,0 +1,29 @@
+# Copy to a private *.auto.tfvars, replace every REPLACE value, and review a saved plan.
+# Applying this configuration incurs AWS charges. No apply has been authorized or performed.
+aws_region         = "REPLACE_REGION"
+availability_zones = ["REPLACE_AZ_1", "REPLACE_AZ_2"]
+name               = "physharness"
+app_image          = "REPLACE_ECR_REPOSITORY@sha256:REPLACE_WITH_64_HEX_DIGEST"
+certificate_arn    = "REPLACE_EXISTING_ACM_CERTIFICATE_ARN"
+allowed_client_cidrs = ["10.42.0.0/16"]
+postgres_engine_version = "REPLACE_EXACT_SUPPORTED_16_MINOR"
+artifact_bucket_name    = "REPLACE_GLOBALLY_UNIQUE_PRIVATE_BUCKET"
+database_url_secret_arn = "REPLACE_APPLICATION_DATABASE_URL_SECRET_ARN"
+migration_database_url_secret_arn = "REPLACE_SCHEMA_OWNER_DATABASE_URL_SECRET_ARN"
+auth_tokens_secret_arn      = "REPLACE_ROLE_SCOPED_AUTH_JSON_SECRET_ARN"
+openai_api_key_secret_arn   = "REPLACE_OPENAI_KEY_SECRET_ARN"
+temporal_api_key_secret_arn = "REPLACE_TEMPORAL_CLOUD_API_KEY_SECRET_ARN"
+temporal_address           = "REPLACE_NAMESPACE.ACCOUNT.tmprl.cloud:7233"
+temporal_namespace         = "REPLACE_NAMESPACE.ACCOUNT"
+cors_origins               = ["https://REPLACE_PRIVATE_CONSOLE_HOST"]
+model_prices = {
+  REPLACE_EXACT_EXPERIMENT_MODEL = {
+    input_usd_per_million  = "REPLACE_REVIEWED_DECIMAL_PRICE"
+    output_usd_per_million = "REPLACE_REVIEWED_DECIMAL_PRICE"
+    source                = "REPLACE_PRICE_SOURCE_AND_REVIEW_DATE"
+  }
+}
+# e2b_api_key_secret_arn = "REPLACE_E2B_KEY_SECRET_ARN"
+# e2b_template_id        = "REPLACE_EXACT_QUALIFIED_TEMPLATE_ID"
+api_desired_count    = 0
+worker_desired_count = 0

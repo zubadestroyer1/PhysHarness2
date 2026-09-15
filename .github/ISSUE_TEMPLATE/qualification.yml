@@ -1,0 +1,53 @@
+name: Qualification evidence or missing gate
+description: Report a reproducible qualification run, a failed gate, or evidence still needed.
+title: "[Qualification]: "
+labels: ["type:qualification"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A report is evidence for review, not automatic qualification. Failed runs and missing prerequisites belong here too. Do not upload credentials, private model transcripts, or unreviewed scientific exports.
+  - type: input
+    id: gate
+    attributes:
+      label: Wave and exact gate
+      description: Link the roadmap/plan criterion and related tracking issue. State the capability this evidence can establish.
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: Evidence modes used
+      multiple: true
+      options:
+        - Unit or scripted contract tests
+        - Replay or simulated load
+        - Real local infrastructure
+        - Real proof checker or certificate checker
+        - Live hosted models or VM providers
+        - Live multi-worker endurance or recovery
+        - Expert semantic or novelty review
+        - Not run; prerequisites or implementation missing
+    validations:
+      required: true
+  - type: textarea
+    id: inputs
+    attributes:
+      label: Reproduction inputs
+      description: Exact commit, environment/checker/image revisions, commands or manifest, and resource envelope for live work. Link only shareable inputs and artifacts.
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Observed result and evidence
+      description: Include the current run ID, dates, measurements, failures, and evidence hashes/links. If no run occurred, say so. Separate observation from inference.
+    validations:
+      required: true
+  - type: textarea
+    id: limits
+    attributes:
+      label: Limits, missing evidence, and review
+      description: List skips, uncertainty, untested claims, dependencies, and required reviewers. A reviewer decision should identify the actual person, scope, and evidence reviewed.
+    validations:
+      required: true

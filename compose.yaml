@@ -1,0 +1,142 @@
+name: physharness-local
+# Development infrastructure only. Generate .env with infra/prepare_local.py.
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:?Set digest-pinned POSTGRES_IMAGE}
+    environment:
+      POSTGRES_USER: harness_dev
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Generate a local database password}
+      POSTGRES_DB: physharness
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/temporal/init-databases.sql:/docker-entrypoint-initdb.d/01-temporal.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U harness_dev -d physharness"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  temporal-schema:
+    image: ${TEMPORAL_ADMIN_IMAGE:?Set digest-pinned TEMPORAL_ADMIN_IMAGE}
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: harness_dev
+      DB_PORT: "5432"
+      SQL_PASSWORD: ${POSTGRES_PASSWORD:?Generate a local database password}
+    volumes: ["./infra/temporal/setup-schema.sh:/scripts/setup-schema.sh:ro"]
+    entrypoint: ["/bin/sh", "/scripts/setup-schema.sh"]
+    restart: "no"
+
+  temporal:
+    image: ${TEMPORAL_SERVER_IMAGE:?Set digest-pinned TEMPORAL_SERVER_IMAGE}
+    depends_on:
+      temporal-schema: {condition: service_completed_successfully}
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_USER: harness_dev
+      POSTGRES_PWD: ${POSTGRES_PASSWORD:?Generate a local database password}
+      POSTGRES_SEEDS: postgres
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      BIND_ON_IP: 0.0.0.0
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    volumes: ["./infra/temporal/development-sql.yaml:/etc/temporal/config/dynamicconfig/development-sql.yaml:ro"]
+    ports: ["127.0.0.1:7233:7233"]
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    restart: unless-stopped
+
+  temporal-namespace:
+    image: ${TEMPORAL_ADMIN_IMAGE:?Set digest-pinned TEMPORAL_ADMIN_IMAGE}
+    depends_on:
+      temporal: {condition: service_healthy}
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+    volumes: ["./infra/temporal/create-namespace.sh:/scripts/create-namespace.sh:ro"]
+    entrypoint: ["/bin/sh", "/scripts/create-namespace.sh"]
+    restart: "no"
+
+  temporal-ui:
+    image: ${TEMPORAL_UI_IMAGE:?Set digest-pinned TEMPORAL_UI_IMAGE}
+    depends_on:
+      temporal: {condition: service_healthy}
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:8080
+    ports: ["127.0.0.1:8080:8080"]
+    restart: unless-stopped
+
+  migrate:
+    profiles: [app]
+    image: physharness-local:0.1.0
+    build: &app-build
+      context: .
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:?Set digest-pinned PYTHON_IMAGE}
+        UV_IMAGE: ${UV_IMAGE:?Set digest-pinned UV_IMAGE}
+    command: ["python", "-m", "alembic", "upgrade", "head"]
+    environment:
+      PHYSHARNESS_DATABASE_URL: ${PHYSHARNESS_DATABASE_URL:?Generate local configuration}
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  api:
+    profiles: [app]
+    image: physharness-local:0.1.0
+    build: *app-build
+    environment: &app-environment
+      PHYSHARNESS_MODE: local
+      PHYSHARNESS_DATABASE_URL: ${PHYSHARNESS_DATABASE_URL:?Generate local configuration}
+      PHYSHARNESS_AUTH_TOKENS: ${PHYSHARNESS_AUTH_TOKENS:?Generate local credentials}
+      PHYSHARNESS_AUTO_CREATE_SCHEMA: "false"
+      PHYSHARNESS_ARTIFACT_ROOT: /app/.state/artifacts
+      PHYSHARNESS_TEMPORAL_ADDRESS: temporal:7233
+      PHYSHARNESS_TEMPORAL_NAMESPACE: default
+      PHYSHARNESS_TEMPORAL_TLS: "false"
+      PHYSHARNESS_CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
+    volumes: ["artifacts:/app/.state"]
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      temporal-namespace: {condition: service_completed_successfully}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    profiles: [worker]
+    image: physharness-local:0.1.0
+    build: *app-build
+    command: ["python", "-m", "physharness.worker"]
+    environment:
+      <<: *app-environment
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      E2B_API_KEY: ${E2B_API_KEY:-}
+      PHYSHARNESS_E2B_TEMPLATE_ID: ${PHYSHARNESS_E2B_TEMPLATE_ID:-}
+      PHYSHARNESS_MODEL_PRICES: ${PHYSHARNESS_MODEL_PRICES:?Set reviewed model price table}
+      PHYSHARNESS_WORKER_WORKSPACE: ${PHYSHARNESS_WORKER_WORKSPACE:-null}
+    volumes: ["artifacts:/app/.state"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      temporal-namespace: {condition: service_completed_successfully}
+    restart: unless-stopped
+    stop_grace_period: 120s
+
+volumes:
+  postgres-data:
+  artifacts:
