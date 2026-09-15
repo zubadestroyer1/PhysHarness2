@@ -102,6 +102,14 @@ export interface EventRecord {
   created_at: string
 }
 
+export interface EventPage {
+  items: EventRecord[]
+  next_cursor: number
+  has_more: boolean
+  window: 'latest' | 'forward'
+  scan_limited: boolean
+}
+
 export interface Program extends CoreRecord {
   name?: string
   title?: string
@@ -149,10 +157,11 @@ export interface WorkspaceData {
   sessions: CoreRecord[]
   programs: Program[]
   events: EventRecord[]
+  eventPage: EventPage | null
   status: ServiceStatus | null
 }
 
 export const emptyWorkspace: WorkspaceData = {
   campaigns: [], problems: [], experiments: [], branches: [], tasks: [], claims: [],
-  artifacts: [], reviews: [], sessions: [], programs: [], events: [], status: null,
+  artifacts: [], reviews: [], sessions: [], programs: [], events: [], eventPage: null, status: null,
 }

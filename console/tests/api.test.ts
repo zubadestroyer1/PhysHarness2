@@ -70,3 +70,18 @@ it('rejects a repeated server cursor instead of spinning forever', async () => {
   const api = createApiClient({baseUrl:'',token:'test',fetcher})
   await expect(api.list('artifacts')).rejects.toMatchObject({code:'COLLECTION_LIMIT'})
 })
+
+it('preserves event page continuation even when no visible events were returned', async () => {
+  const page = {items: [], next_cursor: 5000, has_more: true, window: 'forward', scan_limited: true}
+  const fetcher = vi.fn().mockResolvedValue(new Response(JSON.stringify(page), {headers:{'Content-Type':'application/json'}}))
+  await expect(createApiClient({baseUrl:'',token:'test',fetcher}).events(5)).resolves.toEqual(page)
+})
+
+it('continues through an empty filtered collection page', async () => {
+  const response = (body: unknown) => new Response(JSON.stringify(body), {headers:{'Content-Type':'application/json'}})
+  const fetcher = vi.fn()
+    .mockResolvedValueOnce(response({items:[],next_cursor:'scanned'}))
+    .mockResolvedValueOnce(response({items:[{id:'visible'}],next_cursor:null}))
+  await expect(createApiClient({baseUrl:'',token:'test',fetcher}).list('claims','?experiment_id=e1')).resolves.toEqual([{id:'visible'}])
+  expect(fetcher.mock.calls[1][0]).toBe('/v1/claims?experiment_id=e1&after=scanned')
+})

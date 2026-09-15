@@ -97,11 +97,13 @@ second terminal, start the console:
 ```sh
 cd console
 npm ci
-npm run dev
+VITE_API_URL=http://127.0.0.1:8000 npm run dev
 ```
 
 Open the URL printed by Vite. Connect to the local API using the token in
-`.state/researcher.token` at the repository root. The console presents campaigns, targets,
+`.state/researcher.token` at the repository root. The API URL on the connection screen must be
+`http://127.0.0.1:8000` for this local setup; enter it there if you did not set `VITE_API_URL`.
+The console presents campaigns, targets,
 experiments, branches, claims, artifacts, reviews, and resource accounting. It displays missing
 services and connection faults explicitly. See the [console guide](docs/CONSOLE.md).
 

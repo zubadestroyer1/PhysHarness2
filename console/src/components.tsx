@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { actionsFor } from './transitions'
 import type { ApiFailure } from './api'
 import type { Artifact, Branch, Claim, Experiment, Ledger, Problem, Review, ServiceStatus } from './types'
 
@@ -58,8 +59,9 @@ export type Selection =
   | { kind: 'branch'; item: Branch }
   | null
 
-export function EvidencePanel({ selection, ledger, ledgerError, reviews, onReview, onExport, onTransition }: {
+export function EvidencePanel({ selection, ledger, ledgerError, reviews, onReview, onExport, onTransition, busy = false }: {
   selection: Selection
+  busy?: boolean
   ledger: Ledger | null
   ledgerError: ApiFailure | null
   reviews: Review[]
@@ -118,7 +120,7 @@ export function EvidencePanel({ selection, ledger, ledgerError, reviews, onRevie
         </dl>}
         {ledgerError && <ErrorBanner error={ledgerError} title="Ledger unavailable" />}
         {!ledger && !ledgerError && <p className="muted">Loading server ledger…</p>}
-        <div className="transition-row detail-transitions">{detailActions(selection.item.status).map(action => <button key={action} className={action === 'cancel' ? 'button button--danger' : 'button button--secondary'} aria-label={`${action} experiment`} onClick={() => onTransition?.(selection.item, action)}>{action.charAt(0).toUpperCase() + action.slice(1)}</button>)}</div>
+        <div className="transition-row detail-transitions">{actionsFor(selection.item.status).map(action => <button key={action} className={action === 'cancel' ? 'button button--danger' : 'button button--secondary'} disabled={busy} aria-label={`${action} experiment`} onClick={() => onTransition?.(selection.item, action)}>{action.charAt(0).toUpperCase() + action.slice(1)}</button>)}</div>
         <button className="button button--secondary full" onClick={() => onExport(selection.item)}>Export reproducibility manifest</button>
       </>}
       {selection?.kind === 'artifact' && <>
@@ -137,13 +139,6 @@ export function EvidencePanel({ selection, ledger, ledgerError, reviews, onRevie
       </>}
     </aside>
   )
-}
-
-function detailActions(status: string): Array<'start' | 'pause' | 'resume' | 'cancel'> {
-  if (status === 'draft' || status === 'created') return ['start', 'cancel']
-  if (status === 'running') return ['pause', 'cancel']
-  if (status === 'paused') return ['resume', 'cancel']
-  return []
 }
 
 function DetailHeader({ title, subtitle }: { title: string; subtitle: string }) {
