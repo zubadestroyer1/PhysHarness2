@@ -55,6 +55,8 @@ Index(
     RecordRow.kind,
     record_json_text("artifact_id"),
     record_json_text("review_id"),
+    record_json_text("status"),
+    record_json_text("assurance"),
 )
 
 

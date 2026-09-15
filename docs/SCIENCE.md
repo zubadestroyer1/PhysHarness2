@@ -22,8 +22,8 @@ case; it avoids reading all irrelevant proofs and stops after the first eligible
 regressions with 1,000 irrelevant verified claims return one result with one proof-store read. They
 do not qualify PostgreSQL fleet latency, remote artifact-store throughput, or production scale.
 
-These independent Python modules operate on passed records and data. They do not
-write service receipts, review decisions, or canonical storage. The application must
+The standalone knowledge and computation modules below operate on passed records
+and data. They do not write service receipts, review decisions, or canonical storage. The application must
 authenticate and scope canonical inputs before passing them in. A receipt identifier
 or digest is a provenance reference, not proof that a worker supplied true data.
 

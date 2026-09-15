@@ -500,6 +500,104 @@ def test_artifact_acceptance_uses_indexed_matching_receipt_lookup(lab):
     assert any("records_project_kind_artifact" in plan for plan in plans)
 
 
+@pytest.mark.parametrize(
+    "status,assurance",
+    [
+        ("queued", "none"),
+        ("failed", "none"),
+        ("verified", "none"),
+    ],
+)
+def test_receipt_state_index_bounds_actual_sqlite_work(lab, status, assurance):
+    import copy
+
+    from sqlalchemy import event
+    from test_research_services import accepted_fixture
+
+    service, _, exp, _, (alpha, _), receipt = accepted_fixture(lab)
+    with service.db.transaction() as session:
+        session.delete(session.get(RecordRow, receipt["id"]))
+    counts = []
+    queries = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if "artifact_id" in statement:
+            queries.append((statement, parameters))
+
+    def measure():
+        instructions = 0
+
+        def progress():
+            nonlocal instructions
+            instructions += 1
+            return 0
+
+        with service.db.sessions() as session:
+            experiment = session.get(RecordRow, exp["id"])
+            artifact = session.get(RecordRow, receipt["artifact_id"])
+            connection = session.connection().connection.driver_connection
+            event.listen(service.db.engine, "before_cursor_execute", capture)
+            connection.set_progress_handler(progress, 1)
+            try:
+                accepted = service._accepted_for_sharing(session, artifact, experiment)
+            finally:
+                connection.set_progress_handler(None, 0)
+                event.remove(service.db.engine, "before_cursor_execute", capture)
+        return accepted, instructions
+
+    previous = 0
+    for inventory in [100, 1000, 10000]:
+        with service.db.transaction() as session:
+            for number in range(previous, inventory):
+                pending = copy.deepcopy(receipt)
+                pending.update(id=f"state-receipt-{number:05d}", status=status, assurance=assurance)
+                session.add(
+                    RecordRow(
+                        id=pending["id"],
+                        project_id=alpha.project_id,
+                        kind="verification",
+                        revision=1,
+                        payload=pending,
+                    )
+                )
+        previous = inventory
+        accepted, instructions = measure()
+        assert accepted is False
+        counts.append(instructions)
+        print(
+            f"receipt_state={status}/{assurance} inventory={inventory} "
+            f"sqlite_instructions={instructions}"
+        )
+    # This measures database execution, not result count or ORM materialization.
+    assert max(counts) <= 500
+    assert max(counts[1:]) <= counts[0] + 50
+    with service.db.engine.connect() as connection:
+        plans = [
+            str(row)
+            for statement, parameters in queries
+            for row in connection.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters)
+        ]
+    assert any(
+        "records_project_kind_artifact_review" in plan and plan.count("<expr>=?") == 4
+        for plan in plans
+    )
+    print("receipt_lookup_plans=" + repr(sorted(set(plans))))
+    # A matching receipt remains reachable after the large failed/queued inventory.
+    with service.db.transaction() as session:
+        session.add(
+            RecordRow(
+                id=receipt["id"],
+                project_id=alpha.project_id,
+                kind="verification",
+                revision=1,
+                payload=receipt,
+            )
+        )
+    accepted, instructions = measure()
+    print(f"matching_receipt_after_inventory=10000 sqlite_instructions={instructions}")
+    assert accepted is True and instructions <= 500
+
+
 @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
 @pytest.mark.parametrize(
     "private_kind",

@@ -38,10 +38,12 @@ returned item, and cursors never reveal record content or grant read authority. 
 keyset reads of current state, not a transactionally frozen export across multiple requests.
 
 Ordered indexes cover project/kind/ID, experiment scope, and agent review-target scope. Accepted
-cross-branch artifacts use an indexed artifact/current-review receipt lookup with the existing exact
-source, theorem, environment and target bindings; only one matching receipt is materialized. Receipt
-lookup can still examine multiple entries for the same artifact/review when their other bindings
-differ. The scan budget bounds collection metadata, not proof-checker execution or wall-clock latency.
+cross-branch artifacts use an indexed artifact/current-review/status/assurance receipt lookup with the
+existing exact source, theorem, environment and target bindings; only one matching receipt is
+materialized. Queued, failed, and insufficient-assurance receipts are excluded by index equality
+keys. Receipt lookup can still examine multiple entries sharing the same artifact, review, verified
+status and independent-kernel assurance when other bindings differ. The scan budget bounds collection
+metadata, not proof-checker execution or wall-clock latency.
 
 GET `/v1/events` accepts `after` (sequence), `limit` (default 100, maximum 1,000), and `tail`.
 The default scans forward; `tail=true` requests the latest visible window for an activity panel.
