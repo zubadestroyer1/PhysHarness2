@@ -8,14 +8,14 @@ scientific/fleet exit criteria has been substituted with a mock or a schema chec
 
 | Check | Observed result | What it does not establish |
 |---|---|---|
-| Python aggregate suite | 368 passed, 2 explicit infrastructure skips, 21 upstream deprecation warnings; Ruff lint and format checks passed | Live provider behavior or a proof kernel |
+| Research-loop Python aggregate | 525 passed, 1 explicit infrastructure skip, 3 integration/Lean deselections, 21 upstream warnings locally; Ruff lint and formatting passed | Live provider behavior or a proof kernel |
 | Console tests/build | 10 tests passed; TypeScript/Vite production build passed | Large-graph capacity or full accessibility qualification |
 | Browser smoke | Authenticated API connection, visible connection failure, real local campaign creation | A scientific experiment or publication |
-| Temporal integration | Real pinned local Temporal CLI 1.8.3 server; 1 engine test passed after sandbox compatibility fix; duplicate-delivery contract checks passed | Temporal Cloud operation, regional failures or production scale |
+| Temporal integration | Both real engine tests passed with CLI 1.8.3/server 1.31.2; startup, task/verification lifecycle, duplicate identity and cancellation exercised | Temporal Cloud operation, regional failures or production scale |
 | Ledger replay | 1,000 reservations/settlements with 128 local concurrent clients; 2.13 s total, p95 0.405 s | 128 live models/VMs; this used SQLite and simulated accounting only |
-| Infrastructure | Terraform 1.16.2/AWS 6.10.0 validation, Compose configuration, SQLite migrations, PostgreSQL DDL | Terraform plan/apply, container boot or a live PostgreSQL migration |
-| Acceptance audits | Seeded contract attacks and independent code review; reproduced defects fixed/rechecked | Universal soundness, Linux sandbox qualification or actual Lean acceptance |
-| GitHub CI on Linux | [Run 34939315898](https://github.com/zubadestroyer1/PhysHarness2/actions/runs/34939315898) passed all five jobs at `156eb2b`: Python 367 passed/2 skipped/1 deselected; live PostgreSQL 1 passed; console 10 passed and built; Terraform validated; application container built and imported | Managed deployment, adversarial proof isolation, a live model/VM experiment or any complete wave qualification |
+| Infrastructure | Terraform 1.16.2/AWS 6.10.0 validation, Compose configuration, SQLite migrations, real PostgreSQL 16.15 migration and acceptance review-lock regression | Terraform plan/apply, managed recovery or fleet capacity |
+| Acceptance audits | Seeded contract attacks, independent code reviews and 9 + 9 real core Lean/nanoda engineering outcomes; reproduced defects fixed/rechecked | Universal soundness, production containment qualification or expert-reviewed physics |
+| GitHub CI on Linux | [Research-loop run 34947302989](https://github.com/zubadestroyer1/PhysHarness2/actions/runs/34947302989) passed all five jobs at `0668f862`: ordinary Python 524 passed/2 skipped/3 deselected, plus 2 actual Temporal tests; PostgreSQL, console, Terraform and application container checks passed | Managed deployment, production adversarial isolation, live model throughput or any complete wave qualification |
 
 Test counts are snapshots, not a continuously updated badge. Each delivery must run a fresh
 aggregate suite after integration. Local evidence reports are retained in `work/`; no credentials
@@ -29,7 +29,7 @@ live migration/repository path; it does not establish managed-database recovery 
 ## Wave progress and remaining gates
 
 The research-loop implementation adds a real pinned Linux checker image, source-pinned
-Mathlib/Physlib/QuantumInfo build, a 27-declaration source inventory, exact target/source/theorem
+Mathlib/Physlib/QuantumInfo build, a 27-declaration source inventory and actual Lean axiom report, exact target/source/theorem
 and review binding, multiple trusted target bundles, typed live-run preparation, and a bounded
 canonical team runner. The current delivery evidence is in
 [the implementation record](../work/research-loop-implementation.md),
@@ -41,6 +41,10 @@ canonical team runner. The current delivery evidence is in
   with Lean replay, and again with nanoda independent replay. All 18 observations also passed
   an offline causal-diagnostic audit. These are engineering observations, not expert-reviewed
   physics or complete containment qualification.
+- The selected physics build completed 8,790 jobs. Lean checked all 27 selected declarations
+  and reported their axioms. A separate library suite passed all three expected outcomes in
+  both Lean and nanoda modes: oscillator identity, Pauli-X involution and incomplete-proof
+  rejection. This does not provide expert semantic review or qualify the 60 benchmark entries.
 - A PostgreSQL concurrency test reproduced a review update crossing receipt creation; the
   row-lock fix passed the live regression and adjacent migration/integration checks.
 - Real Temporal tests exercise task completion, blocked verification, duplicate identity,

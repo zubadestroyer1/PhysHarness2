@@ -182,3 +182,23 @@ COLIMA_HOME=/private/tmp/physharness-colima colima stop
 This targets only the dedicated profile used for this implementation. Keep its disk/artifacts
 for reuse; do not start or stop unrelated user VMs. Shut down cloud workers through their
 canonical provider lifecycle so destruction and remaining costs are recorded.
+
+
+The implementation's local image archive is retained outside the temporary VM profile at
+`.state/formal/preserved-images.tar.zst` in the implementation worktree. Its measured SHA-256,
+image identities and shutdown evidence are recorded in `work/testing-vm-lifecycle.json`.
+The archive is a local cache, not a distributed release or qualification certificate.
+
+If the temporary VM profile has been removed, create a dedicated Linux builder as documented
+in [the formal environment guide](FORMAL_ENVIRONMENT.md). Verify the archive hash against the
+record before loading it through that builder's explicitly selected Docker endpoint:
+
+```sh
+set -o pipefail
+zstd -dc .state/formal/preserved-images.tar.zst | \
+  DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock docker image load
+```
+
+Inspect the restored image IDs against the recorded identities before using their corresponding
+metadata. A different architecture or scientific environment requires its own build and checks.
+Restart the VM only while it is needed, then stop it again to release its RAM.
