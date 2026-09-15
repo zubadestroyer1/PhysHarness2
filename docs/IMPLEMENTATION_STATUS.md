@@ -4,7 +4,7 @@ Updated 2026-09-15 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) rem
 Every wave is **unqualified**. Several components are implemented and tested; none of the live
 scientific/fleet exit criteria has been substituted with a mock or a schema check.
 
-## Recorded evidence
+## Initial development evidence
 
 | Check | Observed result | What it does not establish |
 |---|---|---|
@@ -25,6 +25,26 @@ The GitHub run adds actual Linux container and PostgreSQL evidence beyond this M
 checks. Its container job builds and imports the installed application; it does not start a
 complete deployment or qualify generated-code containment. The PostgreSQL test exercises the
 live migration/repository path; it does not establish managed-database recovery or load capacity.
+
+## PR #1 correction evidence
+
+At source `207e013`, the fresh local aggregate reports **482 Python tests passed, 2 explicit
+skips and 21 upstream warnings**; Ruff lint/format (96 files), deployment metadata and whitespace
+checks passed. Supported Node 24.19.0 reports **36 console tests passed** and a successful
+TypeScript/Vite build. Browser smoke covered canonical controls, selected state and accounting.
+
+The corrected source combined with the committed research-loop wave (`60e8254`) reports
+**639 Python tests passed, 4 explicit infrastructure skips and 21 upstream warnings**;
+Ruff passed for 112 files. All original review findings and additional scoped review findings
+were corrected and re-reviewed. See the [correction report](../work/pr-1-fix-validation.md) for
+reproductions, exact source/integration identities, query/read measurements, compatibility
+resolutions and remaining costs. Current head CI and required independent approval are tracked
+on [PR #1](https://github.com/zubadestroyer1/PhysHarness2/pull/1).
+
+Comparator v2 requires separately pinned canonical target/source identities and the reviewed
+theorem. Old ambiguous manifests/receipts require explicit repinning/resubmission. The new
+immutable migration adds ordered visibility/receipt indexes; it does not alter revision 0001.
+These corrections do not extend historical kernel/provider evidence to changed source bytes.
 
 ## Wave progress and remaining gates
 
@@ -98,6 +118,10 @@ canonical team runner. The current delivery evidence is in
   remain attached to the current failed run. Impossible timing/concurrency measurements fail.
 
 ## Environmental and publication blockers
+
+The PR #1 correction run did not execute a live provider, a Lean kernel or a managed deployment.
+The wave observations below apply to their recorded source/image hashes; changed verifier bytes
+require a separate rebuild, rerun and repinning.
 
 A dedicated local Colima VM was used for real Linux builds and proof tests; its lifecycle and
 final image preservation are recorded in the delivery report. Lean candidate execution stays
