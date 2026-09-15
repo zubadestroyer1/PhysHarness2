@@ -21,6 +21,7 @@ SHA256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 ImageDigest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 ALLOWED_AXIOMS = frozenset({"propext", "Quot.sound", "Classical.choice"})
 PROTOCOL = "physharness-comparator-v2"
+MAX_CANDIDATE_CHARACTERS = 2_000_000
 
 
 class Contract(BaseModel):
@@ -33,7 +34,7 @@ class EngineeringRequest(Contract):
     challenge_sha256: SHA256
     environment_digest: SHA256
     candidate_sha256: SHA256
-    candidate_source: str = Field(max_length=2_000_000)
+    candidate_source: str = Field(max_length=MAX_CANDIDATE_CHARACTERS)
     publication: bool = False
 
 

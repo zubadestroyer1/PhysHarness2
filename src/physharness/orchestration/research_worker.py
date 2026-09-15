@@ -94,11 +94,24 @@ class CanonicalRuntimeStore:
                 "input_tokens": checkpoint.session.input_tokens,
                 "output_tokens": checkpoint.session.output_tokens,
             }
-            return (
+            record = (
                 self.service._replace(session, row, values)
                 if row
                 else self.service._insert(session, "session", self.actor, values)
             )
+            self.service._event(
+                session,
+                self.actor,
+                op,
+                "session.saved",
+                record["id"],
+                {
+                    "experiment_id": self.experiment_id,
+                    "task_id": self.task_id,
+                    "revision": record["revision"],
+                },
+            )
+            return record
 
         self.service._execute(
             self.actor, f"runtime-save:{digest_json(data)}", "runtime.save", data, action

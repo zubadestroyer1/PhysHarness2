@@ -22,13 +22,13 @@ def api():
 def request(**changes):
     values = dict(
         problem_revision_id="revision-1",
-        target_digest=sha(b"target"),
+        target_digest=sha(b"canonical metadata"),
         challenge_sha256=sha(b"target"),
+        target_theorem="identity",
         environment_digest=sha(b"environment"),
         candidate_sha256=sha(b"proof"),
         candidate_source="proof",
         semantic_reviewed=True,
-        target_theorem="identity",
     )
     values.update(changes)
     return api().VerificationRequest(**values)
@@ -59,8 +59,8 @@ def configured(tmp_path):
         {
             "protocol": "physharness-comparator-v2",
             "problem_revision_id": "revision-1",
+            "target_digest": sha(b"canonical metadata"),
             "challenge_sha256": sha(target),
-            "target_digest": sha(target),
             "environment_digest": sha(env),
             "theorem_names": ["identity"],
         }
@@ -79,9 +79,7 @@ def configured(tmp_path):
             independent_kernel=True,
         ),
     )
-    req = request(
-        target_digest=sha(target), challenge_sha256=sha(target), environment_digest=sha(env)
-    )
+    req = request(challenge_sha256=sha(target), environment_digest=sha(env))
     return v.ComparatorVerifier(config), req
 
 
@@ -224,6 +222,7 @@ def test_inconsistent_outcome_contract_rejected():
             message="bad",
             remediation="fix",
             target_digest="a" * 64,
+            challenge_sha256="d" * 64,
             environment_digest="b" * 64,
             candidate_sha256="c" * 64,
         )
@@ -467,6 +466,104 @@ def test_cleanup_failure_retains_original_timeout(tmp_path, monkeypatch):
     result = verifier.verify(req)
     assert result.code == "container_cleanup_failed"
     assert result.diagnostics["prior_failure"]["code"] == "checker_timeout"
+
+
+def run_synthetic_driver(tmp_path, monkeypatch, capsys, *, tamper=None, engineering=False):
+    """Synthetic filesystem and syscall transport; executes the real trusted driver."""
+    from physharness.verification import container_driver as driver
+
+    verifier, req = configured(tmp_path)
+    trusted = tmp_path / "trusted"
+    trusted.mkdir()
+    candidate = tmp_path / "candidate"
+    candidate.mkdir()
+    for name in ("manifest.json", "environment.json", "Challenge.lean", "lakefile.toml"):
+        (trusted / name).write_bytes((tmp_path / name).read_bytes())
+    meta = req.model_dump(exclude={"candidate_source"})
+    meta.update(
+        target_theorem="identity",
+        challenge_sha256=sha((trusted / "Challenge.lean").read_bytes()),
+        driver_sha256=driver.sha(Path(driver.__file__).read_bytes()),
+        seccomp_sha256=sha(b"policy"),
+    )
+    if engineering:
+        for field in ("semantic_reviewed", "definition_holes", "target_theorem"):
+            meta.pop(field, None)
+    (trusted / "request.json").write_text(json.dumps(meta))
+    (trusted / "seccomp.json").write_bytes(b"policy")
+    (candidate / "Solution.lean").write_text(req.candidate_source)
+    env = json.loads((trusted / "environment.json").read_bytes())
+    for name in env["binaries"]:
+        binary = tmp_path / name
+        binary.write_bytes(b"synthetic binary")
+        monkeypatch.setitem(driver.BINARIES, name, str(binary))
+        env["binaries"][name] = sha(binary.read_bytes())
+    raw_env = json.dumps(env).encode()
+    (trusted / "environment.json").write_bytes(raw_env)
+    meta["environment_digest"] = sha(raw_env)
+    (trusted / "request.json").write_text(json.dumps(meta))
+    manifest = json.loads((trusted / "manifest.json").read_bytes())
+    manifest.update(
+        protocol="physharness-comparator-v2",
+        challenge_sha256=meta["challenge_sha256"],
+        environment_digest=meta["environment_digest"],
+    )
+    if tamper is not None:
+        manifest[tamper] = ["wrong"] if tamper == "theorem_names" else "changed"
+    (trusted / "manifest.json").write_text(json.dumps(manifest))
+    path_type = Path
+
+    def sandbox_path(value):
+        text = str(value)
+        if text == "/work" or text.startswith(("/trusted/", "/candidate/", "/work/")):
+            return tmp_path / text.lstrip("/")
+        return path_type(value)
+
+    monkeypatch.setattr(driver, "Path", sandbox_path)
+    monkeypatch.setattr(driver, "check_boundary", lambda: None)
+    monkeypatch.setattr(driver, "run_comparator", lambda *args: (0, b"synthetic checker"))
+    driver.main()
+    result = json.loads(capsys.readouterr().out)
+    return meta, result
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    [
+        "protocol",
+        "problem_revision_id",
+        "target_digest",
+        "challenge_sha256",
+        "environment_digest",
+        "theorem_names",
+    ],
+)
+def test_container_driver_rejects_manifest_identity_tamper(tmp_path, monkeypatch, capsys, tamper):
+    _, result = run_synthetic_driver(tmp_path, monkeypatch, capsys, tamper=tamper)
+    assert result["status"] == "blocked", result
+    assert "manifest" in result["diagnostics"]["error"]
+
+
+def test_engineering_request_reaches_synthetic_driver_checker_without_review_selector(
+    tmp_path, monkeypatch, capsys
+):
+    """Raw trusted-host transport shape only; no engineering host API or qualification."""
+    meta, result = run_synthetic_driver(tmp_path, monkeypatch, capsys, engineering=True)
+    assert not {"semantic_reviewed", "definition_holes", "target_theorem"} & meta.keys()
+    assert result["status"] == "verified", result
+    assert result["diagnostics"]["comparator_output"] == "synthetic checker"
+    for field in ("target_digest", "challenge_sha256", "environment_digest", "candidate_sha256"):
+        assert result[field] == meta[field]
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["protocol", "problem_revision_id", "target_digest", "challenge_sha256", "environment_digest"],
+)
+def test_engineering_driver_keeps_common_manifest_checks(tmp_path, monkeypatch, capsys, tamper):
+    _, result = run_synthetic_driver(tmp_path, monkeypatch, capsys, tamper=tamper, engineering=True)
+    assert result["status"] == "blocked", result
+    assert "manifest" in result["diagnostics"]["error"]
 
 
 def test_canonical_revision_digest_is_separate_from_lean_source_pin(tmp_path, monkeypatch):

@@ -366,3 +366,13 @@ def test_elapsed_accepts_parallel_attempts_within_capacity():
     plans = v.PortfolioPlanner(m).plan()
     observations = [observation(p, wall_seconds=20) for p in plans]
     assert v.summarize(m, plans, observations, evidence(), elapsed_seconds=40).elapsed_seconds == 40
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("challenge_sha256", "f" * 64), ("review_id", "stale"), ("target_theorem", "other")],
+)
+def test_canonical_evidence_requires_source_review_and_theorem(field, value):
+    rows = records()
+    rows[-1][field] = value
+    assert not evidence(rows).validate("p1", "receipt-p1").valid

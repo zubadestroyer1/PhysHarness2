@@ -1,5 +1,5 @@
 import type {
-  Campaign, EventRecord, Experiment, Ledger, Problem, ServiceStatus, WorkspaceData,
+  Campaign, EventPage, Experiment, Ledger, Problem, ServiceStatus, WorkspaceData,
 } from './types'
 
 export interface ApiErrorBody {
@@ -116,7 +116,7 @@ export function createApiClient({ baseUrl, token, fetcher = fetch }: ClientOptio
         if (!Array.isArray(result.items)) throw new ApiFailure({code:'INVALID_SERVER_RESPONSE', message:'Collection response has no items array.'})
         items.push(...result.items)
         cursor = result.next_cursor ?? undefined
-        if (cursor && (cursors.has(cursor) || items.length > 50000)) {
+        if (cursor && (cursors.has(cursor) || cursors.size >= 10000 || items.length > 50000)) {
           throw new ApiFailure({code:'COLLECTION_LIMIT', message:'Collection pagination cannot safely continue.', remediation:'Use a scoped query or inspect the API pagination diagnostics.'})
         }
         if (cursor) cursors.add(cursor)
@@ -124,7 +124,16 @@ export function createApiClient({ baseUrl, token, fetcher = fetch }: ClientOptio
       return items
     },
     status: () => request<ServiceStatus>('/v1/status'),
-    events: (after?: number) => request<{ items: EventRecord[] }>(`/v1/events?${after !== undefined ? `after=${after}&` : 'tail=true&'}limit=100`).then(result => result.items),
+    events: async (after?: number): Promise<EventPage> => {
+      const page = await request<EventPage>(`/v1/events?${after !== undefined ? `after=${after}&` : 'tail=true&'}limit=100`)
+      if (!Array.isArray(page.items) || !Number.isSafeInteger(page.next_cursor) || page.next_cursor < (after ?? 0)
+        || typeof page.has_more !== 'boolean' || typeof page.scan_limited !== 'boolean'
+        || page.window !== (after === undefined ? 'latest' : 'forward')
+        || (after !== undefined && page.has_more && page.next_cursor === after)) {
+        throw new ApiFailure({code: 'INVALID_EVENT_PAGE', message: 'The server returned an invalid event continuation.', remediation: 'Inspect the API event pagination diagnostics and retry the read.'})
+      }
+      return page
+    },
     createCampaign: (input: CampaignInput, key: string) => mutate<Campaign>('/v1/campaigns', input, key),
     createProblem: (input: ProblemInput, key: string) => mutate<Problem>('/v1/problems', input, key),
     createExperiment: (input: ExperimentInput, key: string) => mutate<Experiment>('/v1/experiments', input, key),
@@ -141,7 +150,9 @@ export function createApiClient({ baseUrl, token, fetcher = fetch }: ClientOptio
 export type ApiClient = ReturnType<typeof createApiClient>
 
 export async function loadWorkspace(api: ApiClient): Promise<WorkspaceData> {
-  const [campaigns, problems, experiments, branches, tasks, claims, artifacts, reviews, sessions, programs, events, status] = await Promise.all([
+  // Capture the watermark first: writes during collection loading are replayed next poll.
+  const eventPage = await api.events()
+  const [campaigns, problems, experiments, branches, tasks, claims, artifacts, reviews, sessions, programs, status] = await completeReads([
     api.list<WorkspaceData['campaigns'][number]>('campaigns'),
     api.list<WorkspaceData['problems'][number]>('problems'),
     api.list<WorkspaceData['experiments'][number]>('experiments'),
@@ -152,8 +163,16 @@ export async function loadWorkspace(api: ApiClient): Promise<WorkspaceData> {
     api.list<WorkspaceData['reviews'][number]>('reviews'),
     api.list<WorkspaceData['sessions'][number]>('sessions'),
     api.list<WorkspaceData['programs'][number]>('programs'),
-    api.events(),
     api.status(),
   ])
-  return { campaigns, problems, experiments, branches, tasks, claims, artifacts, reviews, sessions, programs, events, status }
+  return { campaigns, problems, experiments, branches, tasks, claims, artifacts, reviews, sessions, programs, events: eventPage.items, eventPage, status }
+}
+
+/** Keep a read cycle in flight until every sibling request has settled, including failures. */
+export async function completeReads<const Reads extends readonly Promise<unknown>[]>(reads: Reads): Promise<{ -readonly [K in keyof Reads]: Awaited<Reads[K]> }> {
+  const results = await Promise.allSettled(reads)
+  return results.map(result => {
+    if (result.status === 'rejected') throw result.reason
+    return result.value
+  }) as { -readonly [K in keyof Reads]: Awaited<Reads[K]> }
 }

@@ -29,6 +29,22 @@ returned cursor as `after` until it is null. Rows use stable ID order rather tha
 chronological order. Project and branch visibility filters apply before returning data; a cursor
 does not grant access. Do not assume a first page is a complete export.
 
+Each collection request examines at most `max(100, limit)` metadata records in its indexed scope,
+plus one unexamined lookahead record. It stops sooner when it has `limit` authorized items.
+Invisible records consume the scan budget, so `items` can be empty while `next_cursor` is non-null.
+The cursor is the last examined record ID, including when that record was invisible. Continue until
+the cursor is null; internal full readers follow the same rule. Authorization still applies to every
+returned item, and cursors never reveal record content or grant read authority. These pages are
+keyset reads of current state, not a transactionally frozen export across multiple requests.
+
+Ordered indexes cover project/kind/ID, experiment scope, and agent review-target scope. Accepted
+cross-branch artifacts use an indexed artifact/current-review/status/assurance receipt lookup with the
+existing exact source, theorem, environment and target bindings; only one matching receipt is
+materialized. Queued, failed, and insufficient-assurance receipts are excluded by index equality
+keys. Receipt lookup can still examine multiple entries sharing the same artifact, review, verified
+status and independent-kernel assurance when other bindings differ. The scan budget bounds collection
+metadata, not proof-checker execution or wall-clock latency.
+
 GET `/v1/events` accepts `after` (sequence), `limit` (default 100, maximum 1,000), and `tail`.
 The default scans forward; `tail=true` requests the latest visible window for an activity panel.
 Responses include `items`, `next_cursor`, `has_more`, `window`, and `scan_limited`. A bounded scan
@@ -56,6 +72,25 @@ cursor. Each event includes sequence, kind, aggregate ID, operation ID, payload 
 The budget covers cost, concurrency, lifetime and optional cumulative tokens. The integrated
 worker currently runs direct/independent Responses policies; unsupported runtime/policy selections
 fail explicitly. Runtime-specific limits do not imply every native SDK can enforce hard tokens.
+
+## Verification identity and recovery
+
+The `/v1` API remains unchanged: submission selects only the candidate artifact and publication
+flag. The server builds the verification request from canonical records. `target_digest` remains
+the complete reviewed problem metadata identity. `challenge_sha256` is computed from the exact
+UTF-8 `formal_statement`, without newline normalization; ProblemCreate has no additional source
+hash input. A receipt also pins `review_id` and `target_theorem`, checked before verification and
+again before receipt/claim commit. Current review, source hash and theorem bindings are required
+for accepted sharing and evidence retrieval.
+
+Candidates support at most 2,000,000 Unicode characters. A larger candidate fails submission
+with HTTP 422 `CANDIDATE_TOO_LARGE` before queueing. A persisted oversized candidate, unreadable
+artifact or request-construction fault receives a terminal `blocked` receipt with code and
+remediation. Old receipts lacking source/review/theorem pins block with
+`verification_receipt_incompatible` and require fresh submission. Trusted manifests and driver
+responses use `physharness-comparator-v2`; old ambiguous manifests are rejected. Operators must
+regenerate/repin manifests and requalify changed launcher/driver/image bytes. See
+[verification](VERIFICATION.md) for the complete private verifier contract.
 
 ## Evidence, context and retrieval
 

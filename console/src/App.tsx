@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
-import { ApiFailure, createApiClient, loadWorkspace, type CampaignInput, type ExperimentInput, type ProblemInput } from './api'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
+import { ApiFailure, completeReads, createApiClient, type CampaignInput, type ExperimentInput, type ProblemInput } from './api'
+import { actionsFor } from './transitions'
+import { ACTIVITY_LIMIT, refreshWorkspace, replaceRecord } from './workspace'
 import { CampaignForm, ExperimentForm, ProblemForm, ReviewForm } from './forms'
 import { EmptyState, ErrorBanner, EvidencePanel, Modal, StatusPill, StatusStrip, type Selection } from './components'
 import { emptyWorkspace, type Campaign, type Experiment, type Ledger, type Problem, type WorkspaceData } from './types'
@@ -21,90 +23,152 @@ export default function App() {
   const [loading, setLoading] = useState(Boolean(token))
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<ApiFailure | null>(null)
+  const [pollError, setPollError] = useState<ApiFailure | null>(null)
   const [section, setSection] = useState<Section>(() => sectionFromLocation())
   const [campaignId, setCampaignId] = useState<string | null>(null)
-  const [selection, setSelection] = useState<Selection>(null)
+  const [selectedRecord, storeSelection] = useState<Selection>(null)
   const [dialog, setDialog] = useState<Dialog>(null)
   const [ledger, setLedger] = useState<Ledger | null>(null)
   const [ledgerError, setLedgerError] = useState<ApiFailure | null>(null)
   const [exportData, setExportData] = useState<unknown>(null)
   const [displayMode, setDisplayMode] = useState<'table' | 'graph'>('table')
 
+  const sessionVersion = useRef(0)
+  const selectionVersion = useRef(0)
+  const requestVersion = useRef(0)
+  const ledgerVersion = useRef(0)
+  const selectionRef = useRef<Selection>(null)
+  const dataRef = useRef(data)
+  const refreshRef = useRef<(followup?: boolean) => Promise<void>>(async () => {})
+  const selection = canonicalSelection(selectedRecord, data)
   const api = useMemo(() => createApiClient({ baseUrl: apiUrl, token }), [apiUrl, token])
-  const refresh = useCallback(async () => {
-    if (!token) return
+
+  const closeDialog = () => {
+    requestVersion.current++
+    setDialog(null); setBusy(false); setExportData(null)
+  }
+  const setSelection = (next: Selection) => {
+    selectionVersion.current++
+    selectionRef.current = next
+    storeSelection(next)
+    setLedger(null); setLedgerError(null)
+    closeDialog()
+  }
+  const refreshLedger = useCallback(async () => {
+    const selected = selectionRef.current
+    if (!token || selected?.kind !== 'experiment') return
+    const session = sessionVersion.current, view = selectionVersion.current, request = ++ledgerVersion.current
+    const current = () => session === sessionVersion.current && view === selectionVersion.current && request === ledgerVersion.current
     try {
-      const next = await loadWorkspace(api)
-      setData(next)
-      setCampaignId(current => current && next.campaigns.some(campaign => campaign.id === current) ? current : next.campaigns[0]?.id ?? null)
-      setError(null)
+      const value = await api.ledger(selected.item.id)
+      if (current()) { setLedger(value); setLedgerError(null) }
     } catch (caught) {
-      setError(asApiFailure(caught))
-    } finally {
-      setLoading(false)
+      if (current()) { setLedger(null); setLedgerError(asApiFailure(caught)) }
     }
   }, [api, token])
+  useEffect(() => { void refreshLedger() }, [refreshLedger, selectedRecord])
 
-  useEffect(() => { void refresh() }, [refresh])
   useEffect(() => {
     if (!token) return
-    const timer = window.setInterval(() => { void refresh() }, 5_000)
-    return () => window.clearInterval(timer)
-  }, [refresh, token])
-  useEffect(() => {
-    if (selection?.kind !== 'experiment') { setLedger(null); setLedgerError(null); return }
-    let current = true
-    setLedger(null); setLedgerError(null)
-    api.ledger(selection.item.id).then(value => { if (current) setLedger(value) }).catch(caught => { if (current) setLedgerError(asApiFailure(caught)) })
-    return () => { current = false }
-  }, [api, selection])
+    const session = sessionVersion.current
+    let mounted = true
+    let inFlight: Promise<void> | null = null
+    const current = () => mounted && session === sessionVersion.current
+    const run = async (followup = false): Promise<void> => {
+      while (inFlight) {
+        await inFlight
+        if (!followup) return
+      }
+      if (!current()) return
+      const cycle = async () => {
+        try {
+          const [snapshot] = await completeReads([refreshWorkspace(api, dataRef.current), refreshLedger()])
+          if (!current()) return
+          // A transition may have completed while this read was pending. Never replace a
+          // newer canonical revision with an older response from that read.
+          const next = mergeCanonical(snapshot, dataRef.current)
+          dataRef.current = next
+          setData(next)
+          setCampaignId(id => id && next.campaigns.some(item => item.id === id) ? id : next.campaigns[0]?.id ?? null)
+          setPollError(null)
+        } catch (caught) {
+          if (current()) setPollError(asApiFailure(caught))
+        } finally {
+          if (current()) setLoading(false)
+        }
+      }
+      inFlight = cycle()
+      try { await inFlight } finally { inFlight = null }
+    }
+    refreshRef.current = run
+    void run()
+    const timer = window.setInterval(() => { void run() }, 5_000)
+    return () => { mounted = false; window.clearInterval(timer) }
+  }, [api, token, refreshLedger])
+  useEffect(() => () => { sessionVersion.current++ }, [])
+  const refresh = useCallback(() => refreshRef.current(), [])
 
   const connect = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const form = new FormData(event.currentTarget)
     const supplied = String(form.get('token')).trim()
     const suppliedUrl = String(form.get('apiUrl')).trim()
+    sessionVersion.current++
     sessionStorage.setItem(tokenKey, supplied)
     sessionStorage.setItem(apiUrlKey, suppliedUrl)
-    setApiUrl(suppliedUrl)
-    setToken(supplied)
-    setLoading(true)
+    setApiUrl(suppliedUrl); setToken(supplied); setLoading(true)
   }
   const disconnect = () => {
+    sessionVersion.current++
     sessionStorage.removeItem(tokenKey)
     sessionStorage.removeItem(apiUrlKey)
-    setToken(''); setData(emptyWorkspace); setSelection(null); setError(null)
+    dataRef.current = emptyWorkspace
+    setToken(''); setData(emptyWorkspace); setSelection(null); setError(null); setPollError(null)
   }
   const move = (next: Section) => {
     setSection(next)
     window.history.replaceState(null, '', `#${next}`)
   }
-  const mutate = async (operation: () => Promise<unknown>) => {
+  const mutate = async (operation: () => Promise<unknown>, onSuccess?: (value: unknown) => void) => {
+    const session = sessionVersion.current, view = selectionVersion.current, request = ++requestVersion.current
+    const current = () => session === sessionVersion.current && view === selectionVersion.current && request === requestVersion.current
     setBusy(true); setError(null)
-    try { await operation(); setDialog(null); await refresh() }
-    catch (caught) { setError(asApiFailure(caught)) }
-    finally { setBusy(false) }
+    try {
+      const result = await operation()
+      if (!current()) return
+      onSuccess?.(result)
+      setDialog(null)
+      await refreshRef.current(true)
+    } catch (caught) { if (current()) setError(asApiFailure(caught)) }
+    finally { if (current()) setBusy(false) }
   }
   const createCampaign = (input: CampaignInput) => mutate(() => api.createCampaign(input, crypto.randomUUID()))
   const createProblem = (input: ProblemInput) => mutate(() => api.createProblem(input, crypto.randomUUID()))
   const createExperiment = (input: ExperimentInput) => mutate(() => api.createExperiment(input, crypto.randomUUID()))
-  const transition = (experiment: Experiment, action: 'start' | 'pause' | 'resume' | 'cancel') => mutate(async () => {
-    const updated = await api.transitionExperiment(experiment.id, action, experiment.revision, crypto.randomUUID())
-    setSelection({ kind: 'experiment', item: updated })
-  })
+  const transition = (experiment: Experiment, action: 'start' | 'pause' | 'resume' | 'cancel') => mutate(
+    () => api.transitionExperiment(experiment.id, action, experiment.revision, crypto.randomUUID()),
+    result => {
+      const next = {...dataRef.current, experiments: replaceRecord(dataRef.current.experiments, result as Experiment)}
+      dataRef.current = next; setData(next)
+    },
+  )
   const review = (problem: Problem, decision: 'approved' | 'rejected', rationale: string) => mutate(() => api.reviewProblem(problem.id, decision, rationale, crypto.randomUUID()))
   const exportExperiment = async (experiment: Experiment) => {
+    const session = sessionVersion.current, view = selectionVersion.current, request = ++requestVersion.current
+    const current = () => session === sessionVersion.current && view === selectionVersion.current && request === requestVersion.current
     setBusy(true); setError(null); setExportData(null); setDialog('export')
-    try { setExportData(await api.exportExperiment(experiment.id)) }
-    catch (caught) { setError(asApiFailure(caught)) }
-    finally { setBusy(false) }
+    try { const result = await api.exportExperiment(experiment.id); if (current()) setExportData(result) }
+    catch (caught) { if (current()) setError(asApiFailure(caught)) }
+    finally { if (current()) setBusy(false) }
   }
   const selectArtifact = async (artifact: WorkspaceData['artifacts'][number]) => {
-    setSelection({ kind: 'artifact', item: artifact }); setError(null)
+    setSelection({ kind: 'artifact', item: artifact })
+    const session = sessionVersion.current, view = selectionVersion.current
+    const current = () => session === sessionVersion.current && view === selectionVersion.current
     try {
       const result = await api.artifactContent(artifact.id)
-      setSelection({ kind: 'artifact', item: { ...artifact, content: result.content } })
-    } catch (caught) { setError(asApiFailure(caught)) }
+      if (current()) storeSelection({ kind: 'artifact', item: { ...artifact, content: result.content } })
+    } catch (caught) { if (current()) setError(asApiFailure(caught)) }
   }
 
   if (!token) return <ConnectionScreen apiUrl={apiUrl} connect={connect} />
@@ -113,6 +177,7 @@ export default function App() {
   const scopedProblems = campaign ? data.problems.filter(item => item.campaign_id === campaign.id) : data.problems
   const scopedExperiments = campaign ? data.experiments.filter(item => item.campaign_id === campaign.id) : data.experiments
   const experimentIds = new Set(scopedExperiments.map(item => item.id))
+  const scopedArtifacts = data.artifacts.filter(item => !item.experiment_id || experimentIds.has(item.experiment_id))
   const scopedClaims = data.claims.filter(item => experimentIds.has(item.experiment_id))
   const scopedBranches = data.branches.filter(item => experimentIds.has(item.experiment_id))
 
@@ -122,7 +187,8 @@ export default function App() {
       <div className="topbar-actions"><span className="connection-label"><span className={data.status ? 'live-dot' : 'state-dot'} />{data.status ? 'Connected' : 'Connection unconfirmed'}</span><button className="button button--quiet" onClick={disconnect}>Disconnect</button></div>
     </header>
     <StatusStrip status={data.status} />
-    {error && !dialog && <div className="error-wrap"><ErrorBanner error={error} onRetry={refresh} /></div>}
+    {pollError && <div className="error-wrap"><ErrorBanner error={pollError} title="Refresh failed — displayed records may be stale" onRetry={refresh} /></div>}
+    {error && !dialog && <div className="error-wrap"><ErrorBanner error={error} /></div>}
     <div className="workstation">
       <aside className="sidebar">
         <nav aria-label="Primary navigation">{sections.map(item => <button key={item.id} className={section === item.id ? 'active' : ''} aria-current={section === item.id ? 'page' : undefined} onClick={() => move(item.id)}>{item.label}</button>)}</nav>
@@ -130,7 +196,7 @@ export default function App() {
           {data.campaigns.map(item => <button key={item.id} className={`campaign-button ${campaignId === item.id ? 'active' : ''}`} onClick={() => setCampaignId(item.id)}><span>{item.title}</span><small>{item.programs.join(' · ')}</small></button>)}
           {!data.campaigns.length && <p className="muted compact">No campaigns connected.</p>}
         </div>
-        <div className="sidebar-foot"><span>Refresh interval</span><strong>5 seconds</strong><small>Polling failures remain visible.</small></div>
+        <div className="sidebar-foot"><span>Refresh interval</span><strong>5 seconds</strong><small>{data.eventPage?.window === 'forward' && data.eventPage.has_more ? 'Catching up; displayed records may be behind.' : 'Polling failures remain visible.'}</small></div>
       </aside>
       <main className="main-content">
         {loading && !data.status ? <LoadingState /> : <>
@@ -138,17 +204,17 @@ export default function App() {
           {section === 'campaigns' && <Campaigns campaigns={data.campaigns} onCreate={() => setDialog('campaign')} onSelect={setCampaignId} />}
           {section === 'problems' && <Problems problems={scopedProblems} onCreate={() => setDialog('problem')} onSelect={item => setSelection({ kind: 'problem', item })} />}
           {section === 'experiments' && <Experiments experiments={scopedExperiments} campaigns={data.campaigns} onCreate={() => setDialog('experiment')} onSelect={item => setSelection({ kind: 'experiment', item })} onTransition={transition} busy={busy} />}
-          {section === 'claims' && <ClaimsAndBranches claims={scopedClaims} branches={scopedBranches} mode={displayMode} setMode={setDisplayMode} onClaim={item => setSelection({ kind: 'claim', item })} onBranch={item => setSelection({ kind: 'branch', item })} artifacts={data.artifacts} onArtifact={selectArtifact} />}
-          {section === 'activity' && <Activity events={data.events} />}
+          {section === 'claims' && <ClaimsAndBranches claims={scopedClaims} branches={scopedBranches} mode={displayMode} setMode={setDisplayMode} onClaim={item => setSelection({ kind: 'claim', item })} onBranch={item => setSelection({ kind: 'branch', item })} artifacts={scopedArtifacts} onArtifact={selectArtifact} />}
+          {section === 'activity' && <Activity events={data.events} pending={Boolean(data.eventPage?.window === 'forward' && data.eventPage.has_more)} />}
         </>}
       </main>
-      <EvidencePanel selection={selection} ledger={ledger} ledgerError={ledgerError} reviews={data.reviews} onReview={problem => { setSelection({ kind: 'problem', item: problem }); setDialog('review') }} onExport={exportExperiment} onTransition={transition} />
+      <EvidencePanel selection={selection} ledger={ledger} ledgerError={ledgerError} reviews={data.reviews} onReview={problem => { setSelection({ kind: 'problem', item: problem }); setDialog('review') }} onExport={exportExperiment} onTransition={transition} busy={busy} />
     </div>
-    {dialog === 'campaign' && <Modal title="New campaign" description="Create a private research objective and select its scientific programs." onClose={() => setDialog(null)}>{error && <ErrorBanner error={error} />}<CampaignForm submit={createCampaign} busy={busy} /></Modal>}
-    {dialog === 'problem' && <Modal title="Propose problem" description="Store the exact target, assumptions, source, and trusted environment identity." onClose={() => setDialog(null)}>{error && <ErrorBanner error={error} />}<ProblemForm campaigns={data.campaigns} submit={createProblem} busy={busy} /></Modal>}
-    {dialog === 'experiment' && <Modal title="New experiment" description="Set exact model and runtime identities inside an explicit resource envelope." onClose={() => setDialog(null)}>{error && <ErrorBanner error={error} />}<ExperimentForm campaigns={data.campaigns} problems={data.problems} submit={createExperiment} busy={busy} /></Modal>}
-    {dialog === 'review' && selection?.kind === 'problem' && <Modal title="Review target meaning" description="Record an expert semantic decision with rationale. Reviewer authorization is enforced by the API." onClose={() => setDialog(null)}>{error && <ErrorBanner error={error} />}<ReviewForm submit={(decision, rationale) => review(selection.item, decision, rationale)} busy={busy} /></Modal>}
-    {dialog === 'export' && <Modal title="Experiment export" description="Canonical reproducibility manifest returned by the service, including missing qualification." onClose={() => setDialog(null)}>{error && <ErrorBanner error={error} />}{busy ? <p>Loading export…</p> : exportData ? <pre className="export-block">{JSON.stringify(exportData, null, 2)}</pre> : !error && <p className="muted">No export was returned.</p>}</Modal>}
+    {dialog === 'campaign' && <Modal title="New campaign" description="Create a private research objective and select its scientific programs." onClose={closeDialog}>{error && <ErrorBanner error={error} />}<CampaignForm submit={createCampaign} busy={busy} /></Modal>}
+    {dialog === 'problem' && <Modal title="Propose problem" description="Store the exact target, assumptions, source, and trusted environment identity." onClose={closeDialog}>{error && <ErrorBanner error={error} />}<ProblemForm campaigns={data.campaigns} submit={createProblem} busy={busy} /></Modal>}
+    {dialog === 'experiment' && <Modal title="New experiment" description="Set exact model and runtime identities inside an explicit resource envelope." onClose={closeDialog}>{error && <ErrorBanner error={error} />}<ExperimentForm campaigns={data.campaigns} problems={data.problems} submit={createExperiment} busy={busy} /></Modal>}
+    {dialog === 'review' && selection?.kind === 'problem' && <Modal title="Review target meaning" description="Record an expert semantic decision with rationale. Reviewer authorization is enforced by the API." onClose={closeDialog}>{error && <ErrorBanner error={error} />}<ReviewForm submit={(decision, rationale) => review(selection.item, decision, rationale)} busy={busy} /></Modal>}
+    {dialog === 'export' && <Modal title="Experiment export" description="Canonical reproducibility manifest returned by the service, including missing qualification." onClose={closeDialog}>{error && <ErrorBanner error={error} />}{busy ? <p>Loading export…</p> : exportData ? <pre className="export-block">{JSON.stringify(exportData, null, 2)}</pre> : !error && <p className="muted">No export was returned.</p>}</Modal>}
   </div>
 }
 
@@ -162,7 +228,7 @@ function PageHeader({ eyebrow, title, description, action }: { eyebrow: string; 
 
 function Overview({ data, campaign, problems, experiments, onCreateCampaign, onCreateExperiment, onSelectProblem, onSelectExperiment }: { data: WorkspaceData; campaign: Campaign | null; problems: Problem[]; experiments: Experiment[]; onCreateCampaign: () => void; onCreateExperiment: () => void; onSelectProblem: (item: Problem) => void; onSelectExperiment: (item: Experiment) => void }) {
   if (!data.campaigns.length) return <><PageHeader eyebrow="Workspace overview" title="Research control plane" description={data.status ? 'The authenticated workspace is available. Start by defining a campaign and its exact scientific objective.' : 'No canonical workspace state has been loaded from the service.'} /><EmptyState title={data.status ? 'No campaigns yet' : 'Campaign data unavailable'} body={data.status ? 'Create a campaign before proposing reviewed targets or allocating experiments.' : 'Resolve the visible connection error and retry before creating records.'} action={data.status ? <button className="button button--primary" onClick={onCreateCampaign}>Create campaign</button> : undefined} /></>
-  return <><PageHeader eyebrow="Workspace overview" title={campaign?.title ?? 'All campaigns'} description={campaign?.objective ?? 'Canonical research records returned by the service.'} action={problems.length ? <button className="button button--primary" onClick={onCreateExperiment}>New experiment</button> : undefined} /><div className="metric-grid"><Metric label="Problems" value={problems.length} detail={`${problems.filter(item => item.semantic_review === 'approved').length} semantically approved`} /><Metric label="Experiments" value={experiments.length} detail={`${experiments.filter(item => item.status === 'running').length} running`} /><Metric label="Active sessions" value={data.sessions.length} detail="server records" /><Metric label="Claims" value={data.claims.filter(item => experiments.some(exp => exp.id === item.experiment_id)).length} detail="not equivalent to proofs" /></div><section className="split-section"><div className="content-card"><CardTitle title="Target queue" subtitle="Semantic review is shown independently." />{problems.length ? <div className="record-list">{problems.slice(0, 5).map(item => <button key={item.id} onClick={() => onSelectProblem(item)}><span><strong>{item.title}</strong><small>{item.program}</small></span><StatusPill value={item.semantic_review} /></button>)}</div> : <EmptyState title="No problems" body="Propose a target with assumptions, source, and environment digest." />}</div><div className="content-card"><CardTitle title="Execution" subtitle="A completed model run does not establish proof." />{experiments.length ? <div className="record-list">{experiments.slice(0, 5).map(item => <button key={item.id} aria-label={`Open experiment ${campaign?.title ?? item.id}`} onClick={() => onSelectExperiment(item)}><span><strong>{item.id.slice(0, 8)}</strong><small>${item.budget.max_cost_usd} envelope</small></span><StatusPill value={item.status} /></button>)}</div> : <EmptyState title="No experiments" body="Create an experiment after storing a problem target." />}</div></section></>
+  return <><PageHeader eyebrow="Workspace overview" title={campaign?.title ?? 'All campaigns'} description={campaign?.objective ?? 'Canonical research records returned by the service.'} action={problems.length ? <button className="button button--primary" onClick={onCreateExperiment}>New experiment</button> : undefined} /><div className="metric-grid"><Metric label="Problems" value={problems.length} detail={`${problems.filter(item => item.semantic_review === 'approved').length} semantically approved`} /><Metric label="Experiments" value={experiments.length} detail={`${experiments.filter(item => item.status === 'running').length} running`} /><Metric label="Recorded sessions" value={data.sessions.length} detail="project-wide total" /><Metric label="Claims" value={data.claims.filter(item => experiments.some(exp => exp.id === item.experiment_id)).length} detail="not equivalent to proofs" /></div><section className="split-section"><div className="content-card"><CardTitle title="Target queue" subtitle="Semantic review is shown independently." />{problems.length ? <div className="record-list">{problems.slice(0, 5).map(item => <button key={item.id} onClick={() => onSelectProblem(item)}><span><strong>{item.title}</strong><small>{item.program}</small></span><StatusPill value={item.semantic_review} /></button>)}</div> : <EmptyState title="No problems" body="Propose a target with assumptions, source, and environment digest." />}</div><div className="content-card"><CardTitle title="Execution" subtitle="A completed model run does not establish proof." />{experiments.length ? <div className="record-list">{experiments.slice(0, 5).map(item => <button key={item.id} aria-label={`Open experiment ${campaign?.title ?? item.id}`} onClick={() => onSelectExperiment(item)}><span><strong>{item.id.slice(0, 8)}</strong><small>${item.budget.max_cost_usd} envelope</small></span><StatusPill value={item.status} /></button>)}</div> : <EmptyState title="No experiments" body="Create an experiment after storing a problem target." />}</div></section></>
 }
 
 function Campaigns({ campaigns, onCreate, onSelect }: { campaigns: Campaign[]; onCreate: () => void; onSelect: (id: string) => void }) {
@@ -187,15 +253,41 @@ function BranchGraph({ branches, onSelect }: { branches: WorkspaceData['branches
   return <div className="branch-graph"><ul>{roots.map(draw)}</ul></div>
 }
 
-function Activity({ events }: { events: WorkspaceData['events'] }) {
-  return <><PageHeader eyebrow="Append-only log" title="Activity" description="Project events include their correlated operation IDs and stored payloads." />{events.length ? <ol className="timeline">{[...events].sort((a, b) => b.sequence - a.sequence).map(item => <li key={item.sequence}><span className="timeline-marker" /><div><header><strong>{item.kind}</strong><time>{formatDate(item.created_at)}</time></header><p>Aggregate <code>{item.aggregate_id}</code></p><details><summary>Event #{item.sequence} · operation {item.operation_id}</summary><pre>{JSON.stringify(item.payload, null, 2)}</pre></details></div></li>)}</ol> : <EmptyState title="No activity events" body="The server returned an empty event collection. New canonical operations will appear here." />}</>
+function Activity({ events, pending }: { events: WorkspaceData['events']; pending: boolean }) {
+  const newestFirst = useMemo(() => [...events].reverse(), [events])
+  return <><PageHeader eyebrow="Append-only log" title="Activity" description={`Activity starts with up to 100 recent visible events and keeps the ${ACTIVITY_LIMIT.toLocaleString('en-US')} newest observed events. Earlier history is omitted from this display.`} /><p className="muted">{pending ? 'Catching up with additional event pages; displayed records may be behind.' : 'Events include correlated operation IDs and stored payloads.'}</p>{events.length ? <ol className="timeline">{newestFirst.map(item => <li key={item.sequence}><span className="timeline-marker" /><div><header><strong>{item.kind}</strong><time>{formatDate(item.created_at)}</time></header><p>Aggregate <code>{item.aggregate_id}</code></p><details><summary>Event #{item.sequence} · operation {item.operation_id}</summary><pre>{JSON.stringify(item.payload, null, 2)}</pre></details></div></li>)}</ol> : <EmptyState title="No activity events" body="The server returned an empty event collection. New canonical operations will appear here." />}</>
 }
 
 function Metric({ label, value, detail }: { label: string; value: number; detail: string }) { return <article className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></article> }
 function CardTitle({ title, subtitle }: { title: string; subtitle: string }) { return <header className="card-title"><h2>{title}</h2><p>{subtitle}</p></header> }
 function LoadingState() { return <div className="loading-state"><span /><p>Loading canonical research records…</p></div> }
 function asApiFailure(value: unknown) { return value instanceof ApiFailure ? value : new ApiFailure({ code: 'CLIENT_ERROR', message: value instanceof Error ? value.message : 'Unexpected client error', retryable: false, remediation: 'Check the submitted values and retry.' }) }
-function actionsFor(status: string): Array<'start' | 'pause' | 'resume' | 'cancel'> { if (status === 'draft' || status === 'created') return ['start', 'cancel']; if (status === 'running') return ['pause', 'cancel']; if (status === 'paused') return ['resume', 'cancel']; return [] }
 function capitalize(value: string) { return value.charAt(0).toUpperCase() + value.slice(1) }
 function formatDate(value: string) { const parsed = new Date(value); return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString() }
 function sectionFromLocation(): Section { const value = window.location.hash.slice(1) as Section; return sections.some(section => section.id === value) ? value : 'overview' }
+
+function canonicalSelection(selected: Selection, data: WorkspaceData): Selection {
+  if (!selected) return null
+  switch (selected.kind) {
+    case 'problem': { const item = data.problems.find(item => item.id === selected.item.id); return item ? {kind: 'problem', item} : null }
+    case 'experiment': { const item = data.experiments.find(item => item.id === selected.item.id); return item ? {kind: 'experiment', item} : null }
+    case 'claim': { const item = data.claims.find(item => item.id === selected.item.id); return item ? {kind: 'claim', item} : null }
+    case 'branch': { const item = data.branches.find(item => item.id === selected.item.id); return item ? {kind: 'branch', item} : null }
+    case 'artifact': {
+      const item = data.artifacts.find(item => item.id === selected.item.id)
+      return item ? {kind: 'artifact', item: {...item, content: selected.item.content}} : null
+    }
+  }
+}
+
+function mergeCanonical(snapshot: WorkspaceData, current: WorkspaceData): WorkspaceData {
+  const next = {...snapshot}
+  const collections = ['campaigns', 'problems', 'experiments', 'branches', 'tasks', 'claims', 'artifacts', 'reviews', 'sessions', 'programs'] as const
+  for (const collection of collections) {
+    if (snapshot[collection] === current[collection]) continue
+    const loaded = new Map(snapshot[collection].map(record => [record.id, record]))
+    const newer = current[collection].filter(item => item.revision > (loaded.get(item.id)?.revision ?? item.revision))
+    for (const record of newer) Object.assign(next, {[collection]: replaceRecord(next[collection], record)})
+  }
+  return next
+}
