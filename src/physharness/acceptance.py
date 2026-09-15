@@ -4,7 +4,7 @@ import logging
 
 from .errors import HarnessError
 from .verification import UnavailableVerifier, VerificationOutcome, VerificationRequest
-from .verification.boundary import digest, preflight
+from .verification.boundary import MAX_CANDIDATE_CHARACTERS, digest, preflight
 
 log = logging.getLogger(__name__)
 
@@ -31,7 +31,13 @@ class AcceptanceMixin:
                 raise HarnessError(
                     "TARGET_CHANGED", "Experiment target no longer matches its revision."
                 )
-            self.artifacts.get(artifact.payload["sha256"])
+            try:
+                source = self.artifacts.get(artifact.payload["sha256"]).decode("utf-8")
+            except UnicodeError as error:
+                raise HarnessError(
+                    "CANDIDATE_FORMAT", "Candidate must be valid UTF-8 Lean source.", status=422
+                ) from error
+            self._check_candidate_size(source)
             record = self._insert(
                 session,
                 "verification",
@@ -86,8 +92,11 @@ class AcceptanceMixin:
         if receipt["status"] in {"verified", "blocked", "rejected"}:
             return receipt
         problem = self.get_record("problem", receipt["problem_revision_id"], actor)
+        incompatible_receipt = any(
+            field not in receipt for field in ("challenge_sha256", "review_id", "target_theorem")
+        )
         try:
-            if not receipt.get("challenge_sha256") or "review_id" not in receipt:
+            if incompatible_receipt:
                 raise HarnessError(
                     "VERIFICATION_RECEIPT_INCOMPATIBLE",
                     "This receipt predates source and review binding; submit a fresh verification.",
@@ -102,6 +111,7 @@ class AcceptanceMixin:
                     "Exact candidate bytes could not be read as UTF-8.",
                     remediation="Restore the pinned artifact and submit a fresh verification.",
                 ) from error
+            self._check_candidate_size(source)
             request = VerificationRequest(
                 problem_revision_id=problem["id"],
                 target_theorem=problem.get("target_theorem", "target"),
@@ -186,7 +196,11 @@ class AcceptanceMixin:
             # snapshot read before the lock was acquired. SQLite already serializes writes.
             session.refresh(current, with_for_update=True)
             result = outcome.model_dump(mode="json")
-            if self._verification_revision_changed(current.payload, receipt):
+            # Only locally detected legacy receipts skip comparisons of missing pins.
+            # Checker diagnostic text never controls this authoritative identity guard.
+            if not incompatible_receipt and self._verification_revision_changed(
+                current.payload, receipt
+            ):
                 result.update(
                     status="blocked",
                     assurance="none",
@@ -255,3 +269,13 @@ class AcceptanceMixin:
                 != receipt.get("challenge_sha256"),
             )
         )
+
+    @staticmethod
+    def _check_candidate_size(source):
+        if len(source) > MAX_CANDIDATE_CHARACTERS:
+            raise HarnessError(
+                "CANDIDATE_TOO_LARGE",
+                f"Candidate exceeds {MAX_CANDIDATE_CHARACTERS:,} characters.",
+                status=422,
+                remediation="Reduce the candidate source and submit a fresh verification.",
+            )

@@ -20,3 +20,16 @@ rebuild commands, source provenance and audit limits; see
 The classical and quantum smoke fixtures are tiny algebraic engineering examples,
 not accepted scientific claims. Live engineering results, when present, are separate
 from domain-expert review and full containment qualification.
+
+
+## PR correction compatibility
+
+Scientific submission and request validation share a 2,000,000-character candidate limit; larger
+submissions fail before queueing. Persisted oversized candidates, unavailable candidate bytes and
+incompatible legacy receipts receive explicit blocked diagnostics. Scientific receipts bind the
+current review, exact UTF-8 source hash and selected theorem, including during evidence reuse.
+Engineering requests remain separate and do not acquire a manufactured semantic review.
+
+The combined PR corrections change host/driver bytes. Earlier recorded engineering results remain
+evidence for their recorded image and code hashes; they do not validate this combined source.
+Rebuild and rerun genuine engineering/qualification checks before supplying new deployment pins.

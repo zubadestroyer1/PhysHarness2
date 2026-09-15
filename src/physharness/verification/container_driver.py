@@ -154,6 +154,20 @@ def main():
         if sha(Path("/trusted/environment.json").read_bytes()) != req["environment_digest"]:
             raise RuntimeError("environment changed in transit")
         manifest = json.loads(Path("/trusted/manifest.json").read_text())
+        if manifest.get("protocol") != "physharness-comparator-v2":
+            raise RuntimeError("manifest protocol is incompatible")
+        for field in (
+            "problem_revision_id",
+            "target_digest",
+            "challenge_sha256",
+            "environment_digest",
+        ):
+            if manifest.get(field) != req[field]:
+                raise RuntimeError(f"manifest {field} differs from request")
+        # Scientific requests always carry semantic_reviewed, even when false.
+        # Engineering requests omit review fields; only the trusted host creates this metadata.
+        if "semantic_reviewed" in req and manifest.get("theorem_names") != [req["target_theorem"]]:
+            raise RuntimeError("manifest theorem selection differs from reviewed target")
         # Source remains a read-only bind mount, separate from the trusted bundle.
         # Only the new .lake directory is writable during candidate elaboration.
         for name in ["Challenge.lean", *env["files"]]:

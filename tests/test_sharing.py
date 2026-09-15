@@ -305,3 +305,349 @@ async def test_worker_prompt_tools_sessions_and_outputs_obey_same_branch(lab):
     other_store = CanonicalRuntimeStore(service, author, exp["id"], "different-task", "holder", 1)
     with pytest.raises(HarnessError):
         await other_store.load(seen[0])
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("challenge_sha256", "f" * 64), ("review_id", "stale"), ("target_theorem", "other")],
+)
+def test_sharing_requires_current_source_review_and_theorem(lab, field, value):
+    service, _, exp, _, (alpha, beta) = approaches(lab, "verified")
+    item = artifact(service, beta, "candidate")
+    receipt = service.verify_candidate(exp["id"], item["id"], False, beta, "submit")
+    with service.db.transaction() as session:
+        service._replace(
+            session,
+            session.get(RecordRow, receipt["id"]),
+            {
+                "status": "verified",
+                "assurance": "independent_kernel",
+                field: value,
+            },
+        )
+    assert service.list_records("artifact", alpha) == []
+    assert service.list_records("verification", alpha) == []
+
+
+@pytest.mark.parametrize("inventory", [1000, 2000])
+@pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
+    lab, inventory, sharing
+):
+    from sqlalchemy import event
+
+    service, _, exp, _, (alpha, beta) = approaches(lab, sharing)
+    visible_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    with service.db.transaction() as session:
+        for number in range(inventory):
+            identifier = f"00000000-0000-0000-0000-{number:012d}"
+            session.add(
+                RecordRow(
+                    id=identifier,
+                    project_id=alpha.project_id,
+                    kind="artifact",
+                    revision=1,
+                    payload={
+                        "id": identifier,
+                        "kind": "artifact",
+                        "experiment_id": exp["id"],
+                        "branch_id": beta.branch_id,
+                        "artifact_kind": "native_checkpoint",
+                        "origin_actor_id": beta.id,
+                    },
+                )
+            )
+        session.add(
+            RecordRow(
+                id=visible_id,
+                project_id=alpha.project_id,
+                kind="artifact",
+                revision=1,
+                payload={
+                    "id": visible_id,
+                    "kind": "artifact",
+                    "experiment_id": exp["id"],
+                    "branch_id": alpha.branch_id,
+                    "artifact_kind": "native_checkpoint",
+                },
+            )
+        )
+    queries = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        queries.append((statement, parameters))
+
+    event.listen(service.db.engine, "before_cursor_execute", capture)
+    try:
+        page = service.page_records("artifact", alpha, exp["id"], limit=1)
+    finally:
+        event.remove(service.db.engine, "before_cursor_execute", capture)
+    print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
+    assert len(queries) <= 110
+    assert page["items"] == [] and page["next_cursor"] is not None
+    seen = []
+    while page["next_cursor"] is not None:
+        previous = page["next_cursor"]
+        page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
+        assert page["next_cursor"] is None or page["next_cursor"] > previous
+        seen.extend(item["id"] for item in page["items"])
+    assert seen == [visible_id]
+    assert [item["id"] for item in service.list_records("artifact", alpha, exp["id"], limit=1)] == [
+        visible_id
+    ]
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_record_page_query_plan_uses_ordered_scope_index(lab, scoped):
+    from sqlalchemy import event
+
+    service, author, exp, _, _ = approaches(lab, "none")
+    queries = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if "ORDER BY records.id" in statement:
+            queries.append((statement, parameters))
+
+    event.listen(service.db.engine, "before_cursor_execute", capture)
+    try:
+        service.page_records("artifact", author, exp["id"] if scoped else None, limit=1)
+    finally:
+        event.remove(service.db.engine, "before_cursor_execute", capture)
+    with service.db.engine.connect() as connection:
+        plans = [
+            str(row)
+            for statement, parameters in queries
+            for row in connection.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters)
+        ]
+    print(plans)
+    assert all("TEMP B-TREE" not in plan for plan in plans)
+    expected = "records_project_kind_experiment_keyset" if scoped else "records_project_kind_keyset"
+    assert any(expected in plan for plan in plans)
+
+
+def test_agent_review_page_uses_problem_scope_index(lab):
+    from sqlalchemy import event
+
+    service, _, _, _, (alpha, _) = approaches(lab, "none")
+    queries = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if "ORDER BY records.id" in statement:
+            queries.append((statement, parameters))
+
+    event.listen(service.db.engine, "before_cursor_execute", capture)
+    try:
+        result = service.page_records("review", alpha, limit=1)
+    finally:
+        event.remove(service.db.engine, "before_cursor_execute", capture)
+    assert len(result["items"]) == 1
+    with service.db.engine.connect() as connection:
+        plans = [
+            str(row)
+            for statement, parameters in queries
+            for row in connection.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters)
+        ]
+    assert any("records_project_kind_problem_keyset" in plan for plan in plans)
+    assert all("TEMP B-TREE" not in plan for plan in plans)
+
+
+def test_artifact_acceptance_uses_indexed_matching_receipt_lookup(lab):
+    import copy
+
+    from sqlalchemy import event
+    from sqlalchemy.orm import Session
+    from test_research_services import accepted_fixture
+
+    service, _, exp, _, (alpha, _), receipt = accepted_fixture(lab)
+    with service.db.transaction() as session:
+        for number in range(1000):
+            stale = copy.deepcopy(receipt)
+            stale.update(id=f"stale-receipt-{number:05d}", review_id="obsolete-review")
+            session.add(
+                RecordRow(
+                    id=stale["id"],
+                    project_id=alpha.project_id,
+                    kind="verification",
+                    revision=1,
+                    payload=stale,
+                )
+            )
+    loaded_receipts, queries = [], []
+
+    def loaded(session, row):
+        if isinstance(row, RecordRow) and row.kind == "verification":
+            loaded_receipts.append(row.id)
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if "artifact_id" in statement or '$."artifact_id"' in parameters:
+            queries.append((statement, parameters))
+
+    event.listen(Session, "loaded_as_persistent", loaded)
+    event.listen(service.db.engine, "before_cursor_execute", capture)
+    try:
+        result = service.page_records("artifact", alpha, exp["id"], limit=1)
+    finally:
+        event.remove(Session, "loaded_as_persistent", loaded)
+        event.remove(service.db.engine, "before_cursor_execute", capture)
+    assert [item["id"] for item in result["items"]] == [receipt["artifact_id"]]
+    assert len(loaded_receipts) <= 1
+    with service.db.engine.connect() as connection:
+        plans = [
+            str(row)
+            for statement, parameters in queries
+            for row in connection.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters)
+        ]
+    assert any("records_project_kind_artifact" in plan for plan in plans)
+
+
+@pytest.mark.parametrize(
+    "status,assurance",
+    [
+        ("queued", "none"),
+        ("failed", "none"),
+        ("verified", "none"),
+    ],
+)
+def test_receipt_state_index_bounds_actual_sqlite_work(lab, status, assurance):
+    import copy
+
+    from sqlalchemy import event
+    from test_research_services import accepted_fixture
+
+    service, _, exp, _, (alpha, _), receipt = accepted_fixture(lab)
+    with service.db.transaction() as session:
+        session.delete(session.get(RecordRow, receipt["id"]))
+    counts = []
+    queries = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if "artifact_id" in statement:
+            queries.append((statement, parameters))
+
+    def measure():
+        instructions = 0
+
+        def progress():
+            nonlocal instructions
+            instructions += 1
+            return 0
+
+        with service.db.sessions() as session:
+            experiment = session.get(RecordRow, exp["id"])
+            artifact = session.get(RecordRow, receipt["artifact_id"])
+            connection = session.connection().connection.driver_connection
+            event.listen(service.db.engine, "before_cursor_execute", capture)
+            connection.set_progress_handler(progress, 1)
+            try:
+                accepted = service._accepted_for_sharing(session, artifact, experiment)
+            finally:
+                connection.set_progress_handler(None, 0)
+                event.remove(service.db.engine, "before_cursor_execute", capture)
+        return accepted, instructions
+
+    previous = 0
+    for inventory in [100, 1000, 10000]:
+        with service.db.transaction() as session:
+            for number in range(previous, inventory):
+                pending = copy.deepcopy(receipt)
+                pending.update(id=f"state-receipt-{number:05d}", status=status, assurance=assurance)
+                session.add(
+                    RecordRow(
+                        id=pending["id"],
+                        project_id=alpha.project_id,
+                        kind="verification",
+                        revision=1,
+                        payload=pending,
+                    )
+                )
+        previous = inventory
+        accepted, instructions = measure()
+        assert accepted is False
+        counts.append(instructions)
+        print(
+            f"receipt_state={status}/{assurance} inventory={inventory} "
+            f"sqlite_instructions={instructions}"
+        )
+    # This measures database execution, not result count or ORM materialization.
+    assert max(counts) <= 500
+    assert max(counts[1:]) <= counts[0] + 50
+    with service.db.engine.connect() as connection:
+        plans = [
+            str(row)
+            for statement, parameters in queries
+            for row in connection.exec_driver_sql("EXPLAIN QUERY PLAN " + statement, parameters)
+        ]
+    assert any(
+        "records_project_kind_artifact_review" in plan and plan.count("<expr>=?") == 4
+        for plan in plans
+    )
+    print("receipt_lookup_plans=" + repr(sorted(set(plans))))
+    # A matching receipt remains reachable after the large failed/queued inventory.
+    with service.db.transaction() as session:
+        session.add(
+            RecordRow(
+                id=receipt["id"],
+                project_id=alpha.project_id,
+                kind="verification",
+                revision=1,
+                payload=receipt,
+            )
+        )
+    accepted, instructions = measure()
+    print(f"matching_receipt_after_inventory=10000 sqlite_instructions={instructions}")
+    assert accepted is True and instructions <= 500
+
+
+@pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+@pytest.mark.parametrize(
+    "private_kind",
+    [
+        "session",
+        "checkpoint",
+        "native_checkpoint",
+        "runtime_event",
+        "execution_failure",
+    ],
+)
+def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+    lab, sharing, private_kind
+):
+    service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+    kind = "session" if private_kind == "session" else "artifact"
+    legacy = Principal(
+        id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+    )
+    controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+    with service.db.transaction() as session:
+        for name, owner, origin, trusted in [
+            ("own", alpha.branch_id, alpha.id, False),
+            ("hidden", beta.branch_id, beta.id, False),
+            ("legacy", None, legacy.id, False),
+            ("trusted", beta.branch_id, author.id, True),
+        ]:
+            session.add(
+                RecordRow(
+                    id=name,
+                    project_id=author.project_id,
+                    kind=kind,
+                    revision=1,
+                    payload={
+                        "id": name,
+                        "kind": kind,
+                        "experiment_id": exp["id"],
+                        "branch_id": owner,
+                        "origin_actor_id": origin,
+                        "artifact_kind": private_kind,
+                        "trusted_input": trusted,
+                    },
+                )
+            )
+    for actor, expected in [
+        (alpha, {"own", "trusted"}),
+        (legacy, {"legacy", "trusted"}),
+        (controller, {"trusted"}),
+        (author, {"own", "hidden", "legacy", "trusted"}),
+    ]:
+        assert {
+            row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+        } == expected

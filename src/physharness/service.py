@@ -36,6 +36,7 @@ from .storage import (
     OutboxRow,
     RecordRow,
     ReservationRow,
+    record_json_text,
 )
 from .worker_authority import current_worker_effects
 
@@ -93,12 +94,39 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
     def _accepted_for_sharing(self, session, row, experiment):
         """Only canonical receipts bound to the exact reviewed target confer visibility."""
         if row.kind == "artifact":
+            target = session.get(RecordRow, experiment.payload["problem_id"])
+            if (
+                target is None
+                or target.kind != "problem"
+                or target.project_id != row.project_id
+                or target.payload.get("semantic_review") != "approved"
+                or target.payload.get("target_digest") != experiment.payload.get("target_digest")
+                or row.payload.get("experiment_id") != experiment.id
+            ):
+                return False
+            expected = {
+                "artifact_id": row.id,
+                "status": "verified",
+                "assurance": "independent_kernel",
+                "experiment_id": experiment.id,
+                "review_id": target.payload.get("review_id"),
+                "target_theorem": target.payload.get("target_theorem", "target"),
+                "challenge_sha256": hashlib.sha256(
+                    target.payload["formal_statement"].encode("utf-8")
+                ).hexdigest(),
+                "problem_revision_id": target.id,
+                "target_digest": target.payload.get("target_digest"),
+                "environment_digest": target.payload.get("environment_digest"),
+                "candidate_sha256": row.payload.get("sha256"),
+            }
             receipts = session.scalars(
-                select(RecordRow).where(
+                select(RecordRow)
+                .where(
                     RecordRow.project_id == row.project_id,
                     RecordRow.kind == "verification",
-                    RecordRow.payload["artifact_id"].as_string() == row.id,
+                    *(record_json_text(field) == value for field, value in expected.items()),
                 )
+                .limit(1)
             )
             return any(self._accepted_for_sharing(session, r, experiment) for r in receipts)
         if row.kind == "claim":
@@ -123,6 +151,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             and target.kind == "problem"
             and target.payload.get("semantic_review") == "approved"
             and data.get("review_id") == target.payload.get("review_id")
+            and data.get("target_theorem") == target.payload.get("target_theorem", "target")
             and data.get("challenge_sha256")
             == hashlib.sha256(target.payload["formal_statement"].encode("utf-8")).hexdigest()
             and data.get("problem_revision_id") == target.id
@@ -243,11 +272,15 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             )
             if experiment_id:
                 self._get(session, "experiment", experiment_id, actor)
-                query = query.where(RecordRow.payload["experiment_id"].as_string() == experiment_id)
+                query = query.where(record_json_text("experiment_id") == experiment_id)
             if actor.role == "agent":
                 experiment = session.get(RecordRow, actor.experiment_id)
                 if not experiment or experiment.project_id != actor.project_id:
                     return {"items": [], "next_cursor": None}
+                # SQLAlchemy's identity map holds weak references. Retain the common
+                # branch explicitly so row authorization does not reload it per record.
+                _scope_branch = session.get(RecordRow, actor.branch_id) if actor.branch_id else None
+                _scope_target = session.get(RecordRow, experiment.payload["problem_id"])
                 if kind in {"experiment", "problem", "campaign"}:
                     identifier = (
                         experiment.id if kind == "experiment" else experiment.payload[f"{kind}_id"]
@@ -255,34 +288,26 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                     query = query.where(RecordRow.id == identifier)
                 elif kind == "review":
                     query = query.where(
-                        RecordRow.payload["problem_id"].as_string()
-                        == experiment.payload["problem_id"]
+                        record_json_text("problem_id") == experiment.payload["problem_id"]
                     )
                 else:
-                    query = query.where(
-                        RecordRow.payload["experiment_id"].as_string() == actor.experiment_id
-                    )
+                    query = query.where(record_json_text("experiment_id") == actor.experiment_id)
             if after:
                 query = query.where(RecordRow.id > after)
-            # Apply authorization before pagination. Hidden rows cannot truncate a visible page.
-            rows, scanned = [], None
-            while len(rows) < limit + 1:
-                chunk_query = query if scanned is None else query.where(RecordRow.id > scanned)
-                chunk = list(
-                    session.scalars(chunk_query.order_by(RecordRow.id).limit(max(100, limit + 1)))
-                )
-                if not chunk:
-                    break
-                for row in chunk:
-                    if self._in_scope(session, row, actor):
-                        rows.append(row)
-                        if len(rows) == limit + 1:
-                            break
-                scanned = chunk[-1].id
-            visible = rows[:limit]
+            # Limit scanned metadata, not just visible output. The unexamined lookahead
+            # proves continuation without authorizing or exposing that row's contents.
+            scan_limit = max(100, limit)
+            chunk = list(session.scalars(query.order_by(RecordRow.id).limit(scan_limit + 1)))
+            visible, scanned = [], 0
+            for row in chunk[:scan_limit]:
+                scanned += 1
+                if self._in_scope(session, row, actor):
+                    visible.append(row)
+                    if len(visible) == limit:
+                        break
             return {
                 "items": [copy.deepcopy(r.payload) for r in visible],
-                "next_cursor": visible[-1].id if len(rows) > limit else None,
+                "next_cursor": chunk[scanned - 1].id if scanned < len(chunk) else None,
             }
 
     def list_records(self, kind, actor, experiment_id=None, limit=500):

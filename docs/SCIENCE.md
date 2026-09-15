@@ -1,7 +1,29 @@
 # Source knowledge and scientific computation
 
-These independent Python modules operate on passed records and data. They do not
-write service receipts, review decisions, or canonical storage. The application must
+## Canonical knowledge search costs and exclusions
+
+The service loads verified claim metadata in indexed batches of at most 256, applies lexical and
+type-token matching, and ranks those candidates before fetching any proof bytes. It validates ranked
+candidates in order and stops after collecting the requested number of eligible results. A missing
+or invalid metadata dependency does not consume the result limit. Current branch/sharing and
+discovery restrictions, approved assumptions and review, exact theorem/challenge source, environment,
+claim/receipt identity, and artifact digest bindings still apply before source retrieval.
+
+An otherwise eligible candidate with missing, corrupt, or unsafe local source storage is omitted;
+search continues and returns its claim ID and error code in `rejected_candidates`. Candidates failing
+visibility or acceptance metadata checks expose neither their source nor rejection details. Other
+storage failures, including unavailable remote storage, remain explicit errors. The direct dependency
+bundle endpoint still fails explicitly on corrupt source and reads its source only once.
+
+This is not a database full-text index: metadata matching remains linear in scoped claim inventory,
+and sorting uses memory/time proportional to matching metadata. Invalid high-ranked candidates add
+validation work and potentially storage reads. `limit=1` therefore does not promise one read in every
+case; it avoids reading all irrelevant proofs and stops after the first eligible result. Local
+regressions with 1,000 irrelevant verified claims return one result with one proof-store read. They
+do not qualify PostgreSQL fleet latency, remote artifact-store throughput, or production scale.
+
+The standalone knowledge and computation modules below operate on passed records
+and data. They do not write service receipts, review decisions, or canonical storage. The application must
 authenticate and scope canonical inputs before passing them in. A receipt identifier
 or digest is a provenance reference, not proof that a worker supplied true data.
 

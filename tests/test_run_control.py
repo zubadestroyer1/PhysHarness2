@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -169,3 +170,37 @@ def test_invalid_runtime_configuration_never_becomes_a_run_plan(field, value):
 
     with pytest.raises(ValidationError):
         RunPlan.model_validate({**plan_input(), field: value})
+
+
+def test_configured_preflight_forwards_nondefault_reviewed_theorem(lab, tmp_path):
+    from physharness.run_control import RunPlan, prepare_run, run_preflight
+    from physharness.verification.boundary import outcome
+
+    service, actor, reviewer = lab
+    source_files(tmp_path)
+    source = "theorem distinct_selector : True := by trivial\n"
+    (tmp_path / "Challenge.lean").write_text(source)
+    data = plan_input()
+    data["target"]["target_theorem"] = "distinct_selector"
+    prepared = prepare_run(service, actor, RunPlan.model_validate(data), tmp_path)
+    service.review_problem(
+        prepared["problem_id"], "approved", "Synthetic fixture review", reviewer, "review"
+    )
+    calls = []
+
+    class ControlledPreflight:
+        def preflight(self, request):
+            calls.append(request)
+            return outcome(
+                request, "blocked", "configured_unprobed", "Synthetic preflight", "No kernel run"
+            )
+
+    service.verifier = ControlledPreflight()
+    operator = Principal(id="controller", project_id="lab", role="operator")
+    report = run_preflight(service, operator, prepared["experiment_id"], prices={}, environment={})
+    assert len(calls) == 1
+    assert calls[0].target_theorem == "distinct_selector"
+    assert calls[0].semantic_reviewed is True
+    assert calls[0].challenge_sha256 == hashlib.sha256(source.encode()).hexdigest()
+    assert report["model_calls"] == 0
+    assert service.list_records("task", operator) == []

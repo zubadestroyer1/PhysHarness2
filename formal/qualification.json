@@ -13,16 +13,17 @@
     "Both kernel and independent nanoda engineering runs passed two positive cases and seven negative/attack cases.",
     "No generated Lean code executed on the development Mac host.",
     "These engineering cases are not a complete containment qualification or a scientific semantic review.",
-    "Physics dependency source build and declaration kernel audit have separate evidence; source inventory alone does not establish compiled declarations."
+    "Physics dependency source build and declaration kernel audit have separate evidence; source inventory alone does not establish compiled declarations.",
+    "PR correction composition changed launcher/driver bytes; previous engineering results apply only to recorded hashes. Current combined source needs rebuild, rerun and repinning."
   ],
   "observed_build_image_digest": "sha256:cadb65787cb75657516379dc91f3870c6c473e3df11b907428f522ceff360eca",
-  "engineering_status": "passed",
+  "engineering_status": "previous_snapshot_passed_current_source_changed",
   "engineering_evidence": [
     "work/acceptance-evidence/engineering-kernel-report.json",
     "work/acceptance-evidence/engineering-independent-report.json"
   ],
   "physics_engineering": {
-    "status": "passed",
+    "status": "previous_snapshot_passed_current_source_changed",
     "source_build_jobs": 8790,
     "declarations_checked": 27,
     "kernel_cases_passed": 3,
@@ -31,5 +32,6 @@
     "evidence": "formal/evidence/physics/index.json",
     "semantic_review": "not_reviewed",
     "production_qualification": "unqualified"
-  }
+  },
+  "protocol": "physharness-comparator-v2"
 }

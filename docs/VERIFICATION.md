@@ -64,6 +64,15 @@ A v2 manifest has this schema:
 
 Configure `ComparatorConfig(bundle_directory=Path(...), manifest_sha256=..., qualification=...)`. `LinuxQualification` binds image digest, archived qualification-report SHA-256, current `driver_digest()`, `launcher_digest()`, `seccomp_digest()`, `linux_boundary="docker-landlock-seccomp-v1"` and the explicit independent-kernel capability. These are operator-managed evidence references, not certificates minted by this code. Runtime upgrades require operational requalification.
 
+The operator-pinned manifest binds the canonical problem revision, canonical metadata digest,
+source hash and environment. `theorem_names` must be exactly `[problem.target_theorem]`; a
+bundle selecting another or additional theorem fails closed. Both host and trusted driver check
+these bindings, and both compare `Challenge.lean` bytes to `challenge_sha256`. The shared driver
+requires theorem equality for trusted scientific requests (which always contain
+`semantic_reviewed`); engineering requests omit review fields but retain every common
+protocol/revision/metadata/source/environment check. Checker diagnostic codes cannot disable
+the service's final locked review/source identity check.
+
 **Migration:** v1 conflated canonical scientific revision identity with Lean source bytes. It cannot represent the current contract. Regenerate bundles from stored revisions with the explicit v2 protocol and `challenge_sha256`; do not relabel old digests. Old manifests and responses fail closed. Submit fresh verification receipts for revisions whose receipts predate source/review binding. Legacy CI case requests must now be engineering requests with no semantic-review fields and explicit expected codes.
 
 ## Actual execution and checker protocol
@@ -159,3 +168,16 @@ manifest_sha256 = create_problem_bundle(
 Both functions are exported by `physharness.verification`. Environment preparation bounds and hashes the metadata and project files, rejects symlinks/reserved paths and emits canonical bytes. Bundle preparation checks the stored `ProblemCreate` digest, exact environment digest, selected theorem, source and copied project files before and after creation. The canonical problem's environment digest must already match those bytes. These helpers create no review, qualification record, receipt or claim; a pending target remains pending.
 
 The final acceptance commit locks and refreshes the canonical problem row with `SELECT FOR UPDATE` on PostgreSQL before comparing its review and identity. This serializes concurrent review updates with the receipt/claim commit. A real two-transaction PostgreSQL regression reproduced the previous race and passed after the fix; SQLite alone cannot exercise that race because it serializes writes globally.
+
+
+## PR correction compatibility
+
+Scientific submission and request validation share a 2,000,000-character candidate limit; larger
+submissions fail before queueing. Persisted oversized candidates, unavailable candidate bytes and
+incompatible legacy receipts receive explicit blocked diagnostics. Scientific receipts bind the
+current review, exact UTF-8 source hash and selected theorem, including during evidence reuse.
+Engineering requests remain separate and do not acquire a manufactured semantic review.
+
+The combined PR corrections change host/driver bytes. Earlier recorded engineering results remain
+evidence for their recorded image and code hashes; they do not validate this combined source.
+Rebuild and rerun genuine engineering/qualification checks before supplying new deployment pins.
