@@ -101,6 +101,7 @@ def accepted_fixture(lab, sharing="verified"):
                 message="Synthetic test evidence only",
                 remediation="",
                 target_digest=request.target_digest,
+                challenge_sha256=request.challenge_sha256,
                 environment_digest=request.environment_digest,
                 candidate_sha256=request.candidate_sha256,
                 checker_versions={

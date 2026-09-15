@@ -1,6 +1,7 @@
 """Application authority: actors, immutable targets, commands, and budget invariants."""
 
 import copy
+import hashlib
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -120,6 +121,10 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             and target.project_id == row.project_id
             and target.kind == "problem"
             and target.payload.get("semantic_review") == "approved"
+            and data.get("review_id") == target.payload.get("review_id")
+            and data.get("target_theorem") == target.payload.get("target_theorem", "target")
+            and data.get("challenge_sha256")
+            == hashlib.sha256(target.payload["formal_statement"].encode("utf-8")).hexdigest()
             and data.get("problem_revision_id") == target.id
             and data.get("target_digest")
             == target.payload.get("target_digest")

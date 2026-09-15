@@ -57,6 +57,25 @@ The budget covers cost, concurrency, lifetime and optional cumulative tokens. Th
 worker currently runs direct/independent Responses policies; unsupported runtime/policy selections
 fail explicitly. Runtime-specific limits do not imply every native SDK can enforce hard tokens.
 
+## Verification identity and recovery
+
+The `/v1` API remains unchanged: submission selects only the candidate artifact and publication
+flag. The server builds the verification request from canonical records. `target_digest` remains
+the complete reviewed problem metadata identity. `challenge_sha256` is computed from the exact
+UTF-8 `formal_statement`, without newline normalization; ProblemCreate has no additional source
+hash input. A receipt also pins `review_id` and `target_theorem`, checked before verification and
+again before receipt/claim commit. Current review, source hash and theorem bindings are required
+for accepted sharing and evidence retrieval.
+
+Candidates support at most 2,000,000 Unicode characters. A larger candidate fails submission
+with HTTP 422 `CANDIDATE_TOO_LARGE` before queueing. A persisted oversized candidate, unreadable
+artifact or request-construction fault receives a terminal `blocked` receipt with code and
+remediation. Old receipts lacking source/review/theorem pins block with
+`verification_receipt_incompatible` and require fresh submission. Trusted manifests and driver
+responses use `physharness-comparator-v2`; old ambiguous manifests are rejected. Operators must
+regenerate/repin manifests and requalify changed launcher/driver/image bytes. See
+[verification](VERIFICATION.md) for the complete private verifier contract.
+
 ## Evidence, context and retrieval
 
 - GET `/v1/artifacts/{id}/content` returns authorized UTF-8 artifact content after a hash check.

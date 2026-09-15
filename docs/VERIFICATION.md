@@ -14,15 +14,31 @@ The application constructs requests from immutable stored revisions and recorded
 The public candidate API must not accept caller-controlled target/environment selection, semantic
 review flags, qualification records, or verification outcomes as authority. A digest names bytes;
 it never establishes mathematical truth. Only a trusted application service should persist an
-acceptance receipt after checking the returned status and binding all three digests to the request.
+acceptance receipt after checking the returned status and binding all four digests to the request.
 
-A request includes revision id, target/environment/candidate SHA256, UTF-8 candidate source,
-semantic review, definition-hole flag, and publication flag. Outcomes distinguish `verified`,
+A request includes revision id, canonical `target_digest`, `challenge_sha256`, environment and
+candidate SHA256, required `target_theorem`, UTF-8 candidate source, semantic review,
+definition-hole flag, and publication flag. `target_digest` identifies the complete canonical
+problem metadata; it is never a hash of Lean source alone. `challenge_sha256` hashes the exact
+UTF-8 `problem.formal_statement` bytes, including its original line endings. No second
+user-entered source-hash field is added to ProblemCreate. Outcomes distinguish `verified`,
 `rejected`, and `blocked`; only verified outcomes carry `kernel` or `independent_kernel` assurance.
 Every outcome includes remediation, identity digests, checker versions, axioms and diagnostics.
 Candidate digest mismatches reject before any process launch. Unreviewed targets and definition
 holes block. Definition holes require a newly reviewed concrete target; this adapter cannot approve
 fillable definitions.
+
+The queue and VerificationRequest use `MAX_CANDIDATE_CHARACTERS = 2_000_000`: exactly that
+many Unicode characters are supported, even when UTF-8 encoding takes more bytes. Submission
+of 2,000,001 characters fails with HTTP 422 `CANDIDATE_TOO_LARGE` before a receipt is queued.
+Receipts pin source hash, current `review_id`, and selected `target_theorem`. Processing checks
+those pins before calling the verifier and again under a lock on the canonical problem row
+before committing a receipt/claim. The canonical review must approve that exact target revision.
+Legacy oversized receipts become `blocked` with `candidate_too_large`; artifact-read/UTF-8
+faults become `blocked` with `candidate_unavailable`. Request construction and checker faults
+also persist terminal diagnostics and remediation. An incompatible legacy receipt gets
+`verification_receipt_incompatible`; submit a fresh verification. Accepted sharing and canonical
+evidence validation require the current review, exact source hash and selected theorem.
 
 `UnavailableVerifier` is the safe deployment default. `ComparatorVerifier()` without config is
 also blocked. Config is service-owned and **not an API request**. Its qualification record is an
@@ -44,8 +60,10 @@ The bundle contains these UTF-8 files:
 ```json
 // manifest.json (remove this comment for actual JSON)
 {
+  "protocol": "physharness-comparator-v2",
   "problem_revision_id": "stored-revision-id",
-  "target_digest": "SHA256 of Challenge.lean bytes",
+  "target_digest": "canonical problem metadata digest from the service",
+  "challenge_sha256": "SHA256 of exact UTF-8 problem.formal_statement / Challenge.lean bytes",
   "environment_digest": "SHA256 of environment.json bytes",
   "theorem_names": ["reviewed_theorem_name"]
 }
@@ -71,6 +89,18 @@ The bundle contains these UTF-8 files:
   }
 }
 ```
+
+The operator-pinned manifest binds the canonical problem revision, canonical metadata digest,
+source hash and environment. `theorem_names` must be exactly `[problem.target_theorem]`; a
+bundle selecting another or additional theorem fails closed. Both host and trusted driver check
+these bindings, and both compare `Challenge.lean` bytes to `challenge_sha256`.
+
+**Compatibility:** manifests without protocol v2 and distinct source identity are rejected.
+Do not reinterpret an old target metadata digest as a source digest. Regenerate and repin trusted
+manifests and operator qualification cases from canonical records. This launcher/driver change
+invalidates old launcher and driver pins: rebuild the image and repeat deployment qualification
+before acceptance use. Updating a hash alone does not qualify a deployment. Existing blocked
+qualification records stay blocked, and synthetic transport tests establish no kernel assurance.
 
 `files` must include all project configuration and reviewed dependency sources used by the target.
 For larger libraries, install immutable audited dependencies in the pinned image and reference
@@ -130,7 +160,7 @@ These results must not be used as negative mathematical evidence. **The `axioms`
 upper bound, not a measured minimal axiom closure.** The diagnostics always label this distinction.
 Minimal closure extraction is not implemented; disallowed dependencies are checked by Comparator.
 
-Only the trusted driver emits the `physharness-comparator-v1` JSON response after capturing
+Only the trusted driver emits the `physharness-comparator-v2` JSON response after capturing
 Comparator stdout/stderr. Worker output is opaque diagnostics, never parsed as a receipt. Host
 validation checks response schema, every digest, pinned versions, axiom policy and publication
 replay. Publication requires the separately qualified nanoda binary and successful Comparator
@@ -163,7 +193,9 @@ unqualified, even if Python tests pass. Before operating it:
    changed definitions, `sorry`, extra axioms and native-computation trust. Include hangs and
    excessive output. Do not call this profile qualified merely because startup probes pass.
 4. For each `formal/smoke/{quantum,classical}` fixture, assemble separate fresh trusted bundles
-   with `Challenge.lean`, the root formal lakefile/toolchain, and the correct theorem name. Submit
+   with exact canonical `formal_statement` bytes as `Challenge.lean`, the root formal lakefile/toolchain,
+   and exactly the reviewed `target_theorem`. Record the canonical metadata digest separately from
+   the challenge source hash in each protocol-v2 manifest. Submit
    `Solution.lean` only as candidate bytes. Run kernel and publication checks, independently
    verifying rejection of the attacks. Obtain and record expert semantic review separately.
 5. Archive exact commands, images, kernel/runtime versions, positive/negative results and
