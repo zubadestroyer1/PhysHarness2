@@ -224,3 +224,215 @@ async def test_obsolete_campaign_command_after_cancellation_is_acknowledged():
             return {"status": "cancelled"}
 
     await TemporalDelivery(Client(), "queue")(item)
+
+
+@pytest.mark.asyncio
+async def test_active_temporal_duplicate_validates_identity_before_acknowledgement():
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.common import WorkflowIDConflictPolicy
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from physharness.errors import HarnessError
+    from physharness.orchestration.temporal_delivery import TemporalDelivery
+
+    class Client:
+        async def start_workflow(self, *args, **kwargs):
+            if kwargs["id_conflict_policy"] == WorkflowIDConflictPolicy.FAIL:
+                raise WorkflowAlreadyStartedError("task:task-id", "TaskWorkflow")
+            return self
+
+        def get_workflow_handle(self, identifier):
+            return self
+
+        async def describe(self):
+            return self
+
+        workflow_type = "TaskWorkflow"
+        status = WorkflowExecutionStatus.RUNNING
+
+        async def memo(self):
+            return {"canonical_aggregate": "different-task", "project_id": "lab"}
+
+    item = {
+        "id": "command",
+        "project_id": "lab",
+        "kind": "task.queued",
+        "aggregate_id": "task-id",
+        "payload": {},
+    }
+    with pytest.raises(HarnessError) as error:
+        await TemporalDelivery(Client(), "queue")(item)
+    assert error.value.code == "WORKFLOW_IDENTITY_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_experiment_start_embeds_first_command_without_signal_with_start():
+    from temporalio.common import WorkflowIDConflictPolicy, WorkflowIDReusePolicy
+
+    from physharness.orchestration.temporal_delivery import TemporalDelivery
+    from physharness.orchestration.workflows import ExperimentWorkflow
+
+    item = {
+        "id": "start-command",
+        "project_id": "lab",
+        "kind": "experiment.queued",
+        "aggregate_id": "experiment-id",
+        "payload": {"revision": 2},
+    }
+    calls = []
+
+    class Client:
+        async def start_workflow(self, run, argument, **options):
+            calls.append((run, argument, options))
+            assert "start_signal" not in options and "start_signal_args" not in options
+
+    await TemporalDelivery(Client(), "queue")(item)
+    assert len(calls) == 1
+    run, argument, options = calls[0]
+    assert run == ExperimentWorkflow.run
+    assert argument == {"experiment_id": "experiment-id", "pending_commands": [item]}
+    assert options["id_conflict_policy"] == WorkflowIDConflictPolicy.FAIL
+    assert options["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+    assert options["memo"] == {"canonical_aggregate": "experiment-id", "project_id": "lab"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conflict", [None, "project", "workflow_type"])
+async def test_experiment_duplicate_checks_identity_before_explicit_signal(conflict):
+    from temporalio.client import WorkflowExecutionStatus
+    from temporalio.exceptions import WorkflowAlreadyStartedError
+
+    from physharness.errors import HarnessError
+    from physharness.orchestration.temporal_delivery import TemporalDelivery
+    from physharness.orchestration.workflows import ExperimentWorkflow
+
+    item = {
+        "id": "cancel-command",
+        "project_id": "lab",
+        "kind": "experiment.cancelled",
+        "aggregate_id": "experiment-id",
+        "payload": {"revision": 3},
+    }
+    events = []
+
+    class Client:
+        workflow_type = "TaskWorkflow" if conflict == "workflow_type" else "ExperimentWorkflow"
+        status = WorkflowExecutionStatus.RUNNING
+
+        async def start_workflow(self, *args, **kwargs):
+            assert "start_signal" not in kwargs
+            events.append("start")
+            raise WorkflowAlreadyStartedError("experiment:experiment-id", "ExperimentWorkflow")
+
+        def get_workflow_handle(self, identifier):
+            assert identifier == "experiment:experiment-id"
+            return self
+
+        async def describe(self):
+            events.append("describe")
+            return self
+
+        async def memo(self):
+            events.append("memo")
+            return {
+                "canonical_aggregate": "experiment-id",
+                "project_id": "other-lab" if conflict == "project" else "lab",
+            }
+
+        async def signal(self, handler, command, **options):
+            assert handler == ExperimentWorkflow.command and command == item
+            assert options["rpc_timeout"].total_seconds() == 20
+            events.append("signal")
+
+    if conflict:
+        with pytest.raises(HarnessError) as error:
+            await TemporalDelivery(Client(), "queue")(item)
+        assert error.value.code == "WORKFLOW_IDENTITY_CONFLICT"
+        assert "signal" not in events
+    else:
+        await TemporalDelivery(Client(), "queue")(item)
+        assert events == ["start", "describe", "memo", "signal"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("legacy_signal_start", [False, True])
+async def test_experiment_initial_command_and_legacy_signal_are_both_consumed(
+    monkeypatch, legacy_signal_start
+):
+    from physharness.orchestration import workflows
+
+    instance = workflows.ExperimentWorkflow()
+    queued = {"id": "queued", "kind": "experiment.queued"}
+    cancelled = {"id": "cancelled", "kind": "experiment.cancelled"}
+    initial = {"experiment_id": "experiment-id"}
+    if legacy_signal_start:
+        await instance.command(queued)
+    else:
+        initial["pending_commands"] = [queued]
+    # Temporal can deliver signals before the workflow run coroutine starts.
+    await instance.command(cancelled)
+    seen = []
+
+    async def wait_condition(predicate):
+        assert predicate()
+
+    async def execute_activity(name, item, **options):
+        assert name == "apply_experiment_command"
+        seen.append(item)
+        return {"status": "replay_fixture"}
+
+    monkeypatch.setattr(workflows.workflow, "wait_condition", wait_condition)
+    monkeypatch.setattr(workflows.workflow, "execute_activity", execute_activity)
+    assert await instance.run(initial) == {"status": "cancelled"}
+    assert seen == [queued, cancelled]
+
+
+@pytest.mark.asyncio
+async def test_experiment_continue_as_new_preserves_pending_and_inflight_signals(monkeypatch):
+    from copy import deepcopy
+    from types import SimpleNamespace
+
+    from physharness.orchestration import workflows
+
+    instance = workflows.ExperimentWorkflow()
+    queued = [{"id": str(index), "kind": "experiment.queued"} for index in range(103)]
+    arriving = {"id": "arrived-during-activity", "kind": "experiment.queued"}
+    cancelled = {"id": "cancelled", "kind": "experiment.cancelled"}
+    seen, continuations = [], []
+
+    class Continued(Exception):
+        pass
+
+    async def wait_condition(predicate):
+        assert predicate()
+
+    async def execute_activity(name, item, **options):
+        seen.append(item)
+        if item["id"] == "50":
+            await instance.command(arriving)
+        return {"status": "replay_fixture"}
+
+    def continue_as_new(argument, **options):
+        # An omitted memo inherits the prior run's canonical identity in the SDK.
+        assert "memo" not in options
+        continuations.append(deepcopy(argument))
+        raise Continued
+
+    monkeypatch.setattr(workflows.workflow, "wait_condition", wait_condition)
+    monkeypatch.setattr(workflows.workflow, "execute_activity", execute_activity)
+    monkeypatch.setattr(
+        workflows.workflow,
+        "info",
+        lambda: SimpleNamespace(is_continue_as_new_suggested=lambda: True),
+    )
+    monkeypatch.setattr(workflows.workflow, "continue_as_new", continue_as_new)
+    with pytest.raises(Continued):
+        await instance.run({"experiment_id": "experiment-id", "pending_commands": queued})
+    assert seen == queued[:100]
+    assert continuations == [
+        {"experiment_id": "experiment-id", "pending_commands": queued[100:] + [arriving]}
+    ]
+    resumed = workflows.ExperimentWorkflow()
+    await resumed.command(cancelled)
+    assert await resumed.run(continuations[0]) == {"status": "cancelled"}
+    assert seen == queued + [arriving, cancelled]
