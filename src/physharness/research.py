@@ -98,6 +98,8 @@ class ResearchMixin:
             if origin["id"] != experiment_id and origin.get("sharing", "none") == "none":
                 continue
             receipt = self.get_record("verification", claim["verification_id"], broker)
+            if receipt.get("assurance") != "independent_kernel":
+                continue
             problem = self.get_record("problem", claim["problem_revision_id"], broker)
             if (
                 problem["semantic_review"] != "approved"

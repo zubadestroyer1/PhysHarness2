@@ -20,20 +20,25 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 SHA256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 ImageDigest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 ALLOWED_AXIOMS = frozenset({"propext", "Quot.sound", "Classical.choice"})
-PROTOCOL = "physharness-comparator-v1"
+PROTOCOL = "physharness-comparator-v2"
 
 
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
-class VerificationRequest(Contract):
+class EngineeringRequest(Contract):
     problem_revision_id: str = Field(min_length=1, max_length=256)
     target_digest: SHA256
+    challenge_sha256: SHA256
     environment_digest: SHA256
     candidate_sha256: SHA256
     candidate_source: str = Field(max_length=2_000_000)
     publication: bool = False
+
+
+class VerificationRequest(EngineeringRequest):
+    target_theorem: str = Field(min_length=1, max_length=500)
     semantic_reviewed: bool
     definition_holes: bool = False
 
@@ -45,6 +50,7 @@ class VerificationOutcome(Contract):
     message: str
     remediation: str
     target_digest: SHA256
+    challenge_sha256: SHA256
     candidate_sha256: SHA256
     environment_digest: SHA256
     axioms: list[str] = Field(default_factory=list)
@@ -69,11 +75,15 @@ class Verifier(Protocol):
     def verify(self, request: VerificationRequest) -> VerificationOutcome: ...
 
 
-class LinuxQualification(Contract):
-    """Operator-owned deployment evidence reference, never populated from worker data."""
+class EngineeringResult(Contract):
+    purpose: Literal["engineering_smoke"] = "engineering_smoke"
+    outcome: VerificationOutcome
+
+
+class ExecutionPins(Contract):
+    """Execution identity for engineering; these hashes do not establish qualification."""
 
     image_digest: ImageDigest
-    qualification_report_sha256: SHA256
     driver_sha256: SHA256
     launcher_sha256: SHA256
     seccomp_sha256: SHA256
@@ -81,17 +91,32 @@ class LinuxQualification(Contract):
     independent_kernel: bool = False
 
 
-class ComparatorConfig(Contract):
+class LinuxQualification(ExecutionPins):
+    """Operator-owned evidence reference, never populated from worker data."""
+
+    qualification_report_sha256: SHA256
+
+
+class RunConfig(Contract):
     bundle_directory: Path
     manifest_sha256: SHA256
-    qualification: LinuxQualification
     timeout_seconds: int = Field(default=120, ge=1, le=3600)
     output_limit_bytes: int = Field(default=256_000, ge=1024, le=2_000_000)
 
 
+class ComparatorConfig(RunConfig):
+    qualification: LinuxQualification
+
+
+class EngineeringConfig(RunConfig):
+    execution: ExecutionPins
+
+
 class Manifest(Contract):
+    protocol: Literal["physharness-comparator-v2"]
     problem_revision_id: str
     target_digest: SHA256
+    challenge_sha256: SHA256
     environment_digest: SHA256
     theorem_names: list[str] = Field(min_length=1, max_length=128)
 
@@ -104,10 +129,11 @@ class Environment(Contract):
 
 
 class DriverResult(Contract):
-    protocol: Literal["physharness-comparator-v1"]
+    protocol: Literal["physharness-comparator-v2"]
     status: Literal["verified", "rejected", "blocked"]
     code: str
     target_digest: SHA256
+    challenge_sha256: SHA256
     environment_digest: SHA256
     candidate_sha256: SHA256
     independent_kernel: bool
@@ -173,13 +199,14 @@ def outcome(req, status, code, message, remediation, **kwargs):
         message=message,
         remediation=remediation,
         target_digest=req.target_digest,
+        challenge_sha256=req.challenge_sha256,
         environment_digest=req.environment_digest,
         candidate_sha256=req.candidate_sha256,
         **kwargs,
     )
 
 
-def preflight(req: VerificationRequest) -> VerificationOutcome | None:
+def candidate_preflight(req: EngineeringRequest) -> VerificationOutcome | None:
     try:
         actual = digest(req.candidate_source.encode("utf-8"))
     except UnicodeEncodeError:
@@ -192,6 +219,13 @@ def preflight(req: VerificationRequest) -> VerificationOutcome | None:
             "Candidate bytes do not match.",
             "Submit the exact UTF-8 source with its SHA256 digest.",
         )
+    return None
+
+
+def preflight(req: VerificationRequest) -> VerificationOutcome | None:
+    failed = candidate_preflight(req)
+    if failed:
+        return failed
     if not req.semantic_reviewed:
         return outcome(
             req,
@@ -285,9 +319,14 @@ def safe_read(root: Path, name: str) -> bytes:
     return current.read_bytes()
 
 
-class ComparatorVerifier:
-    def __init__(self, config: ComparatorConfig | None = None):
-        self.config = config
+class _PinnedRunner:
+    config: ComparatorConfig | EngineeringConfig | None
+
+    @property
+    def _pins(self):
+        if isinstance(self.config, ComparatorConfig):
+            return self.config.qualification
+        return self.config.execution
 
     def _bundle(self, req):
         config = self.config
@@ -298,23 +337,30 @@ class ComparatorVerifier:
         if digest(raw) != config.manifest_sha256:
             raise ValueError("pinned manifest digest mismatch")
         manifest = Manifest.model_validate_json(raw)
+        if isinstance(req, VerificationRequest) and manifest.theorem_names != [req.target_theorem]:
+            raise ValueError("bundle theorem selection differs from the reviewed target theorem")
         if any(
             getattr(manifest, key) != getattr(req, key)
-            for key in ("problem_revision_id", "target_digest", "environment_digest")
+            for key in (
+                "problem_revision_id",
+                "target_digest",
+                "challenge_sha256",
+                "environment_digest",
+            )
         ):
             raise ValueError("request does not match trusted manifest")
         target = safe_read(root, "Challenge.lean")
         raw_env = safe_read(root, "environment.json")
-        if digest(target) != req.target_digest or digest(raw_env) != req.environment_digest:
+        if digest(target) != req.challenge_sha256 or digest(raw_env) != req.environment_digest:
             raise ValueError("target or environment digest mismatch")
         env = Environment.model_validate_json(raw_env)
-        if env.image != config.qualification.image_digest:
+        if env.image != self._pins.image_digest:
             raise ValueError("image differs from qualified image")
-        if config.qualification.driver_sha256 != driver_digest():
+        if self._pins.driver_sha256 != driver_digest():
             raise ValueError("qualification predates this driver")
-        if config.qualification.launcher_sha256 != launcher_digest():
+        if self._pins.launcher_sha256 != launcher_digest():
             raise ValueError("qualification predates this host launcher")
-        if config.qualification.seccomp_sha256 != seccomp_digest():
+        if self._pins.seccomp_sha256 != seccomp_digest():
             raise ValueError("qualification does not match this seccomp policy")
         if not all(env.checker_versions.get(x) for x in ("lean", "comparator")):
             raise ValueError("missing pinned checker versions")
@@ -337,10 +383,22 @@ class ComparatorVerifier:
             raise ValueError("trusted Lake configuration missing")
         return manifest, env, files
 
-    def verify(self, request: VerificationRequest) -> VerificationOutcome:
-        failed = preflight(request)
-        if failed:
-            return failed
+    def _publication_preflight(self, request, env):
+        if request.publication and (
+            not self._pins.independent_kernel
+            or not env.checker_versions.get("nanoda")
+            or not env.binaries.get("nanoda")
+        ):
+            return outcome(
+                request,
+                "blocked",
+                "independent_kernel_required",
+                "Publication requires nanoda.",
+                "Qualify and pin the compatible independent kernel image.",
+            )
+        return None
+
+    def _verify_pinned(self, request: EngineeringRequest) -> VerificationOutcome:
         if self.config is None:
             return outcome(
                 request,
@@ -360,20 +418,17 @@ class ComparatorVerifier:
                 "Restore the immutable bundle or create and review a new pinned revision.",
                 diagnostics={"error": str(exc)},
             )
-        if request.publication and (
-            not self.config.qualification.independent_kernel
-            or not env.checker_versions.get("nanoda")
-        ):
-            return outcome(
-                request,
-                "blocked",
-                "independent_kernel_required",
-                "Publication requires nanoda.",
-                "Qualify and pin the compatible independent kernel image.",
-            )
+        publication_failure = self._publication_preflight(request, env)
+        if publication_failure:
+            return publication_failure
         try:
             result = DriverResult.model_validate(self._run_container(request, manifest, env, files))
-            for key in ("target_digest", "environment_digest", "candidate_sha256"):
+            for key in (
+                "target_digest",
+                "challenge_sha256",
+                "environment_digest",
+                "candidate_sha256",
+            ):
                 if getattr(result, key) != getattr(request, key):
                     raise ValueError(f"driver returned mismatched {key}")
             if result.checker_versions != env.checker_versions:
@@ -404,7 +459,7 @@ class ComparatorVerifier:
                     "Independent replay is missing.",
                     "Run the publication request using a qualified independent kernel.",
                 )
-            if result.independent_kernel and not self.config.qualification.independent_kernel:
+            if result.independent_kernel and not self._pins.independent_kernel:
                 raise ValueError("unqualified independent kernel")
             return outcome(
                 request,
@@ -417,8 +472,10 @@ class ComparatorVerifier:
                 checker_versions=result.checker_versions,
                 diagnostics={
                     **result.diagnostics,
-                    "qualification_report_sha256": (
-                        self.config.qualification.qualification_report_sha256
+                    **(
+                        {"qualification_report_sha256": self._pins.qualification_report_sha256}
+                        if isinstance(self._pins, LinuxQualification)
+                        else {}
                     ),
                 },
             )
@@ -576,3 +633,58 @@ class ComparatorVerifier:
                 "prior_failure": prior_failure,
             },
         )
+
+
+class ComparatorVerifier(_PinnedRunner):
+    def __init__(self, config: ComparatorConfig | None = None):
+        if config is not None and not isinstance(config, ComparatorConfig):
+            raise TypeError(
+                "Scientific acceptance requires a ComparatorConfig qualification record"
+            )
+        self.config = config
+
+    def verify(self, request: VerificationRequest) -> VerificationOutcome:
+        if not isinstance(request, VerificationRequest):
+            raise TypeError("Scientific acceptance requires a reviewed VerificationRequest")
+        return preflight(request) or self._verify_pinned(request)
+
+    def preflight(self, request: VerificationRequest) -> VerificationOutcome:
+        failed = preflight(request)
+        if failed:
+            return failed
+        if self.config is None:
+            return self._verify_pinned(request)
+        try:
+            _, env, _ = self._bundle(request)
+            publication_failure = self._publication_preflight(request, env)
+            if publication_failure:
+                return publication_failure
+        except (ValueError, OSError) as exc:
+            return outcome(
+                request,
+                "blocked",
+                "trusted_bundle_invalid",
+                "Trusted bundle validation failed.",
+                "Restore the immutable bundle or prepare a new pinned revision.",
+                diagnostics={"error": str(exc)},
+            )
+        return outcome(
+            request,
+            "blocked",
+            "configured_unprobed",
+            "Bundle pins match; execution has not run.",
+            "Run the actual isolated checker; preflight does not establish kernel assurance.",
+        )
+
+
+class EngineeringVerifier(_PinnedRunner):
+    def __init__(self, config: EngineeringConfig):
+        if not isinstance(config, EngineeringConfig):
+            raise TypeError("Engineering observations require EngineeringConfig")
+        self.config = config
+
+    def run(self, request: EngineeringRequest) -> EngineeringResult:
+        if not isinstance(request, EngineeringRequest) or isinstance(request, VerificationRequest):
+            raise TypeError("Engineering input must not assert a semantic review")
+        checked = candidate_preflight(request) or self._verify_pinned(request)
+        return EngineeringResult(outcome=checked)

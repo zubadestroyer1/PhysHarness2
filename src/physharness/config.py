@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     e2b_template_id: str | None = None
     worker_workspace: WorkspacePolicy | None = Field(default=None, repr=False)
     temporal_task_queue: str = "physharness-research-v1"
+    verification_registry: Path | None = None
     verification_bundle: Path | None = None
     verification_manifest_sha256: str | None = None
     verification_qualification: Path | None = None
@@ -85,6 +86,14 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_deployment(self):
+        if self.verification_registry and any(
+            (
+                self.verification_bundle,
+                self.verification_manifest_sha256,
+                self.verification_qualification,
+            )
+        ):
+            raise ValueError("Configure either a verifier registry or a single bundle, not both.")
         if not self.auth_tokens and self.auth_file.is_file():
             self.auth_tokens = _authentication(json.loads(self.auth_file.read_text()))
         if self.mode == "production":
