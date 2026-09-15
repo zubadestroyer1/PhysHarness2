@@ -16,8 +16,10 @@ acceptance.
 > Local tests, a local Temporal integration, synthetic accounting checks, and Linux CI have run.
 > CI includes an application-container build and a live PostgreSQL migration test.
 > Real Linux Lean and independent-kernel engineering checks now pass two reference proofs and
-> seven seeded attacks in each mode. Hosted-model research, live VM fleets, reviewed physics
-> benchmarks, production sandbox qualification and new scientific results remain outstanding. The
+> seven seeded nonacceptance cases in each mode. Two additional library identities (classical
+> oscillator and quantum Pauli-X) and an incomplete-proof rejection also passed in both modes.
+> Hosted-model research, live VM fleets, reviewed physics benchmarks, production sandbox
+> qualification and new scientific results remain outstanding. The
 > [evidence ledger](docs/IMPLEMENTATION_STATUS.md) records what has been checked and what remains.
 
 ## What the system is for
