@@ -122,10 +122,11 @@ def main():
     req = json.loads(Path("/trusted/request.json").read_text())
     env = json.loads(Path("/trusted/environment.json").read_text())
     result = {
-        "protocol": "physharness-comparator-v1",
+        "protocol": "physharness-comparator-v2",
         "status": "blocked",
         "code": "boundary_unqualified",
         "target_digest": req["target_digest"],
+        "challenge_sha256": req["challenge_sha256"],
         "candidate_sha256": req["candidate_sha256"],
         "environment_digest": req["environment_digest"],
         "independent_kernel": False,
@@ -148,7 +149,7 @@ def main():
         source = Path("/candidate/Solution.lean").read_bytes()
         if sha(source) != req["candidate_sha256"]:
             raise RuntimeError("candidate changed in transit")
-        if sha(Path("/trusted/Challenge.lean").read_bytes()) != req["target_digest"]:
+        if sha(Path("/trusted/Challenge.lean").read_bytes()) != req["challenge_sha256"]:
             raise RuntimeError("target changed in transit")
         if sha(Path("/trusted/environment.json").read_bytes()) != req["environment_digest"]:
             raise RuntimeError("environment changed in transit")
