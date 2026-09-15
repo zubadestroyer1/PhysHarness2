@@ -1,0 +1,236 @@
+{
+  "schema": "physharness-declaration-audit-v1",
+  "audit_kind": "lexical_source_inventory",
+  "semantic_review": "not_reviewed",
+  "kernel_check": "not_run",
+  "sandbox_qualification": "not_run",
+  "transitive_axiom_closure": "not_computed",
+  "modules": [
+    {
+      "package": "physlib",
+      "path": "Physlib/ClassicalMechanics/HamiltonsEquations.lean",
+      "source_sha256": "de57aae55ef35165f0e02d25ded4063a7284effe0dbe95e9a7c39987628f2196",
+      "imports": [
+        "Physlib.Mathematics.VariationalCalculus.HasVarGradient",
+        "Physlib.SpaceAndTime.Time.Derivatives"
+      ],
+      "declarations": [
+        {
+          "name": "hamiltonEqOp",
+          "kind": "def",
+          "line": 39
+        },
+        {
+          "name": "hamiltonEqOp_eq_zero_iff_hamiltons_equations",
+          "kind": "lemma",
+          "line": 49
+        },
+        {
+          "name": "hamiltons_equations_varGradient",
+          "kind": "theorem",
+          "line": 56
+        }
+      ],
+      "risk_tokens": {}
+    },
+    {
+      "package": "physlib",
+      "path": "Physlib/ClassicalMechanics/HarmonicOscillator/Basic.lean",
+      "source_sha256": "875076395e85ef14a32577b418eb33e9be90fa355cc3407b5eaf04519aa75f80",
+      "imports": [
+        "Physlib.ClassicalMechanics.EulerLagrange",
+        "Physlib.ClassicalMechanics.HamiltonsEquations",
+        "Physlib.Mathematics.Calculus.Gradient",
+        "Mathlib.Algebra.Order.Archimedean.Real.Hom"
+      ],
+      "declarations": [
+        {
+          "name": "HarmonicOscillator",
+          "kind": "structure",
+          "line": 122
+        },
+        {
+          "name": "kineticEnergy",
+          "kind": "def",
+          "line": 196
+        },
+        {
+          "name": "potentialEnergy",
+          "kind": "def",
+          "line": 200
+        },
+        {
+          "name": "energy",
+          "kind": "def",
+          "line": 204
+        },
+        {
+          "name": "EquationOfMotion",
+          "kind": "def",
+          "line": 417
+        },
+        {
+          "name": "energy_conservation_of_equationOfMotion",
+          "kind": "lemma",
+          "line": 526
+        },
+        {
+          "name": "hamiltonian",
+          "kind": "def",
+          "line": 612
+        }
+      ],
+      "risk_tokens": {}
+    },
+    {
+      "package": "physlib",
+      "path": "QuantumInfo/States/Pure/Qubit.lean",
+      "source_sha256": "3f1cfbc5353564ab5d2db4966190871e455529537b9f36cb70ce6130f1417f2e",
+      "imports": [
+        "QuantumInfo.Channels.Bundled",
+        "QuantumInfo.Channels.CPTP",
+        "QuantumInfo.Channels.Dual",
+        "QuantumInfo.Channels.MatrixMap",
+        "QuantumInfo.Channels.Unbundled",
+        "Physlib.Meta.TODO.Basic"
+      ],
+      "declarations": [
+        {
+          "name": "Qubit",
+          "kind": "abbrev",
+          "line": 29
+        },
+        {
+          "name": "X",
+          "kind": "def",
+          "line": 70
+        },
+        {
+          "name": "X_sq",
+          "kind": "theorem",
+          "line": 94
+        },
+        {
+          "name": "H",
+          "kind": "def",
+          "line": 78
+        },
+        {
+          "name": "H_sq",
+          "kind": "theorem",
+          "line": 102
+        },
+        {
+          "name": "CNOT",
+          "kind": "def",
+          "line": 167
+        },
+        {
+          "name": "controllize_mul",
+          "kind": "theorem",
+          "line": 199
+        }
+      ],
+      "risk_tokens": {}
+    },
+    {
+      "package": "physlib",
+      "path": "QuantumInfo/States/Mixed/MState.lean",
+      "source_sha256": "c769365a74c2a2f6a5054a9c28251325b4700f1899d08ea841c11648c5124f97",
+      "imports": [
+        "QuantumInfo.ForMathlib.ContinuousLinearMap",
+        "QuantumInfo.ForMathlib.ComplexLaplaceTransform",
+        "QuantumInfo.ForMathlib.ContinuousSup",
+        "QuantumInfo.ForMathlib.Filter",
+        "QuantumInfo.ForMathlib.HermitianMat",
+        "QuantumInfo.ForMathlib.Isometry",
+        "QuantumInfo.ForMathlib.LinearEquiv",
+        "QuantumInfo.ForMathlib.MatrixNorm.TraceNorm",
+        "QuantumInfo.ForMathlib.Matrix",
+        "QuantumInfo.ForMathlib.Minimax",
+        "QuantumInfo.ForMathlib.Misc",
+        "QuantumInfo.ForMathlib.Unitary",
+        "QuantumInfo.ClassicalInfo.Distribution",
+        "QuantumInfo.States.Pure.Braket",
+        "Mathlib.Logic.Equiv.Basic"
+      ],
+      "declarations": [
+        {
+          "name": "MState",
+          "kind": "structure",
+          "line": 63
+        },
+        {
+          "name": "pure",
+          "kind": "def",
+          "line": 269
+        },
+        {
+          "name": "purity",
+          "kind": "def",
+          "line": 306
+        },
+        {
+          "name": "traceLeft",
+          "kind": "def",
+          "line": 580
+        },
+        {
+          "name": "traceRight",
+          "kind": "def",
+          "line": 587
+        },
+        {
+          "name": "traceLeft_prod_eq",
+          "kind": "theorem",
+          "line": 594
+        },
+        {
+          "name": "pure_iff_purity_one",
+          "kind": "theorem",
+          "line": 435
+        },
+        {
+          "name": "purify_spec",
+          "kind": "theorem",
+          "line": 1025
+        }
+      ],
+      "risk_tokens": {}
+    },
+    {
+      "package": "mathlib",
+      "path": "Mathlib/LinearAlgebra/Matrix/PosDef.lean",
+      "source_sha256": "09290b5923e167fcf959df64d00b039c7b99c4b236755728219bf5b5feaac24a",
+      "imports": [
+        "Mathlib.Algebra.CharP.Invertible",
+        "Mathlib.Algebra.Order.Ring.Star",
+        "Mathlib.Data.Real.Star",
+        "Mathlib.LinearAlgebra.Matrix.BilinearForm",
+        "Mathlib.LinearAlgebra.Matrix.DotProduct",
+        "Mathlib.LinearAlgebra.Matrix.Hermitian",
+        "Mathlib.LinearAlgebra.Matrix.Vec",
+        "Mathlib.LinearAlgebra.QuadraticForm.Basic"
+      ],
+      "declarations": [
+        {
+          "name": "PosSemidef",
+          "kind": "def",
+          "line": 59
+        },
+        {
+          "name": "PosDef",
+          "kind": "def",
+          "line": 161
+        }
+      ],
+      "risk_tokens": {}
+    }
+  ],
+  "source_lock_sha256": "c5615b4f818bb8dfefc0281f116d2ece500597a488eb4ee244b330d41c9235c5",
+  "selection_sha256": "0340a1f1204450358d9aef5d6e3351b275fec048a102dfed7bb5e4bd8c923c68",
+  "source_revisions": {
+    "mathlib": "db584cd6d46c92f209a44c0f1c829460d327499d",
+    "physlib": "405848179db6375f814021e804a37dc0dda66d91"
+  }
+}
