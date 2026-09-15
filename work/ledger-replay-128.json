@@ -1,0 +1,25 @@
+{
+  "kind": "replay_infrastructure",
+  "backend": "local_sqlite",
+  "clients": 128,
+  "operations": 1000,
+  "elapsed_seconds": 2.1317650839919224,
+  "p50_seconds": 0.20469564601080492,
+  "p95_seconds": 0.4045062919612974,
+  "errors": {},
+  "ledger": {
+    "max_cost_usd": "1000",
+    "reserved_cost_usd": "0",
+    "spent_cost_usd": "1",
+    "active_workers": 0,
+    "max_concurrency": 128,
+    "uncertain_operations": 0,
+    "max_tokens": null,
+    "tokens_reserved": 0,
+    "tokens_spent": 0
+  },
+  "live_model_calls": 0,
+  "allocated_vms": 0,
+  "live_fleet_qualified": false,
+  "scientific_throughput_measured": false
+}

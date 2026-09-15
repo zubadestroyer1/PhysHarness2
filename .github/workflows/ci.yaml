@@ -1,0 +1,103 @@
+name: Repository checks
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  python:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: "0.11.14"
+          enable-cache: true
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.13"
+      - run: uv sync --locked --all-extras
+      - run: uv run ruff check src tests tools infra migrations
+      - run: uv run ruff format --check src tests tools infra migrations
+      - run: uv run pytest -m "not integration and not lean" -q
+      - run: uv run python infra/validate_metadata.py
+      - name: Clarify qualification
+        run: echo 'Unit and metadata checks do not qualify a Lean kernel, VM boundary, cloud deployment, or worker capacity.' >> "$GITHUB_STEP_SUMMARY"
+
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: library/postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+        env:
+          POSTGRES_DB: physharness_ci
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ephemeral_ci_only
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U ci -d physharness_ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: "0.11.14"
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12.13"
+      - run: uv sync --locked
+      - run: uv run pytest tests/test_infrastructure.py -k postgresql_live -q
+        env:
+          PHYSHARNESS_TEST_DATABASE_URL: postgresql+psycopg://ci:ephemeral_ci_only@localhost:5432/physharness_ci
+
+  console:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: console
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24.15.0"
+          cache: npm
+          cache-dependency-path: console/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  terraform:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd
+        with:
+          terraform_version: "1.16.2"
+      - run: terraform -chdir=infra/terraform/aws fmt -check
+      - run: terraform -chdir=infra/terraform/aws init -backend=false -input=false -lockfile=readonly
+      - run: terraform -chdir=infra/terraform/aws validate -no-color
+
+  container:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Load immutable image inputs
+        run: |
+          python3 - <<'PY'
+          import json, os
+          images = json.load(open('infra/images.lock.json'))['images']
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write('PYTHON_IMAGE=' + images['python'] + '\n')
+              output.write('UV_IMAGE=' + images['uv'] + '\n')
+          PY
+      - name: Build application image without publishing
+        run: docker build --build-arg PYTHON_IMAGE="$PYTHON_IMAGE" --build-arg UV_IMAGE="$UV_IMAGE" -t "physharness-ci:${GITHUB_SHA}" .
+      - name: Import installed package inside the actual image
+        run: docker run --rm "physharness-ci:${GITHUB_SHA}" python -c "import physharness.api, physharness.worker; import e2b, numpy"
