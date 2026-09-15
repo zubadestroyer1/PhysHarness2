@@ -346,7 +346,9 @@ def write_build_context(root: Path, destination) -> None:
             )
         ):
             raise ValueError(f"build context requires regular source paths: {name}")
-    with tarfile.open(fileobj=destination, mode="w|") as context:
+    # Buildx must recognize stdin within its short initial header peek. USTAR
+    # avoids a leading PAX extension for filesystem subsecond timestamps.
+    with tarfile.open(fileobj=destination, mode="w|", format=tarfile.USTAR_FORMAT) as context:
         for name in sorted(names):
             context.add(root / name, arcname=name, recursive=False)
 

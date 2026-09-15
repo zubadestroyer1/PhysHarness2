@@ -216,6 +216,11 @@ def test_lake_preparation_preserves_revision_evidence_and_is_idempotent(tmp_path
         ]
     }
     (package / "lake-manifest.json").write_text(json.dumps(upstream))
+    physics = source / "physlib"
+    physics.mkdir()
+    physics_config = 'name = "Physlib"\nenableArtifactCache = true\nrestoreAllArtifacts = true\n'
+    (physics / "lakefile.toml").write_text(physics_config)
+    (physics / "Model.lean").write_bytes(b"def model := 1\n")
     spec.loader.exec_module(helper)
     lock = {"sources": {"lean4export": {"revision": "a" * 40}}}
     helper.prepare(source, lock)
@@ -224,6 +229,16 @@ def test_lake_preparation_preserves_revision_evidence_and_is_idempotent(tmp_path
     assert json.loads((package / "lake-manifest.json").read_text())["packages"][0]["dir"] == str(
         source / "lean4export"
     )
+    assert (physics / "lakefile.upstream.toml").read_text() == physics_config
+    assert (physics / "lakefile.toml").read_text() == physics_config.replace(
+        "enableArtifactCache = true", "enableArtifactCache = false"
+    )
+    assert (physics / "Model.lean").read_bytes() == b"def model := 1\n"
+    prepared_bytes = (physics / "lakefile.toml").read_bytes()
+    (physics / "lakefile.upstream.toml").write_text('name = "Unexpected"\n')
+    with pytest.raises(ValueError, match="Unexpected Physlib"):
+        helper.prepare(source, lock)
+    assert (physics / "lakefile.toml").read_bytes() == prepared_bytes
 
 
 def test_download_does_not_delete_an_existing_partial_file(tmp_path):
@@ -287,6 +302,9 @@ def test_build_context_excludes_caches_and_unrelated_formal_files(tmp_path):
         path.write_text("synthetic source" if name in included else "never send this")
     output = io.BytesIO()
     module().write_build_context(tmp_path, output)
+    # Buildx peeks only 1024 bytes: a leading PAX header plus its payload leaves
+    # no actual member header to recognize, and stdin is mistaken for a Dockerfile.
+    assert output.getvalue()[156:157] == tarfile.REGTYPE
     with tarfile.open(fileobj=io.BytesIO(output.getvalue())) as context:
         names = set(context.getnames())
         assert names == set(included)
