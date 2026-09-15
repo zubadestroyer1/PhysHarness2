@@ -1,3 +1,5 @@
+import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -558,3 +560,171 @@ async def test_checkpoint_upload_outliving_lease_cannot_publish(lab, monkeypatch
     operations = service.list_records("workspace_operation", broker.actor, experiment["id"])
     assert all(op["status"] != "completed" for op in operations if op["command"] != "provision")
     assert service.ledger(experiment["id"], broker.actor)["active_workers"] == 1
+
+
+@pytest.mark.parametrize("stage", ["provision", "run"])
+@pytest.mark.parametrize("stop", ["timeout", "interrupt"])
+async def test_runtime_cancellation_through_workspace_stops_generation(lab, tmp_path, stage, stop):
+    from test_execution_responses import client_for, message, response
+
+    from physharness.execution import (
+        ExecutionError,
+        ModelConfig,
+        ResponsesRuntime,
+        RuntimeLimits,
+        SQLiteRuntimeStore,
+    )
+    from physharness.orchestration.research_worker import research_tools
+    from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
+
+    broker, service, experiment, calls, providers, _ = setup(lab)
+    target = service.get_record("problem", experiment["problem_id"], broker.actor)
+    workspace_tools = WorkspaceTools(
+        broker,
+        WorkspacePolicy(
+            template_id="qualified-template",
+            environment_digest=target["environment_digest"],
+            qualification_report_sha256="a" * 64,
+            timeout_seconds=60,
+            cost_bound_usd="0.2",
+            cost_source="test fixture only",
+        ),
+    )
+    entered = asyncio.Event()
+
+    async def stalled(*args):
+        entered.set()
+        await asyncio.Event().wait()
+
+    if stage == "run":
+        await workspace_tools._ensure()
+        providers[0].run = stalled
+    else:
+        factory = broker.provider_factory
+
+        def stalled_factory(**kwargs):
+            vm = factory(**kwargs)
+            vm.create = stalled
+            return vm
+
+        broker.provider_factory = stalled_factory
+    task = service.get_record("task", broker.task_id, broker.actor)
+    agent = Principal(
+        id="holder",
+        project_id=broker.actor.project_id,
+        role="agent",
+        experiment_id=experiment["id"],
+        branch_id=task["branch_id"],
+    )
+    dispatcher = research_tools(service, agent, task["branch_id"], workspace_tools=workspace_tools)
+    call = {
+        "id": "fc_1",
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "run_command",
+        "status": "completed",
+        "arguments": json.dumps({"argv": ["sleep", "10"], "cwd": ".", "timeout_seconds": 30}),
+    }
+    requests = []
+    client = client_for(
+        [response([call]), response([message("must never generate")], response_id="resp_2")],
+        requests,
+    )
+    store = SQLiteRuntimeStore(tmp_path / "runtime-cancel.db")
+    runtime = ResponsesRuntime(store=store, dispatcher=dispatcher, client=client)
+    running = asyncio.create_task(
+        runtime.start(
+            "run",
+            ModelConfig(model="exact-model"),
+            RuntimeLimits(timeout_seconds=1 if stop == "timeout" else 10),
+        )
+    )
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        session_id = next(iter(runtime._active))
+        if stop == "interrupt":
+            assert await runtime.interrupt(session_id)
+            with pytest.raises(asyncio.CancelledError):
+                await running
+        else:
+            with pytest.raises(ExecutionError) as error:
+                await running
+            assert error.value.code == "TIMEOUT"
+        checkpoint = await runtime.checkpoint(session_id)
+        assert checkpoint.session.status == "uncertain"
+        assert checkpoint.native_state["pending_operation"]
+        assert len([url for url, _ in requests if not url.endswith("/input_tokens")]) == 1
+        workspace = service.list_records("workspace", broker.actor, experiment["id"])[0]
+        assert workspace["status"] == "reconciliation_required"
+        assert workspace["execution_id"] == "vm-123"
+        ledger = service.ledger(experiment["id"], broker.actor)
+        assert ledger["reserved_cost_usd"] == "0.2"
+        assert ledger["active_workers"] == 1 and ledger["uncertain_operations"] == 1
+    finally:
+        if not running.done():
+            running.cancel()
+        await asyncio.gather(running, return_exceptions=True)
+        await client.close()
+        store.close()
+
+
+@pytest.mark.parametrize("stage", ["provision", "run"])
+@pytest.mark.parametrize("persistence_fails", [False, True])
+@pytest.mark.parametrize("handle_retained", [False, True])
+async def test_original_cancellation_survives_observation_failures(
+    lab, monkeypatch, stage, persistence_fails, handle_retained
+):
+    broker, service, experiment, _, providers, _ = setup(lab)
+    cancellation = asyncio.CancelledError("operator cancelled")
+
+    async def cancel(*args):
+        if not handle_retained:
+            providers[0].execution_id = None
+            providers[0].last_execution_observation = {
+                "execution_id": "vm-123",
+                "destruction_confirmed": stage == "run",
+            }
+        raise cancellation
+
+    if stage == "run":
+        workspace = await broker.provision(cost_bound_usd="0.2", operation_id="p")
+        providers[0].run = cancel
+        providers[0].last_execution_observation = {
+            "execution_id": "vm-123",
+            "destruction_confirmed": True,
+        }
+        call = broker.run(
+            workspace["id"],
+            expected_execution_id="vm-123",
+            request=CommandRequest(argv=["true"], operation_id="run"),
+        )
+    else:
+        factory = broker.provider_factory
+
+        def cancelling_factory(**kwargs):
+            vm = factory(**kwargs)
+            vm.create = cancel
+            return vm
+
+        broker.provider_factory = cancelling_factory
+        call = broker.provision(cost_bound_usd="0.2", operation_id="p")
+
+    def fail(*args, **kwargs):
+        raise OSError("uncertainty persistence unavailable")
+
+    if persistence_fails:
+        monkeypatch.setattr(broker, "_record_uncertainty", fail)
+    with pytest.raises(asyncio.CancelledError) as error:
+        await call
+    assert error.value is cancellation
+    observed = next(iter(broker.reconciliation_observations.values()))
+    assert observed["execution_id"] == "vm-123"
+    assert observed["destruction_confirmed"] is (stage == "run")
+    if persistence_fails:
+        assert "Cannot persist reconciliation" in cancellation.__notes__[0]
+    else:
+        workspace = broker.inspect(observed["workspace_id"])
+        assert workspace["status"] == "reconciliation_required"
+        assert workspace["destruction_confirmed"] is (stage == "run")
+    ledger = service.ledger(experiment["id"], broker.actor)
+    assert ledger["reserved_cost_usd"] == "0.2" and ledger["spent_cost_usd"] == "0"

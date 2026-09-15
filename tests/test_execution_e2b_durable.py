@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import shlex
@@ -139,6 +140,181 @@ def provider(tmp_path, identity="vm-source"):
         ),
     )
     return p
+
+
+@pytest.mark.parametrize("mode", ["fork", "restore"])
+@pytest.mark.parametrize("failure", ["metadata", "cancel", "cleanup_timeout"])
+async def test_unverified_child_identity_is_durable_and_never_reallocated(
+    tmp_path, monkeypatch, mode, failure
+):
+    from e2b import AsyncSandbox
+
+    p = provider(tmp_path)
+    p.timeout_seconds = 0.02
+    cancellation = asyncio.CancelledError("stop validation")
+
+    async def stalled_cleanup():
+        await asyncio.Event().wait()
+
+    sandbox = SimpleNamespace(
+        sandbox_id="known-billable-child",
+        get_info=AsyncMock(
+            side_effect=cancellation if failure == "cancel" else OSError("metadata")
+        ),
+        kill=AsyncMock(
+            side_effect=stalled_cleanup if failure == "cleanup_timeout" else OSError("kill")
+        ),
+    )
+    allocate = AsyncMock(return_value=[sandbox] if mode == "fork" else sandbox)
+    p._sandbox.fork = allocate
+    monkeypatch.setattr(AsyncSandbox, "create", allocate)
+    checkpoint = NativeWorkspaceCheckpoint.build(
+        kind="snapshot",
+        execution_id="vm-source",
+        template_id=p.template_id,
+        snapshot_id="snapshot:qualified",
+    )
+
+    async def dispatch(owner):
+        if mode == "fork":
+            return await owner.fork(expected_execution_id="vm-source", operation_id="allocation")
+        return await owner.restore_snapshot(
+            checkpoint, operation_id="allocation", pinned_snapshot_id=checkpoint.snapshot_id
+        )
+
+    with pytest.raises(asyncio.CancelledError if failure == "cancel" else ExecutionError) as error:
+        await asyncio.wait_for(dispatch(p), 0.5)
+    if failure == "cancel":
+        assert error.value is cancellation
+    else:
+        assert error.value.code == "OPERATION_UNCERTAIN"
+    observation = p.native_child_observations["allocation"]
+    assert observation["execution_id"] == "known-billable-child"
+    assert observation["destruction_confirmed"] is False
+    child = p._native_children["allocation"]
+    assert child.execution_id == "known-billable-child" and child._quarantined
+    with pytest.raises(ExecutionError, match="reconcil"):
+        await dispatch(p)
+    p.journal.db.close()
+    restarted = provider(tmp_path)
+    restarted.timeout_seconds = p.timeout_seconds
+    restarted._sandbox.fork = allocate
+    evidence = restarted.journal.export("e2b:vm-source")[0]
+    assert evidence["status"] == "pending"
+    assert evidence["result"]["execution_id"] == "known-billable-child"
+    assert evidence["result"]["destruction_confirmed"] is False
+    with pytest.raises(ExecutionError, match="reconcil"):
+        await dispatch(restarted)
+    assert allocate.await_count == 1
+
+
+@pytest.mark.parametrize("mode", ["fork", "restore"])
+async def test_child_identity_persisted_before_validation_await(tmp_path, monkeypatch, mode):
+    from e2b import AsyncSandbox
+
+    p = provider(tmp_path)
+    entered = asyncio.Event()
+
+    async def validate():
+        entered.set()
+        await asyncio.Event().wait()
+
+    child = SimpleNamespace(
+        sandbox_id="allocated-before-await",
+        get_info=validate,
+        kill=AsyncMock(side_effect=OSError("cleanup unavailable")),
+    )
+    p._sandbox.fork = AsyncMock(return_value=[child])
+    monkeypatch.setattr(AsyncSandbox, "create", AsyncMock(return_value=child))
+    checkpoint = NativeWorkspaceCheckpoint.build(
+        kind="snapshot",
+        execution_id="vm-source",
+        template_id=p.template_id,
+        snapshot_id="snapshot:qualified",
+    )
+    call = (
+        p.fork(expected_execution_id="vm-source", operation_id="allocation")
+        if mode == "fork"
+        else p.restore_snapshot(
+            checkpoint, operation_id="allocation", pinned_snapshot_id=checkpoint.snapshot_id
+        )
+    )
+    pending = asyncio.create_task(call)
+    try:
+        await asyncio.wait_for(entered.wait(), 1)
+        # A separate connection can recover the identity while validation is still suspended.
+        with CommandJournal(tmp_path / "journal.db") as recovered:
+            evidence = recovered.export("e2b:vm-source")[0]
+        assert evidence["status"] == "pending"
+        assert evidence["result"]["execution_id"] == child.sandbox_id
+        assert p._native_children["allocation"]._quarantined
+    finally:
+        pending.cancel("operator interrupt")
+        with pytest.raises(asyncio.CancelledError, match="operator interrupt"):
+            await pending
+    with CommandJournal(tmp_path / "journal.db") as recovered:
+        assert recovered.export("e2b:vm-source")[0]["result"]["destruction_confirmed"] is False
+
+
+async def test_malformed_fork_retains_all_returned_child_identities(tmp_path):
+    p = provider(tmp_path)
+    children = [
+        SimpleNamespace(sandbox_id=name, kill=AsyncMock(side_effect=OSError("kill failed")))
+        for name in ["unexpected-child-a", "unexpected-child-b"]
+    ]
+    source = p._sandbox
+    source.fork = AsyncMock(return_value=[source, *children, OSError("partial failure")])
+    with pytest.raises(ExecutionError) as error:
+        await p.fork(expected_execution_id="vm-source", operation_id="malformed")
+    assert error.value.code == "OPERATION_UNCERTAIN"
+    with CommandJournal(tmp_path / "journal.db") as recovered:
+        record = recovered.export("e2b:vm-source")[0]
+    assert record["status"] == "pending"
+    assert {child["execution_id"] for child in record["result"]["children"]} == {
+        "unexpected-child-a",
+        "unexpected-child-b",
+    }
+    assert all(not child["destruction_confirmed"] for child in record["result"]["children"])
+    source.kill.assert_not_awaited()
+    for child in children:
+        child.kill.assert_awaited_once()
+    with pytest.raises(ExecutionError, match="reconcile"):
+        await p.fork(expected_execution_id="vm-source", operation_id="malformed")
+    source.fork.assert_awaited_once()
+
+
+async def test_child_allocation_requires_observation_capable_journal(tmp_path, monkeypatch):
+    p = provider(tmp_path)
+    monkeypatch.setattr(p.journal, "observe", None)
+    p._sandbox.fork = AsyncMock(return_value=[])
+    with pytest.raises(ExecutionError) as error:
+        await p.fork(expected_execution_id="vm-source", operation_id="no-observations")
+    assert error.value.code == "CAPABILITY_UNAVAILABLE"
+    p._sandbox.fork.assert_not_awaited()
+
+
+async def test_completed_child_replay_refuses_quarantined_handle(tmp_path):
+    p = provider(tmp_path)
+    child = SimpleNamespace(
+        sandbox_id="child",
+        kill=AsyncMock(side_effect=OSError("kill failed")),
+        get_info=AsyncMock(
+            return_value=SimpleNamespace(
+                sandbox_id="child",
+                allow_internet_access=False,
+                network=None,
+            )
+        ),
+    )
+    p._sandbox.fork = AsyncMock(return_value=[child])
+    allocated = await p.fork(expected_execution_id="vm-source", operation_id="allocate")
+    with pytest.raises(ExecutionError):
+        await allocated.close()
+    with pytest.raises(ExecutionError) as error:
+        await p.fork(expected_execution_id="vm-source", operation_id="allocate")
+    assert error.value.code == "NATIVE_RECONNECT_REQUIRED"
+    assert p.journal.export("e2b:vm-source")[0]["result"]["execution_id"] == "child"
+    p._sandbox.fork.assert_awaited_once()
 
 
 async def test_files_export_restore_and_symlink_safety(tmp_path):

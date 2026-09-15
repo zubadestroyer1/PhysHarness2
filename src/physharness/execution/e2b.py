@@ -259,6 +259,7 @@ class E2BSandboxProvider:
         self.workspace_root = workspace_root
         self.journal = journal
         self._native_children: dict[str, E2BSandboxProvider] = {}
+        self._native_allocations: dict[str, list[E2BSandboxProvider]] = {}
         self._paused = False
         self._creating = False
         self._closing = False
@@ -680,6 +681,12 @@ class E2BSandboxProvider:
                 "CAPABILITY_UNAVAILABLE",
                 f"Native {command} requires a durable journal and operation ID",
             )
+        if command in {"fork", "restore_snapshot"} and not callable(
+            getattr(self.journal, "observe", None)
+        ):
+            raise ExecutionError(
+                "CAPABILITY_UNAVAILABLE", "Native allocation requires durable child observations"
+            )
         return self.journal.begin(
             "e2b:" + execution_id,
             operation_id,
@@ -813,7 +820,12 @@ class E2BSandboxProvider:
 
     def _replay_child(self, operation_id: str, replay: dict[str, Any]) -> E2BSandboxProvider:
         child = self._native_children.get(operation_id)
-        if child is None or child.execution_id != replay.get("execution_id"):
+        if (
+            child is None
+            or child._quarantined
+            or child._sandbox is None
+            or child.execution_id != replay.get("execution_id")
+        ):
             raise ExecutionError(
                 "NATIVE_RECONNECT_REQUIRED",
                 "Allocation already completed; reconcile recorded child identity "
@@ -837,21 +849,18 @@ class E2BSandboxProvider:
             try:
                 await self._verify_network(self._sandbox, expected_execution_id)
                 results = await self._sandbox.fork(timeout=self.timeout_seconds, count=1)
-                if len(results) != 1 or isinstance(results[0], Exception):
+                children = self._retain_children(expected_execution_id, operation_id, results)
+                if len(results) != 1 or len(children) != 1:
                     raise ValueError("Native fork did not return one successful child")
                 sandbox = results[0]
-                if sandbox.sandbox_id == expected_execution_id:
-                    sandbox = None  # Never kill the source on a malformed provider response.
-                    raise ValueError("Native fork reused source identity")
+                child = children[0]
                 await self._verify_network(sandbox, sandbox.sandbox_id)
-            except Exception as exc:
-                if sandbox is not None:
-                    await sandbox.kill()
-                raise ExecutionError(
-                    "OPERATION_UNCERTAIN", "Native fork unverified; reconcile before retry"
-                ) from exc
-            child = self._child(sandbox)
-            await self._commit_child(expected_execution_id, operation_id, child)
+                self._complete_native(
+                    expected_execution_id, operation_id, {"execution_id": child.execution_id}
+                )
+            except BaseException as exc:
+                await self._fail_child(expected_execution_id, operation_id, exc)
+            child._quarantined = False
             return child
 
     async def restore_snapshot(
@@ -898,40 +907,81 @@ class E2BSandboxProvider:
                 if sandbox.sandbox_id == checkpoint.execution_id:
                     sandbox = None
                     raise ValueError("Snapshot restore reused source identity")
+                children = self._retain_children(checkpoint.execution_id, operation_id, [sandbox])
+                if not children:
+                    raise ValueError("Snapshot restore returned no child identity")
+                child = children[0]
                 await self._verify_network(sandbox, sandbox.sandbox_id)
-            except Exception as exc:
-                if sandbox is not None:
-                    await sandbox.kill()
-                raise ExecutionError(
-                    "OPERATION_UNCERTAIN",
-                    "Native snapshot restore uncertain; reconcile before retry",
-                ) from exc
-            child = self._child(sandbox)
-            await self._commit_child(checkpoint.execution_id, operation_id, child)
+                self._complete_native(
+                    checkpoint.execution_id, operation_id, {"execution_id": child.execution_id}
+                )
+            except BaseException as exc:
+                await self._fail_child(checkpoint.execution_id, operation_id, exc)
+            child._quarantined = False
             return child
 
-    async def _commit_child(
-        self, source_id: str, operation_id: str, child: E2BSandboxProvider
-    ) -> None:
-        identity = child.execution_id
-        self._native_children[operation_id] = child
-        observation = {"execution_id": identity, "destruction_confirmed": False}
+    def _retain_children(
+        self, source_id: str, operation_id: str, sandboxes: list[Any]
+    ) -> list[E2BSandboxProvider]:
+        # No await may separate receiving a child from retaining its recovery identity.
+        children = []
+        observations = []
+        for sandbox in sandboxes:
+            identity = getattr(sandbox, "sandbox_id", None)
+            if not isinstance(identity, str) or not identity or identity == source_id:
+                continue  # Never adopt or destroy the source on a malformed provider response.
+            child = self._child(sandbox)
+            child._quarantined = True
+            children.append(child)
+            observations.append({"execution_id": identity, "destruction_confirmed": False})
+        if not children:
+            return children
+        self._native_allocations[operation_id] = children
+        self._native_children[operation_id] = children[0]
+        observation = dict(observations[0])
+        if len(children) > 1:
+            observation["children"] = observations
         self.native_child_observations[operation_id] = observation
-        try:
-            self._complete_native(source_id, operation_id, {"execution_id": identity})
-        except BaseException as exc:
+        assert self.journal is not None
+        self.journal.observe("e2b:" + source_id, operation_id, observation)
+        return children
+
+    async def _fail_child(self, source_id: str, operation_id: str, exc: BaseException) -> None:
+        children = self._native_allocations.get(operation_id, [])
+        observation = self.native_child_observations.get(operation_id)
+        for index, child in enumerate(children):
+            assert observation is not None
+            child_observation = (
+                observation["children"][index] if "children" in observation else observation
+            )
             child._quarantined = True
             try:
                 async with asyncio.timeout(min(self.timeout_seconds, 10)):
                     await child.close()
-                observation["destruction_confirmed"] = True
-            except BaseException:
-                pass
-            raise ExecutionError(
-                "OPERATION_UNCERTAIN",
-                f"Native child {identity} allocation could not be committed; reconcile. "
-                f"Destruction confirmed: {observation['destruction_confirmed']}.",
-                operation_id=operation_id,
-                remediation=f"Retain child identity {identity}; reconcile journal and charges. "
-                "Never retry this allocation automatically.",
-            ) from exc
+                child_observation["destruction_confirmed"] = True
+            except asyncio.CancelledError as cancelled:
+                if not isinstance(exc, asyncio.CancelledError):
+                    exc = cancelled
+            except Exception:
+                pass  # Identity remains quarantined and destruction is explicitly unconfirmed.
+            if index == 0:
+                observation["destruction_confirmed"] = child_observation["destruction_confirmed"]
+            try:
+                assert self.journal is not None
+                self.journal.observe("e2b:" + source_id, operation_id, observation)
+            except Exception as journal_error:
+                exc.add_note(
+                    f"Cannot persist native child observation {observation}: {journal_error}"
+                )
+        if isinstance(exc, asyncio.CancelledError):
+            raise exc
+        identity = observation["execution_id"] if observation else "unknown"
+        confirmed = observation["destruction_confirmed"] if observation else False
+        raise ExecutionError(
+            "OPERATION_UNCERTAIN",
+            f"Native child {identity} allocation unverified; reconcile before retry. "
+            f"Destruction confirmed: {confirmed}.",
+            operation_id=operation_id,
+            remediation=f"Retain child identity {identity}; reconcile journal and charges. "
+            "Never retry this allocation automatically.",
+        ) from exc

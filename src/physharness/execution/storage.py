@@ -103,6 +103,23 @@ class CommandJournal:
         finally:
             self.db.execute("COMMIT")
 
+    def observe(self, program_id: str, operation_id: str, observation: dict[str, Any]) -> None:
+        """Persist recovery evidence without making a pending operation replayable."""
+        if not isinstance(observation, dict):
+            raise ExecutionError("INVALID_TOOL_RESULT", "Journal observations must be JSON objects")
+        encoded = json.dumps(observation, sort_keys=True, allow_nan=False)
+        cursor = self.db.execute(
+            "UPDATE research_commands SET result=? "
+            "WHERE program_id=? AND operation_id=? AND status='pending'",
+            (encoded, program_id, operation_id),
+        )
+        if cursor.rowcount != 1:
+            raise ExecutionError(
+                "OPERATION_CONFLICT",
+                "Only a pending operation can receive observations",
+                operation_id=operation_id,
+            )
+
     def complete(self, program_id: str, operation_id: str, result: Any) -> None:
         if not isinstance(result, dict):
             raise ExecutionError("INVALID_TOOL_RESULT", "Journal results must be JSON objects")
