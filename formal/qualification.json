@@ -13,6 +13,8 @@
     "elan launchers found, but no default Lean toolchain configured",
     "No generated Lean code executed on the development host",
     "Python protocol/adversarial tests do not qualify a kernel",
-    "Audit fixes and io_uring denial probes are protocol-tested only; no live Linux containment test has run"
-  ]
+    "Audit fixes and io_uring denial probes are protocol-tested only; no live Linux containment test has run",
+    "Protocol v2 separates canonical target metadata and challenge source hashes; changed launcher/driver and operator cases require regeneration, repinning and real requalification"
+  ],
+  "protocol": "physharness-comparator-v2"
 }

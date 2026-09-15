@@ -79,9 +79,17 @@ class CanonicalEvidence:
                 or review["scope"] != "target"
                 or review["problem_id"] != problem_id
                 or review["target_digest"] != problem["target_digest"]
+                or receipt.get("review_id") != review["id"]
                 or not review.get("reviewed_by")
             ):
                 raise ValueError("semantic review does not approve the exact target")
+            if (
+                receipt.get("challenge_sha256")
+                != hashlib.sha256(problem["formal_statement"].encode("utf-8")).hexdigest()
+            ):
+                raise ValueError("receipt challenge source mismatch")
+            if receipt.get("target_theorem") != problem["target_theorem"]:
+                raise ValueError("receipt selected theorem mismatch")
             for field, expected in (
                 ("target_digest", target_digest),
                 ("environment_digest", environment_digest),

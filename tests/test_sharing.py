@@ -305,3 +305,25 @@ async def test_worker_prompt_tools_sessions_and_outputs_obey_same_branch(lab):
     other_store = CanonicalRuntimeStore(service, author, exp["id"], "different-task", "holder", 1)
     with pytest.raises(HarnessError):
         await other_store.load(seen[0])
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("challenge_sha256", "f" * 64), ("review_id", "stale"), ("target_theorem", "other")],
+)
+def test_sharing_requires_current_source_review_and_theorem(lab, field, value):
+    service, _, exp, _, (alpha, beta) = approaches(lab, "verified")
+    item = artifact(service, beta, "candidate")
+    receipt = service.verify_candidate(exp["id"], item["id"], False, beta, "submit")
+    with service.db.transaction() as session:
+        service._replace(
+            session,
+            session.get(RecordRow, receipt["id"]),
+            {
+                "status": "verified",
+                "assurance": "independent_kernel",
+                field: value,
+            },
+        )
+    assert service.list_records("artifact", alpha) == []
+    assert service.list_records("verification", alpha) == []

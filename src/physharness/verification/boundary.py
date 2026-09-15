@@ -20,7 +20,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 SHA256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 ImageDigest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
 ALLOWED_AXIOMS = frozenset({"propext", "Quot.sound", "Classical.choice"})
-PROTOCOL = "physharness-comparator-v1"
+PROTOCOL = "physharness-comparator-v2"
+MAX_CANDIDATE_CHARACTERS = 2_000_000
 
 
 class Contract(BaseModel):
@@ -30,10 +31,12 @@ class Contract(BaseModel):
 class VerificationRequest(Contract):
     problem_revision_id: str = Field(min_length=1, max_length=256)
     target_digest: SHA256
+    challenge_sha256: SHA256
     environment_digest: SHA256
     candidate_sha256: SHA256
-    candidate_source: str = Field(max_length=2_000_000)
+    candidate_source: str = Field(max_length=MAX_CANDIDATE_CHARACTERS)
     publication: bool = False
+    target_theorem: str = Field(min_length=1, max_length=500)
     semantic_reviewed: bool
     definition_holes: bool = False
 
@@ -45,6 +48,7 @@ class VerificationOutcome(Contract):
     message: str
     remediation: str
     target_digest: SHA256
+    challenge_sha256: SHA256
     candidate_sha256: SHA256
     environment_digest: SHA256
     axioms: list[str] = Field(default_factory=list)
@@ -90,8 +94,10 @@ class ComparatorConfig(Contract):
 
 
 class Manifest(Contract):
+    protocol: Literal["physharness-comparator-v2"]
     problem_revision_id: str
     target_digest: SHA256
+    challenge_sha256: SHA256
     environment_digest: SHA256
     theorem_names: list[str] = Field(min_length=1, max_length=128)
 
@@ -104,10 +110,11 @@ class Environment(Contract):
 
 
 class DriverResult(Contract):
-    protocol: Literal["physharness-comparator-v1"]
+    protocol: Literal["physharness-comparator-v2"]
     status: Literal["verified", "rejected", "blocked"]
     code: str
     target_digest: SHA256
+    challenge_sha256: SHA256
     environment_digest: SHA256
     candidate_sha256: SHA256
     independent_kernel: bool
@@ -173,6 +180,7 @@ def outcome(req, status, code, message, remediation, **kwargs):
         message=message,
         remediation=remediation,
         target_digest=req.target_digest,
+        challenge_sha256=req.challenge_sha256,
         environment_digest=req.environment_digest,
         candidate_sha256=req.candidate_sha256,
         **kwargs,
@@ -298,14 +306,21 @@ class ComparatorVerifier:
         if digest(raw) != config.manifest_sha256:
             raise ValueError("pinned manifest digest mismatch")
         manifest = Manifest.model_validate_json(raw)
+        if manifest.theorem_names != [req.target_theorem]:
+            raise ValueError("bundle theorem selection differs from the reviewed target theorem")
         if any(
             getattr(manifest, key) != getattr(req, key)
-            for key in ("problem_revision_id", "target_digest", "environment_digest")
+            for key in (
+                "problem_revision_id",
+                "target_digest",
+                "challenge_sha256",
+                "environment_digest",
+            )
         ):
             raise ValueError("request does not match trusted manifest")
         target = safe_read(root, "Challenge.lean")
         raw_env = safe_read(root, "environment.json")
-        if digest(target) != req.target_digest or digest(raw_env) != req.environment_digest:
+        if digest(target) != req.challenge_sha256 or digest(raw_env) != req.environment_digest:
             raise ValueError("target or environment digest mismatch")
         env = Environment.model_validate_json(raw_env)
         if env.image != config.qualification.image_digest:
@@ -363,6 +378,7 @@ class ComparatorVerifier:
         if request.publication and (
             not self.config.qualification.independent_kernel
             or not env.checker_versions.get("nanoda")
+            or not env.binaries.get("nanoda")
         ):
             return outcome(
                 request,
@@ -373,7 +389,12 @@ class ComparatorVerifier:
             )
         try:
             result = DriverResult.model_validate(self._run_container(request, manifest, env, files))
-            for key in ("target_digest", "environment_digest", "candidate_sha256"):
+            for key in (
+                "target_digest",
+                "challenge_sha256",
+                "environment_digest",
+                "candidate_sha256",
+            ):
                 if getattr(result, key) != getattr(request, key):
                     raise ValueError(f"driver returned mismatched {key}")
             if result.checker_versions != env.checker_versions:
