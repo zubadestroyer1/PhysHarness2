@@ -1,18 +1,24 @@
 {
-  "status": "blocked",
+  "status": "unqualified",
   "expert_review": "not_reviewed",
-  "kernel_smoke": "not_run",
-  "independent_kernel_smoke": "not_run",
+  "kernel_smoke": "engineering_passed_9_of_9",
+  "independent_kernel_smoke": "engineering_passed_9_of_9",
   "qualified_image_digest": null,
-  "comparator_source_commit": null,
-  "lean4export_source_commit": null,
-  "landrun_source_commit": null,
-  "nanoda_source_commit": null,
+  "comparator_source_commit": "3927ad383f208ae977c340a91c48ac9b497d2097",
+  "lean4export_source_commit": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+  "landrun_source_commit": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+  "nanoda_source_commit": "4c544ed4099c8227f07d5de77ad1e69fb0740a27",
   "observations": [
-    "Docker CLI found, but Docker daemon unavailable on the development Mac",
-    "elan launchers found, but no default Lean toolchain configured",
-    "No generated Lean code executed on the development host",
-    "Python protocol/adversarial tests do not qualify a kernel",
-    "Audit fixes and io_uring denial probes are protocol-tested only; no live Linux containment test has run"
+    "Pinned real aarch64 Linux toolchain built inside dedicated Colima VM on 2026-09-15.",
+    "Both kernel and independent nanoda engineering runs passed two positive cases and seven negative/attack cases.",
+    "No generated Lean code executed on the development Mac host.",
+    "These engineering cases are not a complete containment qualification or a scientific semantic review.",
+    "Physics dependency source build and declaration kernel audit have separate evidence; source inventory alone does not establish compiled declarations."
+  ],
+  "observed_build_image_digest": "sha256:cadb65787cb75657516379dc91f3870c6c473e3df11b907428f522ceff360eca",
+  "engineering_status": "passed",
+  "engineering_evidence": [
+    "work/acceptance-evidence/engineering-kernel-report.json",
+    "work/acceptance-evidence/engineering-independent-report.json"
   ]
 }
