@@ -131,3 +131,16 @@ it('uses the refreshed canonical revision for the next selected transition',asyn
  await act(async()=>{})
  expect(fetch).toHaveBeenCalledWith('/v1/experiments/e1/transition',expect.objectContaining({body:JSON.stringify({action:'cancel',expected_revision:2})}))
 })
+
+it('labels historical sessions as project-wide recorded sessions and discloses the Activity limit',async()=>{
+ const original=vi.mocked(fetch).getMockImplementation()!
+ vi.mocked(fetch).mockImplementation((input,init)=>String(input).endsWith('/sessions')?response({items:[{id:'session-1',project_id:'p1',revision:2,created_at:'2026-09-14T00:00:00Z',status:'completed'}]}):original(input,init))
+ render(<App />)
+ await act(async()=>{})
+ const metric=screen.getByText('Recorded sessions').closest('article')!
+ expect(within(metric).getByText('1')).toBeInTheDocument()
+ expect(within(metric).getByText('project-wide total')).toBeInTheDocument()
+ expect(screen.queryByText('Active sessions')).not.toBeInTheDocument()
+ fireEvent.click(screen.getByRole('button',{name:'Activity'}))
+ expect(screen.getByText(/1,000 newest observed events/)).toBeInTheDocument()
+})

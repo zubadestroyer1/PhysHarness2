@@ -1,6 +1,8 @@
 import { ApiFailure, completeReads, loadWorkspace, type ApiClient } from './api'
 import type { CoreRecord, WorkspaceData } from './types'
 
+export const ACTIVITY_LIMIT = 1000
+
 const collections = {
   campaign: 'campaigns', problem: 'problems', experiment: 'experiments', branch: 'branches',
   task: 'tasks', claim: 'claims', artifact: 'artifacts', review: 'reviews', session: 'sessions', program: 'programs',
@@ -60,5 +62,7 @@ export async function refreshWorkspace(api: ApiClient, current: WorkspaceData): 
 }
 
 function mergeEvents(previous: WorkspaceData['events'], incoming: WorkspaceData['events']) {
-  return [...new Map([...previous, ...incoming].map(event => [event.sequence, event])).values()].sort((a, b) => a.sequence - b.sequence)
+  if (!incoming.length) return previous
+  return [...new Map([...previous, ...incoming].map(event => [event.sequence, event])).values()]
+    .sort((a, b) => a.sequence - b.sequence).slice(-ACTIVITY_LIMIT)
 }
