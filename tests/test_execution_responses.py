@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -206,3 +207,189 @@ async def test_missing_model_output_is_not_a_successful_fallback(tmp_path):
         await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
     assert error.value.code == "MODEL_OUTPUT_MISSING"
     await client.close()
+
+
+async def test_duplicate_provider_tool_call_is_dispatched_once_across_turns(tmp_path):
+    requests, effects = [], []
+    call = {
+        "id": "fc",
+        "type": "function_call",
+        "call_id": "stable-call",
+        "name": "effect",
+        "arguments": "{}",
+        "status": "completed",
+    }
+    dispatcher = ToolDispatcher()
+
+    async def effect(arguments, operation_id):
+        effects.append(operation_id)
+        return {"canonical_result": len(effects)}
+
+    dispatcher.register(
+        "effect",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        effect,
+    )
+    client = client_for(
+        [
+            response([call]),
+            response([call], response_id="r2"),
+            response([message("done")], response_id="r3"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), dispatcher=dispatcher, client=client
+    )
+    result = await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert len(effects) == 1
+    assert result.session.input_tokens == 30
+    await client.close()
+
+
+async def test_usage_hook_failure_retains_correlated_pending_generation(tmp_path):
+    client = client_for([response([message("done")])], [])
+    events = []
+
+    async def failed_accounting(event):
+        events.append(event)
+        if event.kind == "usage":
+            raise OSError("ledger unavailable")
+
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=failed_accounting
+    )
+    with pytest.raises(ExecutionError):
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    started = next(event for event in events if event.kind == "generation_started")
+    checkpoint = await runtime.checkpoint(started.session_id)
+    assert checkpoint.session.status == "uncertain"
+    assert checkpoint.native_state["pending_operation"] == started.operation_id
+    assert checkpoint.session.input_tokens == 10
+    with pytest.raises(ExecutionError, match="unresolved"):
+        await runtime.resume(checkpoint)
+    await client.close()
+
+
+def test_checkpoint_snapshots_native_state_without_mutable_alias():
+    from physharness.execution import RuntimeCheckpoint, RuntimeSession
+
+    state = {"input": [{"content": "exact assumptions"}]}
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    checkpoint = RuntimeCheckpoint.build(session, state)
+    state["input"][0]["content"] = "changed"
+    checkpoint.verify()
+    assert checkpoint.native_state["input"][0]["content"] == "exact assumptions"
+
+
+async def test_continuation_marks_session_running_before_awaiting_preflight(tmp_path):
+    """A second adapter must observe the in-progress continuation in the shared store."""
+    entered, release = asyncio.Event(), asyncio.Event()
+    requests = []
+    client = client_for([response([message("first")])], requests)
+    store = SQLiteRuntimeStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, client=client)
+    first = await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+
+    async def blocked_handler(request):
+        if request.url.path.endswith("/input_tokens"):
+            entered.set()
+            await release.wait()
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        return httpx.Response(200, json=response([message("second")], response_id="resp_2"))
+
+    waiting_client = AsyncOpenAI(
+        api_key="mock-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(blocked_handler)),
+    )
+    runtime.client = waiting_client
+    running = asyncio.create_task(runtime.continue_session(first.session.id, "next"))
+    await entered.wait()
+    try:
+        checkpoint = await store.load(first.session.id)
+        assert checkpoint.session.status == "running"
+        other = ResponsesRuntime(store=store, client=waiting_client)
+        with pytest.raises(ExecutionError) as error:
+            await other.continue_session(first.session.id, "concurrent")
+        assert error.value.code == "SESSION_NOT_READY"
+    finally:
+        release.set()
+        await running
+        await client.close()
+        await waiting_client.close()
+
+
+async def test_duplicate_tool_identity_cannot_change_effect_arguments(tmp_path):
+    calls = [
+        {
+            "id": "fc",
+            "type": "function_call",
+            "call_id": "same",
+            "name": "effect",
+            "arguments": json.dumps({"value": value}),
+        }
+        for value in (1, 2)
+    ]
+    dispatcher, effects = ToolDispatcher(), []
+
+    async def effect(arguments, operation_id):
+        effects.append(arguments["value"])
+        return {"result": arguments["value"]}
+
+    dispatcher.register(
+        "effect",
+        {
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ["value"],
+            "additionalProperties": False,
+        },
+        effect,
+    )
+    client = client_for([response([calls[0]]), response([calls[1]], response_id="resp_2")], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, dispatcher=dispatcher
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert error.value.code == "COMMAND_MISMATCH" and effects == [1]
+    await client.close()
+
+
+async def test_explicit_resume_can_continue_interruption_before_billable_request(tmp_path):
+    entered = asyncio.Event()
+
+    async def handler(request):
+        entered.set()
+        await asyncio.Event().wait()
+
+    client = AsyncOpenAI(
+        api_key="mock-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+    store = SQLiteRuntimeStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, client=client)
+    running = asyncio.create_task(
+        runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    )
+    await entered.wait()
+    session_id = next(iter(runtime._active))
+    assert await runtime.interrupt(session_id)
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    checkpoint = await runtime.checkpoint(session_id)
+    assert checkpoint.session.status == "interrupted"
+    assert checkpoint.native_state["pending_operation"] is None
+    restored = ResponsesRuntime(
+        store=store, client=client_for([response([message("continued")])], [])
+    )
+    session = await restored.resume(checkpoint)
+    assert session.status == "ready"
+    result = await restored.continue_session(session_id, "Continue the unresolved work")
+    assert result.output_text == "continued" and result.session.turns == 1
+    await client.close()
+    await restored.client.close()
