@@ -30,11 +30,30 @@ measured results and the full multi-wave roadmap.
 - Regression audits covering forged acceptance, sharing leakage, stale leases, uncertain remote
   work, cancellation races, export privacy, workspace paths and SDK/workflow sandbox compatibility.
 
-Local validation: 368 Python tests passed, two infrastructure skips; 10 console tests and
+Initial local validation: 368 Python tests passed, two infrastructure skips; 10 console tests and
 production build passed; real local Temporal engine test passed. These are not live fleet,
 kernel, semantic-review, scientific-discovery or production qualification claims.
 
-Linux CI at `156eb2b`: all five jobs passed, including a real application-container build and
+Initial Linux CI at `156eb2b`: all five jobs passed, including a real application-container build and
 PostgreSQL migration test. See the [evidence ledger](docs/IMPLEMENTATION_STATUS.md) for the run,
 exact test counts and remaining limits. Repository settings are recorded separately from the
 templates that propose them.
+
+### PR #1 review corrections
+
+- Separate canonical target identity from exact challenge source identity in Comparator v2,
+  binding acceptance to the current approved review and selected theorem. Legacy ambiguous
+  manifests and receipts require explicit repinning/resubmission.
+- Enforce candidate limits before queueing and persist verifier construction/read failures as
+  blocked receipts with diagnostics.
+- Propagate VM cancellation and durably retain quarantined child identities before post-allocation
+  awaits; uncertain operations keep their reservations.
+- Keep console controls, selected records and resource ledgers current; preserve mutation errors
+  across polls and reject stale responses. Incremental refresh uses bounded activity history and
+  transactional session-save events. Correct the local API URL setup.
+- Bound hidden-record scans with indexed continuation; rank knowledge metadata before expensive
+  proof reads while preserving authority and acceptance checks.
+
+The [correction report](work/pr-1-fix-validation.md) records regression evidence, validation
+and compatibility checks against a captured copy of the active research-loop wave. These
+changes do not confer scientific, provider or fleet qualification.
