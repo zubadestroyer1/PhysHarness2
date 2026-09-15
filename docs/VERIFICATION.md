@@ -93,7 +93,11 @@ The bundle contains these UTF-8 files:
 The operator-pinned manifest binds the canonical problem revision, canonical metadata digest,
 source hash and environment. `theorem_names` must be exactly `[problem.target_theorem]`; a
 bundle selecting another or additional theorem fails closed. Both host and trusted driver check
-these bindings, and both compare `Challenge.lean` bytes to `challenge_sha256`.
+these bindings, and both compare `Challenge.lean` bytes to `challenge_sha256`. The shared driver
+requires theorem equality for trusted scientific requests (which always contain
+`semantic_reviewed`); engineering requests omit review fields but retain every common
+protocol/revision/metadata/source/environment check. Checker diagnostic codes cannot disable
+the service's final locked review/source identity check.
 
 **Compatibility:** manifests without protocol v2 and distinct source identity are rejected.
 Do not reinterpret an old target metadata digest as a source digest. Regenerate and repin trusted
