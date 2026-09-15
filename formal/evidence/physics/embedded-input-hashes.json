@@ -1,0 +1,8 @@
+{
+  "/opt/verifier/formal_environment.py": "f08a741be6bdef815d774a9f7ba0903bce5a35c88a603e7ff97483d90e807e8b",
+  "/opt/verifier/prepare_lake.py": "4aff00dfabebcf860e25fa84543356a32be09d8e610276d0d3e4b554eb44c572",
+  "/opt/verifier/record_build.py": "0f579a352b1891d6c9ee54f04c063290332da1ca5084d56953a21595fc9c0866",
+  "/opt/verifier/DeclarationAudit.lean": "179cc31b931926c96e2410bfa791837464a8bb05df62523658130b24c4bc7668",
+  "/opt/physharness/container_driver.py": "a5df1f833fa05d5a172f1285ad40a0c5e3100944ff36a2d539355ce3bbe919a7",
+  "/opt/verifier/metadata/environment.lock.json": "c5615b4f818bb8dfefc0281f116d2ece500597a488eb4ee244b330d41c9235c5"
+}

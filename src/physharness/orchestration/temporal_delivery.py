@@ -19,15 +19,17 @@ class TemporalDelivery:
         options = {
             "task_queue": self.task_queue,
             "id_reuse_policy": WorkflowIDReusePolicy.REJECT_DUPLICATE,
-            "id_conflict_policy": WorkflowIDConflictPolicy.USE_EXISTING,
+            "id_conflict_policy": WorkflowIDConflictPolicy.FAIL,
             "rpc_timeout": timedelta(seconds=20),
         }
         memo = {"canonical_aggregate": item["aggregate_id"], "project_id": item["project_id"]}
         if item["kind"].startswith("experiment."):
             run, workflow_type = ExperimentWorkflow.run, "ExperimentWorkflow"
             workflow_id = f"experiment:{item['aggregate_id']}"
-            argument = {"experiment_id": item["aggregate_id"]}
-            options.update(start_signal="command", start_signal_args=[item])
+            # Signal-with-start does not support FAIL and can deliver a signal
+            # before canonical memo validation. Atomically start with the first
+            # pending command; duplicates take the checked explicit-signal path.
+            argument = {"experiment_id": item["aggregate_id"], "pending_commands": [item]}
         elif item["kind"] == "task.queued":
             run, workflow_type = TaskWorkflow.run, "TaskWorkflow"
             workflow_id, argument = f"task:{item['aggregate_id']}", item
@@ -45,8 +47,8 @@ class TemporalDelivery:
         try:
             await self.client.start_workflow(run, argument, id=workflow_id, memo=memo, **options)
         except WorkflowAlreadyStartedError:
-            # USE_EXISTING covers active executions only. A completed durable command must
-            # be acknowledged as delivered, never restarted and never retried forever.
+            # Validate both active and completed identities. USE_EXISTING would
+            # silently acknowledge an active workflow with different command input.
             execution = await self.client.get_workflow_handle(workflow_id).describe()
             if execution.workflow_type != workflow_type or await execution.memo() != memo:
                 raise HarnessError(
@@ -54,6 +56,11 @@ class TemporalDelivery:
                     "Existing workflow has different canonical inputs.",
                 ) from None
             if item["kind"].startswith("experiment."):
+                if execution.status == WorkflowExecutionStatus.RUNNING:
+                    await self.client.get_workflow_handle(workflow_id).signal(
+                        ExperimentWorkflow.command, item, rpc_timeout=timedelta(seconds=20)
+                    )
+                    return
                 if execution.status == WorkflowExecutionStatus.COMPLETED:
                     result = await self.client.get_workflow_handle(workflow_id).result()
                     if result == {"status": "cancelled"}:

@@ -3,8 +3,11 @@
 import asyncio
 import inspect
 import logging
-from contextlib import suppress
+import os
+from contextlib import nullcontext, suppress
+from typing import Literal
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import select
 
 from ..domain import (
@@ -18,14 +21,17 @@ from ..domain import (
 )
 from ..errors import HarnessError
 from ..execution import (
+    ExecutionError,
     ModelConfig,
     ResponsesRuntime,
     RuntimeCheckpoint,
     RuntimeLimits,
     ToolDispatcher,
 )
+from ..execution.parameters import validate_responses_parameters
 from ..memory import PortableMemory
 from ..storage import RecordRow
+from ..worker_authority import worker_effects
 from .pricing import ModelPrice
 
 log = logging.getLogger(__name__)
@@ -39,6 +45,14 @@ class CanonicalRuntimeStore:
         self.task_id, self.holder, self.fence = task_id, holder, fence
 
     async def save(self, checkpoint):
+        # Cancellation may still retain uncertain evidence; stale holders cannot
+        # publish any canonical checkpoint. Each command verifies this binding.
+        with worker_effects(
+            self.actor, self.task_id, self.holder, self.fence, require_active=False
+        ):
+            self._save_checkpoint(checkpoint)
+
+    def _save_checkpoint(self, checkpoint):
         checkpoint.verify()
         data = checkpoint.model_dump(mode="json")
         artifact = self.service.create_artifact(
@@ -127,12 +141,24 @@ class CanonicalRuntimeStore:
 def research_tools(service, agent, branch_id, *, task_context=None, workspace_tools=None):
     dispatcher = ToolDispatcher()
 
+    def check_worker():
+        if task_context:
+            with service.db.sessions() as session:
+                service._active(session, agent.experiment_id, agent)
+                service._fenced(session, **task_context)
+
     def register(name, properties, handler, description):
         async def wrapped(args, operation_id):
             try:
-                result = handler(args, operation_id)
-                return await result if inspect.isawaitable(result) else result
+                check_worker()
+                with worker_effects(agent, **task_context) if task_context else nullcontext():
+                    result = handler(args, operation_id)
+                    return await result if inspect.isawaitable(result) else result
             except HarnessError as error:
+                if error.code in {"STALE_LEASE", "EXPERIMENT_NOT_ACTIVE", "EXPERIMENT_DEADLINE"}:
+                    raise ExecutionError(
+                        error.code, str(error), operation_id=operation_id
+                    ) from error
                 # Expected tool rejections are observable to the model and canonical logs.
                 log.warning(
                     "Research tool rejected: %s", error.code, extra={"operation_id": operation_id}
@@ -225,15 +251,38 @@ def research_tools(service, agent, branch_id, *, task_context=None, workspace_to
         "verify_candidate",
         {"artifact_id": {"type": "string"}},
         lambda a, k: service.verify_candidate(
-            agent.experiment_id, a["artifact_id"], False, agent, k
+            agent.experiment_id, a["artifact_id"], True, agent, k
         ),
-        "Queue independent proof acceptance against the exact reviewed target.",
+        "Queue independent-kernel proof acceptance against the exact reviewed target. "
+        "The publication request flag requires independent replay for reusable evidence; "
+        "it never approves publication or scientific novelty.",
     )
     register(
         "inspect_verification",
         {"receipt_id": {"type": "string"}},
         lambda a, k: service.get_record("verification", a["receipt_id"], agent),
         "Inspect a queued, blocked, rejected or verified receipt without assuming success.",
+    )
+
+    async def wait_for_verification(args, operation_id):
+        deadline = asyncio.get_running_loop().time() + args["timeout_seconds"]
+        while True:
+            check_worker()
+            receipt = service.get_record("verification", args["receipt_id"], agent)
+            remaining = deadline - asyncio.get_running_loop().time()
+            if receipt["status"] != "queued" or remaining <= 0:
+                return receipt
+            await asyncio.sleep(min(0.1, remaining))
+
+    register(
+        "wait_for_verification",
+        {
+            "receipt_id": {"type": "string"},
+            "timeout_seconds": {"type": "number", "exclusiveMinimum": 0, "maximum": 30},
+        },
+        wait_for_verification,
+        "Wait up to 30 seconds for a canonical receipt without paid model polling. "
+        "A still-queued result is unresolved; a verifier worker must process it.",
     )
     register(
         "fork_branch",
@@ -284,6 +333,7 @@ class ResearchTaskExecutor:
         self.service = service
         self.prices = {name: ModelPrice.model_validate(price) for name, price in prices.items()}
         self.runtime_factory = runtime_factory or ResponsesRuntime
+        self.live_runtime = runtime_factory is None or runtime_factory is ResponsesRuntime
         self.limits = limits or RuntimeLimits()
         self.workspace_factory = workspace_factory
 
@@ -318,6 +368,22 @@ class ResearchTaskExecutor:
                     "capability restrictions."
                 ),
             )
+        # Validate before acquiring a lease or reserving a worker slot, including
+        # direct HTTP/Temporal dispatches that did not pass through run preflight.
+        try:
+            model_config = ModelConfig(
+                model=model["model"],
+                parameters=validate_responses_parameters(model["parameters"]),
+            )
+            runtime_limits = RuntimeLimits.model_validate(
+                experiment.get("runtime_limits") or self.limits.model_dump()
+            )
+        except (ExecutionError, ValidationError):
+            raise HarnessError(
+                "INVALID_CONFIG",
+                "The model configuration or runtime limits are invalid.",
+                status=422,
+            ) from None
         if model["model"] not in self.prices:
             raise HarnessError(
                 "MODEL_PRICE_REQUIRED",
@@ -451,15 +517,7 @@ class ResearchTaskExecutor:
                     ),
                 }
             )
-            running = asyncio.create_task(
-                runtime.start(
-                    prompt,
-                    ModelConfig(model=model["model"], parameters=model["parameters"]),
-                    RuntimeLimits.model_validate(
-                        experiment.get("runtime_limits") or self.limits.model_dump()
-                    ),
-                )
-            )
+            running = asyncio.create_task(runtime.start(prompt, model_config, runtime_limits))
 
             async def renew():
                 tick = 0
@@ -575,3 +633,271 @@ class ResearchTaskExecutor:
                 actor,
                 f"slot-finished:{holder}",
             )
+
+
+class TeamRunLimits(BaseModel):
+    """Validate supervisor limits before allocating any canonical tasks."""
+
+    model_config = ConfigDict(extra="forbid")
+    max_concurrency: int = Field(default=1, ge=1, le=100)
+    max_tasks: int = Field(default=8, ge=1, le=1000)
+    timeout_seconds: float = Field(default=300, gt=0, le=86400, allow_inf_nan=False)
+
+
+class TeamRunManifest(TeamRunLimits):
+    """Finite execution of explicit canonical tasks and their optional descendants."""
+
+    experiment_id: str = Field(min_length=1)
+    project_id: str = Field(min_length=1)
+    mode: Literal["live", "replay"]
+    task_ids: list[str] = Field(min_length=1, max_length=1000)
+    include_delegated: bool = True
+    process_verifications: bool = True
+    max_verifications: int = Field(default=8, ge=0, le=1000)
+    run_id: str = Field(default_factory=new_id, min_length=1)
+
+    @field_validator("task_ids")
+    @classmethod
+    def unique_tasks(cls, values):
+        if len(set(values)) != len(values) or any(not value.strip() for value in values):
+            raise ValueError("Task IDs must be unique and nonempty")
+        return values
+
+
+class ResearchTeamRunner:
+    """A bounded local supervisor over durable, independently leased canonical tasks.
+
+    Temporal remains the distributed delivery mechanism. This runner is also useful
+    for finite operator launches and deterministic integration replay. Losing this
+    Python process never deletes child tasks or turns uncertain sessions into retries.
+    """
+
+    def __init__(self, service, *, executor: ResearchTaskExecutor):
+        self.service, self.executor = service, executor
+        self._verification_tasks: set[asyncio.Task] = set()
+
+    def _records(self, kind, actor, experiment_id):
+        cursor = None
+        while True:
+            page = self.service.page_records(kind, actor, experiment_id, 500, cursor)
+            yield from page["items"]
+            cursor = page["next_cursor"]
+            if cursor is None:
+                return
+
+    async def run(self, manifest: TeamRunManifest | dict):
+        manifest = TeamRunManifest.model_validate(manifest)
+        actor = Principal(id="team-controller", project_id=manifest.project_id, role="operator")
+        experiment = self.service.get_record("experiment", manifest.experiment_id, actor)
+        if manifest.max_concurrency > experiment["budget"]["max_concurrency"]:
+            raise HarnessError("TEAM_LIMIT", "Team concurrency exceeds the experiment envelope.")
+        if manifest.mode == "live":
+            if not self.executor.live_runtime or not os.environ.get("OPENAI_API_KEY"):
+                raise HarnessError(
+                    "LIVE_PROVIDER_REQUIRED", "Live runs require configured Responses credentials."
+                )
+        elif self.executor.live_runtime:
+            raise HarnessError(
+                "REPLAY_PROVIDER_REQUIRED", "Replay requires an explicitly injected mock provider."
+            )
+        roots = [self.service.get_record("task", task_id, actor) for task_id in manifest.task_ids]
+        if any(task["experiment_id"] != experiment["id"] for task in roots):
+            raise HarnessError("TASK_SCOPE", "Team tasks must belong to the manifest experiment.")
+        if len(roots) > manifest.max_tasks:
+            raise HarnessError("TEAM_LIMIT", "Explicit tasks exceed the finite task limit.")
+        self.service.create_artifact(
+            ArtifactCreate(
+                experiment_id=experiment["id"],
+                kind="team_run_manifest",
+                media_type="application/json",
+                content=manifest.model_dump_json(),
+                provenance={"mode": manifest.mode, "run_id": manifest.run_id},
+            ),
+            actor,
+            f"team-manifest:{manifest.run_id}",
+        )
+        initial_ids = {task["id"] for task in self._records("task", actor, experiment["id"])}
+        root_branches = {task["branch_id"] for task in roots}
+        outcomes, active, attempted = {}, {}, set()
+        checks, checked_ids, verification_errors = {}, set(), []
+        stop_reason = None
+        deadline = asyncio.get_running_loop().time() + manifest.timeout_seconds
+
+        def selected_tasks():
+            descendants = set(root_branches)
+            if manifest.include_delegated:
+                branches = list(self._records("branch", actor, experiment["id"]))
+                while True:
+                    added = {b["id"] for b in branches if b.get("parent_id") in descendants}
+                    if added <= descendants:
+                        break
+                    descendants.update(added)
+            return [
+                task
+                for task in self._records("task", actor, experiment["id"])
+                if task["id"] in manifest.task_ids
+                or (
+                    manifest.include_delegated
+                    and task["branch_id"] in descendants
+                    and (task["branch_id"] not in root_branches or task["id"] not in initial_ids)
+                )
+            ]
+
+        async def cancel_active():
+            for future in active:
+                future.cancel()
+            if active:
+                await asyncio.gather(*active, return_exceptions=True)
+            for task_id in active.values():
+                outcomes[task_id] = {
+                    "task_id": task_id,
+                    "status": "blocked",
+                    "code": "EXECUTION_CANCELLED",
+                }
+            active.clear()
+
+        def verification_receipts():
+            branches = {task["branch_id"] for task in selected_tasks()}
+            return [
+                receipt
+                for receipt in self._records("verification", actor, experiment["id"])
+                if receipt.get("branch_id") in branches
+            ]
+
+        async def verify(receipt_id):
+            verifier = Principal(
+                id="team-acceptance-worker", project_id=actor.project_id, role="verifier"
+            )
+            # Independent authority runs outside every model's worker_effects scope.
+            return await asyncio.to_thread(self.service.process_verification, receipt_id, verifier)
+
+        def retain_verifier(future):
+            self._verification_tasks.discard(future)
+            # Retrieve exceptions when the supervisor timed out before this checker.
+            if not future.cancelled():
+                future.exception()
+
+        try:
+            while True:
+                state = self.service.get_record("experiment", experiment["id"], actor)["status"]
+                if state not in {"queued", "running"}:
+                    stop_reason = "EXPERIMENT_NOT_ACTIVE"
+                    break
+                if asyncio.get_running_loop().time() >= deadline:
+                    stop_reason = "TEAM_TIMEOUT"
+                    break
+                selected = selected_tasks()
+                if manifest.process_verifications and not checks:
+                    for receipt in verification_receipts():
+                        if (
+                            receipt["status"] != "queued"
+                            or receipt["id"] in checked_ids
+                            or len(checked_ids) >= manifest.max_verifications
+                        ):
+                            continue
+                        checked_ids.add(receipt["id"])
+                        future = asyncio.create_task(verify(receipt["id"]))
+                        self._verification_tasks.add(future)
+                        future.add_done_callback(retain_verifier)
+                        checks[future] = receipt["id"]
+                        break  # One independent checker at a time per finite supervisor.
+                task_states = {
+                    task["id"]: task["status"]
+                    for task in self._records("task", actor, experiment["id"])
+                }
+                for task in selected:
+                    task_id = task["id"]
+                    if task_id in attempted or task_id in outcomes:
+                        continue
+                    if task["status"] in {"completed", "failed", "blocked"}:
+                        outcomes[task_id] = {"task_id": task_id, "status": task["status"]}
+                        continue
+                    if (
+                        len(active) >= manifest.max_concurrency
+                        or len(attempted) >= manifest.max_tasks
+                    ):
+                        break
+                    if any(task_states.get(dep) != "completed" for dep in task["dependency_ids"]):
+                        continue
+                    attempted.add(task_id)
+                    future = asyncio.create_task(self.executor.execute(task_id, actor.project_id))
+                    active[future] = task_id
+                if not active and not checks:
+                    pending = [task for task in selected if task["id"] not in outcomes]
+                    if pending:
+                        stop_reason = (
+                            "TEAM_TASK_LIMIT"
+                            if len(attempted) >= manifest.max_tasks
+                            else "DEPENDENCIES_PENDING"
+                        )
+                    break
+                # Poll canonical cancellation while model calls are in flight.
+                completed, _ = await asyncio.wait(
+                    [*active, *checks],
+                    timeout=min(0.25, max(0, deadline - asyncio.get_running_loop().time())),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for future in completed:
+                    if future in checks:
+                        receipt_id = checks.pop(future)
+                        try:
+                            future.result()
+                        except Exception as error:
+                            verification_errors.append(
+                                {
+                                    "receipt_id": receipt_id,
+                                    "code": getattr(error, "code", "VERIFICATION_FAILED"),
+                                }
+                            )
+                        continue
+                    task_id = active.pop(future)
+                    try:
+                        outcomes[task_id] = future.result()
+                    except Exception as error:
+                        outcomes[task_id] = {
+                            "task_id": task_id,
+                            "status": "blocked",
+                            "code": getattr(error, "code", "EXECUTION_FAILED"),
+                        }
+            await cancel_active()
+        except BaseException:
+            await cancel_active()
+            raise
+        remaining = [task["id"] for task in selected_tasks() if task["id"] not in outcomes]
+        pending_receipts = [
+            receipt["id"] for receipt in verification_receipts() if receipt["status"] == "queued"
+        ]
+        if pending_receipts and not stop_reason:
+            stop_reason = "VERIFICATION_PENDING"
+        summary = {
+            "run_id": manifest.run_id,
+            "experiment_id": experiment["id"],
+            "mode": manifest.mode,
+            "evidence_level": "live_provider" if manifest.mode == "live" else "mock_provider",
+            "status": "completed"
+            if not stop_reason
+            and all(outcome["status"] == "completed" for outcome in outcomes.values())
+            else "blocked",
+            "stop_reason": stop_reason,
+            "outcomes": list(outcomes.values()),
+            "remaining_task_ids": remaining,
+            "attempted_tasks": len(attempted),
+            "verification_receipts": verification_receipts(),
+            "verification_errors": verification_errors,
+            "pending_verification_ids": pending_receipts,
+            "verification_worker_continues": bool(checks),
+            "ledger": self.service.ledger(experiment["id"], actor),
+            "scientific_acceptance": "requires_independent_receipts_and_review",
+        }
+        artifact = self.service.create_artifact(
+            ArtifactCreate(
+                experiment_id=experiment["id"],
+                kind="team_run_report",
+                content=canonical_json(summary),
+                media_type="application/json",
+                provenance={"mode": manifest.mode, "run_id": manifest.run_id},
+            ),
+            actor,
+            f"team-report:{manifest.run_id}:{digest_json(summary)}",
+        )
+        return {**summary, "artifact_id": artifact["id"]}

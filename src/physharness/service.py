@@ -38,6 +38,7 @@ from .storage import (
     ReservationRow,
     record_json_text,
 )
+from .worker_authority import current_worker_effects
 
 log = logging.getLogger(__name__)
 MICRO_USD = Decimal(1_000_000)
@@ -446,6 +447,22 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                 )
             )
 
+    def _check_worker_effects(self, session, actor):
+        binding = current_worker_effects.get()
+        if binding is None:
+            return
+        if actor != binding.actor:
+            raise HarnessError("WORKER_EFFECT_SCOPE", "Bound effects cannot change principal.")
+        task = self._get(session, "task", binding.task_id, actor)
+        if actor.role == "agent" and (
+            actor.experiment_id != task.payload["experiment_id"]
+            or actor.branch_id != task.payload["branch_id"]
+        ):
+            raise HarnessError("WORKER_EFFECT_SCOPE", "Bound effects belong to another task.")
+        if binding.require_active:
+            self._active(session, task.payload["experiment_id"], actor)
+        self._fenced(session, binding.task_id, binding.holder, binding.fence)
+
     def _execute(
         self,
         actor: Principal,
@@ -475,6 +492,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
         try:
             with self.db.transaction() as session:
                 self.db.command_lock(session, command_key)
+                self._check_worker_effects(session, actor)
                 prior = session.get(CommandRow, command_key)
                 if prior:
                     if prior.fingerprint != fingerprint:
@@ -485,6 +503,9 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                         )
                     return copy.deepcopy(prior.result)
                 result = action(session, operation_id)
+                # A slow external write may have consumed the lease. Roll back authoritative
+                # metadata even when its replaceable object-store bytes already exist.
+                self._check_worker_effects(session, actor)
                 session.add(
                     CommandRow(
                         id=command_key,

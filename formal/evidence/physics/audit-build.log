@@ -1,0 +1,50 @@
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 319B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/physharness-formal:physics433
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [internal] load build context
+#4 transferring context: 2.45kB done
+#4 DONE 0.0s
+
+#5 [1/5] FROM docker.io/library/physharness-formal:physics433@sha256:7b64cd4c6371e872f58207c4913cbafb46dc958a5b7b66a38f3e63fed5944c35
+#5 resolve docker.io/library/physharness-formal:physics433@sha256:7b64cd4c6371e872f58207c4913cbafb46dc958a5b7b66a38f3e63fed5944c35 done
+#5 extracting sha256:c83cf6b72ebc0368fcddafcc7836061114be42995a85e031d19b0e08a28b2236
+#5 extracting sha256:c83cf6b72ebc0368fcddafcc7836061114be42995a85e031d19b0e08a28b2236 14.6s done
+#5 DONE 14.6s
+
+#5 [1/5] FROM docker.io/library/physharness-formal:physics433@sha256:7b64cd4c6371e872f58207c4913cbafb46dc958a5b7b66a38f3e63fed5944c35
+#5 extracting sha256:8ce7e7545f9fa560f4b7cffb9c6fa601b66850437ef52796c39c779a40514b2b done
+#5 DONE 14.6s
+
+#6 [2/5] WORKDIR /opt/sources/physlib
+#6 DONE 0.4s
+
+#7 [3/5] COPY DeclarationAudit.lean /opt/verifier/DeclarationAudit.lean
+#7 DONE 0.0s
+
+#8 [4/5] RUN lake --offline env lean /opt/verifier/DeclarationAudit.lean > /opt/verifier/metadata/declarations-kernel.txt
+#8 0.087 warning: manifest out of date: source kind (git/path) of dependency '«doc-gen4»' changed; use `lake update «doc-gen4»` to update it
+#8 0.087 warning: manifest out of date: source kind (git/path) of dependency 'mathlib' changed; use `lake update mathlib` to update it
+#8 DONE 12.7s
+
+#9 [5/5] WORKDIR /work
+#9 DONE 0.0s
+
+#10 exporting to image
+#10 exporting layers 0.0s done
+#10 exporting manifest sha256:b55c38a34404abea808797c853414cdefe49f6eb60ceb4e10a94699f616a45ac done
+#10 exporting config sha256:6bec40c897cfafb09cd95dc852cae49634dd247623f0999d5ddc10a034a84399 done
+#10 exporting attestation manifest sha256:40f2af81af7136e0aea3ad6a42fe0446dca726ec197f53b3ce5012b2888d34a0 done
+#10 exporting manifest list sha256:b8cef3506481cd9ce3b278c304e345d9d1db704269400123714cc6ecc666b6ec done
+#10 naming to docker.io/library/physharness-formal:physics433-audited done
+#10 unpacking to docker.io/library/physharness-formal:physics433-audited 0.0s done
+#10 DONE 0.1s
