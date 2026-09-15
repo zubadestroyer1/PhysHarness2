@@ -1,0 +1,14 @@
+{
+  "status": "unqualified",
+  "qualification_report_sha256": null,
+  "kubernetes": "not_implemented",
+  "firecracker": "not_implemented",
+  "ray_kuberay": "not_implemented",
+  "live_workers_128_72h": "not_run",
+  "live_workers_1000": "not_run",
+  "recovery_fault_injection": "not_run",
+  "notes": [
+    "Local Compose is a development environment, not the self-hosted production deployment.",
+    "Canonical storage and proof acceptance contracts remain unchanged by a future scheduler or VM provider."
+  ]
+}

@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "physharness"
+version = "0.1.0"
+description = "Durable, model-directed physics research with independent proof acceptance"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "Apache-2.0"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn>=0.34,<1", "pydantic>=2.10,<3",
+  "pydantic-settings>=2.8,<3", "sqlalchemy>=2.0,<3", "alembic>=1.14,<2",
+  "psycopg[binary]>=3.2,<4", "pgvector>=0.4,<1", "httpx>=0.28,<1",
+  "typer>=0.15,<1", "boto3>=1.36,<2", "temporalio>=1.10,<2",
+  "mcp>=1.9,<2", "openai>=2.54,<3", "jsonschema>=4,<5", "opentelemetry-api>=1.31,<2",
+  "opentelemetry-sdk>=1.31,<2", "opentelemetry-exporter-otlp-proto-http>=1.31,<2",
+]
+
+[project.optional-dependencies]
+codex = ["openai-codex"]
+claude = ["claude-agent-sdk"]
+openhands = ["openhands-sdk==1.47.0"]
+e2b = ["e2b>=2.49,<3", "e2b-code-interpreter>=2,<3"]
+science = ["sympy>=1.13,<2", "numpy>=2,<3", "scipy>=1.15,<2"]
+papers = ["pypdf>=5,<7"]
+
+[project.scripts]
+phys = "physharness.cli:app"
+phys-mcp = "physharness.mcp_server:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<10", "pytest-asyncio>=0.25,<2", "hypothesis>=6,<7", "ruff>=0.11,<1", "pyyaml>=6,<7"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/physharness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["integration: requires configured external infrastructure", "lean: requires a qualified Lean toolchain"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
