@@ -1,0 +1,46 @@
+name: Research target or library gap
+description: Propose a mathematical-physics target, missing prerequisite, or scientific review.
+title: "[Research]: "
+labels: ["type:research", "area:science"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This issue proposes research; opening or closing it does not certify a proof or novelty. Share only material suitable for a public repository.
+  - type: dropdown
+    id: program
+    attributes:
+      label: Program
+      options:
+        - Quantum
+        - Classical
+        - Shared mathematical foundations
+        - Other proposed area
+    validations:
+      required: true
+  - type: textarea
+    id: target
+    attributes:
+      label: Target and assumptions
+      description: State the intended claim, domains, quantifiers, regularity, and physical assumptions as precisely as currently possible. Identify unresolved interpretation questions.
+    validations:
+      required: true
+  - type: textarea
+    id: sources
+    attributes:
+      label: Sources and current evidence
+      description: Link source statements, library declarations, or related work. Distinguish reproduction, formalization, a conjecture, numerical evidence, and a proposed new result. Mark novelty as unreviewed unless an actual expert review is linked.
+    validations:
+      required: true
+  - type: textarea
+    id: readiness
+    attributes:
+      label: Prerequisites and possible approaches
+      description: Note reusable lemmas, missing machinery, potential counterexamples, and representations worth exploring. No prescribed decomposition is required.
+  - type: textarea
+    id: completion
+    attributes:
+      label: Intended deliverable and review
+      description: Describe what would complete this issue, how it can be checked independently, and the expert review needed. A partial result or documented obstruction may be an explicit deliverable.
+    validations:
+      required: true

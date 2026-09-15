@@ -4,7 +4,7 @@ Updated 2026-09-15 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) rem
 Every wave is **unqualified**. Several components are implemented and tested; none of the live
 scientific/fleet exit criteria has been substituted with a mock or a schema check.
 
-## Local evidence
+## Recorded evidence
 
 | Check | Observed result | What it does not establish |
 |---|---|---|
@@ -15,10 +15,16 @@ scientific/fleet exit criteria has been substituted with a mock or a schema chec
 | Ledger replay | 1,000 reservations/settlements with 128 local concurrent clients; 2.13 s total, p95 0.405 s | 128 live models/VMs; this used SQLite and simulated accounting only |
 | Infrastructure | Terraform 1.16.2/AWS 6.10.0 validation, Compose configuration, SQLite migrations, PostgreSQL DDL | Terraform plan/apply, container boot or a live PostgreSQL migration |
 | Acceptance audits | Seeded contract attacks and independent code review; reproduced defects fixed/rechecked | Universal soundness, Linux sandbox qualification or actual Lean acceptance |
+| GitHub CI on Linux | [Run 34939315898](https://github.com/zubadestroyer1/PhysHarness2/actions/runs/34939315898) passed all five jobs at `156eb2b`: Python 367 passed/2 skipped/1 deselected; live PostgreSQL 1 passed; console 10 passed and built; Terraform validated; application container built and imported | Managed deployment, adversarial proof isolation, a live model/VM experiment or any complete wave qualification |
 
 Test counts are snapshots, not a continuously updated badge. Each delivery must run a fresh
 aggregate suite after integration. Local evidence reports are retained in `work/`; no credentials
 or live private research transcripts belong in repository reports.
+
+The GitHub run adds actual Linux container and PostgreSQL evidence beyond this Mac's local
+checks. Its container job builds and imports the installed application; it does not start a
+complete deployment or qualify generated-code containment. The PostgreSQL test exercises the
+live migration/repository path; it does not establish managed-database recovery or load capacity.
 
 ## Wave progress and remaining gates
 

@@ -9,9 +9,11 @@ real Linux containment qualification evidence. Native compilation is not a sandb
 local smoke checks and protocol tests do not qualify adversarial Lean execution or production use.
 
 For a suspected defect, preserve the operation ID, relevant hashes, environment versions and
-minimal reproduction. Do not include live credentials or private research transcripts in a public
-issue. A private security contact has not yet been configured for this repository; arrange a
-private maintainer channel before disclosing sensitive reproductions.
+minimal reproduction. Use GitHub's enabled
+[private vulnerability reporting](https://github.com/zubadestroyer1/PhysHarness2/security/advisories/new)
+for sensitive security or acceptance-boundary defects. Do not include live credentials or private
+research transcripts in a public issue. Share only the minimum diagnostic evidence necessary,
+and redact credentials even in private reports.
 
 On an acceptance incident, stop result promotion, preserve historical receipts and source bytes,
 identify all affected environment/target revisions, and revalidate through a corrected independent
