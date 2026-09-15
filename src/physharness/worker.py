@@ -44,6 +44,7 @@ class Activities:
             if experiment["policy"] == "independent"
             else experiment["models"][:1]
         )
+        task_ids = []
         for index, _ in enumerate(models):
             branch = self.service.create_branch(
                 experiment["id"],
@@ -56,12 +57,17 @@ class Activities:
                 f"seed-branch:{experiment['id']}:{index}",
             )
 
-            self.service.create_task(
+            task = self.service.create_task(
                 TaskCreate(branch_id=branch["id"], objective=branch["objective"]),
                 actor,
                 f"seed-task:{branch['id']}",
             )
-        return {"experiment_id": experiment["id"], "seeded_approaches": len(models)}
+            task_ids.append(task["id"])
+        return {
+            "experiment_id": experiment["id"],
+            "seeded_approaches": len(models),
+            "task_ids": task_ids,
+        }
 
     @activity.defn
     async def run_research_task(self, item: dict) -> dict:

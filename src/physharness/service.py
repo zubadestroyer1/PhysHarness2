@@ -1,6 +1,7 @@
 """Application authority: actors, immutable targets, commands, and budget invariants."""
 
 import copy
+import hashlib
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -36,6 +37,7 @@ from .storage import (
     RecordRow,
     ReservationRow,
 )
+from .worker_authority import current_worker_effects
 
 log = logging.getLogger(__name__)
 MICRO_USD = Decimal(1_000_000)
@@ -120,6 +122,9 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             and target.project_id == row.project_id
             and target.kind == "problem"
             and target.payload.get("semantic_review") == "approved"
+            and data.get("review_id") == target.payload.get("review_id")
+            and data.get("challenge_sha256")
+            == hashlib.sha256(target.payload["formal_statement"].encode("utf-8")).hexdigest()
             and data.get("problem_revision_id") == target.id
             and data.get("target_digest")
             == target.payload.get("target_digest")
@@ -417,6 +422,22 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                 )
             )
 
+    def _check_worker_effects(self, session, actor):
+        binding = current_worker_effects.get()
+        if binding is None:
+            return
+        if actor != binding.actor:
+            raise HarnessError("WORKER_EFFECT_SCOPE", "Bound effects cannot change principal.")
+        task = self._get(session, "task", binding.task_id, actor)
+        if actor.role == "agent" and (
+            actor.experiment_id != task.payload["experiment_id"]
+            or actor.branch_id != task.payload["branch_id"]
+        ):
+            raise HarnessError("WORKER_EFFECT_SCOPE", "Bound effects belong to another task.")
+        if binding.require_active:
+            self._active(session, task.payload["experiment_id"], actor)
+        self._fenced(session, binding.task_id, binding.holder, binding.fence)
+
     def _execute(
         self,
         actor: Principal,
@@ -446,6 +467,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
         try:
             with self.db.transaction() as session:
                 self.db.command_lock(session, command_key)
+                self._check_worker_effects(session, actor)
                 prior = session.get(CommandRow, command_key)
                 if prior:
                     if prior.fingerprint != fingerprint:
@@ -456,6 +478,9 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                         )
                     return copy.deepcopy(prior.result)
                 result = action(session, operation_id)
+                # A slow external write may have consumed the lease. Roll back authoritative
+                # metadata even when its replaceable object-store bytes already exist.
+                self._check_worker_effects(session, actor)
                 session.add(
                     CommandRow(
                         id=command_key,
