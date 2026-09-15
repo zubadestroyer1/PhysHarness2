@@ -4,7 +4,18 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Float, Index, Integer, String, create_engine, event, text
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    Float,
+    Index,
+    Integer,
+    String,
+    create_engine,
+    event,
+    literal,
+    text,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -21,6 +32,39 @@ class RecordRow(Base):
     revision: Mapped[int] = mapped_column(Integer)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     __table_args__ = (Index("records_project_kind", "project_id", "kind"),)
+
+
+def record_json_text(field: str):
+    # Constant JSON paths must be in the SQL text for SQLite expression-index matching.
+    return RecordRow.payload[
+        literal(field, type_=JSON.JSONStrIndexType(), literal_execute=True)
+    ].as_string()
+
+
+Index("records_project_kind_keyset", RecordRow.project_id, RecordRow.kind, RecordRow.id)
+Index(
+    "records_project_kind_experiment_keyset",
+    RecordRow.project_id,
+    RecordRow.kind,
+    record_json_text("experiment_id"),
+    RecordRow.id,
+)
+Index(
+    "records_project_kind_artifact_review",
+    RecordRow.project_id,
+    RecordRow.kind,
+    record_json_text("artifact_id"),
+    record_json_text("review_id"),
+)
+
+
+Index(
+    "records_project_kind_problem_keyset",
+    RecordRow.project_id,
+    RecordRow.kind,
+    record_json_text("problem_id"),
+    RecordRow.id,
+)
 
 
 class CommandRow(Base):

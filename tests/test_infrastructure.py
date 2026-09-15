@@ -73,9 +73,23 @@ def test_frozen_migration_matches_current_column_and_index_contract(tmp_path, mo
         expected = {(c.name, c.nullable) for c in table.columns}
         actual = {(c["name"], c["nullable"]) for c in inspector.get_columns(table.name)}
         assert actual == expected, table.name
-        assert {i["name"] for i in inspector.get_indexes(table.name)} == {
-            i.name for i in table.indexes
+        # SQLite's generic reflection skips expression indexes. Compare its actual
+        # index DDL with ORM DDL instead, including the literal JSON scope path.
+        with engine.connect() as connection:
+            actual_indexes = dict(
+                connection.execute(
+                    sa.text(
+                        "SELECT name, sql FROM sqlite_master WHERE type='index' "
+                        "AND tbl_name=:table AND sql IS NOT NULL"
+                    ),
+                    {"table": table.name},
+                ).all()
+            )
+        expected_indexes = {
+            index.name: str(sa.schema.CreateIndex(index).compile(dialect=engine.dialect))
+            for index in table.indexes
         }
+        assert actual_indexes == expected_indexes
     engine.dispose()
     for migration in (ROOT / "migrations/versions").glob("*.py"):
         assert "physharness.storage" not in migration.read_text()
@@ -94,6 +108,9 @@ def test_postgresql_offline_migration_generates_real_sql(monkeypatch):
     assert "CREATE TABLE reservations" in sql
     assert "SERIAL" in sql
     assert "COMMIT" in sql
+    assert "CREATE INDEX records_project_kind_keyset ON records (project_id, kind, id)" in sql
+    assert "CREATE INDEX records_project_kind_experiment_keyset" in sql
+    assert "CAST(payload ->> 'experiment_id' AS VARCHAR)" in sql
 
 
 def load_validator():
