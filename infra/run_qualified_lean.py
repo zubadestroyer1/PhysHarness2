@@ -30,6 +30,7 @@ from physharness.verification import (
     seccomp_digest,
 )
 from physharness.verification.boundary import Environment, digest, safe_read
+from physharness.verification.qualification import validate_runtime_identity
 
 ROOT = Path(__file__).resolve().parents[1]
 EXPECTED = {("verified", "kernel_checked"), ("blocked", "comparator_failed")}
@@ -64,7 +65,7 @@ def diagnostic_expectations(case: dict) -> list[str]:
     return markers
 
 
-def check_case_outcome(case: dict, result) -> None:
+def check_case_outcome(case: dict, result, *, publication: bool | None = None) -> None:
     markers = diagnostic_expectations(case)
     expected = case["expected_status"], case["expected_code"]
     if expected not in EXPECTED:
@@ -81,6 +82,24 @@ def check_case_outcome(case: dict, result) -> None:
     if result.status == "blocked" and not 0 < exit_code < 128:
         raise RuntimeError(f"Verification case {case['id']} terminated without a checker result")
     logs = result.diagnostics.get("comparator_output")
+    if result.status == "verified":
+        expected_assurance = (
+            ("independent_kernel" if publication else "kernel")
+            if publication is not None
+            else result.assurance
+        )
+        controls = ["Lean default kernel accepts the solution", "Your solution is okay!"]
+        if expected_assurance == "independent_kernel":
+            controls.append("Nanoda kernel accepts the solution")
+        if (
+            expected_assurance not in {"kernel", "independent_kernel"}
+            or result.assurance != expected_assurance
+            or not isinstance(logs, str)
+            or any(marker not in logs for marker in controls)
+        ):
+            raise RuntimeError(
+                f"Verification case {case['id']} lacks its requested positive kernel evidence"
+            )
     if markers and (not isinstance(logs, str) or any(marker not in logs for marker in markers)):
         raise RuntimeError(
             f"Verification case {case['id']} lacks its required causal diagnostic evidence"
@@ -100,7 +119,7 @@ def check_cases(cases) -> None:
         diagnostic_expectations(case)
 
 
-def _append_result(output, report, case, result):
+def _append_result(output, report, case, result, *, publication=None):
     report["results"].append(
         {
             "id": case["id"],
@@ -111,7 +130,7 @@ def _append_result(output, report, case, result):
         }
     )
     _write_report(output, report)
-    check_case_outcome(case, result)
+    check_case_outcome(case, result, publication=publication)
 
 
 def _run_cases(output: Path, report: dict) -> None:
@@ -142,7 +161,9 @@ def _run_cases(output: Path, report: dict) -> None:
     )
     for case in cases:
         request = EngineeringRequest.model_validate(case["request"])
-        _append_result(output, report, case, verifier.run(request).outcome)
+        _append_result(
+            output, report, case, verifier.run(request).outcome, publication=request.publication
+        )
     report.update(
         status="passed",
         manifest_sha256=manifest_sha,
@@ -152,9 +173,30 @@ def _run_cases(output: Path, report: dict) -> None:
 
 
 def _run_engineering(
-    output: Path, report: dict, metadata_path: Path, fixtures_path: Path, publication: bool
+    output: Path,
+    report: dict,
+    metadata_path: Path,
+    fixtures_path: Path,
+    publication: bool,
+    runtime_identity: Path | None = None,
 ) -> None:
-    metadata_bytes = safe_read(metadata_path.parent, metadata_path.name)
+    snapshots = {}
+
+    def snapshot(base, name):
+        data = safe_read(base, name)
+        identity = digest(data)
+        if (base, name) in snapshots and snapshots[base, name] != identity:
+            raise RuntimeError(f"Engineering input changed during execution: {name}")
+        snapshots[base, name] = identity
+        return data
+
+    runner_sha = digest(snapshot(Path(__file__).parent, Path(__file__).name))
+    runtime_sha = None
+    if runtime_identity is not None:
+        runtime_bytes = snapshot(runtime_identity.parent, runtime_identity.name)
+        validate_runtime_identity(runtime_bytes)
+        runtime_sha = digest(runtime_bytes)
+    metadata_bytes = snapshot(metadata_path.parent, metadata_path.name)
     metadata = json.loads(metadata_bytes)
     image = Environment.model_validate(
         {
@@ -164,7 +206,7 @@ def _run_engineering(
             "files": {},
         }
     )
-    fixture_bytes = safe_read(fixtures_path.parent, fixtures_path.name)
+    fixture_bytes = snapshot(fixtures_path.parent, fixtures_path.name)
     fixture = json.loads(fixture_bytes)
     if fixture.get("purpose") != "engineering_smoke" or fixture.get("schema_version") != 1:
         raise ValueError("Expected versioned engineering fixture manifest")
@@ -178,6 +220,8 @@ def _run_engineering(
         launcher_sha256=launcher_digest(),
         driver_sha256=driver_digest(),
         seccomp_sha256=seccomp_digest(),
+        runner_sha256=runner_sha,
+        runtime_identity_sha256=runtime_sha,
     )
     _write_report(output, report)
     execution = ExecutionPins(
@@ -189,14 +233,14 @@ def _run_engineering(
         independent_kernel=publication,
     )
     project_files = {
-        name: safe_read(fixtures_path.parent, source)
+        name: snapshot(fixtures_path.parent, source)
         for name, source in fixture["project_files"].items()
     }
     # TemporaryDirectory honors TMPDIR for a shared Colima bind directory on macOS.
     with tempfile.TemporaryDirectory(prefix="physharness-engineering-") as temporary:
         for index, case in enumerate(cases):
-            source = safe_read(fixtures_path.parent, case["challenge"])
-            candidate = safe_read(fixtures_path.parent, case["solution"])
+            source = snapshot(fixtures_path.parent, case["challenge"])
+            candidate = snapshot(fixtures_path.parent, case["solution"])
             bundle = Path(temporary) / str(index)
             # This identity labels an engineering fixture; no scientific revision or review is made.
             target_digest = digest(json.dumps(case, sort_keys=True).encode())
@@ -229,7 +273,12 @@ def _run_engineering(
                     execution=execution,
                 )
             )
-            _append_result(output, report, case, verifier.run(request).outcome)
+            _append_result(
+                output, report, case, verifier.run(request).outcome, publication=request.publication
+            )
+    for (base, name), expected in snapshots.items():
+        if digest(safe_read(base, name)) != expected:
+            raise RuntimeError(f"Engineering input changed during execution: {name}")
     report.update(status="passed")
     _write_report(output, report)
 
@@ -281,10 +330,18 @@ def run_from_environment(output: Path) -> None:
 
 
 def run_engineering(
-    output: Path, metadata: Path, fixtures: Path, publication: bool = False
+    output: Path,
+    metadata: Path,
+    fixtures: Path,
+    publication: bool = False,
+    *,
+    runtime_identity: Path | None = None,
 ) -> None:
     _record_run(
-        output, lambda path, report: _run_engineering(path, report, metadata, fixtures, publication)
+        output,
+        lambda path, report: _run_engineering(
+            path, report, metadata, fixtures, publication, runtime_identity
+        ),
     )
 
 
@@ -292,6 +349,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--engineering-image-metadata", type=Path)
+    parser.add_argument(
+        "--runtime-identity",
+        type=Path,
+        help="Operator-observed Linux runtime JSON; required for scoped qualification evidence",
+    )
     parser.add_argument("--fixtures", type=Path, default=ROOT / "formal/adversarial/cases.json")
     parser.add_argument(
         "--publication", action="store_true", help="Observe independent nanoda replay"
@@ -299,7 +361,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.engineering_image_metadata:
         run_engineering(
-            args.output, args.engineering_image_metadata, args.fixtures, args.publication
+            args.output,
+            args.engineering_image_metadata,
+            args.fixtures,
+            args.publication,
+            runtime_identity=args.runtime_identity,
         )
     else:
         run_from_environment(args.output)
