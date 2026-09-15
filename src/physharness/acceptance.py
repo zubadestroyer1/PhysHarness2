@@ -92,11 +92,11 @@ class AcceptanceMixin:
         if receipt["status"] in {"verified", "blocked", "rejected"}:
             return receipt
         problem = self.get_record("problem", receipt["problem_revision_id"], actor)
+        incompatible_receipt = any(
+            field not in receipt for field in ("challenge_sha256", "review_id", "target_theorem")
+        )
         try:
-            if any(
-                field not in receipt
-                for field in ("challenge_sha256", "review_id", "target_theorem")
-            ):
+            if incompatible_receipt:
                 raise HarnessError(
                     "VERIFICATION_RECEIPT_INCOMPATIBLE",
                     "This receipt predates source and review binding; submit a fresh verification.",
@@ -196,9 +196,9 @@ class AcceptanceMixin:
             # snapshot read before the lock was acquired. SQLite already serializes writes.
             session.refresh(current, with_for_update=True)
             result = outcome.model_dump(mode="json")
-            if result[
-                "code"
-            ] != "verification_receipt_incompatible" and self._verification_revision_changed(
+            # Only locally detected legacy receipts skip comparisons of missing pins.
+            # Checker diagnostic text never controls this authoritative identity guard.
+            if not incompatible_receipt and self._verification_revision_changed(
                 current.payload, receipt
             ):
                 result.update(

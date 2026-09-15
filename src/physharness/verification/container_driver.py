@@ -164,7 +164,9 @@ def main():
         ):
             if manifest.get(field) != req[field]:
                 raise RuntimeError(f"manifest {field} differs from request")
-        if manifest.get("theorem_names") != [req["target_theorem"]]:
+        # Scientific requests always carry semantic_reviewed, even when false.
+        # Engineering requests omit review fields; only the trusted host creates this metadata.
+        if "semantic_reviewed" in req and manifest.get("theorem_names") != [req["target_theorem"]]:
             raise RuntimeError("manifest theorem selection differs from reviewed target")
         # Source remains a read-only bind mount, separate from the trusted bundle.
         # Only the new .lake directory is writable during candidate elaboration.

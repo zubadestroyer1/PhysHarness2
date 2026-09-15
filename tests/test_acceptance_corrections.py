@@ -271,3 +271,42 @@ def test_replacing_approved_review_record_blocks_acceptance(lab, tmp_path, monke
     result = service.process_verification(receipt["id"], operator(actor))
     assert result["status"] == "blocked" and result["code"] == "review_invalid"
     assert calls == []
+
+
+@pytest.mark.parametrize("field", ["review_id", "formal_statement"])
+def test_checker_reserved_code_cannot_disable_final_identity_guard(
+    lab, tmp_path, monkeypatch, field
+):
+    from physharness.verification.boundary import outcome
+
+    service, actor, experiment, problem, _, _ = canonical_comparator(lab, tmp_path, monkeypatch)
+    receipt = submit(service, actor, experiment, problem["formal_statement"])
+
+    class SyntheticVerifier:
+        def verify(self, request):
+            if field == "review_id":
+                service.review_problem(
+                    problem["id"], "approved", "Replacement fixture review", lab[2], "review-again"
+                )
+            else:
+                with service.db.transaction() as session:
+                    service._replace(
+                        session,
+                        session.get(RecordRow, problem["id"]),
+                        {"formal_statement": problem["formal_statement"] + "\n"},
+                    )
+            return outcome(
+                request,
+                "verified",
+                "verification_receipt_incompatible",
+                "Synthetic checker carrying a reserved diagnostic",
+                "",
+                assurance="kernel",
+                checker_versions={"lean": "synthetic", "comparator": "synthetic"},
+            )
+
+    service.verifier = SyntheticVerifier()
+    result = service.process_verification(receipt["id"], operator(actor))
+    assert result["status"] == "blocked" and result["code"] == "review_changed", result
+    assert result["remediation"]
+    assert service.list_records("claim", actor) == []
