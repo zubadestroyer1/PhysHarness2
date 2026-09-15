@@ -20,5 +20,16 @@
   "engineering_evidence": [
     "work/acceptance-evidence/engineering-kernel-report.json",
     "work/acceptance-evidence/engineering-independent-report.json"
-  ]
+  ],
+  "physics_engineering": {
+    "status": "passed",
+    "source_build_jobs": 8790,
+    "declarations_checked": 27,
+    "kernel_cases_passed": 3,
+    "independent_kernel_cases_passed": 3,
+    "image_digest": "sha256:6179eb7308aaba0ee8287f24857cd122efede0fb9acf8b9fa217ed030e386a68",
+    "evidence": "formal/evidence/physics/index.json",
+    "semantic_review": "not_reviewed",
+    "production_qualification": "unqualified"
+  }
 }

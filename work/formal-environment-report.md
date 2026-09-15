@@ -35,7 +35,7 @@ The apt repository is the signed Debian snapshot `20260901T000000Z`.
 
    Initial result: 12 failures for the absent utility/lock. Subsequent regression additions
    reproduced the OS-directory-alias issue, non-idempotent Lake preparation, and shared
-   partial-download-file collision before their fixes. Current result: **20 passed** (plus the infrastructure metadata regression).
+   partial-download-file collision before their fixes. Current result: **21 passed** (22 including the infrastructure metadata regression).
 
 2. Checked actual toolchain manifests for every pinned dependency. No conflicting resolved
    revision was found across their committed Lake manifests.
@@ -98,7 +98,98 @@ The apt repository is the signed Debian snapshot `20260901T000000Z`.
 
 8. Started the physics target with the same isolated endpoint and source-only context,
    `--target physics -t physharness-formal:physics433`.
-   Log: `/tmp/physharness-physics-build.log`. Outcome will be appended below after completion.
+   Log: `/tmp/physharness-physics-build.log`. Source compilation completed successfully:
+   **8,790/8,790 jobs in 2,515 seconds**, including the requested Physlib and QuantumInfo
+   roots. Final image/audit/proof outcomes are recorded below.
+
+   The first image export exhausted the dedicated VM's 60 GiB disk while unpacking a
+   compiled Mathlib layer. The successful compilation log and the failed unpack diagnostic
+   are preserved at `.state/formal/physics-source-build.log`. Docker retained the image
+   manifest `sha256:7b64cd4c6371e872f58207c4913cbafb46dc958a5b7b66a38f3e63fed5944c35`;
+   this observation alone does not establish a runnable image or passed proof test.
+
+9. Root expanded the same isolated VM data disk from 60 GiB to 160 GiB (6 CPUs,
+   12 GiB RAM, aarch64 VZ), preserving the compiled image. Ran the fixed declaration
+   audit in a small recovery layer:
+
+   ```sh
+   DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock \
+     docker-buildx build --network=none --progress=plain --load \
+       -f .state/formal/physics-audit/Dockerfile \
+       -t physharness-formal:physics433-audited .state/formal/physics-audit
+   ```
+
+   Result: all 27 qualified `#check`/`#print axioms` commands passed in 12.7 seconds.
+   `Qubit` depends on no axioms; the other 26 declarations report only `propext`,
+   `Classical.choice`, and `Quot.sound`. Image: `sha256:b8cef3506481cd9ce3b278c304e345d9d1db704269400123714cc6ecc666b6ec`.
+   An earlier stdin-tar invocation was rejected by Buildx before execution: Python's
+   leading PAX metadata header did not fit Buildx's short archive recognition peek.
+   Added a failing regression, switched the reusable context to USTAR, and verified:
+
+   ```sh
+   .venv/bin/python tools/formal_environment.py build-context |
+     DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock \
+       docker-buildx build --check --file formal/Dockerfile -
+   ```
+
+   Result: `Check complete, no warnings found.` The build wrapper is mode 0644;
+   documentation invokes it with `bash` so GitHub content-API publication preserves usage.
+
+10. The first genuine library test failed closed before proof acceptance because upstream
+    Physlib enables Lake's local artifact cache. Lake tried to chmod imported `.olean`
+    files in the read-only dependency tree. The original failed report is retained as
+    `formal/evidence/physics/before-cache-fix-report.json`; it is not counted as an attack pass.
+
+    Both formal and acceptance agents independently inspected the pinned Lake source.
+    The supported package setting has precedence over workspace/environment defaults.
+    Added a tested, idempotent preparation overlay preserving `lakefile.upstream.toml`
+    and changing only `enableArtifactCache = true` to `false`. Unexpected upstream
+    configuration fails closed. Upstream SHA256 is
+    `903e753340d0af869d1527225256464ef208e2c19b42a6171eb3a59ae82acaea`;
+    prepared SHA256 is `1aaa5325ab697e777d5a1af163dfd79b2ee1bf8353797751cbfe587474b023da`.
+    Compiler options, Lean declaration sources and the verification driver are unchanged.
+
+    ```sh
+    DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock \
+      docker-buildx build --network=none --progress=plain --load \
+        -f .state/formal/physics-runtime/Dockerfile \
+        -t physharness-formal:physics433-final .state/formal/physics-runtime
+    ```
+
+    This layer required `lake --offline --no-build build` for the three selected roots.
+    Result: **All targets up-to-date (8790 jobs)**, followed by another successful
+    declaration audit. Final image: `sha256:6179eb7308aaba0ee8287f24857cd122efede0fb9acf8b9fa217ed030e386a68`.
+
+11. Extracted actual metadata and input hashes using read-only, networkless trusted
+    Python containers. Verified the driver SHA against the repository, then ran:
+
+    ```sh
+    export DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock
+    export TMPDIR="$PWD/.state/tmp"
+    PYTHONPATH=src .venv/bin/python infra/run_qualified_lean.py \
+      --engineering-image-metadata .state/formal/physics-image-metadata.json \
+      --fixtures formal/library-cases.json \
+      --output .state/formal/library-engineering-kernel.json
+    PYTHONPATH=src .venv/bin/python infra/run_qualified_lean.py \
+      --engineering-image-metadata .state/formal/physics-image-metadata.json \
+      --fixtures formal/library-cases.json --publication \
+      --output .state/formal/library-engineering-independent.json
+    ```
+
+    Result: **3/3 kernel and 3/3 independent nanoda cases passed**. Both the harmonic
+    oscillator identity and Pauli-X involution verified; the sorried quantum theorem was
+    rejected with the required causal `Illegal axiom detected: 'sorryAx'` diagnostic.
+    The independent positive logs explicitly report both nanoda and Lean acceptance.
+    No production sandbox controls were relaxed and no optional attack probes rerun.
+
+12. Archived measured metadata, declaration output, both final reports, initial failure,
+    exact recovery Dockerfiles and small build logs under `formal/evidence/physics/`.
+    `index.json` binds their hashes, source lock, fixture inputs, embedded helper hashes,
+    VM size, image identities and local full-build log hash. The measured image came from
+    the original source build plus two recovery layers; it retains the original recursive
+    chmod layer. The consolidated current full Dockerfile has passed `--check`, but was
+    not rebuilt end to end after the recovery changes. This distinction is explicit in
+    the public provenance. Root owns persistent image export and VM shutdown.
 
 ## Scope and remaining trust requirements
 
