@@ -1,0 +1,6 @@
+{
+  "source": "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem",
+  "sha256": "e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3",
+  "retrieved_at": "2026-09-14",
+  "public_trust_store": true
+}

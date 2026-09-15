@@ -1,0 +1,5 @@
+# Development only: a production Temporal service needs its own reviewed configuration.
+limit.maxIDLength:
+  - value: 255
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true
