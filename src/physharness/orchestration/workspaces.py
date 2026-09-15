@@ -7,6 +7,7 @@ fence lost during a call produces a reconciliation record, never success.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import hashlib
 from collections.abc import Callable
@@ -427,11 +428,45 @@ class WorkspaceBroker:
                     {"execution_id": observed},
                 )
             return result
+        except asyncio.CancelledError as exc:
+            self._observe_cancellation(workspace["id"], identity, exc, provider=provider)
+            raise
         except BaseException as exc:
             self._uncertain(workspace["id"], identity, observed_execution_id=observed)
             raise _reconcile(
                 "VM provision outcome requires reconciliation; reservation remains held."
             ) from exc
+
+    def _observe_cancellation(
+        self, workspace_id, operation_id, cancellation, *, provider, execution_id=None
+    ):
+        # Record observation only; cancellation never grants settlement or reuse authority.
+        if execution_id is None and provider is not None:
+            try:
+                execution_id = provider.execution_id
+            except Exception:
+                pass
+        observation = getattr(provider, "last_execution_observation", None)
+        if execution_id is None and isinstance(observation, dict):
+            recorded_id = observation.get("execution_id")
+            if isinstance(recorded_id, str) and recorded_id:
+                execution_id = recorded_id
+        confirmed = bool(
+            isinstance(observation, dict)
+            and execution_id is not None
+            and observation.get("execution_id") == execution_id
+            and observation.get("destruction_confirmed") is True
+        )
+        try:
+            self._uncertain(
+                workspace_id,
+                operation_id,
+                observed_execution_id=execution_id,
+                destruction_confirmed=confirmed,
+            )
+        except Exception as exc:
+            # _uncertain retains the in-memory evidence even if persistence fails.
+            cancellation.add_note(str(exc))
 
     def _uncertain(
         self, workspace_id, operation_id, *, observed_execution_id=None, destruction_confirmed=False
@@ -666,6 +701,15 @@ class WorkspaceBroker:
                     {"command": command},
                 )
             return result
+        except asyncio.CancelledError as exc:
+            self._observe_cancellation(
+                workspace_id,
+                identity,
+                exc,
+                provider=self._providers.get(workspace_id),
+                execution_id=execution_id,
+            )
+            raise
         except BaseException as exc:
             if isinstance(exc, ExecutionError) and exc.code == "WORKSPACE_TRANSFER_REJECTED":
                 try:
