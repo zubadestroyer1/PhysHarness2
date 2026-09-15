@@ -50,6 +50,14 @@ result = {
         str(path.relative_to("/opt/sources")): sha(path)
         for path in Path("/opt/sources").glob("*/lake-manifest.json")
     },
+    "lake_config_overlays": {
+        str(path.parent.relative_to("/opt/sources")): {
+            "upstream_sha256": sha(path),
+            "prepared_sha256": sha(path.with_name("lakefile.toml")),
+            "change": "enableArtifactCache = false; all other settings preserved",
+        }
+        for path in Path("/opt/sources").glob("*/lakefile.upstream.toml")
+    },
 }
 (metadata / "build.json").write_text(json.dumps(result, indent=2) + "\n")
 with (metadata / "dpkg-packages.txt").open("w") as f:
