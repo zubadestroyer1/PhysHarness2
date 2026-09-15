@@ -1,9 +1,13 @@
 """Source and knowledge services connected to the canonical scientific authority."""
 
+from sqlalchemy import select
+
 from .domain import ArtifactCreate, Principal, canonical_json, digest_json
 from .errors import HarnessError
 from .evaluation.evidence import CanonicalEvidence
 from .knowledge import LemmaIndex, LemmaRecord, ingest_text
+from .knowledge.index import tokens
+from .storage import RecordRow, record_json_text
 
 
 class ResearchMixin:
@@ -71,17 +75,42 @@ class ResearchMixin:
             action,
         )
 
-    def _applicable_knowledge(self, experiment_id, actor, claim_id=None):
-        experiment = self.get_record("experiment", experiment_id, actor)
-        target = self.get_record("problem", experiment["problem_id"], actor)
+    def _knowledge_claims(self, experiment, actor, claim_id=None):
+        """Load metadata in indexed keyset batches; no artifact content is fetched here."""
         scope = (
-            experiment_id
+            experiment["id"]
             if experiment["mode"] == "discovery" or experiment["sharing"] == "none"
             else None
         )
+        query = select(RecordRow).where(
+            RecordRow.project_id == actor.project_id,
+            RecordRow.kind == "claim",
+            record_json_text("proof_status") == "verified",
+        )
+        if scope:
+            query = query.where(record_json_text("experiment_id") == scope)
+        if claim_id:
+            query = query.where(RecordRow.id == claim_id)
+        cursor = None
+        with self.db.sessions() as session:
+            while True:
+                page = query if cursor is None else query.where(RecordRow.id > cursor)
+                rows = list(session.scalars(page.order_by(RecordRow.id).limit(256)))
+                for row in rows:
+                    yield row.payload
+                if len(rows) < 256:
+                    return
+                cursor = rows[-1].id
+
+    def _applicable_knowledge(
+        self, experiment_id, actor, claim_id=None, *, claims=None, rejected_candidates=None
+    ):
+        experiment = self.get_record("experiment", experiment_id, actor)
+        target = self.get_record("problem", experiment["problem_id"], actor)
         broker = Principal(id="knowledge-broker", project_id=actor.project_id, role="operator")
         # This broker may inspect provenance, but only this policy can release a dependency.
-        claims = self.list_records("claim", broker, scope)
+        if claims is None:
+            claims = self._knowledge_claims(experiment, broker, claim_id)
         for claim in claims:
             if claim_id and claim["id"] != claim_id:
                 continue
@@ -94,13 +123,21 @@ class ResearchMixin:
                     raise
             if claim["proof_status"] != "verified":
                 continue
-            origin = self.get_record("experiment", claim["experiment_id"], broker)
-            if origin["id"] != experiment_id and origin.get("sharing", "none") == "none":
-                continue
-            receipt = self.get_record("verification", claim["verification_id"], broker)
-            problem = self.get_record("problem", claim["problem_revision_id"], broker)
+            try:
+                origin = self.get_record("experiment", claim["experiment_id"], broker)
+                if origin["id"] != experiment_id and origin.get("sharing", "none") == "none":
+                    continue
+                receipt = self.get_record("verification", claim["verification_id"], broker)
+                problem = self.get_record("problem", claim["problem_revision_id"], broker)
+                candidate = self.get_record("artifact", receipt["artifact_id"], broker)
+                review = self.get_record("review", problem["review_id"], broker)
+            except HarnessError as error:
+                if error.code == "NOT_FOUND":
+                    continue  # Broken or inaccessible metadata cannot become a dependency.
+                raise
             if (
                 problem["semantic_review"] != "approved"
+                or receipt.get("claim_id") != claim["id"]
                 or claim["statement"] != problem["formal_statement"]
                 or claim["assumptions"] != problem["assumptions"]
                 or claim["target_digest"] != problem["target_digest"]
@@ -111,8 +148,6 @@ class ResearchMixin:
                 and claim["target_digest"] == target["target_digest"]
             ):
                 continue
-            candidate = self.get_record("artifact", receipt["artifact_id"], broker)
-            review = self.get_record("review", problem["review_id"], broker)
             evidence = CanonicalEvidence(
                 [problem, receipt, candidate, review], snapshot_id=f"knowledge:{claim['id']}"
             )
@@ -124,14 +159,44 @@ class ResearchMixin:
                 experiment_id=origin["id"],
             ).valid:
                 continue
-            self.artifacts.get(candidate["sha256"])
-            yield claim, problem, receipt, candidate, review
+            try:
+                source = self.artifacts.get(candidate["sha256"])
+            except HarnessError as error:
+                if rejected_candidates is None or error.code not in {
+                    "ARTIFACT_INTEGRITY_ERROR",
+                    "ARTIFACT_NOT_FOUND",
+                    "ARTIFACT_PATH_UNSAFE",
+                }:
+                    raise
+                # Report only candidates that passed visibility and all acceptance bindings.
+                rejected_candidates.append({"claim_id": claim["id"], "code": error.code})
+                continue
+            yield claim, problem, receipt, candidate, review, source
 
     def search_knowledge(self, experiment_id, query, actor, type_query="", limit=20):
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be from 1 to 1000")
         experiment = self.get_record("experiment", experiment_id, actor)
         target = self.get_record("problem", experiment["problem_id"], actor)
-        records = [
-            LemmaRecord(
+        terms, type_terms = tokens(query), tokens(type_query)
+        ranked = []
+        for claim in self._knowledge_claims(experiment, actor):
+            statement_terms = tokens(claim["statement"])
+            matches = terms & statement_terms
+            if type_terms <= statement_terms and (not terms or matches):
+                # Service lemmas use the statement as their type signature, so this is
+                # the same ordering as LemmaIndex's lexical-plus-type score.
+                ranked.append((-3 * len(matches), claim["id"], str(claim["revision"]), claim))
+        ranked.sort(key=lambda item: item[:3])
+        hits, rejected_candidates = [], []
+        eligible = self._applicable_knowledge(
+            experiment_id,
+            actor,
+            claims=(item[3] for item in ranked),
+            rejected_candidates=rejected_candidates,
+        )
+        for claim, _, receipt, candidate, _, _ in eligible:
+            record = LemmaRecord(
                 id=claim["id"],
                 revision=str(claim["revision"]),
                 environment_digest=receipt["environment_digest"],
@@ -144,16 +209,19 @@ class ResearchMixin:
                 assumptions=claim["assumptions"],
                 limitations=["Recomposition in the consuming proof is still required."],
             )
-            for claim, _, receipt, candidate, _ in self._applicable_knowledge(experiment_id, actor)
-        ]
-        hits = LemmaIndex(records).search(
-            query,
-            environment_digest=target["environment_digest"],
-            type_query=type_query,
-            limit=limit,
-        )
+            hits.extend(
+                LemmaIndex([record]).search(
+                    query,
+                    environment_digest=target["environment_digest"],
+                    type_query=type_query,
+                    limit=1,
+                )
+            )
+            if len(hits) == limit:
+                break
         return {
             "items": [hit.model_dump(mode="json") for hit in hits],
+            "rejected_candidates": rejected_candidates,
             "retrieval": "lexical_and_type_tokens",
             "environment_digest": target["environment_digest"],
             "information_policy": experiment["mode"],
@@ -171,7 +239,7 @@ class ResearchMixin:
                     "Check sharing policy, target review and the exact environment revision."
                 ),
             )
-        claim, problem, receipt, candidate, review = matches[0]
+        claim, problem, receipt, candidate, review, source = matches[0]
         result = {
             "format": "physharness-dependency-source-v1",
             "status": "accepted_dependency_source",
@@ -181,7 +249,7 @@ class ResearchMixin:
             "receipt": receipt,
             "review": review,
             "artifact": candidate,
-            "candidate_source": self.artifacts.get(candidate["sha256"]).decode("utf-8"),
+            "candidate_source": source.decode("utf-8"),
             "recomposition_required": True,
             "limitations": [
                 "This exports source and acceptance evidence, not an importable trusted binary.",
