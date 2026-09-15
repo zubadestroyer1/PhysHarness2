@@ -1,0 +1,20 @@
+{
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "files": {
+    "engineering-independent-report.json": "fc4492b234c7e94de66bb04e594a5cfd93ee6ec40709434bcddfd8e919192c10",
+    "engineering-kernel-report.json": "a0e2ba5bbebc8b262081bd25b7ed5a94bd10f8d2e560809ef58311fbe5c1df14",
+    "image-metadata.json": "8fb3e117b2ecd798264a56a3c963dd5f668db463eb94290de19016f8d6aefdd6",
+    "runtime-identity.json": "66d588eeff457e8e555a30c9dfca889d0ad113d015a9e007043d25384d5ba1e7",
+    "postgres-lock-regression.json": "91c2b4b118db66212c009fe3fb73f96c922269c0824396eadd764b3e46aa547c"
+  },
+  "observations": {
+    "single_kernel_cases": 9,
+    "independent_kernel_cases": 9,
+    "positive_cases_per_mode": 2,
+    "attack_cases_per_mode": 7,
+    "container_cleanup": "18 explicit removals confirmed",
+    "candidate_execution": "only dedicated Linux VM Docker boundary"
+  }
+}
