@@ -1,0 +1,63 @@
+{
+  "schema": "physharness-declaration-selection-v1",
+  "scope": "Selected reusable mechanics and quantum declarations; source spellings require elaborated-name audit before reuse.",
+  "modules": [
+    {
+      "package": "physlib",
+      "path": "Physlib/ClassicalMechanics/HamiltonsEquations.lean",
+      "declarations": [
+        "hamiltonEqOp",
+        "hamiltonEqOp_eq_zero_iff_hamiltons_equations",
+        "hamiltons_equations_varGradient"
+      ]
+    },
+    {
+      "package": "physlib",
+      "path": "Physlib/ClassicalMechanics/HarmonicOscillator/Basic.lean",
+      "declarations": [
+        "HarmonicOscillator",
+        "kineticEnergy",
+        "potentialEnergy",
+        "energy",
+        "EquationOfMotion",
+        "energy_conservation_of_equationOfMotion",
+        "hamiltonian"
+      ]
+    },
+    {
+      "package": "physlib",
+      "path": "QuantumInfo/States/Pure/Qubit.lean",
+      "declarations": [
+        "Qubit",
+        "X",
+        "X_sq",
+        "H",
+        "H_sq",
+        "CNOT",
+        "controllize_mul"
+      ]
+    },
+    {
+      "package": "physlib",
+      "path": "QuantumInfo/States/Mixed/MState.lean",
+      "declarations": [
+        "MState",
+        "pure",
+        "purity",
+        "traceLeft",
+        "traceRight",
+        "traceLeft_prod_eq",
+        "pure_iff_purity_one",
+        "purify_spec"
+      ]
+    },
+    {
+      "package": "mathlib",
+      "path": "Mathlib/LinearAlgebra/Matrix/PosDef.lean",
+      "declarations": [
+        "PosSemidef",
+        "PosDef"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "schema": "physharness-testing-vm-lifecycle-v1",
+  "observed_at_utc": "2026-09-15T08:42:25.119396+00:00",
+  "purpose": "local_engineering_build_and_proof_checks",
+  "production_qualified": false,
+  "vm": {
+    "provider": "colima",
+    "profile_home": "/private/tmp/physharness-colima",
+    "profile": "default",
+    "architecture": "aarch64",
+    "cpus": 6,
+    "memory_bytes": 12884901888,
+    "initial_data_disk_gib": 60,
+    "final_data_disk_gib": 160,
+    "final_status": "Stopped",
+    "shutdown_exit_code": 0,
+    "stop_observation": {
+      "name": "default",
+      "status": "Stopped",
+      "arch": "aarch64",
+      "cpus": 6,
+      "memory": 12884901888,
+      "disk": 171798691840,
+      "runtime": "docker"
+    },
+    "remaining_test_containers_before_shutdown": []
+  },
+  "recovery": {
+    "trigger": "Physics source compilation completed; Docker image unpack failed because data disk was full.",
+    "action": "Graceful stop, expand same sparse data disk, restart same isolated profile, reuse preserved image layers.",
+    "compilation_repeated": false
+  },
+  "archive": {
+    "path": ".state/formal/preserved-images.tar.zst",
+    "size_bytes": 7142252079,
+    "sha256": "68188a32d08672b18336bd763d912499e9cca40e91a98c6f01e4829430c7e7b4",
+    "docker_save_exit_code": 0,
+    "zstd_compress_exit_code": 0,
+    "zstd_test_exit_code": 0,
+    "restoration_test": "not_run",
+    "images": [
+      {
+        "image_digest": "sha256:cadb65787cb75657516379dc91f3870c6c473e3df11b907428f522ceff360eca",
+        "tags": [
+          "physharness-formal:lean433"
+        ]
+      },
+      {
+        "image_digest": "sha256:7b64cd4c6371e872f58207c4913cbafb46dc958a5b7b66a38f3e63fed5944c35",
+        "tags": [
+          "physharness-formal:physics433"
+        ]
+      },
+      {
+        "image_digest": "sha256:b8cef3506481cd9ce3b278c304e345d9d1db704269400123714cc6ecc666b6ec",
+        "tags": [
+          "physharness-formal:physics433-audited"
+        ]
+      },
+      {
+        "image_digest": "sha256:6179eb7308aaba0ee8287f24857cd122efede0fb9acf8b9fa217ed030e386a68",
+        "tags": [
+          "physharness-formal:physics433-final"
+        ]
+      }
+    ],
+    "retention": "persistent implementation worktree; ignored by Git; not uploaded"
+  },
+  "logs": {
+    ".state/formal/final-vm-shutdown.log": {
+      "sha256": "ddcde6eb581decf2d1ffea17bf6716bd262a287eec29e56f9947733c0cb77226",
+      "size_bytes": 1742
+    },
+    ".state/formal/archive-integrity.log": {
+      "sha256": "9feabac17d7318d513084c31f57122d7c5279e46c5094683b69951081d75bd15",
+      "size_bytes": 58
+    },
+    ".state/formal/physics-source-build.log": {
+      "sha256": "7174061fe103cb4e64fcce252adb7af1b8fdb8739976706041fe0914df482fb5",
+      "size_bytes": 716161
+    }
+  },
+  "limitations": [
+    "This stopped local build/test VM is not evidence of fleet qualification.",
+    "The compressed archive passed integrity verification; a restore drill was not run.",
+    "Expert review and operational verifier qualification remain separate."
+  ]
+}

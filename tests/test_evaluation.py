@@ -56,8 +56,8 @@ def records(problem_id="p1", target="target", family="f1"):
             "project_id": "project",
             "problem_revision_id": problem_id,
             "target_digest": digest,
-            "candidate_sha256": sha("proof"),
             "challenge_sha256": sha(target),
+            "candidate_sha256": sha("proof"),
             "review_id": f"review-{problem_id}",
             "target_theorem": "target",
             "environment_digest": sha("env"),
@@ -76,6 +76,20 @@ def records(problem_id="p1", target="target", family="f1"):
 
 def evidence(items=None):
     return api().CanonicalEvidence(items or records(), snapshot_id="synthetic-test-snapshot")
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("review_id", "obsolete-review"),
+        ("challenge_sha256", "0" * 64),
+        ("target_theorem", "unrelated.easy_theorem"),
+    ],
+)
+def test_receipt_cannot_rebind_source_review_or_selected_theorem(field, value):
+    rows = records()
+    rows[-1][field] = value
+    assert not evidence(rows).validate("p1", "receipt-p1").valid
 
 
 def manifest(**updates):
