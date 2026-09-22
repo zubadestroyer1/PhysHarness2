@@ -37,8 +37,10 @@ acceptance.
 
 Quantum and classical mathematical-physics programs develop together. Their initial focus is
 rigorous known results and reusable prerequisites, followed by nearby open lemmas and harder root
-problems. The shipped benchmark fixtures are small, uncompiled algebra cases awaiting expert
-review; they are not a qualified physics benchmark.
+problems. The [proposed physics inventory](benchmarks/physics/README.md) now contains 40
+targets and 20 altered cases, with reference proofs, family holdouts and explicit assumptions.
+Human scientific review and model-based difficulty calibration remain pending. The earlier
+small algebra fixtures remain a separate, unqualified inventory.
 
 ## How models connect
 

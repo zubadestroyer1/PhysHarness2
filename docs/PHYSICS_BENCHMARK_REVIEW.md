@@ -100,6 +100,7 @@ modes. Preserve failures and logs. After both complete, assess exact observation
 uv run python tools/physics_benchmark.py assess \
   --bundle .state/physics-review-v1 \
   --image-metadata PATH_TO_IMAGE_METADATA \
+  --resource-profile formal/verifier-resources.json \
   --kernel-report PATH_TO_KERNEL_REPORT \
   --independent-report PATH_TO_INDEPENDENT_REPORT \
   --output .state/physics-assessment-v1.json
@@ -112,8 +113,27 @@ failure. Semantic holds remain pending even when both kernels accept their proof
 The checks establish consistency of operator-supplied evidence; hashes do not
 authenticate a malicious collector or turn JSON into an authoritative receipt.
 Deployment qualification uses its separate [scope and review packet](VERIFIER_QUALIFICATION.md).
+Use the same explicit resource-profile file for both runs and assessment. Different
+memory or deadline settings produce different execution evidence; omitting the option
+selects the pinned repository default. Changed profiles require fresh relevant runs.
 
 ## Fair model calibration
+
+Report separate denominators; a complete 60-case engineering run is not 60 model-solved
+physics problems:
+
+| Measurement | Denominator | Meaning |
+| --- | ---: | --- |
+| Positive proof solving | 40 full-inventory targets, or the 17 declared holdout targets | Accepted model proofs under the frozen information policy |
+| Fixed bad-candidate controls | 11 submitted candidates | Expected mechanical nonacceptance with the intended cause |
+| Valid semantic-control proofs | 9 submitted proofs | Kernel acceptance of the exact changed theorem; no parent-target credit |
+| Meaning preservation | 9 changed-meaning cases, with matched positive controls | Detection of the change, reported alongside false holds on faithful targets |
+
+Infrastructure failures, deadlines and memory exhaustion remain separately visible and
+follow the preregistered failure policy. They cannot count as successful mathematical
+rejections. Fixed attempted proofs do not measure the ability to generate counterexamples
+or prove general inconsistency. Semantic-review evaluation needs an independent labeled
+rubric; withholding every candidate does not demonstrate discrimination.
 
 Freeze the benchmark, environment, model/runtime, allowed information, tool limits,
 budget and scoring rule before evaluation. Keep an open-library track for legitimate

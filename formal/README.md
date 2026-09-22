@@ -4,7 +4,10 @@
 `environment.lock.json`; no separately invented qualified base image is required.
 A real aarch64 core build completed on 2026-09-15. Its measured hashes are in
 `build-observations.aarch64.json`. Build evidence is separate from sandbox qualification
-and expert semantic review.
+and expert semantic review. The current checker profile in `verifier-resources.json` is 8 GiB,
+4 CPUs, 600 seconds and one local checker slot. Canonical profile, raw profile-file and shared
+policy-source hashes are distinct qualification identities. Existing Wave 1 evidence used the
+historical 2 GiB limit; no `work/wave01/evidence-8g` result exists yet.
 
 The optional `physics` Docker target builds selected Mathlib, Physlib and QuantumInfo
 imports from pinned source. Physlib and QuantumInfo share one repository and toolchain.
