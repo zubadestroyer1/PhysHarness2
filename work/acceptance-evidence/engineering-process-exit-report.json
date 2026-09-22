@@ -1,0 +1,129 @@
+{
+  "status": "blocked",
+  "run_id": "51c98a5e-c3b7-440e-a4ff-8e1adcc2b036",
+  "results": [
+    {
+      "id": "classical-positive",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "168e86f4db4d55217a562bbf88b52c9b5e268912197e717722e6a2d7c01dae1f",
+        "challenge_sha256": "1b206be36da6d259a7657f8a84df800295ff2f3979beed585c134dce8a30bee0",
+        "candidate_sha256": "bda7c502df00a4f8a99ede6fa04f7ec09cbd3a218048703c02b483b63bea6856",
+        "environment_digest": "2da8e81ecd01a31228f4969eac1c485204299a54932dd3b33380c2c6d7079880",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (427ms)\nwarning: Challenge.lean:4:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, translate_compose, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (138ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, translate_compose, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-29633fb31bc944b19d008c4b5157c488",
+            "exit_code": 0,
+            "output": "physharness-check-29633fb31bc944b19d008c4b5157c488\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "CompileExitZero",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "e29d703423f3029e38999335623e41bdb4c404c88754f23c5f8eb6d3b584ad3f",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "c12e665f2b74395728fae2dfabd8a27affaab15a6dcb71df1ac2f60b62b15bc1",
+        "environment_digest": "2da8e81ecd01a31228f4969eac1c485204299a54932dd3b33380c2c6d7079880",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (201ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2716 [2/3] Building Solution (175ms)\ntrace: .> LEAN_PATH=/work/.lake/build/lib/lean /opt/lean/bin/lean /work/Solution.lean -o /work/.lake/build/lib/lean/Solution.olean -i /work/.lake/build/lib/lean/Solution.ilean -c /work/.lake/build/ir/Solution.c --setup /work/.lake/build/ir/Solution.setup.json --json\nerror: no such file or directory (error code: 4294967294)\n  file: /work/.lake/build/lib/lean/Solution.olean\nSome required targets logged failures:\n- Solution\nerror: build failed\nuncaught exception: Child exited with 1\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-b2f019bfdd304787a39fd406cc06b407",
+            "exit_code": 0,
+            "output": "physharness-check-b2f019bfdd304787a39fd406cc06b407\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "InitializeExitZero",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "3c8f0fcc738b28ceb099825dff4833159a2a20654b1e28afcc9da2f57440c33e",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "15e5d77bc4e750952cfb15135726744823d1af4c185a0468218813fa4c9e631c",
+        "environment_digest": "2da8e81ecd01a31228f4969eac1c485204299a54932dd3b33380c2c6d7079880",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (194ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2716 [2/3] Building Solution (157ms)\ntrace: .> LEAN_PATH=/work/.lake/build/lib/lean /opt/lean/bin/lean /work/Solution.lean -o /work/.lake/build/lib/lean/Solution.olean -i /work/.lake/build/lib/lean/Solution.ilean -c /work/.lake/build/ir/Solution.c --setup /work/.lake/build/ir/Solution.setup.json --json\nerror: Solution.lean:2:10: unexpected token ':'; expected '{', identifier or term\nwarning: Solution.lean:6:8: declaration uses `sorry`\nerror: Lean exited with code 1\nSome required targets logged failures:\n- Solution\nerror: build failed\nuncaught exception: Child exited with 1\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-8e3257fa7889464b960116376dc08ad6",
+            "exit_code": 0,
+            "output": "physharness-check-8e3257fa7889464b960116376dc08ad6\n"
+          }
+        }
+      }
+    }
+  ],
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "image_digest": "sha256:cadb65787cb75657516379dc91f3870c6c473e3df11b907428f522ceff360eca",
+  "image_metadata_sha256": "8fb3e117b2ecd798264a56a3c963dd5f668db463eb94290de19016f8d6aefdd6",
+  "fixtures_sha256": "e4038798e45d9f841a282793d0196237e57e331f67ab956dafd391d682e18542",
+  "independent_kernel_requested": true,
+  "launcher_sha256": "c13ca1adc4781efa9d8c6db550c3b8f53344ba2579fb7df5672e7f0c5db1a7d0",
+  "driver_sha256": "a5df1f833fa05d5a172f1285ad40a0c5e3100944ff36a2d539355ce3bbe919a7",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "runner_observed_status": "passed",
+  "coverage_status": "incomplete",
+  "reason": "Additional process-exit coverage stopped after the orchestration security filter. InitializeExitZero encountered a Lean syntax error before executing its initializer. The generic comparator_failed expectation is insufficient to count this attack as exercised. Do not count this additional suite as passed qualification; no further candidate execution was attempted.",
+  "cleanup_status": "all three containers recorded removed; runner session 89643 completed"
+}

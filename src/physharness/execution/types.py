@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -112,7 +113,7 @@ class RuntimeCheckpoint(Record):
         data = {"session": session.model_dump(mode="json"), "native_state": native_state}
         return cls(
             session=session.model_copy(deep=True),
-            native_state=native_state,
+            native_state=deepcopy(native_state),
             state_digest=digest(data),
         )
 

@@ -1,0 +1,241 @@
+{
+  "schema": "physharness-formal-environment-v1",
+  "resolved_at": "2026-09-15",
+  "lean": {
+    "version": "v4.33.0",
+    "archives": {
+      "amd64": {
+        "url": "https://github.com/leanprover/lean4/releases/download/v4.33.0/lean-4.33.0-linux.tar.zst",
+        "sha256": "4b3fb03c29a1e0a253fb1d11f9bae3725f19a0dc6fc09b3ea16d2c9df3349e2c",
+        "size": 574882764,
+        "hash_evidence": "GitHub release asset digest; verified against downloaded bytes during image build"
+      },
+      "arm64": {
+        "url": "https://github.com/leanprover/lean4/releases/download/v4.33.0/lean-4.33.0-linux_aarch64.tar.zst",
+        "sha256": "f961a417cba10b6ea0a9d136712d5952813817ffd6680041f09a233526f803a9",
+        "size": 575937537,
+        "hash_evidence": "GitHub release asset digest; verified against downloaded bytes during image build"
+      }
+    }
+  },
+  "builder_images": {
+    "rust": "rust:1.90.0-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f",
+    "go": "golang:1.25.1-bookworm@sha256:c423747fbd96fd8f0b1102d947f51f9b266060217478e5f9bf86f145969562ee"
+  },
+  "debian_snapshot": "20260901T000000Z",
+  "sources": {
+    "comparator": {
+      "repository": "https://github.com/leanprover/comparator",
+      "revision": "3927ad383f208ae977c340a91c48ac9b497d2097",
+      "archive_url": "https://codeload.github.com/leanprover/comparator/tar.gz/3927ad383f208ae977c340a91c48ac9b497d2097",
+      "archive_sha256": "318c8658ab9d255fe7d3c4eb1351f246fd95ec3a7671acb3a372b41be334d0e3",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "ea674a67ec934845dd5769ce8744fc27f076fb9b2c3149b0efc005a1feb6d518"
+      }
+    },
+    "lean4export": {
+      "repository": "https://github.com/leanprover/lean4export",
+      "revision": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+      "archive_url": "https://codeload.github.com/leanprover/lean4export/tar.gz/15f6055e299ad5b89345e533cc2192f4cc00f659",
+      "archive_sha256": "266271a9c062e31535518475a20b69e92f8516d74832d3866f00298e7192eade",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "f1b9d60d0ebd46f79f48e6833deefeaa835fdee12b4078241635ee14b6a0f07a"
+      }
+    },
+    "physlib": {
+      "repository": "https://github.com/leanprover-community/physlib",
+      "revision": "405848179db6375f814021e804a37dc0dda66d91",
+      "archive_url": "https://codeload.github.com/leanprover-community/physlib/tar.gz/405848179db6375f814021e804a37dc0dda66d91",
+      "archive_sha256": "2a9f8e7cd29692ed14d41d537791fb6a0a23da0f22e1454c25b96851041a4fec",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "5a4f5c539ea9b9779ce10d95bb101a3cf49e6c1b12262182ce3b289720a1724c"
+      }
+    },
+    "landrun": {
+      "repository": "https://github.com/Zouuup/landrun",
+      "revision": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+      "archive_url": "https://codeload.github.com/Zouuup/landrun/tar.gz/811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+      "archive_sha256": "5c5f16a55e3ee87eb89bb909410d877501914a8d7ff9b96674e3c12af83ada71",
+      "lockfiles": {
+        "go.sum": "a6a5ec06c4b78ca140c76fdbe171b82a5521a808abc5805ea6eba568e29763e5"
+      }
+    },
+    "nanoda": {
+      "repository": "https://github.com/ammkrn/nanoda_lib",
+      "revision": "4c544ed4099c8227f07d5de77ad1e69fb0740a27",
+      "archive_url": "https://codeload.github.com/ammkrn/nanoda_lib/tar.gz/4c544ed4099c8227f07d5de77ad1e69fb0740a27",
+      "archive_sha256": "06c5e5e96d481b8d01c6e7d5354afd96d3f6d32849122921d0d2815be8641777",
+      "lockfiles": {
+        "Cargo.lock": "0b59e677b7ffa4831e91434e7fe421bd8f023f74e2ae96fd8bee428024f5fa95"
+      }
+    },
+    "mathlib": {
+      "repository": "https://github.com/leanprover-community/mathlib4",
+      "revision": "db584cd6d46c92f209a44c0f1c829460d327499d",
+      "archive_url": "https://codeload.github.com/leanprover-community/mathlib4/tar.gz/db584cd6d46c92f209a44c0f1c829460d327499d",
+      "archive_sha256": "963f31efd321dea2e38178eb3b8161ded7f2be5678aa5e3f0954b1372329bd0c",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "1009a101f52a9d5d8ca57666f0256bae91abdb693e0f27b5a4622cffcc38cf03"
+      }
+    },
+    "doc-gen4": {
+      "repository": "https://github.com/leanprover/doc-gen4",
+      "revision": "aceca4eeb5a79092eabefaa75fcb72b701d02205",
+      "archive_url": "https://codeload.github.com/leanprover/doc-gen4/tar.gz/aceca4eeb5a79092eabefaa75fcb72b701d02205",
+      "archive_sha256": "a2fd795b5bdf150115312fbf61f0e08e97f35a78f27ab6eb8fec9fad977e9c40",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "01c46deb89b19cb9b9a56c0366bc8a8e33fffe68dd90d65bab8edefa90d9c2a4"
+      }
+    },
+    "plausible": {
+      "repository": "https://github.com/leanprover-community/plausible",
+      "revision": "b7eb3304aeae834b12dda98993a37f6a41f6f0bb",
+      "archive_url": "https://codeload.github.com/leanprover-community/plausible/tar.gz/b7eb3304aeae834b12dda98993a37f6a41f6f0bb",
+      "archive_sha256": "87803609f486ebaa9c65484982df3ea1dbf6e4dc489f57fb90a512d89a1c5d43",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "99a17603b60cd9af445e5689b572b8441aaeaed149f3760dc52595a0c4b128db"
+      }
+    },
+    "LeanSearchClient": {
+      "repository": "https://github.com/leanprover-community/LeanSearchClient",
+      "revision": "5f4d51b81cbd3f6b32b156bfad9056621a040404",
+      "archive_url": "https://codeload.github.com/leanprover-community/LeanSearchClient/tar.gz/5f4d51b81cbd3f6b32b156bfad9056621a040404",
+      "archive_sha256": "c2ab5c8f1f784ce6d6db5bca2fc9c17ba546964c46e72e3a4c04d76950482f31",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "a9b5fc5e76254f415e49b04b7049f58c6cb42e76a0e31b0aed2ddf4af6882033"
+      }
+    },
+    "importGraph": {
+      "repository": "https://github.com/leanprover-community/import-graph",
+      "revision": "16f02aa7642864af59f1ff0e384a015994db9118",
+      "archive_url": "https://codeload.github.com/leanprover-community/import-graph/tar.gz/16f02aa7642864af59f1ff0e384a015994db9118",
+      "archive_sha256": "38c89aeb92ea23d97b837ddb94952e5bdaa96f1fa6b5947a826e863a42d28ee3",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "c8752c5d7299b73dafb9910290d0267aee0a203b72797bd0e07e04cfebe1b7ba"
+      }
+    },
+    "proofwidgets": {
+      "repository": "https://github.com/leanprover-community/ProofWidgets4",
+      "revision": "4be2e3d5087eeb272cf5a8853b8f9dd025ef5957",
+      "archive_url": "https://codeload.github.com/leanprover-community/ProofWidgets4/tar.gz/4be2e3d5087eeb272cf5a8853b8f9dd025ef5957",
+      "archive_sha256": "f8163e84efa0def5d9e67adf7ae20c158372d484b39471ae6ac2d41b45a5d913",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "cfa8a1535cd79fbd868bcc67eb22efdab57568248a437fa5dda567234f1f03e2"
+      }
+    },
+    "aesop": {
+      "repository": "https://github.com/leanprover-community/aesop",
+      "revision": "3448c0bcc5ce01b2d1546e483ec3620e32df3d0e",
+      "archive_url": "https://codeload.github.com/leanprover-community/aesop/tar.gz/3448c0bcc5ce01b2d1546e483ec3620e32df3d0e",
+      "archive_sha256": "631f56cc06bbee196bdd4611b54751c18a28139ffbfc23f2301f25cc27ee0179",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "7f503ca2c502f9ba334604f56baa41038b6ed89f3f11e70e635738709df3b809"
+      }
+    },
+    "Qq": {
+      "repository": "https://github.com/leanprover-community/quote4",
+      "revision": "92c15be17b7caf78c2ad767ec40f89052d908d81",
+      "archive_url": "https://codeload.github.com/leanprover-community/quote4/tar.gz/92c15be17b7caf78c2ad767ec40f89052d908d81",
+      "archive_sha256": "dc91b0aa60373eb486c1144859384f51ea829074fc91d741d1bf93879828ddce",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "460e7ce76c58edfd8ba59428f23e908c5860e8bbca8883ff6c1262980e364d30"
+      }
+    },
+    "batteries": {
+      "repository": "https://github.com/leanprover-community/batteries",
+      "revision": "4488d40d070b9700d4d5a6aa342f0d40c31b2a2d",
+      "archive_url": "https://codeload.github.com/leanprover-community/batteries/tar.gz/4488d40d070b9700d4d5a6aa342f0d40c31b2a2d",
+      "archive_sha256": "34dbf9bdf569593df8aaa740b513565b4c47d87a84758b19dd287d6744ab6725",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "67a8bbfcd0c742e05e198714b2d0f3602a3103d838e7427d773a5587555f88a2"
+      }
+    },
+    "leansqlite": {
+      "repository": "https://github.com/leanprover/leansqlite",
+      "revision": "6168b7549738a19bc837a1625c60c5d1e5dd8aeb",
+      "archive_url": "https://codeload.github.com/leanprover/leansqlite/tar.gz/6168b7549738a19bc837a1625c60c5d1e5dd8aeb",
+      "archive_sha256": "8e0d99e059b7e7f7dc80af3a1c1f3e01da545b3d17211ac0494b5bc7a2f5a582",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "319a30fcf0e03a389503a5b19cba89fefb20185a201d91adad1c8c5c93bd7ba3"
+      }
+    },
+    "Cli": {
+      "repository": "https://github.com/leanprover/lean4-cli",
+      "revision": "6130a47896ce867c6a4a55373441e59e565bad0f",
+      "archive_url": "https://codeload.github.com/leanprover/lean4-cli/tar.gz/6130a47896ce867c6a4a55373441e59e565bad0f",
+      "archive_sha256": "a9327b57e2bf81f132612804ec835277e523f02648a8265c6911aa3b031caa46",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "f608bac5ccb22b59292584eb7fb4497c327e780a17e7afb8d584ce5d79ad0b70"
+      }
+    },
+    "UnicodeBasic": {
+      "repository": "https://github.com/fgdorais/lean4-unicode-basic",
+      "revision": "37e7d8cb7316a88cd3e91208385c9ec6ae780019",
+      "archive_url": "https://codeload.github.com/fgdorais/lean4-unicode-basic/tar.gz/37e7d8cb7316a88cd3e91208385c9ec6ae780019",
+      "archive_sha256": "516896ef958b0e1f9b5d7df276819a2220c46bea7716fd10ebad8f25b2dd299d",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "d9658a78ef40bc761152950f54b13927ae93499a459a45c9d7bbbf352fabe17d"
+      }
+    },
+    "BibtexQuery": {
+      "repository": "https://github.com/dupuisf/BibtexQuery",
+      "revision": "852edafa268eb038a7158551fd580ee8433847b0",
+      "archive_url": "https://codeload.github.com/dupuisf/BibtexQuery/tar.gz/852edafa268eb038a7158551fd580ee8433847b0",
+      "archive_sha256": "cfdaac36c2022d7955ee07cb10905dd5424ff77c30fa274892f87b1ae416f512",
+      "lean_toolchain": "leanprover/lean4:v4.33.0",
+      "lockfiles": {
+        "lake-manifest.json": "b87b2fb79d3be320f7fe4dce8ef649df28960b10d38b007ae4c25f8192b30c83"
+      }
+    },
+    "MD4Lean": {
+      "repository": "https://github.com/acmepjz/md4lean",
+      "revision": "31907cc18f48a95384f99cee5582c00fb39e0f67",
+      "archive_url": "https://codeload.github.com/acmepjz/md4lean/tar.gz/31907cc18f48a95384f99cee5582c00fb39e0f67",
+      "archive_sha256": "372a2484c813c1e5618a34217d591ebd32d79cbb71d5deb3a6ed0dc4c5d3b699",
+      "lean_toolchain": "leanprover/lean4:v4.29.0-rc1",
+      "lockfiles": {
+        "lake-manifest.json": "e6a52fefebe3f7e85914ad0d09abd12a49202505e614a85a8b091767e7a0be57"
+      }
+    }
+  },
+  "libraries": {
+    "Mathlib": {
+      "source": "mathlib",
+      "semantic_review": "not_reviewed",
+      "build_compatibility": "same_declared_toolchain_not_yet_built"
+    },
+    "Physlib": {
+      "source": "physlib",
+      "semantic_review": "not_reviewed",
+      "build_compatibility": "same_declared_toolchain_not_yet_built"
+    },
+    "QuantumInfo": {
+      "source": "physlib",
+      "semantic_review": "not_reviewed",
+      "build_compatibility": "same_declared_toolchain_not_yet_built"
+    }
+  },
+  "excluded_libraries": {
+    "PhyslibAlpha": "Lighter upstream review; excluded from selected import roots. No automatic trust follows for included libraries either."
+  },
+  "qualification": {
+    "sandbox": "not_run",
+    "independent_kernel_compatibility": "not_run",
+    "scientific_review": "not_reviewed"
+  }
+}

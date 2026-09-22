@@ -1,0 +1,187 @@
+{
+  "schema": "physharness-physics-engineering-evidence-v1",
+  "purpose": "engineering_only",
+  "production_qualification": "unqualified",
+  "semantic_review": "not_reviewed",
+  "platform": {
+    "os": "Linux",
+    "architecture": "aarch64",
+    "builder": "dedicated Colima VZ VM",
+    "cpus": 6,
+    "memory_gib": 12,
+    "data_disk_gib": 160,
+    "original_data_disk_gib": 60
+  },
+  "images": {
+    "core": "sha256:cadb65787cb75657516379dc91f3870c6c473e3df11b907428f522ceff360eca",
+    "physics433": "sha256:7b64cd4c6371e872f58207c4913cbafb46dc958a5b7b66a38f3e63fed5944c35",
+    "physics433-audited": "sha256:b8cef3506481cd9ce3b278c304e345d9d1db704269400123714cc6ecc666b6ec",
+    "physics433-final": "sha256:6179eb7308aaba0ee8287f24857cd122efede0fb9acf8b9fa217ed030e386a68"
+  },
+  "source_compilation": {
+    "status": "passed",
+    "jobs": 8790,
+    "seconds": 2515.2,
+    "roots": [
+      "Physlib.ClassicalMechanics.HarmonicOscillator.Basic",
+      "QuantumInfo.States.Pure.Qubit",
+      "QuantumInfo.States.Mixed.MState"
+    ],
+    "source_lock": {
+      "sha256": "c5615b4f818bb8dfefc0281f116d2ece500597a488eb4ee244b330d41c9235c5",
+      "size_bytes": 12341
+    },
+    "log": {
+      "local_path": ".state/formal/physics-source-build.log",
+      "sha256": "7174061fe103cb4e64fcce252adb7af1b8fdb8739976706041fe0914df482fb5",
+      "size_bytes": 716161
+    }
+  },
+  "observed_recipe": {
+    "description": "Original source image followed by the exact audit and readonly-cache Dockerfiles archived here. Original source image retains its earlier recursive chmod layer. Current full Dockerfile is the consolidated future recipe; it was not rebuilt end to end after recovery changes.",
+    "recovery_steps": [
+      {
+        "dockerfile": "audit.Dockerfile",
+        "base": "physics433",
+        "result": "physics433-audited",
+        "command": "docker-buildx build --network=none --progress=plain --load -f .state/formal/physics-audit/Dockerfile -t physharness-formal:physics433-audited .state/formal/physics-audit"
+      },
+      {
+        "dockerfile": "readonly-cache.Dockerfile",
+        "base": "physics433-audited",
+        "result": "physics433-final",
+        "command": "docker-buildx build --network=none --progress=plain --load -f .state/formal/physics-runtime/Dockerfile -t physharness-formal:physics433-final .state/formal/physics-runtime"
+      }
+    ],
+    "consolidated_full_dockerfile": {
+      "sha256": "8cb18d42205e889c4b62276e731f8bc400c2b6c822a09ddd17541f7c493b43f9",
+      "size_bytes": 5003,
+      "validation": "Buildx --check passed; not rebuilt end to end"
+    }
+  },
+  "recovery_inputs": {
+    "formal/DeclarationAudit.lean": {
+      "sha256": "179cc31b931926c96e2410bfa791837464a8bb05df62523658130b24c4bc7668",
+      "size_bytes": 2400
+    },
+    "formal/prepare_lake.py": {
+      "sha256": "4aff00dfabebcf860e25fa84543356a32be09d8e610276d0d3e4b554eb44c572",
+      "size_bytes": 2435
+    },
+    "formal/record_build.py": {
+      "sha256": "0f579a352b1891d6c9ee54f04c063290332da1ca5084d56953a21595fc9c0866",
+      "size_bytes": 2362
+    }
+  },
+  "declaration_audit": {
+    "checked": 27,
+    "no_axioms": [
+      "Qubit"
+    ],
+    "other_26_axioms": [
+      "propext",
+      "Classical.choice",
+      "Quot.sound"
+    ],
+    "scope": "Only the 27 selected declarations; not expert semantic review or all upstream declarations"
+  },
+  "library_suites": {
+    "kernel": {
+      "passed": 3,
+      "total": 3
+    },
+    "independent_nanoda": {
+      "passed": 3,
+      "total": 3
+    },
+    "positive_claims": [
+      "harmonic oscillator omega squared equals stiffness divided by mass",
+      "Pauli-X involution"
+    ],
+    "negative_cause": "Illegal axiom detected: 'sorryAx'"
+  },
+  "fixture_inputs": {
+    "formal/library-cases.json": {
+      "sha256": "948a6ebb1a7ded60fd4b139bfd2af2f923fa35d4684031ca738e95a443b363e0",
+      "size_bytes": 1276
+    },
+    "formal/lakefile.physics.toml": {
+      "sha256": "e3557e21d4bd9d2923997d206e44459786a19d348946ad6a833bc668545e7593",
+      "size_bytes": 172
+    },
+    "formal/lake-manifest.physics.json": {
+      "sha256": "d57958f7fdca5622cc6dfc82a2920f8714fdc8608149477d9b32831a8e7dfd38",
+      "size_bytes": 3253
+    },
+    "formal/lean-toolchain": {
+      "sha256": "302cd63c54178885b89e669f33b38f12f4dd7ae7e5cac537b3203e3768d8fb2b",
+      "size_bytes": 25
+    },
+    "formal/smoke/library-classical/Challenge.lean": {
+      "sha256": "8d48b54c1c79ee3e3190d3f964b25fdacec4fc7d5f83e218d6ad371496fe7c35",
+      "size_bytes": 246
+    },
+    "formal/smoke/library-classical/Solution.lean": {
+      "sha256": "776ca7e864d14c1148c9aec36d2736dea769ab470acb5ba5f5f94c519a579968",
+      "size_bytes": 176
+    },
+    "formal/smoke/library-quantum/Challenge.lean": {
+      "sha256": "30f6b8687af64fcec66a1bebc71e2a1671636877af5edaba81f683e934a5c4d4",
+      "size_bytes": 175
+    },
+    "formal/smoke/library-quantum/Solution.lean": {
+      "sha256": "e9a3089ef19ee93f60504cd91485b60420ac4cab893a7cd476bf8aec9d858b5b",
+      "size_bytes": 110
+    },
+    "formal/smoke/library-quantum/Sorry.lean": {
+      "sha256": "30f6b8687af64fcec66a1bebc71e2a1671636877af5edaba81f683e934a5c4d4",
+      "size_bytes": 175
+    }
+  },
+  "files": {
+    "audit-build.log": {
+      "sha256": "249cf262541a93dcc7557489f930fcbc672c839aed9453d82865dc77a5ff5eb7",
+      "size_bytes": 2360
+    },
+    "audit.Dockerfile": {
+      "sha256": "7a9d1bab8f76e78a8afd0939f9cff286df39aa105eae80ab78f1b9a590b04933",
+      "size_bytes": 280
+    },
+    "before-cache-fix-report.json": {
+      "sha256": "5740594e0c4923189f90dcf555168b3fa5d772a17a545c0e06ce771d74468c34",
+      "size_bytes": 11315
+    },
+    "build-context-check.log": {
+      "sha256": "0d89a4de3094fd792aa5d4af6679ff8dc1086c7b4236336f95081f5c3affdcce",
+      "size_bytes": 647
+    },
+    "declarations-kernel.txt": {
+      "sha256": "a1b350d2820424bdc368dfaa2c4bdceef122394b9a67767c8e36b097c3a91ae8",
+      "size_bytes": 6178
+    },
+    "embedded-input-hashes.json": {
+      "sha256": "51ba82d3d3e59bb5872c60123e973bfffd9b0a801d7f753407263aea9adb5a93",
+      "size_bytes": 655
+    },
+    "engineering-independent-report.json": {
+      "sha256": "dbcbc5107bcccb5e113ca3e9aa3c814f840727520fa38acebf8e601c6c33a9bd",
+      "size_bytes": 9335
+    },
+    "engineering-kernel-report.json": {
+      "sha256": "34a0b22ffde0f04497ec1c821ff2791ae9c6c0d67436fc93d3e6ed648c8b8359",
+      "size_bytes": 8773
+    },
+    "image-metadata.json": {
+      "sha256": "a3dd0fcf2ea27cbc2b8f4617fd44927221b96372891a033ce51046c76f1f07ad",
+      "size_bytes": 3951
+    },
+    "readonly-cache-build.log": {
+      "sha256": "7aefad771e22b943cc3472346277497dec4c5b0dc36017c708b0bcdad3cd9151",
+      "size_bytes": 2500
+    },
+    "readonly-cache.Dockerfile": {
+      "sha256": "9491a1827c42f3f2c4da5d05f3b3ba8fc6df57af98e33100f158090956fadec9",
+      "size_bytes": 508
+    }
+  }
+}

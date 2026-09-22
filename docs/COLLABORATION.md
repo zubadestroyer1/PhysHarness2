@@ -35,3 +35,31 @@ Knowledge retrieval must apply the same visibility gate when its trusted broker 
 ## Validation and limits
 
 `tests/test_sharing.py` exercises direct reads and bytes, pagination, restart briefs, event visibility, cross-branch mail restrictions, sender and provenance forgery, canonical acceptance bindings, explicit orchestrators, nested delegation, controller checkpoint history, actual worker prompt/tool construction, and native session/task binding. Accepted-receipt fixtures are controlled database records for authorization testing. Worker tests use scripted protocol runtimes. Neither provides live proof-checker qualification, containment evidence, live model results, or evidence that collaboration improves scientific success.
+
+## Executing a finite team
+
+`ResearchTeamRunner` takes an explicit list of root task IDs and can discover delegated tasks
+under their descendant branches. Helpers, collaborators, and competing approaches have the
+same canonical execution and budgeting rules; the relation expresses the model's intended
+collaboration pattern. Each task's dependency IDs determine when it may start. A child without
+a dependency on its parent can finish after that parent's model request fails.
+
+A finite run stores its manifest and result as canonical artifacts and reports unfinished
+tasks when its concurrency, task-count, verification-count, or time limits prevent further
+progress. Individual tasks, checkpoints, messages, receipts, and unsettled reservations survive
+the supervisor. Recovery never infers that a lost request was free or reuses a parent's lease.
+
+Model tools are transactionally bound to the assigned holder and fence. Losing the lease or
+cancelling the experiment prevents further worker effects, including replay of old cached
+commands. Portable context checkpoints retain exact target assumptions, unresolved obligations,
+and unverified summary attribution over repeated compactions. They do not carry native model
+history to a child. If canonical obligations or review change, restoration requires a fresh
+context from the canonical records.
+
+The deterministic demonstrations in `tests/test_research_loop_integration.py` run the actual
+OpenAI SDK with an explicit mock HTTP transport through real service/database/artifact and
+ledger paths. They demonstrate single-worker completion, two overlapping workers, a surviving
+delegated helper, continuation exclusion, cancellation, and bounded verification waiting.
+A separate test injects a synthetic checker at the verifier boundary, obtains receipts through
+`process_verification`, and retrieves the accepted dependency bundle. That fixture is explicitly
+mock evidence and provides no live kernel, model, scientific-review, or publication qualification.
