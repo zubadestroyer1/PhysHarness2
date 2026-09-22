@@ -159,22 +159,24 @@ For that single-bundle mode, `PHYSHARNESS_VERIFICATION_RESOURCES` must name the 
 profile file and accompany the complete bundle/manifest/qualification configuration. Startup
 hashes its exact source bytes, parses and canonically hashes the profile, and checks both hashes
 plus the shared policy-source hash against `resource_profile_source_sha256`,
-`resource_profile_sha256` and `resource_policy_sha256` in the qualification. Registry entries
-instead carry explicit canonical `resources` and `resource_profile_source_sha256` fields in each
-`ComparatorConfig`; that raw-source hash and the entry's canonical profile and policy must match
-its qualification pins. A registry file has no global resource-profile path or override that
-silently changes every entry. Operators constructing a registry must hash the exact trusted
-profile source used to produce each entry and retain that source with the qualification evidence.
+`resource_profile_sha256` and `resource_policy_sha256` in the qualification. Each registry entry
+must name its own absolute `resource_profile` file path. At startup the registry reads that file,
+parses the bounded profile, and compares its raw-byte and canonical hashes against both the entry's
+`ComparatorConfig` and its qualification. The existing policy-source check still applies. A registry
+file has no global resource-profile path or override that silently changes every entry. Retain each
+trusted source file with the qualification evidence and update the entry after any byte change.
 
-A registry has `protocol="physharness-verifier-registry-v1"` and an `entries` array. Each entry contains a unique `problem_revision_id` and a complete `ComparatorConfig` JSON object with an absolute `bundle_directory`, `manifest_sha256`, canonical `resources`, `resource_profile_source_sha256` and `qualification`. For example, build the file from already approved configurations:
+A registry has `protocol="physharness-verifier-registry-v1"` and an `entries` array. Each entry contains a unique `problem_revision_id`, an absolute `resource_profile` file path, and a complete `ComparatorConfig` JSON object with an absolute `bundle_directory`, `manifest_sha256`, canonical `resources`, `resource_profile_source_sha256` and `qualification`. Existing registry files need the new path for each entry. For example, build the file from already approved configurations:
 
 ```python
 registry = {
     "protocol": "physharness-verifier-registry-v1",
     "entries": [
         {"problem_revision_id": lemma_problem["id"],
+         "resource_profile": str(lemma_resource_profile.resolve()),
          "config": lemma_config.model_dump(mode="json")},
         {"problem_revision_id": next_problem["id"],
+         "resource_profile": str(next_resource_profile.resolve()),
          "config": next_config.model_dump(mode="json")},
     ],
 }

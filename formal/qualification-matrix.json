@@ -102,7 +102,15 @@
         "tests/test_verifier_resource_bootstrap.py::test_legacy_qualification_missing_resource_pin_fails_closed[resource_profile_source_sha256]",
         "tests/test_verifier_resource_bootstrap.py::test_legacy_qualification_missing_resource_pin_fails_closed[resource_policy_sha256]",
         "tests/test_verifier_resources.py::test_policy_only_change_is_rejected_before_container_launch",
-        "tests/test_verifier_resources.py::test_raw_profile_source_pin_is_checked_before_container_launch"
+        "tests/test_verifier_resources.py::test_raw_profile_source_pin_is_checked_before_container_launch",
+        "tests/test_verifier_registry.py::test_registry_checks_actual_profile_bytes_in_both_construction_paths",
+        "tests/test_verifier_registry.py::test_registry_rejects_changed_values_even_with_updated_source_hash",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[legacy_path]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[value]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[symlink]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[missing]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[oversized]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[duplicate]"
       ]
     }
   ],

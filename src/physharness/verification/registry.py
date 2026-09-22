@@ -14,15 +14,18 @@ from .boundary import (
     Contract,
     EngineeringRequest,
     Manifest,
+    ResourceProfile,
     VerificationRequest,
     digest,
     outcome,
     safe_read,
 )
+from .resource_policy import parse_profile
 
 
 class RegistryEntry(Contract):
     problem_revision_id: str = Field(min_length=1, max_length=256)
+    resource_profile: Path
     config: ComparatorConfig
 
 
@@ -47,6 +50,25 @@ class VerifierRegistry:
             config = entry.config
             if not config.bundle_directory.is_absolute():
                 raise ValueError("Registry bundle directories must be absolute")
+            path = entry.resource_profile
+            if not path.is_absolute():
+                raise ValueError("Registry resource profile paths must be absolute")
+            if any(parent.is_symlink() for parent in path.parents):
+                raise ValueError("Registry resource profile paths must not contain symlinks")
+            try:
+                profile_bytes = safe_read(path.parent, path.name)
+                resources = ResourceProfile.model_validate(parse_profile(profile_bytes))
+            except (OSError, ValueError, TypeError) as exc:
+                raise ValueError("Invalid registry resource profile file or bounds") from exc
+            if (
+                digest(profile_bytes) != config.resource_profile_source_sha256
+                or digest(profile_bytes) != config.qualification.resource_profile_source_sha256
+                or resources.sha256 != config.resources.sha256
+                or resources.sha256 != config.qualification.resource_profile_sha256
+            ):
+                raise ValueError(
+                    "Registry resource profile source differs from configuration or qualification"
+                )
             manifest_bytes = safe_read(config.bundle_directory, "manifest.json")
             if digest(manifest_bytes) != config.manifest_sha256:
                 raise ValueError("Registry manifest digest mismatch")
