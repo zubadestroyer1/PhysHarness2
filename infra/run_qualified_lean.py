@@ -24,9 +24,11 @@ from physharness.verification import (
     EngineeringVerifier,
     ExecutionPins,
     LinuxQualification,
+    ResourceProfile,
     create_bundle,
     driver_digest,
     launcher_digest,
+    resource_policy,
     seccomp_digest,
 )
 from physharness.verification.boundary import Environment, digest, safe_read
@@ -131,6 +133,11 @@ def _append_result(output, report, case, result, *, publication=None):
     )
     _write_report(output, report)
     check_case_outcome(case, result, publication=publication)
+    if (
+        report.get("resource_profile_sha256") is not None
+        and result.diagnostics.get("resource_profile_sha256") != report["resource_profile_sha256"]
+    ):
+        raise RuntimeError("Case outcome resource profile differs from the engineering report")
 
 
 def _run_cases(output: Path, report: dict) -> None:
@@ -149,6 +156,24 @@ def _run_cases(output: Path, report: dict) -> None:
         pinned_bytes(Path(os.environ["CI_CASES_PATH"]), os.environ["CI_CASES_SHA256"])
     )
     check_cases(cases)
+    resource_path = Path(
+        os.environ.get("CI_RESOURCE_PROFILE_PATH", str(ROOT / "formal/verifier-resources.json"))
+    )
+    resource_bytes = safe_read(resource_path.parent, resource_path.name)
+    resources = ResourceProfile.model_validate(resource_policy.parse_profile(resource_bytes))
+    resource_source_sha256 = digest(resource_bytes)
+    if (
+        resources.sha256 != qualification.resource_profile_sha256
+        or resource_source_sha256 != qualification.resource_profile_source_sha256
+        or resource_policy.policy_digest() != qualification.resource_policy_sha256
+    ):
+        raise ValueError("CI resource profile or policy differs from qualification")
+    report.update(
+        resource_profile=resources.model_dump(),
+        resource_profile_sha256=resources.sha256,
+        resource_profile_source_sha256=resource_source_sha256,
+        resource_policy_sha256=resource_policy.policy_digest(),
+    )
     execution = ExecutionPins.model_validate(
         qualification.model_dump(exclude={"qualification_report_sha256"})
     )
@@ -157,6 +182,8 @@ def _run_cases(output: Path, report: dict) -> None:
             bundle_directory=bundle,
             manifest_sha256=manifest_sha,
             execution=execution,
+            resources=resources,
+            resource_profile_source_sha256=resource_source_sha256,
         )
     )
     for case in cases:
@@ -179,6 +206,7 @@ def _run_engineering(
     fixtures_path: Path,
     publication: bool,
     runtime_identity: Path | None = None,
+    resource_profile: Path | None = None,
 ) -> None:
     snapshots = {}
 
@@ -191,6 +219,9 @@ def _run_engineering(
         return data
 
     runner_sha = digest(snapshot(Path(__file__).parent, Path(__file__).name))
+    resource_path = resource_profile or ROOT / "formal/verifier-resources.json"
+    resource_bytes = snapshot(resource_path.parent, resource_path.name)
+    resources = ResourceProfile.model_validate(resource_policy.parse_profile(resource_bytes))
     runtime_sha = None
     if runtime_identity is not None:
         runtime_bytes = snapshot(runtime_identity.parent, runtime_identity.name)
@@ -222,6 +253,10 @@ def _run_engineering(
         seccomp_sha256=seccomp_digest(),
         runner_sha256=runner_sha,
         runtime_identity_sha256=runtime_sha,
+        resource_profile=resources.model_dump(),
+        resource_profile_sha256=resources.sha256,
+        resource_profile_source_sha256=digest(resource_bytes),
+        resource_policy_sha256=resource_policy.policy_digest(),
     )
     _write_report(output, report)
     execution = ExecutionPins(
@@ -231,6 +266,9 @@ def _run_engineering(
         seccomp_sha256=seccomp_digest(),
         linux_boundary="docker-landlock-seccomp-v1",
         independent_kernel=publication,
+        resource_profile_sha256=resources.sha256,
+        resource_profile_source_sha256=digest(resource_bytes),
+        resource_policy_sha256=resource_policy.policy_digest(),
     )
     project_files = {
         name: snapshot(fixtures_path.parent, source)
@@ -271,6 +309,8 @@ def _run_engineering(
                     bundle_directory=bundle,
                     manifest_sha256=manifest_sha,
                     execution=execution,
+                    resources=resources,
+                    resource_profile_source_sha256=digest(resource_bytes),
                 )
             )
             _append_result(
@@ -336,11 +376,12 @@ def run_engineering(
     publication: bool = False,
     *,
     runtime_identity: Path | None = None,
+    resource_profile: Path | None = None,
 ) -> None:
     _record_run(
         output,
         lambda path, report: _run_engineering(
-            path, report, metadata, fixtures, publication, runtime_identity
+            path, report, metadata, fixtures, publication, runtime_identity, resource_profile
         ),
     )
 
@@ -354,6 +395,7 @@ if __name__ == "__main__":
         type=Path,
         help="Operator-observed Linux runtime JSON; required for scoped qualification evidence",
     )
+    parser.add_argument("--resource-profile", type=Path)
     parser.add_argument("--fixtures", type=Path, default=ROOT / "formal/adversarial/cases.json")
     parser.add_argument(
         "--publication", action="store_true", help="Observe independent nanoda replay"
@@ -366,6 +408,7 @@ if __name__ == "__main__":
             args.fixtures,
             args.publication,
             runtime_identity=args.runtime_identity,
+            resource_profile=args.resource_profile,
         )
     else:
         run_from_environment(args.output)
