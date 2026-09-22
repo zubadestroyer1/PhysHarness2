@@ -73,9 +73,11 @@ and must return JSON objects. JSON Schema validates every argument. Tool errors 
 Handlers are trusted control-plane code: they must authorize project access and reserve their
 own budgets before starting children or external work. There is no implicit native subagent tool.
 
-Optional async `event_sink(RuntimeEvent)` receives `generation_started`, `usage`,
-`tool_completed`, and `completed`. The generation-start event contains the input/output token
-reservation and fires before billable generation. A core ledger can veto generation by raising.
+Optional async `event_sink(RuntimeEvent)` receives `generation_started`, `generation_aborted`,
+`usage`, `tool_completed`, and `completed`. The generation-start event contains the input/output
+token reservation and fires before billable generation. A core ledger can veto generation by
+raising. If the runtime deadline expires before the provider request, `generation_aborted` releases
+that reservation with zero usage.
 The usage event includes the stable operation ID and actual native usage; reconciliation should
 be idempotent by operation ID. If the provider response was persisted but delivery of a usage
 callback failed, reconcile from the saved native response. The adapter does not implement a
@@ -236,7 +238,9 @@ separately through canonical receipts and reviews.
 
 The supervisor discovers helper, collaborator, and competing descendant branches, including
 children created by a running model, and starts their tasks only when their canonical dependency
-tasks are completed. A failed parent does not cancel independently runnable children. Every
+tasks are completed. Same-branch delegation records the parent task so a later supervisor run
+continues its queued children without taking unrelated tasks on that branch. A failed parent
+does not cancel independently runnable children. Every
 worker uses the experiment's shared ledger and its own task lease. Repeated dispatch of a
 completed task returns its canonical status without another model request. A running task with
 prior native state requires explicit reconciliation and is never silently restarted.

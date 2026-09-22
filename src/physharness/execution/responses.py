@@ -185,8 +185,8 @@ class ResponsesRuntime:
             # Publish the continuation before the asynchronous tokenizer preflight.
             # Distributed controllers must additionally hold a canonical task lease.
             await self._save(session, state)
-            async with asyncio.timeout(session.limits.timeout_seconds):
-                return await self._loop(session, state)
+            async with asyncio.timeout(session.limits.timeout_seconds) as timeout:
+                return await self._loop(session, state, timeout.when())
         except asyncio.CancelledError:
             # Cancelling an HTTP request cannot prove the remote generation stopped.
             session.status = "uncertain" if state.get("pending_operation") else "interrupted"
@@ -215,7 +215,9 @@ class ResponsesRuntime:
         finally:
             self._active.pop(session.id, None)
 
-    async def _loop(self, session: RuntimeSession, state: dict[str, Any]) -> RuntimeResult:
+    async def _loop(
+        self, session: RuntimeSession, state: dict[str, Any], deadline: float
+    ) -> RuntimeResult:
         client = self._get_client()
         while True:
             if session.turns >= session.limits.max_turns:
@@ -244,6 +246,9 @@ class ResponsesRuntime:
             operation_id = identifier()
             state["pending_operation"] = operation_id
             await self._save(session, state)
+            if asyncio.get_running_loop().time() >= deadline:
+                state["pending_operation"] = None
+                raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
             await self._emit(
                 "generation_started",
                 session,
@@ -252,6 +257,12 @@ class ResponsesRuntime:
                 input_tokens_reserved=count.input_tokens,
                 output_tokens_reserved=min(session.limits.max_output_tokens, remaining),
             )
+            if asyncio.get_running_loop().time() >= deadline:
+                # asyncio.timeout cannot interrupt synchronous event persistence.
+                # The request has not been sent, so release its reservation at zero.
+                state["pending_operation"] = None
+                await self._emit("generation_aborted", session, operation_id, reason="timeout")
+                raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
             response = await client.responses.create(
                 model=session.model.model,
                 input=state["input"],

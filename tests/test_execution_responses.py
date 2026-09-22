@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -124,6 +125,29 @@ async def test_token_preflight_prevents_generation(tmp_path):
         )
     assert error.value.code == "BUDGET_EXHAUSTED"
     assert len(requests) == 1
+    await client.close()
+
+
+async def test_synchronous_event_persistence_cannot_outlive_generation_deadline(tmp_path):
+    requests, events = [], []
+    client = client_for([response([message("late")])], requests)
+    await client.responses.input_tokens.count(model="exact-model", input="warm SDK transport")
+
+    async def persist(event):
+        events.append(event.kind)
+        if event.kind == "generation_started":
+            time.sleep(0.2)
+
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "deadline.db"), client=client, event_sink=persist
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start(
+            "x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=0.1)
+        )
+    assert error.value.code == "TIMEOUT"
+    assert "generation_started" in events
+    assert [url for url, _ in requests if url.endswith("/responses")] == []
     await client.close()
 
 

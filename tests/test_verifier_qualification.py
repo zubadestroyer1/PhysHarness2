@@ -206,6 +206,22 @@ def boundary_evidence(root, scope):
             "output": container + "\n",
         },
     }
+    report["probe_process"] = {
+        "exit_code": 0,
+        "output": json.dumps(
+            {
+                "protocol": "physharness-fixed-boundary-inner-v1",
+                "checks": report["checks"],
+                "observed": report["observed"],
+                "probe_sha256": report["probe_sha256"],
+                "resource_profile_sha256": report["resource_profile_sha256"],
+                "resource_policy_sha256": report["resource_policy_sha256"],
+                "driver_sha256": report["driver_sha256"],
+                "binaries": scope.binaries,
+            }
+        )
+        + "\n",
+    }
     return api().BoundaryEvidence(report=write_json(root, "boundary.json", report))
 
 
@@ -238,6 +254,33 @@ def test_fixed_boundary_booleans_alone_cannot_supply_evidence(deployment, fault)
         report["probe_sha256"] = "0" * 64
     elif fault == "approval":
         report["deployment_approval"] = "approved"
+    boundary = api().BoundaryEvidence(report=write_json(root, "boundary.json", report))
+    packet = api().assess_qualification(
+        root,
+        scope=scope,
+        evidence=all_evidence(root, scope, matrix),
+        regressions=regressions(root, scope, matrix),
+        boundary=boundary,
+    )
+    assert packet.mechanical_status == "invalid"
+    assert not packet.production_qualified
+
+
+@pytest.mark.parametrize("fault", ["missing_process", "process_exit", "process_output", "mismatch"])
+def test_fixed_boundary_requires_successful_matching_probe_process(deployment, fault):
+    root, scope, matrix = deployment
+    boundary = boundary_evidence(root, scope)
+    report = json.loads((root / boundary.report.path).read_bytes())
+    if fault == "missing_process":
+        del report["probe_process"]
+    elif fault == "process_exit":
+        report["probe_process"]["exit_code"] = 1
+    elif fault == "process_output":
+        report["probe_process"]["output"] = "not JSON"
+    else:
+        inner = json.loads(report["probe_process"]["output"])
+        inner["checks"]["nonroot"] = False
+        report["probe_process"]["output"] = json.dumps(inner)
     boundary = api().BoundaryEvidence(report=write_json(root, "boundary.json", report))
     packet = api().assess_qualification(
         root,
