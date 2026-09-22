@@ -90,8 +90,8 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
         }
     )
 
-    def _accepted_for_sharing(self, session, row, experiment):
-        """Only canonical receipts bound to the exact reviewed target confer visibility."""
+    def _accepted_evidence(self, session, row, experiment, assurances):
+        """Require a canonical receipt bound to the exact reviewed target."""
         if row.kind == "artifact":
             target = session.get(RecordRow, experiment.payload["problem_id"])
             if (
@@ -106,7 +106,6 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             expected = {
                 "artifact_id": row.id,
                 "status": "verified",
-                "assurance": "independent_kernel",
                 "experiment_id": experiment.id,
                 "review_id": target.payload.get("review_id"),
                 "target_theorem": target.payload.get("target_theorem", "target"),
@@ -118,23 +117,26 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                 "environment_digest": target.payload.get("environment_digest"),
                 "candidate_sha256": row.payload.get("sha256"),
             }
-            receipts = session.scalars(
-                select(RecordRow)
-                .where(
-                    RecordRow.project_id == row.project_id,
-                    RecordRow.kind == "verification",
-                    *(record_json_text(field) == value for field, value in expected.items()),
-                )
-                .limit(1)
+            if len(assurances) == 1:
+                expected["assurance"] = next(iter(assurances))
+            query = select(RecordRow).where(
+                RecordRow.project_id == row.project_id,
+                RecordRow.kind == "verification",
+                *(record_json_text(field) == value for field, value in expected.items()),
             )
-            return any(self._accepted_for_sharing(session, r, experiment) for r in receipts)
+            if len(assurances) > 1:
+                query = query.where(record_json_text("assurance").in_(assurances))
+            receipts = session.scalars(query.limit(1))
+            return any(
+                self._accepted_evidence(session, r, experiment, assurances) for r in receipts
+            )
         if row.kind == "claim":
             receipt = session.get(RecordRow, row.payload.get("verification_id", ""))
             return bool(
                 receipt
                 and row.payload.get("proof_status") == "verified"
                 and receipt.payload.get("claim_id") == row.id
-                and self._accepted_for_sharing(session, receipt, experiment)
+                and self._accepted_evidence(session, receipt, experiment, assurances)
             )
         if row.kind != "verification":
             return False
@@ -143,7 +145,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
         artifact = session.get(RecordRow, data.get("artifact_id", ""))
         return bool(
             data.get("status") == "verified"
-            and data.get("assurance") == "independent_kernel"
+            and data.get("assurance") in assurances
             and data.get("experiment_id") == experiment.id
             and target
             and target.project_id == row.project_id
@@ -164,6 +166,10 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             and artifact.payload.get("experiment_id") == experiment.id
             and data.get("candidate_sha256") == artifact.payload.get("sha256")
         )
+
+    def _accepted_for_sharing(self, session, row, experiment):
+        """Only independent kernel receipts may cross branch boundaries."""
+        return self._accepted_evidence(session, row, experiment, {"independent_kernel"})
 
     def _in_scope(self, session, row, actor):
         if actor.role != "agent":
