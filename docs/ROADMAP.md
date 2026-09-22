@@ -35,6 +35,12 @@ The table is a navigation aid. The [approved specification](IMPLEMENTATION_PLAN.
 the full requirements, including later domain expansion, self-hosted infrastructure and learning.
 Scientific discovery remains a research outcome even when its infrastructure passes qualification.
 
+Wave 0's current benchmark inventory is 40 proposed real physics targets plus 20 altered cases;
+these are distinct from the tiny algebra controls. References have historical elaboration
+evidence, while human scientific review, calibration and contamination review remain open.
+Wave 1 has implementation and limited control evidence, but the current 8 GiB image benchmark,
+complete qualification packet and deployment/human gates await actual reports.
+
 ## Dependency order
 
 ```mermaid

@@ -15,6 +15,13 @@ The required coverage is in [qualification-matrix.json](../formal/qualification-
 
 The new forty-target scientific benchmark has its own review/evaluation workflow. These verifier controls neither establish that benchmark's scientific fidelity nor measure model difficulty.
 
+Qualification requires an explicit trusted, configurable bounded profile file. The repository
+default is 8 GiB / 4 CPUs / 600 seconds / one local checker slot. The scope and reports keep
+separate hashes for canonical parsed profile content, exact profile-file bytes and shared
+resource-policy source. Old qualification pins do
+not acquire those identities retroactively and fail closed. Any relevant profile, policy,
+embedded image or collector change requires fresh matching evidence.
+
 ## Capture before running
 
 Root/operator scheduling owns Linux execution and runtime observation. No command in the qualification module starts Docker, runs Lean, queries a service or writes a review. First capture the actual deployment's image metadata and Linux runtime identity as files in the repository/work directory. The runtime observation includes `purpose="engineering_runtime_observation"`, `production_qualified=false`, `OSType="linux"`, and nonempty `KernelVersion`, `Architecture`, `ServerVersion`, `CgroupVersion` and `DefaultRuntime` fields. Existing Docker observation snapshots use this format.
@@ -52,6 +59,15 @@ The operator schedules the existing engineering runner with the observed runtime
 Schedule the independent mode with `--publication`, and both modes for `formal/library-cases.json`. Here `--publication` requests independent kernel replay; it grants no publication or review authority. Runtime identity remains a separately collected operator observation; passing a JSON file does not authenticate that observation. The runner records its own source hash and the runtime file hash before execution, then rechecks runner/runtime/metadata/fixture/project/source inputs before marking a run passed. The runtime flag is optional for old callers; reports without it cannot satisfy this matrix.
 
 Each supplied report must match its entire fixture manifest and current source identities. All cases must appear once, include their expected outcome and causal markers, match the mode's assurance and checker versions, and provide a corresponding ordinary Comparator exit. Positive controls need the expected Lean/nanoda completion diagnostics; negative cases need their specific failure diagnostics. A timeout, unrelated syntax error, malformed response or preflight failure cannot count as the intended negative result. Diagnostics improve fixed-fixture reporting and remain untrusted text.
+
+Exit 137 is likewise insufficient to classify an OOM. Assessment requires an increased cgroup
+OOM counter or typed Docker `OOMKilled: true` state. Without that positive evidence, a negative
+exit stays blocked with an uncertain cause. Missing required cgroup observations cannot satisfy
+engineering qualification, but missing optional Docker state does not by itself invalidate an
+otherwise successful kernel result. Resource failures do not satisfy a false-theorem rejection.
+The one-slot file lock
+serializes only contenders with the same service UID and lock path, through cleanup; fleet and
+VM-wide admission remain operator responsibilities.
 
 Cleanup requires a uniquely named checker container and either successful removal of that exact name or a successful authoritative empty listing. Duplicate run IDs, reused containers and duplicate suite modes are invalid. A report from another image or runtime cannot fill a missing requirement.
 
@@ -122,7 +138,7 @@ Each `*_ref` is an `EvidenceFile` containing the actual file path and hash. Asse
 ## Explicit limits and review gates
 
 - The previous optional process-exit probe remains blocked/incomplete after a security filter. Its initializer encountered a syntax failure before execution. It must not be retried in this task, and no report hides or counts that coverage gap as passed.
-- The pinned driver has a 110-second Comparator deadline and a 100,000-byte Comparator output bound, independent of the host configuration's larger limits. A contended library run hit that deadline and remained blocked with cleanup; its generic `boundary_unqualified` code is not a mathematical rejection. This task records that limitation and leaves the image/driver unchanged.
+- The current profile gives Comparator 600 seconds and caps its output at 256,000 bytes. Earlier Wave 1 evidence used the historical 2 GiB profile and remains evidence only for those recorded hashes. No `work/wave01/evidence-8g` run exists yet; the current-image benchmark, fixed probe and complete qualification packet remain pending.
 - Fixed cases, ordinary boundary observations and host regressions do not establish exhaustive host containment, all Landlock/seccomp syscalls, real cgroup exhaustion, database concurrency for the current deployment, or fleet capacity.
 - Review the consolidated source build and recovery in a fresh environment separately. Historical layered recovery evidence cannot prove a later consolidated recipe was rebuilt. The source/image/runtime and evidence collector are part of the human review boundary.
 - The axiom field remains the allowed-set upper bound; this workflow does not invent a minimal dependency closure or semantic correctness assessment.

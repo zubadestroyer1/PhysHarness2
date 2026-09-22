@@ -1,6 +1,6 @@
 # Implementation evidence ledger
 
-Updated 2026-09-15 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) remains the scope.
+Updated 2026-09-22 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) remains the scope.
 Every wave is **unqualified**. Several components are implemented and tested; none of the live
 scientific/fleet exit criteria has been substituted with a mock or a schema check.
 
@@ -78,10 +78,17 @@ canonical team runner. The current delivery evidence is in
   preservation. They do not establish live scientific throughput or a qualified fleet.
 - Optional additional initializer-probe coverage is blocked/incomplete and excluded from pass
   counts. An unrelated syntax error cannot satisfy a negative case's required causal diagnosis.
+- Wave 0 now contains 40 proposed real physics targets and 20 altered cases (11 mechanical
+  nonacceptance controls and nine valid semantic-hold controls), separate from the tiny algebra
+  controls. Their references were historically elaborated, but scientific human review,
+  calibration and contamination decisions remain pending.
+- Wave 1 resource enforcement, qualification parsing and limited control evidence exist. The
+  current 8 GiB image benchmark, fixed boundary evidence, complete qualification assessment and
+  deployment/human gates remain pending; the older 2 GiB reports are historical only.
 
 | Wave | Implemented engineering | Required before the wave can qualify |
 |---|---|---|
-| 0 | Repository, pinned Python/frontend environments, schemas, two program inventories, 60 provenance-bearing tiny algebra fixtures; exact formal source/toolchain locks and 27-declaration inventory | Review the recorded physics build/declaration evidence; expert review of 40 valid targets and 20 negative cases; benchmark inventory remains pending review/uncompiled |
+| 0 | Repository, pinned environments and schemas, 40 proposed real physics targets and 20 altered cases (11 mechanical nonacceptance, nine valid semantic-hold) with historically elaborated references, separate from tiny algebra controls; exact formal source/toolchain locks and 27-declaration inventory | Human review and calibration of the 40 targets and 20 altered cases, including fidelity, difficulty, contamination and holdouts |
 | 1 | Trusted bundles and registry, isolated Comparator, actual Lean/nanoda engineering runs, source/theorem/review-bound receipts, causal negative-case diagnostics and PostgreSQL review locking | Production containment qualification, expert semantic-review process, and larger proof/dependency replay compatibility |
 | 2 | API/CLI/MCP, typed Responses loop, canonical tool/accounting integration, finite single/team supervisor, optional VM tools, live-run preparation/preflight; standalone Codex adapter and accepted-source retrieval | Live automated accepted proof plus subsequent lemma reuse in each program; approved execution deployment and optional research skills |
 | 3 | Temporal/outbox/leases/reservations, canonical VM broker with shared slots, external checkpoints, S3 adapter, E2B lifecycle and managed deployment configuration | Actual managed deployment, safe lease adoption/reconnect, uncertain-operation reconciliation, live fault injection and qualified recovery |
@@ -130,6 +137,11 @@ and tunnel were removed after the concurrency test. Hosted-model identifiers, cr
 qualified E2B templates, reviewed proof bundles, cloud inputs and explicit live experiment
 envelopes remain operator inputs. Expert meaning/novelty decisions cannot be supplied by this
 implementation agent. Use [the first live-run guide](FIRST_LIVE_RUN.md) for the pending inputs.
+
+The historical VM used temporary Colima metadata. Future provisioning must set `COLIMA_HOME` to
+persistent user-owned storage such as `$HOME/.local/share/physharness-colima`. During recovery,
+check the Docker endpoint and host agent directly; `colima status` cannot establish absence after
+temporary metadata is lost.
 
 These are separate from engineering gaps above. Resolving credentials alone will not qualify the
 system; implement and exercise the remaining contracts before promoting a wave.
