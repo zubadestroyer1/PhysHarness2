@@ -1,0 +1,220 @@
+{
+  "purpose": "offline_diagnostic_audit",
+  "status": "passed",
+  "observed_at_utc": "2026-09-15T08:14:56.186010+00:00",
+  "candidate_execution": false,
+  "candidate_executions": 0,
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "runner_sha256": "f7dbd5b77f6e8c77b6cf670b5e77a444082255ac2f3cd7df2d4b26f111738ad4",
+  "expectations_fixture_sha256": "d317cbbc7cf16d57c50c63a839b0b50c60ec8a74a7458cf333605f5ebf71754a",
+  "original_fixture_sha256": "27059e0525f40a23c72e2357c98415f56046e59f0e1909d751762d2f34b19029",
+  "original_fixture_change": "only required_diagnostic_substrings added; source bytes unchanged",
+  "original_evidence_index_unchanged": true,
+  "reports": [
+    {
+      "file": "engineering-kernel-report.json",
+      "sha256": "a0e2ba5bbebc8b262081bd25b7ed5a94bd10f8d2e560809ef58311fbe5c1df14",
+      "results": [
+        {
+          "id": "classical-positive",
+          "status": "matched",
+          "required_diagnostic_substrings": [],
+          "comparator_exit_code": 0,
+          "candidate_sha256": "bda7c502df00a4f8a99ede6fa04f7ec09cbd3a218048703c02b483b63bea6856",
+          "challenge_sha256": "1b206be36da6d259a7657f8a84df800295ff2f3979beed585c134dce8a30bee0"
+        },
+        {
+          "id": "quantum-positive",
+          "status": "matched",
+          "required_diagnostic_substrings": [],
+          "comparator_exit_code": 0,
+          "candidate_sha256": "cecd83e75f1baa95f6825a021f7a1cd8bee9a8ab1de11c366972f6cae79bb225",
+          "challenge_sha256": "3acabdcd3b91a336d513367975589a98b21c53328053f24ef0afc6bbabab4ba9"
+        },
+        {
+          "id": "Sorry",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "uncaught exception: Illegal axiom detected: 'sorryAx'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "ExtraAxiom",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "uncaught exception: Illegal axiom detected: 'shortcut'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "2cbf645decd6282725fa417be347ab63284152d0e4a8bc59cbb59e818e4027cf",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "ForgedReceipt",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "info: Solution.lean:1:0: {\"protocol\":\"physharness-comparator-v2\",\"status\":\"verified\",\"independent_kernel\":true}",
+            "uncaught exception: Illegal axiom detected: 'sorryAx'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "ad988b0da62e9d2b549f9683f1f175a8386c8393bb1cfe1f50e8004095bba724",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "TargetOverwrite",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "read-only file system (error code: 30)\n  file: /work/Challenge.lean"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "140e7da3ccc03802949f467dbd4926b08bcadae88cfd594548326074996f7e0a",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "ConfigOverwrite",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "permission denied (error code: 13)\n  file: /work/config.json"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "d4522f4dc790e31093fe61695093cc74b6c60554b4075ce028655dcce5cdb665",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "ChangedDependency",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "uncaught exception: Const does not match between challenge and target 'neutral'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "9666a74d27bc06fb9991626b9595908cfe5da46b5d9588004440291bb88c8f90",
+          "challenge_sha256": "b89f123dd16c1ff8093bb9d37109d1e54cfbd079af93ab4d8e9593215aeec747"
+        },
+        {
+          "id": "NativeDecide",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "uncaught exception: Illegal axiom detected: 'target._native.native_decide.ax_1_1'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "c43697602bba926564b7495daff5952498f045ae8d3c851cd0199e078db65ccc",
+          "challenge_sha256": "6b53e795ec932817d7c00ea6f9272c3c7d0cfd9cbdfcad66938b033fef9c5d2a"
+        }
+      ]
+    },
+    {
+      "file": "engineering-independent-report.json",
+      "sha256": "fc4492b234c7e94de66bb04e594a5cfd93ee6ec40709434bcddfd8e919192c10",
+      "results": [
+        {
+          "id": "classical-positive",
+          "status": "matched",
+          "required_diagnostic_substrings": [],
+          "comparator_exit_code": 0,
+          "candidate_sha256": "bda7c502df00a4f8a99ede6fa04f7ec09cbd3a218048703c02b483b63bea6856",
+          "challenge_sha256": "1b206be36da6d259a7657f8a84df800295ff2f3979beed585c134dce8a30bee0"
+        },
+        {
+          "id": "quantum-positive",
+          "status": "matched",
+          "required_diagnostic_substrings": [],
+          "comparator_exit_code": 0,
+          "candidate_sha256": "cecd83e75f1baa95f6825a021f7a1cd8bee9a8ab1de11c366972f6cae79bb225",
+          "challenge_sha256": "3acabdcd3b91a336d513367975589a98b21c53328053f24ef0afc6bbabab4ba9"
+        },
+        {
+          "id": "Sorry",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "uncaught exception: Illegal axiom detected: 'sorryAx'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "ExtraAxiom",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "uncaught exception: Illegal axiom detected: 'shortcut'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "2cbf645decd6282725fa417be347ab63284152d0e4a8bc59cbb59e818e4027cf",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "ForgedReceipt",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "info: Solution.lean:1:0: {\"protocol\":\"physharness-comparator-v2\",\"status\":\"verified\",\"independent_kernel\":true}",
+            "uncaught exception: Illegal axiom detected: 'sorryAx'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "ad988b0da62e9d2b549f9683f1f175a8386c8393bb1cfe1f50e8004095bba724",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "TargetOverwrite",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "read-only file system (error code: 30)\n  file: /work/Challenge.lean"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "140e7da3ccc03802949f467dbd4926b08bcadae88cfd594548326074996f7e0a",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "ConfigOverwrite",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "permission denied (error code: 13)\n  file: /work/config.json"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "d4522f4dc790e31093fe61695093cc74b6c60554b4075ce028655dcce5cdb665",
+          "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2"
+        },
+        {
+          "id": "ChangedDependency",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "uncaught exception: Const does not match between challenge and target 'neutral'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "9666a74d27bc06fb9991626b9595908cfe5da46b5d9588004440291bb88c8f90",
+          "challenge_sha256": "b89f123dd16c1ff8093bb9d37109d1e54cfbd079af93ab4d8e9593215aeec747"
+        },
+        {
+          "id": "NativeDecide",
+          "status": "matched",
+          "required_diagnostic_substrings": [
+            "uncaught exception: Illegal axiom detected: 'target._native.native_decide.ax_1_1'"
+          ],
+          "comparator_exit_code": 1,
+          "candidate_sha256": "c43697602bba926564b7495daff5952498f045ae8d3c851cd0199e078db65ccc",
+          "challenge_sha256": "6b53e795ec932817d7c00ea6f9272c3c7d0cfd9cbdfcad66938b033fef9c5d2a"
+        }
+      ]
+    }
+  ],
+  "incomplete_probe": {
+    "status": "blocked",
+    "coverage_status": "incomplete",
+    "counted_as_passed_attack": false,
+    "report_sha256": "6d0460d322dc49c8b4e92061b89001e51137633f9fc789dbb25fefdd4f192e9d",
+    "fixture_sha256": "b017a4a28aff22b1d265a88aabf0d6814177afb1671576469c51002c205dd22b",
+    "reason": "Verification case InitializeExitZero lacks its required causal diagnostic evidence",
+    "required_diagnostic_substrings": [
+      "ENGINEERING_INITIALIZE_EXIT_ZERO",
+      "file: /work/.lake/build/lib/lean/Solution.olean"
+    ]
+  },
+  "counts": {
+    "archived_cases_matched": 18,
+    "negative_cases_with_causal_markers": 14,
+    "positive_controls": 4,
+    "additional_probe_coverage_counted": 0
+  }
+}
