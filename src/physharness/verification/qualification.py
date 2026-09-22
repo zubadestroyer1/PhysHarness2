@@ -16,11 +16,13 @@ from xml.etree import ElementTree as ET
 
 from pydantic import Field, model_validator
 
+from . import resource_policy as resource_policy
 from .boundary import (
     SHA256,
     Contract,
     Environment,
     ImageDigest,
+    ResourceProfile,
     VerificationOutcome,
     digest,
     seccomp_digest,
@@ -106,6 +108,7 @@ BOUNDARY_CHECKS = frozenset(
         "tmp_write_control",
         "no_docker_socket",
         "container_configuration",
+        "memory_events_readable",
     ]
 )
 
@@ -167,6 +170,9 @@ class DeploymentScope(Contract):
     protocol: Literal["physharness-qualification-scope-v1"] = "physharness-qualification-scope-v1"
     image_metadata: EvidenceFile
     runtime_identity: EvidenceFile
+    resource_profile_file: EvidenceFile
+    resources: ResourceProfile
+    resource_profile_sha256: SHA256
     image_digest: ImageDigest
     launcher_sha256: SHA256
     driver_sha256: SHA256
@@ -316,11 +322,22 @@ def _fixture(root: Path, suite: SuiteRequirement) -> dict:
 
 
 def capture_scope(
-    repository: Path, *, image_metadata: EvidenceFile, runtime_identity: EvidenceFile
+    repository: Path,
+    *,
+    image_metadata: EvidenceFile,
+    runtime_identity: EvidenceFile,
+    resource_profile: EvidenceFile | None = None,
 ) -> DeploymentScope:
     """Snapshot current trusted inputs before scheduled runs; never probe a runtime."""
     root = Path(repository).resolve()
     matrix = load_matrix(root)
+    resource_profile = resource_profile or EvidenceFile(
+        path="formal/verifier-resources.json",
+        sha256=digest(_read(root, "formal/verifier-resources.json")),
+    )
+    resources = ResourceProfile.model_validate(
+        resource_policy.parse_profile(_read(root, resource_profile.path, resource_profile.sha256))
+    )
     metadata = _json(_read(root, image_metadata.path, image_metadata.sha256))
     validate_runtime_identity(_read(root, runtime_identity.path, runtime_identity.sha256))
     environment = Environment.model_validate(
@@ -335,6 +352,7 @@ def capture_scope(
     if not required_binaries <= environment.binaries.keys():
         raise EvidenceError("Complete pinned checker binaries, including nanoda, are required")
     names = {
+        resource_profile.path,
         MATRIX_PATH,
         "formal/environment.lock.json",
         matrix.boundary_probe.script,
@@ -368,6 +386,9 @@ def capture_scope(
     return DeploymentScope(
         image_metadata=image_metadata,
         runtime_identity=runtime_identity,
+        resource_profile_file=resource_profile,
+        resources=resources,
+        resource_profile_sha256=resources.sha256,
         image_digest=environment.image,
         driver_sha256=driver,
         launcher_sha256=inputs["src/physharness/verification/boundary.py"],
@@ -412,6 +433,10 @@ def _suite_report(root, scope, suite, report, seen_containers) -> str:
         "image_digest": scope.image_digest,
         "image_metadata_sha256": scope.image_metadata.sha256,
         "runtime_identity_sha256": scope.runtime_identity.sha256,
+        "resource_profile_sha256": scope.resource_profile_sha256,
+        "resource_profile_source_sha256": scope.resource_profile_file.sha256,
+        "resource_policy_sha256": scope.inputs["src/physharness/verification/resource_policy.py"],
+        "resource_profile": scope.resources.model_dump(),
         "runner_sha256": scope.inputs["infra/run_qualified_lean.py"],
         "fixtures_sha256": scope.inputs[suite.fixture],
         "launcher_sha256": scope.launcher_sha256,
@@ -461,6 +486,31 @@ def _suite_report(root, scope, suite, report, seen_containers) -> str:
         }
         if any(getattr(value, key) != expected for key, expected in expected_pins.items()):
             raise EvidenceError("Outcome source, target or environment identity mismatch")
+        if value.diagnostics.get("resource_profile_sha256") != scope.resource_profile_sha256:
+            raise EvidenceError("Outcome resource profile differs from the deployment")
+        if (
+            value.diagnostics.get("resource_policy_sha256")
+            != scope.inputs["src/physharness/verification/resource_policy.py"]
+        ):
+            raise EvidenceError("Outcome resource policy source differs from the deployment")
+        if value.diagnostics.get("oom_confirmed") is not False:
+            raise EvidenceError("OOM or missing resource observations cannot satisfy a fixed case")
+        counters = []
+        for key in ("memory_events_before", "memory_events_after"):
+            record = value.diagnostics.get(key, {})
+            events = record.get("events", {})
+            if (
+                record.get("status") != "observed"
+                or type(events.get("oom_kill")) is not int
+                or events["oom_kill"] < 0
+            ):
+                raise EvidenceError("Actual cgroup memory.events observations are required")
+            counters.append(events)
+        if (
+            resource_policy.confirmed_oom(*counters)
+            or counters[1]["oom_kill"] < counters[0]["oom_kill"]
+        ):
+            raise EvidenceError("OOM counters contradict the expected case evidence")
         if value.checker_versions != scope.checker_versions:
             raise EvidenceError("Outcome checker provenance differs from the scoped image")
         positive = case["expected_status"] == "verified"
@@ -502,6 +552,10 @@ def _boundary_report(scope, matrix, report, runs, containers):
         "image_digest": scope.image_digest,
         "image_metadata_sha256": scope.image_metadata.sha256,
         "runtime_identity_sha256": scope.runtime_identity.sha256,
+        "resource_profile_sha256": scope.resource_profile_sha256,
+        "resource_profile_source_sha256": scope.resource_profile_file.sha256,
+        "resource_policy_sha256": scope.inputs["src/physharness/verification/resource_policy.py"],
+        "resource_profile": scope.resources.model_dump(),
         "probe_sha256": scope.inputs[matrix.boundary_probe.script],
         "launcher_sha256": scope.launcher_sha256,
         "driver_sha256": scope.driver_sha256,
@@ -517,6 +571,12 @@ def _boundary_report(scope, matrix, report, runs, containers):
     ):
         raise EvidenceError("Every fixed observation and writable positive control must pass")
     observed = report.get("observed", {})
+    memory = observed.get("memory_events", {}) if isinstance(observed, dict) else {}
+    if (
+        memory.get("status") != "observed"
+        or type(memory.get("events", {}).get("oom_kill")) is not int
+    ):
+        raise EvidenceError("Actual cgroup memory.events readability is required")
     # These are Linux errno values; a missing file or unsupported operation is not denial.
     for key, allowed in {
         "unix_socket_denied_errno": {1, 13},
@@ -607,7 +667,10 @@ def assess_qualification(
     checks = []
     try:
         current = capture_scope(
-            root, image_metadata=scope.image_metadata, runtime_identity=scope.runtime_identity
+            root,
+            image_metadata=scope.image_metadata,
+            runtime_identity=scope.runtime_identity,
+            resource_profile=scope.resource_profile_file,
         )
         if current != scope:
             raise EvidenceError("Current input hashes differ from the captured deployment scope")
@@ -710,7 +773,10 @@ def assess_qualification(
     try:
         if (
             capture_scope(
-                root, image_metadata=scope.image_metadata, runtime_identity=scope.runtime_identity
+                root,
+                image_metadata=scope.image_metadata,
+                runtime_identity=scope.runtime_identity,
+                resource_profile=scope.resource_profile_file,
             )
             != scope
         ):

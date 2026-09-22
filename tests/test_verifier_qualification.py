@@ -114,6 +114,13 @@ def suite_report(root, scope, suite, mode):
                     "axioms": ["propext", "Quot.sound", "Classical.choice"] if positive else [],
                     "checker_versions": scope.checker_versions,
                     "diagnostics": {
+                        "resource_profile_sha256": scope.resource_profile_sha256,
+                        "resource_policy_sha256": scope.inputs[
+                            "src/physharness/verification/resource_policy.py"
+                        ],
+                        "oom_confirmed": False,
+                        "memory_events_before": {"status": "observed", "events": {"oom_kill": 0}},
+                        "memory_events_after": {"status": "observed", "events": {"oom_kill": 0}},
                         "comparator_exit_code": 0 if positive else 1,
                         "comparator_output": logs,
                         "container_cleanup": {
@@ -135,6 +142,10 @@ def suite_report(root, scope, suite, mode):
         "image_digest": scope.image_digest,
         "image_metadata_sha256": scope.image_metadata.sha256,
         "runtime_identity_sha256": scope.runtime_identity.sha256,
+        "resource_profile": scope.resources.model_dump(),
+        "resource_profile_sha256": scope.resource_profile_sha256,
+        "resource_profile_source_sha256": scope.resource_profile_file.sha256,
+        "resource_policy_sha256": scope.inputs["src/physharness/verification/resource_policy.py"],
         "runner_sha256": scope.inputs["infra/run_qualified_lean.py"],
         "fixtures_sha256": scope.inputs[suite["fixture"]],
         "launcher_sha256": scope.launcher_sha256,
@@ -171,12 +182,17 @@ def boundary_evidence(root, scope):
         "image_digest": scope.image_digest,
         "image_metadata_sha256": scope.image_metadata.sha256,
         "runtime_identity_sha256": scope.runtime_identity.sha256,
+        "resource_profile": scope.resources.model_dump(),
+        "resource_profile_sha256": scope.resource_profile_sha256,
+        "resource_profile_source_sha256": scope.resource_profile_file.sha256,
+        "resource_policy_sha256": scope.inputs["src/physharness/verification/resource_policy.py"],
         "probe_sha256": scope.inputs["infra/probe_verifier_boundary.py"],
         "launcher_sha256": scope.launcher_sha256,
         "driver_sha256": scope.driver_sha256,
         "seccomp_sha256": scope.seccomp_sha256,
         "checks": {name: True for name in matrix["boundary_probe"]["required_checks"]},
         "observed": {
+            "memory_events": {"status": "observed", "events": {"oom_kill": 0}},
             "unix_socket_denied_errno": 1,
             "inet_socket_denied_errno": 1,
             "trusted_write_errno": 30,
@@ -666,3 +682,30 @@ def test_historical_real_image_driver_is_not_recast_as_current_scope(deployment)
     ref = write_json(root, "historical-metadata.json", historical)
     with pytest.raises(ValueError, match="Image driver"):
         api().capture_scope(root, image_metadata=ref, runtime_identity=scope.runtime_identity)
+
+
+@pytest.mark.parametrize("fault", ["profile", "source", "policy", "outcome", "oom"])
+def test_reports_cannot_mix_profiles_or_count_resource_failure_as_case_evidence(deployment, fault):
+    root, scope, matrix = deployment
+    report = suite_report(root, scope, matrix["suites"][0], "kernel")
+    if fault == "profile":
+        report["resource_profile"]["cpus"] = 2
+    elif fault == "source":
+        report["resource_profile_source_sha256"] = "0" * 64
+    elif fault == "policy":
+        report["resource_policy_sha256"] = "0" * 64
+    elif fault == "outcome":
+        report["results"][0]["outcome"]["diagnostics"]["resource_profile_sha256"] = "0" * 64
+    else:
+        report["results"][0]["outcome"]["diagnostics"]["oom_confirmed"] = True
+    item = api().SuiteEvidence(suite_id="core", report=write_json(root, "mixed.json", report))
+    packet = api().assess_qualification(root, scope=scope, evidence=[item])
+    assert packet.mechanical_status == "invalid"
+
+
+def test_scoped_resource_source_mutation_invalidates_packet(deployment):
+    root, scope, _ = deployment
+    path = root / scope.resource_profile_file.path
+    path.write_bytes(path.read_bytes() + b"\n")
+    packet = api().assess_qualification(root, scope=scope, evidence=[])
+    assert packet.mechanical_status == "invalid"

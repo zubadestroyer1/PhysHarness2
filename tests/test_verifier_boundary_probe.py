@@ -62,8 +62,8 @@ def inspection():
             "CapAdd": None,
             "SecurityOpt": ["no-new-privileges", "seccomp=/trusted-stage/seccomp.json"],
             "PidsLimit": 128,
-            "Memory": 2147483648,
-            "NanoCpus": 2000000000,
+            "Memory": 8 * 1024**3,
+            "NanoCpus": 4000000000,
             "Tmpfs": {
                 "/work": "rw,nosuid,nodev,size=1g,mode=1777",
                 "/tmp": "rw,nosuid,nodev,size=256m,mode=1777",
@@ -275,6 +275,8 @@ def test_failed_inspection_keeps_bounded_sanitized_context(tmp_path, monkeypatch
     inner = {
         "protocol": "physharness-fixed-boundary-inner-v1",
         "probe_sha256": module.sha(Path(module.__file__).read_bytes()),
+        "resource_profile_sha256": boundary.ResourceProfile().sha256,
+        "resource_policy_sha256": boundary.resource_policy.policy_digest(),
         "driver_sha256": boundary.driver_digest(),
         "binaries": image["binaries"],
         "checks": {name: True for name in module.CHECKS - {"container_configuration"}},
@@ -340,6 +342,8 @@ def test_successful_inspection_environment_values_are_not_reported(tmp_path, mon
     inner = {
         "protocol": "physharness-fixed-boundary-inner-v1",
         "probe_sha256": module.sha(Path(module.__file__).read_bytes()),
+        "resource_profile_sha256": boundary.ResourceProfile().sha256,
+        "resource_policy_sha256": boundary.resource_policy.policy_digest(),
         "driver_sha256": boundary.driver_digest(),
         "binaries": image_metadata["binaries"],
         "checks": {name: True for name in module.CHECKS - {"container_configuration"}},

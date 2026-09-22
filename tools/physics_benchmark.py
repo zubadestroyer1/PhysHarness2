@@ -37,6 +37,9 @@ def main() -> int:
     assess.add_argument("--image-metadata", type=Path, required=True)
     assess.add_argument("--kernel-report", type=Path, required=True)
     assess.add_argument("--independent-report", type=Path, required=True)
+    assess.add_argument(
+        "--resource-profile", type=Path, default=Path("formal/verifier-resources.json")
+    )
     assess.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
@@ -74,6 +77,7 @@ def main() -> int:
                 image_metadata=args.image_metadata,
                 kernel_report=args.kernel_report,
                 independent_report=args.independent_report,
+                resource_profile=args.resource_profile,
             )
             write_fresh(args.output, result)
         print(json.dumps({"output": str(args.output), "scientific_review": "pending"}, indent=2))

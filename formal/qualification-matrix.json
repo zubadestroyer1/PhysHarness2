@@ -86,6 +86,24 @@
         "tests/test_qualification_diagnostics.py::test_causal_mismatch_checkpoints_blocked_report_with_observed_output",
         "tests/test_acceptance_integration.py::test_checkpoint_failure_cannot_leave_a_passing_current_run"
       ]
+    },
+    {
+      "id": "resource-controls",
+      "nodeids": [
+        "tests/test_verifier_resources.py::test_profile_hash_binds_all_resource_values",
+        "tests/test_verifier_resources.py::test_profile_cannot_be_changed_without_execution_pin",
+        "tests/test_verifier_resources.py::test_confirmed_oom_requires_an_observed_counter_increase",
+        "tests/test_verifier_resources.py::test_single_checker_slot_rejects_concurrent_use",
+        "tests/test_verifier_resources.py::test_driver_timeout_retains_partial_output_and_uses_profile",
+        "tests/test_verifier_resource_bootstrap.py::test_single_bundle_uses_explicit_pinned_resource_profile",
+        "tests/test_verifier_resource_bootstrap.py::test_single_bundle_requires_explicit_resource_profile",
+        "tests/test_verifier_resource_bootstrap.py::test_whitespace_only_profile_source_change_is_rejected",
+        "tests/test_verifier_resource_bootstrap.py::test_policy_only_change_is_rejected_before_verifier_construction",
+        "tests/test_verifier_resource_bootstrap.py::test_legacy_qualification_missing_resource_pin_fails_closed[resource_profile_source_sha256]",
+        "tests/test_verifier_resource_bootstrap.py::test_legacy_qualification_missing_resource_pin_fails_closed[resource_policy_sha256]",
+        "tests/test_verifier_resources.py::test_policy_only_change_is_rejected_before_container_launch",
+        "tests/test_verifier_resources.py::test_raw_profile_source_pin_is_checked_before_container_launch"
+      ]
     }
   ],
   "input_files": [
@@ -111,7 +129,10 @@
     "formal/record_build.py",
     "tests/test_verifier_qualification.py",
     "infra/probe_verifier_boundary.py",
-    "tests/test_verifier_boundary_probe.py"
+    "tests/test_verifier_boundary_probe.py",
+    "src/physharness/verification/resource_policy.py",
+    "formal/verifier-resources.json",
+    "tests/test_verifier_resources.py"
   ],
   "review_gates": [
     {
@@ -145,8 +166,8 @@
       "reason": "Prior real PostgreSQL locking evidence is historical; this scoped host matrix does not rerun a current deployment database concurrency check."
     },
     {
-      "id": "driver-resource-deadline",
-      "reason": "The pinned driver enforces 110 seconds and 100000 Comparator output bytes independently of the host timeout/output configuration. A contended library run reached this deadline and safely returned blocked/boundary_unqualified with cleanup. The generic code does not distinguish deadline from other boundary faults; larger host limits do not extend the driver limit."
+      "id": "resource-capacity",
+      "reason": "Historical 2GiB physics runs had confirmed cgroup OOM kills. New8GiB/4CPU/600s profile requires fresh evidence. One service-UID/shared-tempdir lock is not fleet or VM-wide admission control; root schedules one checker on the12GiB VM."
     }
   ],
   "boundary_probe": {
@@ -167,7 +188,8 @@
       "work_write_control",
       "tmp_write_control",
       "no_docker_socket",
-      "container_configuration"
+      "container_configuration",
+      "memory_events_readable"
     ]
   }
 }

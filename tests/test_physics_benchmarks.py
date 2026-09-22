@@ -2,6 +2,7 @@
 
 import copy
 import json
+from pathlib import Path
 
 import pytest
 
@@ -207,11 +208,19 @@ def synthetic_reports(tmp_path):
 
     from physharness.verification.boundary import (
         Environment,
+        ResourceProfile,
         driver_digest,
         launcher_digest,
         seccomp_digest,
     )
     from physharness.verification.bundles import canonical_json
+    from physharness.verification.resource_policy import policy_digest
+
+    resources = ResourceProfile()
+    resource_pins = {
+        "resource_profile_sha256": resources.sha256,
+        "resource_policy_sha256": policy_digest(),
+    }
 
     release = benchmark()
     bundle = tmp_path / "packet"
@@ -257,6 +266,7 @@ def synthetic_reports(tmp_path):
                 "axioms": [],
                 "checker_versions": metadata["checker_versions"],
                 "diagnostics": {
+                    **resource_pins,
                     "comparator_exit_code": 0 if ok else 1,
                     "comparator_output": "Building Challenge\nBuilding Solution\n"
                     + "\n".join(case["required_diagnostic_substrings"]),
@@ -266,6 +276,11 @@ def synthetic_reports(tmp_path):
             }
             rows.append({"id": case["id"], "outcome": outcome})
         report = {
+            **resource_pins,
+            "resource_profile": resources.model_dump(),
+            "resource_profile_source_sha256": sha(
+                Path("formal/verifier-resources.json").read_bytes()
+            ),
             "status": "passed",
             "purpose": "engineering_smoke",
             "expert_review": "not_provided",
@@ -283,6 +298,63 @@ def synthetic_reports(tmp_path):
         path.write_bytes(canonical_json(report))
         paths.append(path)
     return release, bundle, meta, *paths
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["profile", "profile_pin", "source_pin", "policy_pin", "row_profile", "row_policy", "missing"],
+)
+def test_benchmark_cannot_mix_or_omit_resource_evidence(tmp_path, mutation):
+    release, bundle, meta, kernel, independent = synthetic_reports(tmp_path)
+    report = json.loads(independent.read_bytes())
+    if mutation == "profile":
+        report["resource_profile"]["cpus"] = 2
+    elif mutation == "profile_pin":
+        report["resource_profile_sha256"] = "a" * 64
+    elif mutation == "source_pin":
+        report["resource_profile_source_sha256"] = "a" * 64
+    elif mutation == "policy_pin":
+        report["resource_policy_sha256"] = "a" * 64
+    elif mutation == "row_profile":
+        report["results"][0]["outcome"]["diagnostics"]["resource_profile_sha256"] = "a" * 64
+    elif mutation == "row_policy":
+        report["results"][0]["outcome"]["diagnostics"]["resource_policy_sha256"] = "a" * 64
+    else:
+        del report["resource_profile"]
+    independent.write_text(json.dumps(report))
+    with pytest.raises(HarnessError, match="Benchmark evidence"):
+        assess_benchmark_reports(
+            release,
+            bundle,
+            image_metadata=meta,
+            kernel_report=kernel,
+            independent_report=independent,
+        )
+
+
+def test_custom_profile_requires_explicit_assessment_input(tmp_path):
+    from physharness.verification.boundary import ResourceProfile, digest
+
+    release, bundle, meta, kernel, independent = synthetic_reports(tmp_path)
+    resources = ResourceProfile(cpus=2)
+    path = tmp_path / "resources.json"
+    path.write_text(resources.model_dump_json(indent=2))
+    for report_path in (kernel, independent):
+        report = json.loads(report_path.read_bytes())
+        report.update(
+            resource_profile=resources.model_dump(),
+            resource_profile_sha256=resources.sha256,
+            resource_profile_source_sha256=digest(path.read_bytes()),
+        )
+        for row in report["results"]:
+            row["outcome"]["diagnostics"]["resource_profile_sha256"] = resources.sha256
+        report_path.write_text(json.dumps(report))
+    arguments = dict(image_metadata=meta, kernel_report=kernel, independent_report=independent)
+    with pytest.raises(HarnessError):
+        assess_benchmark_reports(release, bundle, **arguments)
+    assessment = assess_benchmark_reports(release, bundle, **arguments, resource_profile=path)
+    assert assessment["resource_profile_sha256"] == resources.sha256
+    assert assessment["scientific_review"] == "pending"
 
 
 def test_mathematically_valid_semantic_mutation_still_awaits_review(tmp_path):
