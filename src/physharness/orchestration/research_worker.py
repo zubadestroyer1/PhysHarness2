@@ -440,18 +440,47 @@ class ResearchTaskExecutor:
                     actual_tokens=inp + out,
                 )
                 settled.add(event.operation_id)
-            self.service.create_artifact(
-                ArtifactCreate(
-                    experiment_id=experiment["id"],
-                    branch_id=branch["id"],
-                    kind="runtime_event",
-                    content=canonical_json(event.model_dump(mode="json")),
-                    media_type="application/json",
-                    provenance={"task_id": task_id, "price": price.model_dump(mode="json")},
-                ),
-                actor,
-                f"runtime-event:{digest_json(event.model_dump(mode='json'))}",
-            )
+            elif event.kind == "generation_aborted":
+                self.service.settle_resources(
+                    reservations[event.operation_id],
+                    "0",
+                    False,
+                    actor,
+                    f"model-abort:{event.operation_id}",
+                    actual_tokens=0,
+                )
+                settled.add(event.operation_id)
+            try:
+                self.service.create_artifact(
+                    ArtifactCreate(
+                        experiment_id=experiment["id"],
+                        branch_id=branch["id"],
+                        kind="runtime_event",
+                        content=canonical_json(event.model_dump(mode="json")),
+                        media_type="application/json",
+                        provenance={"task_id": task_id, "price": price.model_dump(mode="json")},
+                    ),
+                    actor,
+                    f"runtime-event:{digest_json(event.model_dump(mode='json'))}",
+                )
+                if event.kind == "generation_started":
+                    # This is the last synchronous hook before responses.create. An
+                    # artifact upload may have outlived the lease or experiment.
+                    with self.service.db.transaction() as session:
+                        self.service._active(session, experiment["id"], actor)
+                        self.service._fenced(session, task_id, holder, lease["fence"])
+            except Exception:
+                if event.kind == "generation_started" and event.operation_id in reservations:
+                    self.service.settle_resources(
+                        reservations[event.operation_id],
+                        "0",
+                        False,
+                        actor,
+                        f"model-abort:{event.operation_id}",
+                        actual_tokens=0,
+                    )
+                    settled.add(event.operation_id)
+                raise
 
         running, renewal, workspace_tools = None, None, None
         cleanup_attempted = False
@@ -716,7 +745,6 @@ class ResearchTeamRunner:
             actor,
             f"team-manifest:{manifest.run_id}",
         )
-        initial_ids = {task["id"] for task in self._records("task", actor, experiment["id"])}
         root_branches = {task["branch_id"] for task in roots}
         outcomes, active, attempted = {}, {}, set()
         checks, checked_ids, verification_errors = {}, set(), []
@@ -732,16 +760,23 @@ class ResearchTeamRunner:
                     if added <= descendants:
                         break
                     descendants.update(added)
-            return [
-                task
-                for task in self._records("task", actor, experiment["id"])
-                if task["id"] in manifest.task_ids
-                or (
-                    manifest.include_delegated
-                    and task["branch_id"] in descendants
-                    and (task["branch_id"] not in root_branches or task["id"] not in initial_ids)
-                )
-            ]
+            tasks = list(self._records("task", actor, experiment["id"]))
+            selected_ids = set(manifest.task_ids)
+            if manifest.include_delegated:
+                while True:
+                    added = {
+                        task["id"]
+                        for task in tasks
+                        if task["branch_id"] in descendants
+                        and (
+                            task["branch_id"] not in root_branches
+                            or task.get("delegated_from_task_id") in selected_ids
+                        )
+                    }
+                    if added <= selected_ids:
+                        break
+                    selected_ids.update(added)
+            return [task for task in tasks if task["id"] in selected_ids]
 
         async def cancel_active():
             for future in active:
