@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from test_research_services import accepted_fixture
 from test_sharing import approaches, artifact
 
 from physharness.domain import ArtifactCreate, Principal, TaskCreate
@@ -83,6 +84,23 @@ def test_selected_history_is_hash_bound_paginated_and_budgeted(lab):
     with pytest.raises(HarnessError) as exc:
         capture(memory, alpha.branch_id, alpha, "huge-summary", summary="a" * 100000)
     assert exc.value.code == "CONTEXT_ENVELOPE_EXCEEDED"
+
+
+def test_own_kernel_acceptance_is_portable_but_not_shared(lab):
+    service, _, _, branches, (other, owner), accepted = accepted_fixture(
+        lab, "verified", assurance="kernel"
+    )
+    memory = PortableMemory(service)
+    claim_id = accepted["claim_id"]
+    page = memory.history_page(branches[1]["id"], owner, kind="claim")
+    assert [item["id"] for item in page["items"]] == [claim_id]
+    saved = capture(memory, branches[1]["id"], owner, evidence_ids=[claim_id, accepted["id"]])
+    assert [item["id"] for item in memory.restore(saved["id"], owner)["history"]["references"]] == [
+        claim_id,
+        accepted["id"],
+    ]
+    with pytest.raises(HarnessError):
+        service.get_record("claim", claim_id, other)
 
 
 def test_checkpoint_lineage_and_idempotency_preserve_immutable_prior_context(lab):

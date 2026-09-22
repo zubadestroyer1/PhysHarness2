@@ -85,7 +85,7 @@ def test_program_registration_pins_source_without_executing_it(lab, tmp_path):
     assert not marker.exists()
 
 
-def accepted_fixture(lab, sharing="verified"):
+def accepted_fixture(lab, sharing="verified", assurance="independent_kernel"):
     """Synthetic acceptance result to exercise knowledge authority, never kernel evidence."""
     from test_sharing import approaches, artifact
 
@@ -97,7 +97,7 @@ def accepted_fixture(lab, sharing="verified"):
         def verify(self, request):
             return VerificationOutcome(
                 status="verified",
-                assurance="independent_kernel",
+                assurance=assurance,
                 code="test_fixture",
                 message="Synthetic test evidence only",
                 remediation="",
@@ -141,6 +141,57 @@ def test_knowledge_broker_cannot_bypass_none_sharing(lab):
     with pytest.raises(HarnessError) as error:
         service.knowledge_bundle(exp["id"], receipt["claim_id"], alpha)
     assert error.value.code == "KNOWLEDGE_NOT_APPLICABLE"
+
+
+@pytest.mark.parametrize("assurance,shared", [("kernel", False), ("independent_kernel", True)])
+def test_cross_experiment_knowledge_requires_independent_acceptance(lab, assurance, shared):
+    from physharness.domain import BranchCreate, ExperimentCreate
+    from physharness.errors import HarnessError
+
+    service, author, origin, _, (_, owner), accepted = accepted_fixture(
+        lab, "verified", assurance=assurance
+    )
+    claim_id = accepted["claim_id"]
+    assert (
+        service.knowledge_bundle(origin["id"], claim_id, owner)["receipt"]["id"] == accepted["id"]
+    )
+    consumer = service.create_experiment(
+        ExperimentCreate(
+            campaign_id=origin["campaign_id"],
+            problem_id=origin["problem_id"],
+            models=origin["models"],
+            budget=origin["budget"],
+            sharing="verified",
+        ),
+        author,
+        "knowledge-consumer",
+    )
+    service.transition_experiment(consumer["id"], "start", 1, author, "consumer-start")
+    branch = service.create_branch(
+        consumer["id"],
+        BranchCreate(title="consumer", objective="review evidence"),
+        author,
+        "consumer-branch",
+    )
+    agent = Principal(
+        id="consumer-agent",
+        project_id=author.project_id,
+        role="agent",
+        experiment_id=consumer["id"],
+        branch_id=branch["id"],
+    )
+    hits = service.search_knowledge(consumer["id"], "", agent)["items"]
+    if shared:
+        assert [hit["lemma"]["id"] for hit in hits] == [claim_id]
+        assert (
+            service.knowledge_bundle(consumer["id"], claim_id, agent)["receipt"]["id"]
+            == accepted["id"]
+        )
+    else:
+        assert hits == []
+        with pytest.raises(HarnessError) as error:
+            service.knowledge_bundle(consumer["id"], claim_id, agent)
+        assert error.value.code == "KNOWLEDGE_NOT_APPLICABLE"
 
 
 def test_revoked_review_prevents_knowledge_reuse(lab):

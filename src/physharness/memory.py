@@ -93,7 +93,15 @@ class PortableMemory:
             row.kind == "verification" and data.get("status") == "verified"
         ):
             experiment = self.service._get(session, "experiment", reader.experiment_id, reader)
-            if not self.service._accepted_for_sharing(session, row, experiment):
+            own_branch = data.get("branch_id") == reader.branch_id
+            accepted = (
+                self.service._accepted_evidence(
+                    session, row, experiment, {"kernel", "independent_kernel"}
+                )
+                if own_branch
+                else self.service._accepted_for_sharing(session, row, experiment)
+            )
+            if not accepted:
                 raise _error(
                     "CONTEXT_EVIDENCE_INVALID", "A verified label lacks bound canonical acceptance."
                 )
