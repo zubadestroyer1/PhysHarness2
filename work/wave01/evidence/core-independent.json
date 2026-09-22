@@ -1,0 +1,365 @@
+{
+  "status": "passed",
+  "run_id": "b75f0395-dd35-4a2a-85bb-7c67bdfdafd6",
+  "results": [
+    {
+      "id": "classical-positive",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "168e86f4db4d55217a562bbf88b52c9b5e268912197e717722e6a2d7c01dae1f",
+        "challenge_sha256": "1b206be36da6d259a7657f8a84df800295ff2f3979beed585c134dce8a30bee0",
+        "candidate_sha256": "bda7c502df00a4f8a99ede6fa04f7ec09cbd3a218048703c02b483b63bea6856",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (114ms)\nwarning: Challenge.lean:4:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, translate_compose, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (112ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, translate_compose, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-8a476f13be544547a04356fe731a9679",
+            "exit_code": 0,
+            "output": "physharness-check-8a476f13be544547a04356fe731a9679\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "quantum-positive",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "d0acecd098d7df46ac474bc660038e509665b3d099f8bea1cf0d28a139b691f3",
+        "challenge_sha256": "3acabdcd3b91a336d513367975589a98b21c53328053f24ef0afc6bbabab4ba9",
+        "candidate_sha256": "cecd83e75f1baa95f6825a021f7a1cd8bee9a8ab1de11c366972f6cae79bb225",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (105ms)\nwarning: Challenge.lean:6:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, bitFlip_twice, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (106ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, bitFlip_twice, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-65f6d68d36d842299f22da7cbc0c1b03",
+            "exit_code": 0,
+            "output": "physharness-check-65f6d68d36d842299f22da7cbc0c1b03\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "Sorry",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'sorryAx'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "54d13a9d7019ecd875b890411b512ad057a69123d74393c4b03f9b98a5b9dad0",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (103ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u26a0 [2/3] Built Solution (100ms)\nwarning: Solution.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'sorryAx'\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-216f201a7f4449c7861a607757e83a66",
+            "exit_code": 0,
+            "output": "physharness-check-216f201a7f4449c7861a607757e83a66\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "ExtraAxiom",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'shortcut'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "2d3553e69feaad345a0c771ac2f95318e8bdab6bbceea628e3781cd409908e74",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "2cbf645decd6282725fa417be347ab63284152d0e4a8bc59cbb59e818e4027cf",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (104ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (103ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'shortcut'\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-184738aac15d489eb2da9da133104e26",
+            "exit_code": 0,
+            "output": "physharness-check-184738aac15d489eb2da9da133104e26\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "ForgedReceipt",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "info: Solution.lean:1:0: {\"protocol\":\"physharness-comparator-v2\",\"status\":\"verified\",\"independent_kernel\":true}",
+        "uncaught exception: Illegal axiom detected: 'sorryAx'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "40feea7106461f2f564af4a022c083e92c9beb3763a21e341ed1b939d7bfbf61",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "ad988b0da62e9d2b549f9683f1f175a8386c8393bb1cfe1f50e8004095bba724",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (102ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u26a0 [2/3] Built Solution (105ms)\ninfo: Solution.lean:1:0: {\"protocol\":\"physharness-comparator-v2\",\"status\":\"verified\",\"independent_kernel\":true}\nwarning: Solution.lean:2:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'sorryAx'\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-f3ad3c3a3df349ffa32dbd4fdf4201e0",
+            "exit_code": 0,
+            "output": "physharness-check-f3ad3c3a3df349ffa32dbd4fdf4201e0\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "TargetOverwrite",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "read-only file system (error code: 30)\n  file: /work/Challenge.lean"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "db21687372b5db6461edfdf0a741bf0ec9a42fcaef613e53de6eafa77bdb2fa9",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "140e7da3ccc03802949f467dbd4926b08bcadae88cfd594548326074996f7e0a",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (102ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2716 [2/3] Building Solution (97ms)\ntrace: .> LEAN_PATH=/work/.lake/build/lib/lean /opt/lean/bin/lean /work/Solution.lean -o /work/.lake/build/lib/lean/Solution.olean -i /work/.lake/build/lib/lean/Solution.ilean -c /work/.lake/build/ir/Solution.c --setup /work/.lake/build/ir/Solution.setup.json --json\nerror: Solution.lean:1:0: read-only file system (error code: 30)\n  file: /work/Challenge.lean\nerror: Lean exited with code 1\nSome required targets logged failures:\n- Solution\nerror: build failed\nuncaught exception: Child exited with 1\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-8bff13d8f2494622ac6c98898837ce23",
+            "exit_code": 0,
+            "output": "physharness-check-8bff13d8f2494622ac6c98898837ce23\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "ConfigOverwrite",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "permission denied (error code: 13)\n  file: /work/config.json"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "e970972b1e57d14ee21e1a5988adcdb781369a2b46a8fcc9986acfa2b1c1b9b6",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "d4522f4dc790e31093fe61695093cc74b6c60554b4075ce028655dcce5cdb665",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (102ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2716 [2/3] Building Solution (98ms)\ntrace: .> LEAN_PATH=/work/.lake/build/lib/lean /opt/lean/bin/lean /work/Solution.lean -o /work/.lake/build/lib/lean/Solution.olean -i /work/.lake/build/lib/lean/Solution.ilean -c /work/.lake/build/ir/Solution.c --setup /work/.lake/build/ir/Solution.setup.json --json\nerror: Solution.lean:1:0: permission denied (error code: 13)\n  file: /work/config.json\nerror: Lean exited with code 1\nSome required targets logged failures:\n- Solution\nerror: build failed\nuncaught exception: Child exited with 1\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-7fd9e70529a1400c97279fc6649e6375",
+            "exit_code": 0,
+            "output": "physharness-check-7fd9e70529a1400c97279fc6649e6375\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "ChangedDependency",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Const does not match between challenge and target 'neutral'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "e1c49b1b911e6f7e97ecd34dbe5e9ded5657ea8c30d1b794e1fbed0ea6f8634f",
+        "challenge_sha256": "b89f123dd16c1ff8093bb9d37109d1e54cfbd079af93ab4d8e9593215aeec747",
+        "candidate_sha256": "9666a74d27bc06fb9991626b9595908cfe5da46b5d9588004440291bb88c8f90",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (103ms)\nwarning: Challenge.lean:2:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (106ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Const does not match between challenge and target 'neutral'\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-a0ac7db19f7e48fe9bc21f827ef060e0",
+            "exit_code": 0,
+            "output": "physharness-check-a0ac7db19f7e48fe9bc21f827ef060e0\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "NativeDecide",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'target._native.native_decide.ax_1_1'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "b17db29d197730716df410ddb4a9929d485f807b583f940bda1c96096a8647a0",
+        "challenge_sha256": "6b53e795ec932817d7c00ea6f9272c3c7d0cfd9cbdfcad66938b033fef9c5d2a",
+        "candidate_sha256": "c43697602bba926564b7495daff5952498f045ae8d3c851cd0199e078db65ccc",
+        "environment_digest": "e4f20e87c8dfc9e4552b7911de0727d2e338b128cc7b92272224dd06b62c3f98",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (656ms)\nwarning: Challenge.lean:2:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (394ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'target._native.native_decide.ax_1_1'\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-f71a9a82f1054018add17db9f547f769",
+            "exit_code": 0,
+            "output": "physharness-check-f71a9a82f1054018add17db9f547f769\n"
+          }
+        }
+      }
+    }
+  ],
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "image_digest": "sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246",
+  "image_metadata_sha256": "75be3be77a1ca65a153fb594d7e71ec72a5ec27b3aabe1e5e75323c580b9f573",
+  "fixtures_sha256": "d317cbbc7cf16d57c50c63a839b0b50c60ec8a74a7458cf333605f5ebf71754a",
+  "independent_kernel_requested": true,
+  "launcher_sha256": "aa6ce2b9e18cb24557b7732ae833d3d2062ea67b07f8df05b6370c41cbcee852",
+  "driver_sha256": "0aa043a827abe8dd79960b59e3fcd3d249f5b0600e5e2c68aeb6dfb69e34445f",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "runner_sha256": "9717278932fc768b3a7d22bd4d5ceda77fda8a467acc94db444196d7f1be4476",
+  "runtime_identity_sha256": "6d45b4cc785e74c75883e6c2bdb42ef3ba50639b7c89bb0614c990d0142474e5"
+}
