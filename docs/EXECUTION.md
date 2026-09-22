@@ -73,9 +73,11 @@ and must return JSON objects. JSON Schema validates every argument. Tool errors 
 Handlers are trusted control-plane code: they must authorize project access and reserve their
 own budgets before starting children or external work. There is no implicit native subagent tool.
 
-Optional async `event_sink(RuntimeEvent)` receives `generation_started`, `usage`,
-`tool_completed`, and `completed`. The generation-start event contains the input/output token
-reservation and fires before billable generation. A core ledger can veto generation by raising.
+Optional async `event_sink(RuntimeEvent)` receives `generation_started`, `generation_aborted`,
+`usage`, `tool_completed`, and `completed`. The generation-start event contains the input/output
+token reservation and fires before billable generation. A core ledger can veto generation by
+raising. If the runtime deadline expires before the provider request, `generation_aborted` releases
+that reservation with zero usage.
 The usage event includes the stable operation ID and actual native usage; reconciliation should
 be idempotent by operation ID. If the provider response was persisted but delivery of a usage
 callback failed, reconcile from the saved native response. The adapter does not implement a
