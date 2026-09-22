@@ -466,7 +466,7 @@ wheels = [
 
 [[package]]
 name = "e2b"
-version = "2.49.1"
+version = "2.51.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "attrs" },
@@ -482,9 +482,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "wcmatch" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/14/c1/fb9bf7726dafdc5e8be439218d4c8819e251baca3591ef5ed4ed4c1e883f/e2b-2.49.1.tar.gz", hash = "sha256:300810e78cdd7d9a0b96b0c66e26ed53ed643bc3227f8dd7e9725e04f271dff3", size = 228685, upload-time = "2026-09-10T17:37:25.249Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/44/04/31a10aad90c6d9a55cd2f638b47b92fd867cc188127bc5087809b2b67628/e2b-2.51.0.tar.gz", hash = "sha256:902ee861b30c8ec3e46e7f84db8c993f30695872c7b4490efaad1627ec6e08ba", size = 229124, upload-time = "2026-09-18T12:06:54.814Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a0/51/ea23a1d61460199b4c250d0a6beffc2fb750aab1fbf9301a3db01a6b7fe1/e2b-2.49.1-py3-none-any.whl", hash = "sha256:2ea7c10927ab6e75aae54badef41b49ab0ef0db03b747bf09db2a86f7906ffe6", size = 389026, upload-time = "2026-09-10T17:37:23.907Z" },
+    { url = "https://files.pythonhosted.org/packages/fb/75/882e5105b6f2ad8df3abff8701302f5dd4c41afa930a5ec0590c76e89c1b/e2b-2.51.0-py3-none-any.whl", hash = "sha256:951d0fd069f017e760b338a435bdb83589b4bfb9574fc5203a7f777e9cb994c2", size = 388512, upload-time = "2026-09-18T12:06:52.874Z" },
 ]
 
 [[package]]
