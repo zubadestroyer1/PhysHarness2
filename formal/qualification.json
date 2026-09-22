@@ -1,0 +1,20 @@
+{
+  "status": "blocked",
+  "expert_review": "not_reviewed",
+  "kernel_smoke": "not_run",
+  "independent_kernel_smoke": "not_run",
+  "qualified_image_digest": null,
+  "comparator_source_commit": null,
+  "lean4export_source_commit": null,
+  "landrun_source_commit": null,
+  "nanoda_source_commit": null,
+  "observations": [
+    "Docker CLI found, but Docker daemon unavailable on the development Mac",
+    "elan launchers found, but no default Lean toolchain configured",
+    "No generated Lean code executed on the development host",
+    "Python protocol/adversarial tests do not qualify a kernel",
+    "Audit fixes and io_uring denial probes are protocol-tested only; no live Linux containment test has run",
+    "Protocol v2 separates canonical target metadata and challenge source hashes; changed launcher/driver and operator cases require regeneration, repinning and real requalification"
+  ],
+  "protocol": "physharness-comparator-v2"
+}

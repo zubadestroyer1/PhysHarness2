@@ -1,0 +1,8 @@
+PhysHarnessV2
+Copyright 2026 PhysHarness contributors
+
+New project code is licensed under Apache-2.0. Third-party libraries retain their
+own licenses. Dependencies are resolved in uv.lock and console/package-lock.json.
+The Apache-2.0 terms in LICENSE are the standard license text, sourced from the
+installed boto3 distribution's copy. No boto3 implementation code was copied.
+Scientific source and training-data provenance are recorded per artifact.

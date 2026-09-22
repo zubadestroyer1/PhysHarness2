@@ -1,0 +1,29 @@
+name: Feature or engineering task
+description: Propose a bounded improvement, missing capability, or design change.
+title: "[Task]: "
+labels: ["type:task"]
+body:
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Problem and intended outcome
+      description: Explain who needs this and the resulting behavior. Link a roadmap item or parent issue if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and approach
+      description: Outline a possible implementation, alternatives, affected contracts, and useful boundaries. An open design question is welcome.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Completion evidence
+      description: What specific checks or observed behavior would complete this task? Keep implementation and live qualification separate.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and review
+      description: Link blockers and note changes to trust boundaries, definitions, credentials, result promotion, or compatibility. Identify any expert input needed.

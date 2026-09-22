@@ -1,0 +1,41 @@
+name: Bug or diagnostic failure
+description: Report reproducible behavior, a loud error, or a failure that was hidden.
+title: "[Bug]: "
+labels: ["type:bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share a small reproduction and redacted diagnostics. Do not post credentials, private transcripts, or sensitive research data. [Report security vulnerabilities privately](https://github.com/zubadestroyer1/PhysHarness2/security/advisories/new).
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and observed behavior
+      description: Include whether the system failed visibly, silently lost work, or reported a misleading status.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Commands, steps, or a small synthetic example. State if the fault is intermittent.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment
+      description: Commit, OS, relevant dependency/image versions, and whether this used local tests, replay, or live infrastructure.
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Error code, operation/correlation ID, timestamps with timezone, and a short relevant traceback. Only include identifiers safe to share publicly.
+      render: text
+  - type: textarea
+    id: impact
+    attributes:
+      label: Impact and workaround
+      description: State any effect on evidence integrity, recovery, resource accounting, or ongoing experiments. Distinguish confirmed effects from suspected ones.

@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "repository": "zubadestroyer1/PhysHarness2",
+  "description": "Model-directed mathematical physics research with durable agents, formalization and independent proof acceptance. Development platform; qualification in progress.",
+  "topics": [
+    "theoretical-physics",
+    "mathematical-physics",
+    "lean4",
+    "autoformalization",
+    "multi-agent",
+    "formal-verification",
+    "research-infrastructure",
+    "temporal",
+    "python"
+  ],
+  "labels": [
+    {
+      "name": "type:bug",
+      "color": "1D76DB",
+      "description": "Reproducible faulty behavior"
+    },
+    {
+      "name": "type:feature",
+      "color": "1D76DB",
+      "description": "New or expanded capability"
+    },
+    {
+      "name": "type:task",
+      "color": "1D76DB",
+      "description": "Bounded engineering or maintenance work"
+    },
+    {
+      "name": "type:research",
+      "color": "1D76DB",
+      "description": "Mathematical target, interpretation or research idea"
+    },
+    {
+      "name": "type:qualification",
+      "color": "1D76DB",
+      "description": "Evidence against an explicit acceptance gate"
+    },
+    {
+      "name": "type:epic",
+      "color": "1D76DB",
+      "description": "Wave tracker; close only after qualification review"
+    },
+    {
+      "name": "area:core",
+      "color": "006B75",
+      "description": "Canonical records, API and authority"
+    },
+    {
+      "name": "area:verification",
+      "color": "006B75",
+      "description": "Proof acceptance, trust policy and kernels"
+    },
+    {
+      "name": "area:agents",
+      "color": "006B75",
+      "description": "Runtimes, collaboration and context"
+    },
+    {
+      "name": "area:infrastructure",
+      "color": "006B75",
+      "description": "VMs, orchestration, deployment and CI"
+    },
+    {
+      "name": "area:knowledge",
+      "color": "006B75",
+      "description": "Ingestion, retrieval and mathematical libraries"
+    },
+    {
+      "name": "area:science",
+      "color": "006B75",
+      "description": "Quantum and classical research programs"
+    },
+    {
+      "name": "area:console",
+      "color": "006B75",
+      "description": "Research console and accessibility"
+    },
+    {
+      "name": "area:evaluation",
+      "color": "006B75",
+      "description": "Benchmarks, search comparison and learning"
+    },
+    {
+      "name": "area:docs",
+      "color": "006B75",
+      "description": "Documentation and contributor experience"
+    },
+    {
+      "name": "priority:p0",
+      "color": "B60205",
+      "description": "Active integrity, security or data-loss incident"
+    },
+    {
+      "name": "priority:p1",
+      "color": "B60205",
+      "description": "Next integration cycle or prerequisite blocker"
+    },
+    {
+      "name": "priority:p2",
+      "color": "B60205",
+      "description": "Planned work outside the immediate critical path"
+    },
+    {
+      "name": "status:blocked",
+      "color": "FBCA04",
+      "description": "Cannot proceed; blocking dependency must be linked"
+    },
+    {
+      "name": "status:needs-review",
+      "color": "FBCA04",
+      "description": "Needs an identified review decision"
+    },
+    {
+      "name": "trust-boundary",
+      "color": "B60205",
+      "description": "Requires independent review of acceptance, credentials or promotion"
+    },
+    {
+      "name": "good first issue",
+      "color": "7057FF",
+      "description": "Bounded, documented task suitable for a new contributor"
+    },
+    {
+      "name": "help wanted",
+      "color": "008672",
+      "description": "Additional contributors or specialist expertise requested"
+    }
+  ],
+  "milestones": [
+    {
+      "wave": 0,
+      "title": "Wave 00 \u2014 Foundation and reviewed scientific programs",
+      "description": "Qualification gate: Clean pinned Lean/Mathlib/physics build; declaration audit; 40 reviewed valid targets and 20 negative cases with reference outcomes and family holdouts. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [],
+      "area": "science"
+    },
+    {
+      "wave": 1,
+      "title": "Wave 01 \u2014 Independent proof acceptance",
+      "description": "Qualification gate: Real isolated Linux construction, Comparator and kernel runs; complete dependency/axiom checks; seeded attacks rejected or held for semantic review. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        0
+      ],
+      "area": "verification"
+    },
+    {
+      "wave": 2,
+      "title": "Wave 02 \u2014 Single-agent research loop",
+      "description": "Qualification gate: Live accepted proof and subsequent accepted-lemma reuse in both quantum and classical programs. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        1
+      ],
+      "area": "agents"
+    },
+    {
+      "wave": 3,
+      "title": "Wave 03 \u2014 Durable managed execution",
+      "description": "Qualification gate: Managed deployment and fault injection: VM/controller loss, duplicates, cancellation and pause/resume preserve canonical records and resource accounting. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        2
+      ],
+      "area": "infrastructure"
+    },
+    {
+      "wave": 4,
+      "title": "Wave 04 \u2014 Heterogeneous collaboration and memory",
+      "description": "Qualification gate: Mixed-runtime team completes reusable work, survives parent loss and repeated compaction with unchanged assumptions and proof status. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        3
+      ],
+      "area": "agents"
+    },
+    {
+      "wave": 5,
+      "title": "Wave 05 \u2014 Knowledge and autoformalization",
+      "description": "Qualification gate: Held-out applicable premise retrieval and source correspondence produce a reviewed formal target accepted by independent verification. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        4
+      ],
+      "area": "knowledge"
+    },
+    {
+      "wave": 6,
+      "title": "Wave 06 \u2014 Test-time scaling and portfolios",
+      "description": "Qualification gate: Matched-cost and matched-time comparisons measure solver outcomes, uncertainty and coordination costs before policy promotion. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        4
+      ],
+      "area": "evaluation"
+    },
+    {
+      "wave": 7,
+      "title": "Wave 07 \u2014 Computation-assisted discovery",
+      "description": "Qualification gate: Both programs demonstrate computation-assisted checked claims; unsupported numerical evidence retains its non-proof status. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        1
+      ],
+      "area": "science"
+    },
+    {
+      "wave": 8,
+      "title": "Wave 08 \u2014 Production qualification at 128 workers",
+      "description": "Qualification gate: Full operational acceptance criteria and 72-hour mixed workload at 128 active worker slots with injected failures. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "area": "infrastructure"
+    },
+    {
+      "wave": 9,
+      "title": "Wave 09 \u2014 Thousand-worker and self-hosted execution",
+      "description": "Qualification gate: Managed and self-hosted provider qualification; 1,000 active workers doing useful work with measured overhead and recovery. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        8
+      ],
+      "area": "infrastructure"
+    },
+    {
+      "wave": 10,
+      "title": "Wave 10 \u2014 Learning from verified experience",
+      "description": "Qualification gate: A learned component shows reproducible held-out benefit under the same acceptance policy with rollback; retain/report a non-learning baseline if none qualifies. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        5,
+        6
+      ],
+      "area": "evaluation"
+    },
+    {
+      "wave": 11,
+      "title": "Wave 11 \u2014 Sustained open-problem campaigns",
+      "description": "Qualification gate: Nontrivial new results with expert-confirmed meaning and novelty, independent proofs and reproducible sustained campaigns toward difficult root targets. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
+      "dependencies": [
+        8,
+        9,
+        10
+      ],
+      "area": "science"
+    }
+  ],
+  "main_rules": {
+    "required_checks": [
+      "python",
+      "postgres",
+      "console",
+      "terraform",
+      "container"
+    ],
+    "required_approvals": 1,
+    "require_code_owner_review": true,
+    "allow_force_push": false,
+    "allow_deletion": false,
+    "require_conversation_resolution": true
+  }
+}

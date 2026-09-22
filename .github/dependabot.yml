@@ -1,0 +1,34 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: ["type:task", "area:infrastructure"]
+    groups:
+      actions:
+        patterns: ["*"]
+  - package-ecosystem: uv
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: ["type:task", "area:core"]
+    groups:
+      python-patch:
+        patterns: ["*"]
+        update-types: [patch]
+  - package-ecosystem: npm
+    directory: /console
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 3
+    labels: ["type:task", "area:console"]
+    groups:
+      console-patch:
+        patterns: ["*"]
+        update-types: [patch]

@@ -1,0 +1,7 @@
+# Provision this private encrypted, versioned state bucket separately.
+# No secret credential values belong in a backend config.
+bucket       = "REPLACE_EXISTING_TERRAFORM_STATE_BUCKET"
+key          = "physharness/production.tfstate"
+region       = "REPLACE_REGION"
+encrypt      = true
+use_lockfile = true

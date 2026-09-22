@@ -1,0 +1,51 @@
+name: Qualified Linux proof checks
+# Never runs candidate Lean code on a pull-request or generic hosted runner.
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_path:
+        description: Operator-owned immutable bundle directory on the qualified runner
+        required: true
+      manifest_sha256:
+        description: Reviewed manifest SHA-256
+        required: true
+      qualification_path:
+        description: Operator-owned LinuxQualification JSON path
+        required: true
+      qualification_sha256:
+        description: Reviewed qualification JSON SHA-256
+        required: true
+      cases_path:
+        description: Operator-owned JSON list of reviewed verification requests and expected outcomes
+        required: true
+      cases_sha256:
+        description: Reviewed case-list SHA-256
+        required: true
+permissions:
+  contents: read
+jobs:
+  proof-checks:
+    environment: verification-qualification
+    runs-on: [self-hosted, linux, physharness-qualified]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff
+        with:
+          version: "0.11.14"
+      - run: uv sync --locked
+      - name: Execute actual qualified verifier
+        env:
+          CI_BUNDLE_PATH: ${{ inputs.bundle_path }}
+          CI_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          CI_QUALIFICATION_PATH: ${{ inputs.qualification_path }}
+          CI_QUALIFICATION_SHA256: ${{ inputs.qualification_sha256 }}
+          CI_CASES_PATH: ${{ inputs.cases_path }}
+          CI_CASES_SHA256: ${{ inputs.cases_sha256 }}
+        run: uv run python infra/run_qualified_lean.py --output qualification-results.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: qualified-verifier-results
+          path: qualification-results.json
+          if-no-files-found: error
