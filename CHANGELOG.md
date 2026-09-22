@@ -2,6 +2,17 @@
 
 ## 0.1.0 — Unreleased
 
+Research-loop delivery adds the pinned Lean 4.33.0/physics source environment and actual
+Lean/nanoda engineering evidence; source/theorem/review-bound v2 proof bundles and exact-revision
+registry; typed run preparation, explicit review/preflight and finite team commands; and durable
+worker fencing, continuation and resource-uncertainty fixes. A real PostgreSQL race and a real
+Temporal startup incompatibility were reproduced and corrected. New receipts and manifests are
+required for the v2 binding; legacy records cannot silently inherit acceptance. See the
+[live-run guide](docs/FIRST_LIVE_RUN.md) and [delivery record](work/research-loop-implementation.md).
+
+Model trials, expert scientific review, production qualification and fleet measurements remain
+outstanding. An optional incomplete negative probe is excluded from observed passes.
+
 Initial private-laboratory development implementation. Scientific, kernel, managed-provider and
 fleet qualifications remain separate outstanding gates. See the implementation ledger for
 measured results and the full multi-wave roadmap.
