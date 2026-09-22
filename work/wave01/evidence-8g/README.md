@@ -19,5 +19,14 @@ all 10 mechanical checks are `satisfied`, while deployment approval is pending a
 Earlier `scope.json`, `regressions.json`/`regressions.xml`, core/library reports
 without `-final`, `fixed-boundary.json`, and `focused-independent.json` are retained
 preliminary observations. They do not substitute for the final control set. The
-full 60-case physics reports and their assessment are still running or pending;
-no full-suite outcome is claimed here.
+[kernel](physics-kernel.json) and [independent-kernel](physics-independent.json)
+physics reports are separate from those controls. The
+[final independent audit](../current-evidence-audit.md) found 60/60 expected
+outcomes in each mode: 40 positive references verified, 11 mechanical alterations
+blocked with causal diagnostics, and nine valid semantic alterations verified
+mechanically but held for expert review. The fresh assessment matched
+[physics-assessment.json](physics-assessment.json) exactly and records
+`expected_outcomes_observed_in_both_kernel_modes`. Scientific review and production
+approval remain pending. The [operator retention and shutdown record](retention-and-shutdown.json)
+documents the image archive's passing `zstd -t`, matching OCI IDs and Docker tags,
+and the dedicated VM's observed stop on 2026-09-22. No fresh-VM restore was performed.

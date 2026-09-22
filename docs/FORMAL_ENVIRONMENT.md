@@ -5,6 +5,13 @@ from pinned inputs. The first aarch64 core image was built on 2026-09-15. Its me
 binary hashes are in `formal/build-observations.aarch64.json`; this is build evidence,
 not approval to accept a scientific result. Sandbox attack tests and expert review
 remain separate requirements in [VERIFICATION.md](VERIFICATION.md).
+The current consolidated physics image is
+`sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67`.
+Its final 8 GiB scope and control results are in the
+[current Wave 0/1 delivery](../work/wave01/DELIVERY-2026-09-22.md). Both physics
+modes completed with their expected engineering outcomes. The current and historical
+images were archived with an integrity check, and the dedicated VM was observed
+stopped. Fresh-VM restore and human review remain pending.
 
 ## Version matrix
 

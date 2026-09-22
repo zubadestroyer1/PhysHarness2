@@ -1,10 +1,11 @@
 # Wave 0/1 engineering delivery — 2026-09-15
 
 > Historical delivery snapshot. Work resumed on 2026-09-22; see
-> [the current execution ledger](RESUME-2026-09-22.md). The checks below cover
+> [the current delivery](DELIVERY-2026-09-22.md) and
+> [execution ledger](RESUME-2026-09-22.md). The checks below cover
 > the older 2 GiB verifier scope. The full benchmark subsequently encountered
-> confirmed cgroup OOM failures. An 8 GiB resource-policy revision and fresh
-> evidence are in progress; historical qualification does not approve it.
+> confirmed cgroup OOM failures. Current 8 GiB controls are reported separately;
+> historical qualification does not approve the current scope.
 
 This delivery prepares a substantive mathematical-physics benchmark and scoped verifier
 evidence. Human scientific review, deployment approval and model difficulty calibration
