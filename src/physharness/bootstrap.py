@@ -7,7 +7,7 @@ from .artifacts import LocalArtifactStore, S3ArtifactStore
 from .config import Settings
 from .service import HarnessService
 from .storage import Database
-from .verification import ComparatorConfig, ComparatorVerifier, LinuxQualification
+from .verification import ComparatorConfig, ComparatorVerifier, LinuxQualification, VerifierRegistry
 
 
 def build_service(settings: Settings) -> HarnessService:
@@ -29,7 +29,13 @@ def build_service(settings: Settings) -> HarnessService:
         settings.verification_manifest_sha256,
         settings.verification_qualification,
     ]
-    if any(values):
+    if settings.verification_registry:
+        if any(values):
+            raise ValueError(
+                "Verifier registry and single-bundle configuration cannot be combined."
+            )
+        verifier = VerifierRegistry.from_file(settings.verification_registry)
+    elif any(values):
         if not all(values):
             raise ValueError(
                 "Verifier configuration needs bundle, manifest hash and qualification evidence."
