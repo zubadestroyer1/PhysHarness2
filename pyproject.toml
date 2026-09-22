@@ -21,7 +21,7 @@ dependencies = [
 [project.optional-dependencies]
 codex = ["openai-codex"]
 claude = ["claude-agent-sdk"]
-openhands = ["openhands-sdk==1.47.0"]
+openhands = ["openhands-sdk==1.49.2"]
 e2b = ["e2b>=2.49,<3", "e2b-code-interpreter>=2,<3"]
 science = ["sympy>=1.13,<2", "numpy>=2,<3", "scipy>=1.15,<2"]
 papers = ["pypdf>=5,<7"]
