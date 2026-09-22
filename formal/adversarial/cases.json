@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "purpose": "engineering_smoke",
+  "project_files": {
+    "lakefile.toml": "lakefile.toml",
+    "lean-toolchain": "lean-toolchain"
+  },
+  "cases": [
+    {
+      "id": "classical-positive",
+      "challenge": "classical/Challenge.lean",
+      "solution": "classical/Solution.lean",
+      "theorem_names": [
+        "translate_compose"
+      ],
+      "expected_status": "verified",
+      "expected_code": "kernel_checked"
+    },
+    {
+      "id": "quantum-positive",
+      "challenge": "quantum/Challenge.lean",
+      "solution": "quantum/Solution.lean",
+      "theorem_names": [
+        "bitFlip_twice"
+      ],
+      "expected_status": "verified",
+      "expected_code": "kernel_checked"
+    },
+    {
+      "id": "Sorry",
+      "challenge": "Challenge.lean",
+      "solution": "Sorry.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'sorryAx'"
+      ]
+    },
+    {
+      "id": "ExtraAxiom",
+      "challenge": "Challenge.lean",
+      "solution": "ExtraAxiom.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'shortcut'"
+      ]
+    },
+    {
+      "id": "ForgedReceipt",
+      "challenge": "Challenge.lean",
+      "solution": "ForgedReceipt.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "info: Solution.lean:1:0: {\"protocol\":\"physharness-comparator-v2\",\"status\":\"verified\",\"independent_kernel\":true}",
+        "uncaught exception: Illegal axiom detected: 'sorryAx'"
+      ]
+    },
+    {
+      "id": "TargetOverwrite",
+      "challenge": "Challenge.lean",
+      "solution": "TargetOverwrite.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "read-only file system (error code: 30)\n  file: /work/Challenge.lean"
+      ]
+    },
+    {
+      "id": "ConfigOverwrite",
+      "challenge": "Challenge.lean",
+      "solution": "ConfigOverwrite.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "permission denied (error code: 13)\n  file: /work/config.json"
+      ]
+    },
+    {
+      "id": "ChangedDependency",
+      "challenge": "DependencyChallenge.lean",
+      "solution": "ChangedDependency.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Const does not match between challenge and target 'neutral'"
+      ]
+    },
+    {
+      "id": "NativeDecide",
+      "challenge": "NativeChallenge.lean",
+      "solution": "NativeDecide.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'target._native.native_decide.ax_1_1'"
+      ]
+    }
+  ]
+}

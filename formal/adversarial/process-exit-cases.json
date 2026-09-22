@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "purpose": "engineering_smoke",
+  "project_files": {
+    "lakefile.toml": "lakefile.toml",
+    "lean-toolchain": "lean-toolchain"
+  },
+  "cases": [
+    {
+      "id": "classical-positive",
+      "challenge": "classical/Challenge.lean",
+      "solution": "classical/Solution.lean",
+      "theorem_names": [
+        "translate_compose"
+      ],
+      "expected_status": "verified",
+      "expected_code": "kernel_checked"
+    },
+    {
+      "id": "CompileExitZero",
+      "challenge": "Challenge.lean",
+      "solution": "CompileExitZero.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "error: no such file or directory (error code: 4294967294)\n  file: /work/.lake/build/lib/lean/Solution.olean"
+      ]
+    },
+    {
+      "id": "InitializeExitZero",
+      "challenge": "Challenge.lean",
+      "solution": "InitializeExitZero.lean",
+      "theorem_names": [
+        "target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "ENGINEERING_INITIALIZE_EXIT_ZERO",
+        "file: /work/.lake/build/lib/lean/Solution.olean"
+      ]
+    }
+  ]
+}

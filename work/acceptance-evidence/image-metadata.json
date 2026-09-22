@@ -1,0 +1,42 @@
+{
+  "schema": "physharness-formal-build-v1",
+  "build_status": "built",
+  "sandbox_qualification": "not_run",
+  "semantic_review": "not_reviewed",
+  "independent_kernel_compatibility": "not_run",
+  "source_lock_sha256": "c5615b4f818bb8dfefc0281f116d2ece500597a488eb4ee244b330d41c9235c5",
+  "binaries": {
+    "lean": "79fb1d26fa5a39385d59fdc48a711a14b0710ca6480271acce99b4d177cea085",
+    "lake": "8229bc302b0b7d0e7679e28cc2b830c5aec995ffe5714833503360252f1490ba",
+    "comparator": "227f482d9fd760fb7b19646d6f6e1abbed3b1a2b62fc77e4a6bb69d2d7693cab",
+    "lean4export": "4bac3563125b296123283eecc7a49dc91a1c30bc41c199113c41c9258b42ef28",
+    "landrun": "ff652d627fc822fd5ece4c939446e789cec4ba30814446dabd93234f9bf1615f",
+    "nanoda": "9fe6d27927d156dd2f053b644f2665521ef42db71d1db8ddd856d9c238482196"
+  },
+  "binary_paths": {
+    "lean": "/opt/lean/bin/lean",
+    "lake": "/opt/lean/bin/lake",
+    "comparator": "/opt/verifier/bin/comparator",
+    "lean4export": "/opt/verifier/bin/lean4export",
+    "landrun": "/opt/verifier/bin/landrun",
+    "nanoda": "/opt/verifier/bin/nanoda_bin"
+  },
+  "checker_versions": {
+    "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+    "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+    "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+    "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+    "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+  },
+  "compiler_versions": {
+    "rust": "rustc 1.90.0 (1159e78c4 2025-09-14)",
+    "cargo": "cargo 1.90.0 (840b83a10 2025-07-30)",
+    "go": "go version go1.25.1 linux/arm64"
+  },
+  "prepared_lake_manifests": {
+    "lean4export/lake-manifest.json": "bf32022be9147bf7f338629e432f41abf91dd1ebadf63032cd887fc50d660a0f",
+    "comparator/lake-manifest.json": "a3669b78f05080aca25e4f3e59655f92fa590701699e27cbc5a6e4bdec6ee3d0"
+  },
+  "driver_sha256": "a5df1f833fa05d5a172f1285ad40a0c5e3100944ff36a2d539355ce3bbe919a7",
+  "image": "sha256:cadb65787cb75657516379dc91f3870c6c473e3df11b907428f522ceff360eca"
+}

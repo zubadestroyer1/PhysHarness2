@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "purpose": "engineering_smoke",
+  "project_files": {
+    "lakefile.toml": "lakefile.physics.toml",
+    "lake-manifest.json": "lake-manifest.physics.json",
+    "lean-toolchain": "lean-toolchain"
+  },
+  "cases": [
+    {
+      "id": "library-classical-positive",
+      "challenge": "smoke/library-classical/Challenge.lean",
+      "solution": "smoke/library-classical/Solution.lean",
+      "theorem_names": [
+        "library_target"
+      ],
+      "expected_status": "verified",
+      "expected_code": "kernel_checked"
+    },
+    {
+      "id": "library-quantum-positive",
+      "challenge": "smoke/library-quantum/Challenge.lean",
+      "solution": "smoke/library-quantum/Solution.lean",
+      "theorem_names": [
+        "library_target"
+      ],
+      "expected_status": "verified",
+      "expected_code": "kernel_checked"
+    },
+    {
+      "id": "library-quantum-sorry",
+      "challenge": "smoke/library-quantum/Challenge.lean",
+      "solution": "smoke/library-quantum/Sorry.lean",
+      "theorem_names": [
+        "library_target"
+      ],
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'sorryAx'"
+      ]
+    }
+  ]
+}
