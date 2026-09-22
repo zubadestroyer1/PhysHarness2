@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import errno
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -36,6 +37,7 @@ CHECKS = {
     "tmp_write_control",
     "no_docker_socket",
     "container_configuration",
+    "memory_events_readable",
 }
 BINARY_PATHS = {
     "lean": "/opt/lean/bin/lean",
@@ -53,8 +55,15 @@ def sha(data):
 
 def inside_probe():
     """Observe only fixed process/filesystem/socket properties in the isolated container."""
+    spec = importlib.util.spec_from_file_location(
+        "probe_resource_policy", "/opt/physharness/resource_policy.py"
+    )
+    policy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(policy)
+    resources = policy.parse_profile(Path("/trusted/resources.json").read_bytes())
     checks = {}
-    observed = {}
+    observed = {"memory_events": policy.read_memory_events()}
+    checks["memory_events_readable"] = observed["memory_events"]["status"] == "observed"
     status = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text().splitlines())
     checks["nonroot"] = os.getuid() == 65532 and os.getgid() == 65532
     checks["no_capabilities"] = all(
@@ -116,12 +125,17 @@ def inside_probe():
         "checks": checks,
         "observed": observed,
         "probe_sha256": sha(Path(__file__).read_bytes()),
+        "resource_profile_sha256": policy.profile_digest(resources),
+        "resource_policy_sha256": policy.policy_digest(),
         "driver_sha256": sha(Path("/opt/physharness/container_driver.py").read_bytes()),
         "binaries": {name: sha(Path(path).read_bytes()) for name, path in BINARY_PATHS.items()},
     }
 
 
-def container_command(docker, image, trusted, candidate, name):
+def container_command(docker, image, trusted, candidate, name, resources=None):
+    from physharness.verification import resource_policy
+
+    resources = resource_policy.validate_profile(resources or resource_policy.DEFAULT_PROFILE)
     return [
         docker,
         "run",
@@ -136,8 +150,8 @@ def container_command(docker, image, trusted, candidate, name):
         f"seccomp={trusted / 'seccomp.json'}",
         "--user=65532:65532",
         "--pids-limit=128",
-        "--memory=2g",
-        "--cpus=2",
+        f"--memory={resources['memory_bytes']}",
+        f"--cpus={resources['cpus']}",
         "--tmpfs=/work:rw,nosuid,nodev,size=1g,mode=1777",
         "--tmpfs=/tmp:rw,nosuid,nodev,size=256m,mode=1777",
         "--mount",
@@ -151,16 +165,19 @@ def container_command(docker, image, trusted, candidate, name):
     ]
 
 
-def validate_inspection(container, image, trusted, candidate):
+def validate_inspection(container, image, trusted, candidate, resources=None):
     """Check actual Docker configuration without logging environment values."""
+    from physharness.verification import resource_policy
+
+    resources = resource_policy.validate_profile(resources or resource_policy.DEFAULT_PROFILE)
     config, host = container["Config"], container["HostConfig"]
     expected = {
         "NetworkMode": "none",
         "ReadonlyRootfs": True,
         "Privileged": False,
         "PidsLimit": 128,
-        "Memory": 2 * 1024**3,
-        "NanoCpus": 2_000_000_000,
+        "Memory": resources["memory_bytes"],
+        "NanoCpus": resources["cpus"] * 1_000_000_000,
     }
     if any(host.get(key) != value for key, value in expected.items()):
         raise ValueError("Container isolation/resource configuration differs")
@@ -251,13 +268,21 @@ def _write(path, report):
 
 
 def run_probe(
-    *, image_metadata, image_metadata_sha256, runtime_identity, runtime_identity_sha256, output
+    *,
+    image_metadata,
+    image_metadata_sha256,
+    runtime_identity,
+    runtime_identity_sha256,
+    output,
+    resource_profile=None,
 ):
+    from physharness.verification import resource_policy
     from physharness.verification.boundary import (
         ComparatorVerifier,
         Environment,
         ExecutionFailure,
         bounded_process,
+        checker_slot,
         driver_digest,
         launcher_digest,
         safe_read,
@@ -297,9 +322,19 @@ def run_probe(
             or metadata.get("driver_sha256") != driver_digest()
         ):
             raise ValueError("Complete image binaries and current embedded driver are required")
+        resource_profile = (
+            resource_profile
+            or Path(__file__).resolve().parents[1] / "formal/verifier-resources.json"
+        )
+        resource_bytes = safe_read(resource_profile.parent, resource_profile.name)
+        resources = resource_policy.parse_profile(resource_bytes)
         source = Path(__file__).read_bytes()
         report.update(
             image_digest=env.image,
+            resource_profile=resources,
+            resource_profile_sha256=resource_policy.profile_digest(resources),
+            resource_profile_source_sha256=sha(resource_bytes),
+            resource_policy_sha256=resource_policy.policy_digest(),
             image_metadata_sha256=image_metadata_sha256,
             runtime_identity_sha256=runtime_identity_sha256,
             probe_sha256=sha(source),
@@ -312,7 +347,10 @@ def run_probe(
         if docker is None or Path(docker).name != "docker":
             raise ValueError("Docker executable is unavailable")
         name = "physharness-check-" + uuid4().hex
-        with tempfile.TemporaryDirectory(prefix="physharness-boundary-probe-") as temporary:
+        with (
+            checker_slot(),
+            tempfile.TemporaryDirectory(prefix="physharness-boundary-probe-") as temporary,
+        ):
             staging = Path(temporary)
             trusted, candidate = staging / "trusted", staging / "candidate"
             for path in [trusted, candidate]:
@@ -322,12 +360,15 @@ def run_probe(
                 (path / "canary").chmod(0o444)
             (trusted / "probe.py").write_bytes(source)
             (trusted / "seccomp.json").write_bytes(seccomp_bytes())
+            (trusted / "resources.json").write_bytes(resource_policy.profile_bytes(resources))
             for path in trusted.iterdir():
                 path.chmod(0o444)
             prior_failure = None
             try:
                 code, data = bounded_process(
-                    container_command(docker, env.image, trusted, candidate, name), 45, 64_000
+                    container_command(docker, env.image, trusted, candidate, name, resources),
+                    45,
+                    64_000,
                 )
                 report["probe_process"] = {
                     "exit_code": code,
@@ -342,6 +383,8 @@ def run_probe(
                     or observed.get("probe_sha256") != sha(source)
                     or observed.get("driver_sha256") != driver_digest()
                     or observed.get("binaries") != env.binaries
+                    or observed.get("resource_profile_sha256") != report["resource_profile_sha256"]
+                    or observed.get("resource_policy_sha256") != report["resource_policy_sha256"]
                 ):
                     raise ValueError("Inner fixed-probe provenance differs")
                 report["checks"] = observed["checks"]
@@ -380,7 +423,7 @@ def run_probe(
                         container_inspect = inspected[0]
                     else:
                         image_inspect = inspected[0]
-                validate_inspection(container_inspect, image_inspect, trusted, candidate)
+                validate_inspection(container_inspect, image_inspect, trusted, candidate, resources)
                 report["checks"]["container_configuration"] = True
                 if set(report["checks"]) != CHECKS or any(
                     value is not True for value in report["checks"].values()
@@ -402,6 +445,7 @@ def run_probe(
             Path(__file__).read_bytes() != source
             or safe_read(image_metadata.parent, image_metadata.name) != metadata_bytes
             or safe_read(runtime_identity.parent, runtime_identity.name) != runtime_bytes
+            or safe_read(resource_profile.parent, resource_profile.name) != resource_bytes
         ):
             raise ValueError("Pinned input changed during fixed probe")
         report["status"] = "passed"
@@ -425,4 +469,5 @@ if __name__ == "__main__":
         parser.add_argument("--runtime-identity", type=Path, required=True)
         parser.add_argument("--runtime-identity-sha256", required=True)
         parser.add_argument("--output", type=Path, required=True)
+        parser.add_argument("--resource-profile", type=Path)
         run_probe(**vars(parser.parse_args()))

@@ -9,6 +9,7 @@ from pathlib import Path
 from physharness.errors import HarnessError
 from physharness.verification.boundary import (
     Environment,
+    ResourceProfile,
     VerificationOutcome,
     digest,
     driver_digest,
@@ -17,6 +18,7 @@ from physharness.verification.boundary import (
     seccomp_digest,
 )
 from physharness.verification.bundles import canonical_json, project_path
+from physharness.verification.resource_policy import parse_profile, policy_digest
 
 from .physics_benchmarks import PhysicsBenchmark
 
@@ -219,9 +221,16 @@ def assess_benchmark_reports(
     image_metadata: Path,
     kernel_report: Path,
     independent_report: Path,
+    resource_profile: Path = Path("formal/verifier-resources.json"),
 ) -> dict:
     """Validate operator-supplied engineering observations; always leaves human review pending."""
     try:
+        resource_bytes = safe_read(resource_profile.parent, resource_profile.name)
+        resources = ResourceProfile.model_validate(parse_profile(resource_bytes))
+        resource_pins = {
+            "resource_profile_sha256": resources.sha256,
+            "resource_policy_sha256": policy_digest(),
+        }
         manifest = json.loads(safe_read(bundle, "manifest.json"))
         if (
             set(manifest)
@@ -263,6 +272,9 @@ def assess_benchmark_reports(
             if not isinstance(report, dict) or any(
                 report.get(key) != expected
                 for key, expected in {
+                    **resource_pins,
+                    "resource_profile": resources.model_dump(),
+                    "resource_profile_source_sha256": digest(resource_bytes),
                     "driver_sha256": driver_digest(),
                     "launcher_sha256": launcher_digest(),
                     "seccomp_sha256": seccomp_digest(),
@@ -299,6 +311,8 @@ def assess_benchmark_reports(
                 if result.checker_versions != environment.checker_versions:
                     raise ValueError("Observed checker versions differ")
                 diagnostics = result.diagnostics
+                if any(diagnostics.get(key) != value for key, value in resource_pins.items()):
+                    raise ValueError("Outcome resource profile or policy differs from intended run")
                 logs = diagnostics.get("comparator_output")
                 cleanup = diagnostics.get("container_cleanup")
                 if not isinstance(logs, str) or not isinstance(cleanup, dict):
@@ -326,10 +340,18 @@ def assess_benchmark_reports(
             report_pins.append(
                 {"sha256": digest(raw), "independent_kernel": independent, "cases": len(rows)}
             )
+        if (
+            safe_read(resource_profile.parent, resource_profile.name) != resource_bytes
+            or policy_digest() != resource_pins["resource_policy_sha256"]
+        ):
+            raise ValueError("Resource profile or policy changed during assessment")
         return dict(
             benchmark.inventory(),
             mechanical_status="expected_outcomes_observed_in_both_kernel_modes",
             reports=report_pins,
+            resource_profile=resources.model_dump(),
+            resource_profile_source_sha256=digest(resource_bytes),
+            **resource_pins,
             semantic_hold_ids=[
                 case.id
                 for collection in benchmark.collections
