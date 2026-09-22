@@ -563,6 +563,29 @@ def _boundary_report(scope, matrix, report, runs, containers):
     }
     if any(report.get(key) != expected for key, expected in pins.items()):
         raise EvidenceError("Fixed boundary probe input identity mismatch")
+    process = report.get("probe_process")
+    if (
+        not isinstance(process, dict)
+        or type(process.get("exit_code")) is not int
+        or process["exit_code"] != 0
+        or not isinstance(process.get("output"), str)
+    ):
+        raise EvidenceError("Fixed boundary probe process did not complete successfully")
+    inner = json.loads(process["output"])
+    if not isinstance(inner, dict) or any(
+        inner.get(key) != expected
+        for key, expected in {
+            "protocol": "physharness-fixed-boundary-inner-v1",
+            "probe_sha256": pins["probe_sha256"],
+            "driver_sha256": pins["driver_sha256"],
+            "resource_profile_sha256": pins["resource_profile_sha256"],
+            "resource_policy_sha256": pins["resource_policy_sha256"],
+            "binaries": scope.binaries,
+            "checks": report.get("checks"),
+            "observed": report.get("observed"),
+        }.items()
+    ):
+        raise EvidenceError("Fixed boundary process output differs from reported observations")
     checks = report.get("checks", {})
     if (
         not isinstance(checks, dict)

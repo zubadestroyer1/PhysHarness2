@@ -560,6 +560,59 @@ async def test_mock_delegated_child_remains_queued_at_finite_task_limit(lab):
     await client.close()
 
 
+async def test_same_branch_delegation_survives_supervisor_restart_without_sweeping_unrelated(lab):
+    service, actor, _ = lab
+    experiment, branch, root = campaign(lab)
+    unrelated = service.create_task(
+        TaskCreate(branch_id=branch["id"], objective="Independent queued task"),
+        actor,
+        "unrelated-root-branch-task",
+    )
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            delegated = tool_call(
+                "delegate",
+                {
+                    "branch_id": branch["id"],
+                    "objective": "Queued follow-up",
+                    "dependency_ids": [root["id"]],
+                },
+                "delegate-same-branch",
+            )
+            return httpx.Response(200, json=response([delegated], response_id="delegation"))
+        return httpx.Response(
+            200, json=response([message("Unresolved.")], response_id=f"answer-{calls}")
+        )
+
+    executor, client = mock_executor(service, handler)
+    manifest = research_worker.TeamRunManifest(
+        experiment_id=experiment["id"],
+        project_id=actor.project_id,
+        mode="replay",
+        task_ids=[root["id"]],
+        max_tasks=1,
+    )
+    first = await research_worker.ResearchTeamRunner(service, executor=executor).run(manifest)
+    children = [
+        task
+        for task in service.list_records("task", actor)
+        if task["id"] not in {root["id"], unrelated["id"]}
+    ]
+    assert len(children) == 1
+    assert first["remaining_task_ids"] == [children[0]["id"]]
+    resumed = await research_worker.ResearchTeamRunner(service, executor=executor).run(
+        manifest.model_copy(update={"max_tasks": 2, "run_id": "continuation"})
+    )
+    assert resumed["status"] == "completed"
+    assert service.get_record("task", children[0]["id"], actor)["status"] == "completed"
+    assert service.get_record("task", unrelated["id"], actor)["status"] == "queued"
+    await client.close()
+
+
 async def test_duplicate_worker_dispatch_cannot_enter_provider_twice(lab):
     service, actor, _ = lab
     _, _, task = campaign(lab)

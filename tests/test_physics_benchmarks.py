@@ -3,6 +3,7 @@
 import copy
 import json
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 
@@ -253,6 +254,13 @@ def synthetic_reports(tmp_path):
         rows = []
         for case in fixture["cases"]:
             ok = case["expected_status"] == "verified"
+            container = "physharness-check-" + uuid4().hex
+            logs = "Building Challenge\nBuilding Solution\n"
+            if ok:
+                logs += "Lean default kernel accepts the solution\nYour solution is okay!\n"
+                if independent:
+                    logs += "Nanoda kernel accepts the solution\n"
+            logs += "\n".join(case["required_diagnostic_substrings"])
             outcome = {
                 "status": case["expected_status"],
                 "assurance": ("independent_kernel" if independent else "kernel") if ok else "none",
@@ -268,9 +276,13 @@ def synthetic_reports(tmp_path):
                 "diagnostics": {
                     **resource_pins,
                     "comparator_exit_code": 0 if ok else 1,
-                    "comparator_output": "Building Challenge\nBuilding Solution\n"
-                    + "\n".join(case["required_diagnostic_substrings"]),
-                    "container_cleanup": {"status": "removed"},
+                    "comparator_output": logs,
+                    "container_cleanup": {
+                        "status": "removed",
+                        "container_name": container,
+                        "exit_code": 0,
+                        "output": container + "\n",
+                    },
                     "synthetic": True,
                 },
             }
@@ -367,6 +379,44 @@ def test_mathematically_valid_semantic_mutation_still_awaits_review(tmp_path):
     assert (
         assessment["scientific_review"] == "pending" and assessment["production_qualified"] is False
     )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["lean_marker", "nanoda_marker", "cleanup_exit", "cleanup_output", "cleanup_absence"],
+)
+def test_positive_benchmark_requires_kernel_and_causal_cleanup_evidence(tmp_path, mutation):
+    release, bundle, meta, kernel, independent = synthetic_reports(tmp_path)
+    report = json.loads(independent.read_bytes())
+    diagnostics = report["results"][0]["outcome"]["diagnostics"]
+    if mutation == "lean_marker":
+        diagnostics["comparator_output"] = diagnostics["comparator_output"].replace(
+            "Lean default kernel accepts the solution", "Lean execution started"
+        )
+    elif mutation == "nanoda_marker":
+        diagnostics["comparator_output"] = diagnostics["comparator_output"].replace(
+            "Nanoda kernel accepts the solution", "Nanoda execution started"
+        )
+    elif mutation == "cleanup_exit":
+        diagnostics["container_cleanup"]["exit_code"] = 1
+    elif mutation == "cleanup_output":
+        diagnostics["container_cleanup"]["output"] = "unrelated container\n"
+    else:
+        cleanup = diagnostics["container_cleanup"]
+        diagnostics["container_cleanup"] = {
+            "status": "confirmed_absent",
+            "container_name": cleanup["container_name"],
+            "absence_check": {"exit_code": 1, "output": ""},
+        }
+    independent.write_text(json.dumps(report))
+    with pytest.raises(HarnessError, match="Benchmark evidence"):
+        assess_benchmark_reports(
+            release,
+            bundle,
+            image_metadata=meta,
+            kernel_report=kernel,
+            independent_report=independent,
+        )
 
 
 @pytest.mark.parametrize(

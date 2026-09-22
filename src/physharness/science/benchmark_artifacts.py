@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -328,14 +329,43 @@ def assess_benchmark_reports(
                     "independent_kernel" if independent else "kernel"
                 ):
                     raise ValueError("Kernel assurance does not match requested mode")
+                if result.status == "verified":
+                    controls = [
+                        "Lean default kernel accepts the solution",
+                        "Your solution is okay!",
+                    ]
+                    if independent:
+                        controls.append("Nanoda kernel accepts the solution")
+                    if any(marker not in logs for marker in controls):
+                        raise ValueError("Positive case lacks requested kernel replay diagnostics")
                 if result.status != "verified" and "Building Solution" not in logs:
                     raise ValueError("Failure did not reach candidate construction")
                 if any(marker not in logs for marker in case["required_diagnostic_substrings"]):
                     raise ValueError("Expected negative cause was not observed")
-                if cleanup.get("status") not in {
-                    "removed",
-                    "confirmed_absent",
-                }:
+                name = cleanup.get("container_name")
+                if not isinstance(name, str) or not re.fullmatch(
+                    r"physharness-check-[a-f0-9]{32}", name
+                ):
+                    raise ValueError("Container cleanup identity is missing")
+                if cleanup.get("status") == "removed":
+                    valid = (
+                        type(cleanup.get("exit_code")) is int
+                        and cleanup["exit_code"] == 0
+                        and isinstance(cleanup.get("output"), str)
+                        and cleanup["output"].strip() == name
+                    )
+                elif cleanup.get("status") == "confirmed_absent":
+                    check = cleanup.get("absence_check", {})
+                    valid = (
+                        isinstance(check, dict)
+                        and type(check.get("exit_code")) is int
+                        and check["exit_code"] == 0
+                        and isinstance(check.get("output"), str)
+                        and not check["output"].strip()
+                    )
+                else:
+                    valid = False
+                if not valid:
                     raise ValueError("Container cleanup was not confirmed")
             report_pins.append(
                 {"sha256": digest(raw), "independent_kernel": independent, "cases": len(rows)}
