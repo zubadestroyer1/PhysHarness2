@@ -13,6 +13,8 @@ remaining qualification gates. The [repository README](../README.md) provides th
 | Distinguish implemented code from qualified capability | [Implementation evidence ledger](IMPLEMENTATION_STATUS.md) |
 | Contribute or manage an issue | [Contributing](../CONTRIBUTING.md) and [project management](PROJECT_MANAGEMENT.md) |
 | Integrate a model, tool, or client | [API contract](API_CONTRACT.md) and [execution subsystem](EXECUTION.md) |
+| Prepare a reviewed target, launch a model, and reuse a lemma | [First live run](FIRST_LIVE_RUN.md) |
+| Rebuild the pinned proof and physics environment | [Formal environment](FORMAL_ENVIRONMENT.md) |
 | Assess scientific evidence and acceptance | [Verification](VERIFICATION.md), [science](SCIENCE.md), and [evaluation](EVALUATION.md) |
 | Deploy, diagnose, or operate the system | [Deployment](DEPLOYMENT.md), [operations](OPERATIONS.md), and [security](../SECURITY.md) |
 

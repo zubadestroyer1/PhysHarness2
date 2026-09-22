@@ -1,0 +1,12 @@
+name = "physharness_physics"
+version = "0.1.0"
+
+[[require]]
+name = "Physlib"
+path = "/opt/sources/physlib"
+
+[[lean_lib]]
+name = "Challenge"
+
+[[lean_lib]]
+name = "Solution"

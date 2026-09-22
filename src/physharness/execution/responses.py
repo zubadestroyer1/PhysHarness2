@@ -11,6 +11,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from .parameters import validate_responses_parameters
 from .types import (
     Capabilities,
     EventSink,
@@ -23,6 +24,7 @@ from .types import (
     RuntimeResult,
     RuntimeSession,
     RuntimeStore,
+    digest,
     identifier,
 )
 
@@ -102,14 +104,6 @@ class ResponsesRuntime:
         portable_checkpoint=True,
         hard_token_limit=True,
     )
-    _allowed_parameters = {
-        "instructions",
-        "reasoning",
-        "text",
-        "temperature",
-        "top_p",
-        "service_tier",
-    }
 
     def __init__(
         self,
@@ -160,12 +154,9 @@ class ResponsesRuntime:
         await self.store.save(RuntimeCheckpoint.build(session, state))
 
     async def start(self, prompt: str, model: ModelConfig, limits: RuntimeLimits) -> RuntimeResult:
-        unknown = model.parameters.keys() - self._allowed_parameters
-        if unknown:
-            raise ExecutionError(
-                "INVALID_CONFIG",
-                f"Unsupported or reserved model parameters: {', '.join(sorted(unknown))}",
-            )
+        model = model.model_copy(
+            update={"parameters": validate_responses_parameters(model.parameters)}
+        )
         session = RuntimeSession(runtime="openai_responses", model=model, limits=limits)
         state: dict[str, Any] = {"input": [], "responses": [], "pending_operation": None}
         await self._save(session, state)
@@ -182,12 +173,18 @@ class ResponsesRuntime:
     async def _run(
         self, session: RuntimeSession, state: dict[str, Any], prompt: str
     ) -> RuntimeResult:
+        # Old or externally restored checkpoints must obey the same request
+        # contract before they can write new state or issue provider work.
+        validate_responses_parameters(session.model.parameters)
         if session.id in self._active:
             raise ExecutionError("OPERATION_CONFLICT", "Session is already running")
         self._active[session.id] = asyncio.current_task()
         session.status = "running"
         state["input"].append({"role": "user", "content": prompt})
         try:
+            # Publish the continuation before the asynchronous tokenizer preflight.
+            # Distributed controllers must additionally hold a canonical task lease.
+            await self._save(session, state)
             async with asyncio.timeout(session.limits.timeout_seconds) as timeout:
                 return await self._loop(session, state, timeout.when())
         except asyncio.CancelledError:
@@ -274,6 +271,7 @@ class ResponsesRuntime:
                 max_output_tokens=min(session.limits.max_output_tokens, remaining),
                 store=False,
                 include=["reasoning.encrypted_content"],
+                extra_headers={"X-Client-Request-Id": operation_id},
                 **params,
             )
             native = response.model_dump(mode="json", exclude_none=True)
@@ -290,7 +288,6 @@ class ResponsesRuntime:
                 )
             session.input_tokens += response.usage.input_tokens
             session.output_tokens += response.usage.output_tokens
-            state["pending_operation"] = None
             state["input"].extend(native["output"])
             await self._save(session, state)
             await self._emit(
@@ -303,6 +300,10 @@ class ResponsesRuntime:
                 output_tokens=response.usage.output_tokens,
                 native_usage=response.usage.model_dump(mode="json"),
             )
+            # Clear only after authoritative accounting succeeds. The checkpoint
+            # retains the native response and correlation ID if settlement fails.
+            state["pending_operation"] = None
+            await self._save(session, state)
             if session.input_tokens + session.output_tokens > session.limits.max_total_tokens:
                 raise ExecutionError(
                     "PROVIDER_LIMIT_VIOLATION",
@@ -348,9 +349,22 @@ class ResponsesRuntime:
                     raise ExecutionError(
                         "INVALID_TOOL_ARGUMENTS", "Provider tool arguments are not a JSON object"
                     ) from exc
-                state["pending_operation"] = tool_operation
-                await self._save(session, state)
-                result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
+                identity = digest({"name": call["name"], "arguments": arguments})
+                results = state.setdefault("tool_results", {})
+                previous = results.get(tool_operation)
+                if previous is not None:
+                    if previous["identity"] != identity:
+                        raise ExecutionError(
+                            "COMMAND_MISMATCH",
+                            "Reused tool call ID changed its arguments",
+                            operation_id=tool_operation,
+                        )
+                    result = previous["result"]
+                else:
+                    state["pending_operation"] = tool_operation
+                    await self._save(session, state)
+                    result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
+                    results[tool_operation] = {"identity": identity, "result": result}
                 state["input"].append(
                     {
                         "type": "function_call_output",
@@ -379,10 +393,10 @@ class ResponsesRuntime:
 
     async def resume(self, checkpoint: RuntimeCheckpoint) -> RuntimeSession:
         checkpoint.verify("openai_responses")
-        if (
-            checkpoint.native_state.get("pending_operation")
-            or checkpoint.session.status == "running"
-        ):
+        if checkpoint.native_state.get("pending_operation") or checkpoint.session.status in {
+            "running",
+            "uncertain",
+        }:
             raise ExecutionError(
                 "OPERATION_UNCERTAIN",
                 "Checkpoint has an unresolved operation; reconcile before resuming",
@@ -397,5 +411,10 @@ class ResponsesRuntime:
                 raise ExecutionError(
                     "CHECKPOINT_MISMATCH", "Resume cannot rewind an existing session identity"
                 )
+        if checkpoint.session.status == "interrupted":
+            # An explicit resume may reopen a known local interruption, preserving
+            # the same cumulative limits. Uncertain external effects stay blocked.
+            session = checkpoint.session.model_copy(update={"status": "ready"})
+            checkpoint = RuntimeCheckpoint.build(session, checkpoint.native_state)
         await self.store.save(checkpoint)
         return checkpoint.session
