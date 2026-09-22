@@ -1,0 +1,32 @@
+{
+  "purpose": "database_concurrency_regression",
+  "expert_review": "synthetic_test_fixture_only",
+  "production_qualified": false,
+  "database": "PostgreSQL 16.15 aarch64",
+  "image": "library/postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94",
+  "test": "tests/test_acceptance_integration.py::test_postgresql_review_update_cannot_cross_acceptance_commit",
+  "before_fix": {
+    "result": "failed",
+    "observation": "Concurrent reviewer update committed while acceptance prepared verified receipt; review_was_locked was False"
+  },
+  "after_fix": {
+    "result": "passed",
+    "tests_passed": 16,
+    "elapsed_seconds": 0.76,
+    "includes": "acceptance integration and live isolated-schema PostgreSQL migration",
+    "observation": "Concurrent reviewer update timed out on target row lock; later review succeeded after receipt commit"
+  },
+  "isolation": {
+    "dedicated_vm": true,
+    "network_internal": true,
+    "memory_limit_mb": 256,
+    "ssh_listener": "127.0.0.1:55433"
+  },
+  "cleanup": {
+    "container_removed": true,
+    "ephemeral_volumes_removed": true,
+    "network_removed": true,
+    "ssh_tunnel_closed": true
+  },
+  "acceptance_source_sha256": "94ebba1646d110d435b7b34933d605c0153ee070567495e8f8e1dc731bcf0286"
+}

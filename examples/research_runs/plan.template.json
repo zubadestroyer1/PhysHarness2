@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "run_id": "replace-with-unique-run-name",
+  "project_id": "local-lab",
+  "campaign": {
+    "title": "First reviewed mathematical-physics experiments",
+    "objective": "Reproduce a reviewed result and reuse its checked source in a second target.",
+    "programs": ["quantum", "classical"]
+  },
+  "target": {
+    "title": "REPLACE_WITH_REVIEWED_TARGET_TITLE",
+    "program": "quantum",
+    "informal_statement": "REPLACE_WITH_EXACT_INTENDED_CLAIM",
+    "formal_source_file": "Challenge.lean",
+    "environment_file": "environment.json",
+    "target_theorem": "REPLACE_WITH_QUALIFIED_THEOREM_NAME",
+    "assumptions": [],
+    "definitions": {},
+    "source": "REPLACE_WITH_SOURCE_PROVENANCE",
+    "definition_holes": false
+  },
+  "models": [
+    {"runtime": "responses", "model": "REPLACE_WITH_EXACT_MODEL_ID", "parameters": {}}
+  ],
+  "budget": {
+    "max_cost_usd": "10.00",
+    "max_concurrency": 1,
+    "max_runtime_seconds": 1800,
+    "max_tokens": 50000
+  },
+  "policy": "direct",
+  "sharing": "verified",
+  "runtime_limits": {
+    "max_turns": 16,
+    "max_output_tokens": 4096,
+    "max_total_tokens": 32768,
+    "timeout_seconds": 900
+  }
+}

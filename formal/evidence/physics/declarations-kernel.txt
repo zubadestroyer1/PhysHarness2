@@ -1,0 +1,80 @@
+ClassicalMechanics.hamiltonEqOp {X : Type} [NormedAddCommGroup X] [InnerProductSpace ℝ X] [CompleteSpace X]
+  (H : Time → X → X → ℝ) (p q : Time → X) : Time → X × X
+'ClassicalMechanics.hamiltonEqOp' depends on axioms: [propext, Classical.choice, Quot.sound]
+ClassicalMechanics.hamiltonEqOp_eq_zero_iff_hamiltons_equations {X : Type} [NormedAddCommGroup X]
+  [InnerProductSpace ℝ X] [CompleteSpace X] (H : Time → X → X → ℝ) (p q : Time → X) :
+  ClassicalMechanics.hamiltonEqOp H p q = 0 ↔
+    (∀ (t : Time), Time.deriv q t = gradient (fun x => H t x (q t)) (p t)) ∧
+      ∀ (t : Time), Time.deriv p t = -gradient (fun x => H t (p t) x) (q t)
+'ClassicalMechanics.hamiltonEqOp_eq_zero_iff_hamiltons_equations' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+ClassicalMechanics.hamiltons_equations_varGradient {X : Type} [NormedAddCommGroup X] [InnerProductSpace ℝ X]
+  [CompleteSpace X] (H : Time → X → X → ℝ) (pq : Time → X × X) (hp : ContDiff ℝ (↑⊤) pq) (hL : ContDiff ℝ ↑⊤ ↿H) :
+  varGradient (fun pq' t => inner ℝ (pq' t).1 (Time.deriv (Prod.snd ∘ pq') t) - H t (pq' t).1 (pq' t).2) pq = fun t =>
+    ClassicalMechanics.hamiltonEqOp H (fun t => (pq t).1) (fun t => (pq t).2) t
+'ClassicalMechanics.hamiltons_equations_varGradient' depends on axioms: [propext, Classical.choice, Quot.sound]
+ClassicalMechanics.HarmonicOscillator : Type
+'ClassicalMechanics.HarmonicOscillator' depends on axioms: [propext, Classical.choice, Quot.sound]
+ClassicalMechanics.HarmonicOscillator.kineticEnergy (S : ClassicalMechanics.HarmonicOscillator)
+  (xₜ : Time → EuclideanSpace ℝ (Fin 1)) : Time → ℝ
+'ClassicalMechanics.HarmonicOscillator.kineticEnergy' depends on axioms: [propext, Classical.choice, Quot.sound]
+ClassicalMechanics.HarmonicOscillator.potentialEnergy (S : ClassicalMechanics.HarmonicOscillator)
+  (x : EuclideanSpace ℝ (Fin 1)) : ℝ
+'ClassicalMechanics.HarmonicOscillator.potentialEnergy' depends on axioms: [propext, Classical.choice, Quot.sound]
+ClassicalMechanics.HarmonicOscillator.energy (S : ClassicalMechanics.HarmonicOscillator)
+  (xₜ : Time → EuclideanSpace ℝ (Fin 1)) : Time → ℝ
+'ClassicalMechanics.HarmonicOscillator.energy' depends on axioms: [propext, Classical.choice, Quot.sound]
+ClassicalMechanics.HarmonicOscillator.EquationOfMotion (S : ClassicalMechanics.HarmonicOscillator)
+  (xₜ : Time → EuclideanSpace ℝ (Fin 1)) : Prop
+'ClassicalMechanics.HarmonicOscillator.EquationOfMotion' depends on axioms: [propext, Classical.choice, Quot.sound]
+ClassicalMechanics.HarmonicOscillator.energy_conservation_of_equationOfMotion
+  (S : ClassicalMechanics.HarmonicOscillator) (xₜ : Time → EuclideanSpace ℝ (Fin 1)) (hx : ContDiff ℝ (↑⊤) xₜ)
+  (h : S.EquationOfMotion xₜ) : Time.deriv (S.energy xₜ) = 0
+'ClassicalMechanics.HarmonicOscillator.energy_conservation_of_equationOfMotion' depends on axioms: [propext,
+ Classical.choice,
+ Quot.sound]
+ClassicalMechanics.HarmonicOscillator.hamiltonian (S : ClassicalMechanics.HarmonicOscillator) (t : Time)
+  (p x : EuclideanSpace ℝ (Fin 1)) : ℝ
+'ClassicalMechanics.HarmonicOscillator.hamiltonian' depends on axioms: [propext, Classical.choice, Quot.sound]
+Qubit : Type
+'Qubit' does not depend on any axioms
+Qubit.X : ↥𝐔[Qubit]
+'Qubit.X' depends on axioms: [propext, Classical.choice, Quot.sound]
+Qubit.X_sq : Qubit.X * Qubit.X = 1
+'Qubit.X_sq' depends on axioms: [propext, Classical.choice, Quot.sound]
+Qubit.H : ↥𝐔[Qubit]
+'Qubit.H' depends on axioms: [propext, Classical.choice, Quot.sound]
+Qubit.H_sq : Qubit.H * Qubit.H = 1
+'Qubit.H_sq' depends on axioms: [propext, Classical.choice, Quot.sound]
+Qubit.CNOT : ↥𝐔[Fin 2 × Fin 2]
+'Qubit.CNOT' depends on axioms: [propext, Classical.choice, Quot.sound]
+Qubit.controllize_mul.{u_1} {k : Type u_1} [Fintype k] [DecidableEq k] (g₁ g₂ : ↥𝐔[k]) :
+  Qubit.controllize g₁ * Qubit.controllize g₂ = Qubit.controllize (g₁ * g₂)
+'Qubit.controllize_mul' depends on axioms: [propext, Classical.choice, Quot.sound]
+MState.{u_1} (d : Type u_1) [Fintype d] [DecidableEq d] : Type u_1
+'MState' depends on axioms: [propext, Classical.choice, Quot.sound]
+MState.pure.{u_1} {d : Type u_1} [Fintype d] [DecidableEq d] (ψ : Ket d) : MState d
+'MState.pure' depends on axioms: [propext, Classical.choice, Quot.sound]
+MState.purity.{u_1} {d : Type u_1} [Fintype d] [DecidableEq d] (ρ : MState d) : Prob
+'MState.purity' depends on axioms: [propext, Classical.choice, Quot.sound]
+MState.traceLeft.{u_2, u_3} {d₁ : Type u_2} {d₂ : Type u_3} [Fintype d₁] [Fintype d₂] [DecidableEq d₁] [DecidableEq d₂]
+  (ρ : MState (d₁ × d₂)) : MState d₂
+'MState.traceLeft' depends on axioms: [propext, Classical.choice, Quot.sound]
+MState.traceRight.{u_2, u_3} {d₁ : Type u_2} {d₂ : Type u_3} [Fintype d₁] [Fintype d₂] [DecidableEq d₁] [DecidableEq d₂]
+  (ρ : MState (d₁ × d₂)) : MState d₁
+'MState.traceRight' depends on axioms: [propext, Classical.choice, Quot.sound]
+MState.traceLeft_prod_eq.{u_2, u_3} {d₁ : Type u_2} {d₂ : Type u_3} [Fintype d₁] [Fintype d₂] [DecidableEq d₁]
+  [DecidableEq d₂] (ρ₁ : MState d₁) (ρ₂ : MState d₂) : (ρ₁ ⊗ᴹ ρ₂).traceLeft = ρ₂
+'MState.traceLeft_prod_eq' depends on axioms: [propext, Classical.choice, Quot.sound]
+MState.pure_iff_purity_one.{u_1} {d : Type u_1} [Fintype d] [DecidableEq d] (ρ : MState d) :
+  (∃ ψ, ρ = MState.pure ψ) ↔ ρ.purity = 1
+'MState.pure_iff_purity_one' depends on axioms: [propext, Classical.choice, Quot.sound]
+MState.purify_spec.{u_1} {d : Type u_1} [Fintype d] [DecidableEq d] (ρ : MState d) :
+  (MState.pure ρ.purify).traceRight = ρ
+'MState.purify_spec' depends on axioms: [propext, Classical.choice, Quot.sound]
+Matrix.PosSemidef.{u_2, u_3} {n : Type u_2} {R : Type u_3} [Ring R] [PartialOrder R] [StarRing R] (M : Matrix n n R) :
+  Prop
+'Matrix.PosSemidef' depends on axioms: [propext, Classical.choice, Quot.sound]
+Matrix.PosDef.{u_2, u_3} {n : Type u_2} {R : Type u_3} [Ring R] [PartialOrder R] [StarRing R] (M : Matrix n n R) : Prop
+'Matrix.PosDef' depends on axioms: [propext, Classical.choice, Quot.sound]

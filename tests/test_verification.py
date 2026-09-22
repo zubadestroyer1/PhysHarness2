@@ -57,8 +57,8 @@ def configured(tmp_path):
     (tmp_path / "lakefile.toml").write_text('name = "check"\n')
     manifest = json.dumps(
         {
-            "problem_revision_id": "revision-1",
             "protocol": "physharness-comparator-v2",
+            "problem_revision_id": "revision-1",
             "target_digest": sha(b"canonical metadata"),
             "challenge_sha256": sha(target),
             "environment_digest": sha(env),
@@ -564,3 +564,169 @@ def test_engineering_driver_keeps_common_manifest_checks(tmp_path, monkeypatch, 
     _, result = run_synthetic_driver(tmp_path, monkeypatch, capsys, tamper=tamper, engineering=True)
     assert result["status"] == "blocked", result
     assert "manifest" in result["diagnostics"]["error"]
+
+
+def test_canonical_revision_digest_is_separate_from_lean_source_pin(tmp_path, monkeypatch):
+    verifier, req = configured(tmp_path)
+    canonical = sha(b'{"semantic_revision":"approved physics target"}')
+    manifest = json.loads((tmp_path / "manifest.json").read_bytes())
+    manifest.update(
+        protocol="physharness-comparator-v2",
+        target_digest=canonical,
+        challenge_sha256=sha((tmp_path / "Challenge.lean").read_bytes()),
+    )
+    raw = json.dumps(manifest).encode()
+    (tmp_path / "manifest.json").write_bytes(raw)
+    verifier.config = verifier.config.model_copy(update={"manifest_sha256": sha(raw)})
+    req = req.model_copy(
+        update={"target_digest": canonical, "challenge_sha256": manifest["challenge_sha256"]}
+    )
+    monkeypatch.setattr(
+        verifier,
+        "_run_container",
+        lambda *args: fake_result(
+            req, protocol="physharness-comparator-v2", challenge_sha256=req.challenge_sha256
+        ),
+    )
+    result = verifier.verify(req)
+    assert result.status == "verified"
+    assert result.target_digest == canonical
+    assert result.challenge_sha256 == manifest["challenge_sha256"]
+
+
+def test_bundle_builder_preserves_scientific_revision_and_independent_source_identity(tmp_path):
+    v = api()
+    assert hasattr(v, "create_bundle"), "trusted bundle builder missing"
+    source = "theorem identity (n : Nat) : n = n := by rfl\n"
+    destination = tmp_path / "bundle"
+    manifest_sha = v.create_bundle(
+        destination,
+        problem_revision_id="reviewed-revision",
+        target_digest="c" * 64,
+        challenge_source=source,
+        theorem_names=["identity"],
+        image_digest="sha256:" + "a" * 64,
+        checker_versions={"lean": "pinned", "comparator": "pinned"},
+        binaries={
+            name: "e" * 64 for name in ("lean", "lake", "comparator", "lean4export", "landrun")
+        },
+        project_files={"lakefile.toml": b'name = "check"\n'},
+    )
+    manifest = json.loads((destination / "manifest.json").read_bytes())
+    assert sha((destination / "manifest.json").read_bytes()) == manifest_sha
+    assert manifest["target_digest"] == "c" * 64
+    assert manifest["challenge_sha256"] == sha(source.encode())
+    assert "semantic_reviewed" not in manifest
+    with pytest.raises(FileExistsError):
+        v.create_bundle(
+            destination,
+            problem_revision_id="revision",
+            target_digest="c" * 64,
+            challenge_source=source,
+            theorem_names=["identity"],
+            image_digest="sha256:" + "a" * 64,
+            checker_versions={},
+            binaries={},
+            project_files={},
+        )
+
+
+def test_engineering_check_does_not_require_or_manufacture_a_review(tmp_path, monkeypatch):
+    v = api()
+    assert hasattr(v, "EngineeringVerifier"), "engineering observations need a separate API"
+    production, req = configured(tmp_path)
+    engineering = v.EngineeringVerifier(
+        v.EngineeringConfig(
+            bundle_directory=tmp_path,
+            manifest_sha256=production.config.manifest_sha256,
+            execution=v.ExecutionPins.model_validate(
+                production.config.qualification.model_dump(exclude={"qualification_report_sha256"})
+            ),
+        )
+    )
+    engineering_req = v.EngineeringRequest.model_validate(
+        req.model_dump(exclude={"semantic_reviewed", "definition_holes", "target_theorem"})
+    )
+    monkeypatch.setattr(engineering, "_run_container", lambda *args: fake_result(req))
+    result = engineering.run(engineering_req)
+    assert result.purpose == "engineering_smoke"
+    assert result.outcome.status == "verified"
+    assert not hasattr(engineering, "verify")
+    with pytest.raises(ValidationError):
+        v.VerificationOutcome.model_validate(result.model_dump())
+    with pytest.raises(TypeError):
+        v.ComparatorVerifier(engineering.config)
+
+
+def test_preflight_inspects_real_bundle_without_running_candidate(tmp_path, monkeypatch):
+    verifier, req = configured(tmp_path)
+    assert hasattr(verifier, "preflight"), "deployment preflight missing"
+
+    def forbidden(*args):
+        raise AssertionError("Preflight must not run any candidate")
+
+    monkeypatch.setattr(verifier, "_run_container", forbidden)
+    result = verifier.preflight(req)
+    assert (result.status, result.assurance, result.code) == (
+        "blocked",
+        "none",
+        "configured_unprobed",
+    )
+    (tmp_path / "Challenge.lean").write_text("changed")
+    assert verifier.preflight(req).code == "trusted_bundle_invalid"
+
+
+@pytest.mark.parametrize("name", ["../outside", ".lake/cache", "config.json", "nested/../escape"])
+def test_bundle_builder_rejects_paths_before_writing_anything(tmp_path, name):
+    v = api()
+    destination = tmp_path / "bundle"
+    with pytest.raises(ValueError):
+        v.create_bundle(
+            destination,
+            problem_revision_id="revision",
+            target_digest="c" * 64,
+            challenge_source="theorem good : True := by trivial",
+            theorem_names=["good"],
+            image_digest="sha256:" + "a" * 64,
+            checker_versions={"lean": "pinned", "comparator": "pinned"},
+            binaries={
+                n: "e" * 64 for n in ("lean", "lake", "comparator", "lean4export", "landrun")
+            },
+            project_files={"lakefile.toml": b'name = "check"', name: b"bad"},
+        )
+    assert not destination.exists()
+
+
+def test_old_manifest_cannot_be_silently_reinterpreted(tmp_path):
+    verifier, req = configured(tmp_path)
+    manifest = json.loads((tmp_path / "manifest.json").read_bytes())
+    manifest.pop("protocol")
+    manifest.pop("challenge_sha256")
+    raw = json.dumps(manifest).encode()
+    (tmp_path / "manifest.json").write_bytes(raw)
+    verifier.config = verifier.config.model_copy(update={"manifest_sha256": sha(raw)})
+    result = verifier.verify(req)
+    assert result.code == "trusted_bundle_invalid"
+    assert "protocol" in result.diagnostics["error"]
+
+
+def test_reviewed_theorem_selector_cannot_be_replaced_by_bundle_operator(tmp_path, monkeypatch):
+    verifier, req = configured(tmp_path)
+    req = req.model_copy(update={"target_theorem": "important_unproved_theorem"})
+    monkeypatch.setattr(verifier, "_run_container", lambda *args: fake_result(req))
+    result = verifier.verify(req)
+    assert result.code == "trusted_bundle_invalid"
+    assert "theorem" in result.diagnostics["error"]
+
+
+def test_publication_preflight_blocks_missing_independent_replay_configuration(tmp_path):
+    verifier, req = configured(tmp_path)
+    verifier.config = verifier.config.model_copy(
+        update={
+            "qualification": verifier.config.qualification.model_copy(
+                update={"independent_kernel": False}
+            )
+        }
+    )
+    result = verifier.preflight(req.model_copy(update={"publication": True}))
+    assert (result.status, result.code) == ("blocked", "independent_kernel_required")

@@ -5,6 +5,7 @@ from sqlalchemy import select
 from .domain import Principal, TaskCreate, canonical_json, utcnow
 from .errors import HarnessError
 from .storage import EdgeRow, LeaseRow, RecordRow
+from .worker_authority import current_worker_effects
 
 
 def controller_only(actor):
@@ -18,6 +19,10 @@ class CollaborationMixin:
     def create_task(self, request: TaskCreate, actor: Principal, key: str) -> dict:
         self._research_role(actor)
         data = request.model_dump(mode="json")
+        binding = current_worker_effects.get()
+        delegated_from_task_id = binding.task_id if actor.role == "agent" and binding else None
+        if delegated_from_task_id:
+            data["delegated_from_task_id"] = delegated_from_task_id
 
         def action(session, op):
             branch = self._writable_branch(session, request.branch_id, actor, delegation=True)

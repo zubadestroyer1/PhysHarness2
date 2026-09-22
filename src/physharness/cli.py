@@ -35,6 +35,241 @@ def client():
     return HarnessClient(os.environ.get("PHYSHARNESS_URL", "http://127.0.0.1:8000"), token)
 
 
+def local_authority(*roles):
+    """Resolve a real configured identity; operator commands cannot invent principals."""
+    from .bootstrap import build_service
+    from .service import require_role
+
+    settings = Settings()
+    token = os.environ.get("PHYSHARNESS_TOKEN")
+    actor = settings.auth_tokens.get(token or "")
+    if actor is None:
+        raise HarnessError("TOKEN_REQUIRED", "Supply a configured role-scoped identity token.")
+    require_role(actor, *roles)
+    return settings, build_service(settings), actor
+
+
+@app.command("prepare-environment")
+def prepare_environment_command(
+    image_metadata: Path,
+    image_metadata_sha256: Annotated[str, typer.Option(help="Inspected image metadata SHA-256.")],
+    project_directory: Annotated[Path, typer.Option()],
+    include: Annotated[
+        list[str], typer.Option(help="Repeat for each trusted relative project file.")
+    ],
+    output_file: Annotated[Path, typer.Option()],
+):
+    """Pin a built image and trusted source files without creating a target or review."""
+    import hashlib
+
+    from .verification.preparation import prepare_environment
+
+    try:
+        data = prepare_environment(
+            image_metadata,
+            image_metadata_sha256=image_metadata_sha256,
+            project_directory=project_directory,
+            project_files=include,
+        )
+        with output_file.open("xb") as stream:
+            stream.write(data)
+        output(
+            {
+                "environment_file": str(output_file.resolve()),
+                "environment_digest": hashlib.sha256(data).hexdigest(),
+                "semantic_review": "not_performed",
+                "qualification": "not_performed",
+            }
+        )
+    except Exception as error:
+        fail(error)
+
+
+@app.command("bundle-target")
+def bundle_target_command(
+    problem_id: str,
+    environment_file: Annotated[Path, typer.Option()],
+    project_directory: Annotated[Path, typer.Option()],
+    destination: Annotated[Path, typer.Option()],
+):
+    """Construct an immutable bundle from the canonical target and exact pinned environment."""
+    from .run_control import read_input
+    from .verification.preparation import create_problem_bundle
+
+    try:
+        _, service, actor = local_authority("operator")
+        problem = service.get_record("problem", problem_id, actor)
+        data = read_input(environment_file.parent, environment_file.name, 500000)
+        manifest_hash = create_problem_bundle(
+            destination,
+            problem=problem,
+            environment_bytes=data,
+            project_directory=project_directory,
+        )
+        output(
+            {
+                "bundle_directory": str(destination.resolve()),
+                "manifest_sha256": manifest_hash,
+                "problem_revision_id": problem_id,
+                "target_digest": problem["target_digest"],
+                "semantic_review": problem["semantic_review"],
+                "qualification": "not_performed",
+            }
+        )
+    except Exception as error:
+        fail(error)
+
+
+@app.command("prepare-run")
+def prepare_run_command(manifest: Path):
+    """Create a proposed target and inactive experiment from a versioned local plan."""
+    from pydantic import ValidationError
+
+    from .run_control import RunPlan, prepare_run, read_input
+
+    try:
+        _, service, actor = local_authority("researcher", "operator")
+        try:
+            plan = RunPlan.model_validate_json(read_input(manifest.parent, manifest.name, 500000))
+        except ValidationError:
+            raise HarnessError(
+                "RUN_PLAN_INVALID", "Invalid run plan; check the documented schema. Values omitted."
+            ) from None
+        output(prepare_run(service, actor, plan, manifest.parent))
+    except Exception as error:
+        fail(error)
+
+
+@app.command("review-target")
+def review_target_command(
+    problem_id: str,
+    target_digest: Annotated[str, typer.Option(help="Exact semantic target digest inspected.")],
+    rationale_file: Annotated[Path, typer.Option(help="Written review rationale, UTF-8.")],
+    idempotency_key: Annotated[str, typer.Option()],
+    decision: str = "approved",
+):
+    """Record an explicit human decision using a separately issued reviewer identity."""
+    from .run_control import read_input
+
+    try:
+        _, service, actor = local_authority("reviewer")
+        problem = service.get_record("problem", problem_id, actor)
+        if target_digest != problem["target_digest"]:
+            raise HarnessError("REVIEW_TARGET_MISMATCH", "The inspected target digest differs.")
+        rationale = read_input(rationale_file.parent, rationale_file.name, 100000).decode("utf-8")
+        output(service.review_problem(problem_id, decision, rationale, actor, idempotency_key))
+    except Exception as error:
+        fail(error)
+
+
+@app.command("check-run")
+def check_run_command(experiment_id: str, publication: bool = True):
+    """Report all missing live inputs without allocation, model calls or candidate execution."""
+    from .run_control import run_preflight
+
+    try:
+        settings, service, actor = local_authority("operator")
+        report = run_preflight(
+            service,
+            actor,
+            experiment_id,
+            prices=settings.model_prices,
+            environment=os.environ,
+            publication=publication,
+        )
+    except Exception as error:
+        fail(error)
+    output(report)
+    if report["status"] == "blocked":
+        raise typer.Exit(1)
+
+
+@app.command("run-team")
+def run_team_command(
+    experiment_id: str,
+    max_tasks: Annotated[int, typer.Option(min=1, max=1000)] = 8,
+    concurrency: Annotated[int, typer.Option(min=1, max=100)] = 1,
+    timeout_seconds: Annotated[float, typer.Option(min=1, max=86400)] = 300,
+):
+    """Launch a finite live team on durable records after explicit operator preflight."""
+    import asyncio
+
+    from .orchestration.research_worker import (
+        ResearchTaskExecutor,
+        ResearchTeamRunner,
+        TeamRunLimits,
+        TeamRunManifest,
+    )
+    from .run_control import run_preflight
+    from .worker import Activities
+
+    try:
+        settings, service, actor = local_authority("operator")
+        report = run_preflight(
+            service, actor, experiment_id, prices=settings.model_prices, environment=os.environ
+        )
+        if report["status"] == "blocked":
+            output(report)
+            raise typer.Exit(1)
+        experiment = service.get_record("experiment", experiment_id, actor)
+        if concurrency > experiment["budget"]["max_concurrency"]:
+            raise HarnessError("TEAM_LIMIT", "Concurrency exceeds the experiment envelope.")
+        root_count = 1 if experiment["policy"] == "direct" else len(experiment["models"])
+        if max_tasks < root_count:
+            raise HarnessError("TEAM_LIMIT", "Task bound is smaller than the configured root team.")
+        # Validate the finite supervisor and instantiate dependencies before any queue event.
+        limits = TeamRunLimits(
+            max_concurrency=concurrency,
+            max_tasks=max_tasks,
+            timeout_seconds=timeout_seconds,
+        )
+        factory = None
+        if settings.worker_workspace is not None:
+            from .orchestration.workspace_tools import e2b_workspace_factory
+
+            factory = e2b_workspace_factory(settings.worker_workspace)
+        executor = ResearchTaskExecutor(
+            service, prices=settings.model_prices, workspace_factory=factory
+        )
+        action = {"created": "start", "paused": "resume", "blocked": "resume"}.get(
+            experiment["status"]
+        )
+        if action:
+            service.transition_experiment(
+                experiment_id,
+                action,
+                experiment["revision"],
+                actor,
+                f"operator-start:{experiment_id}:{experiment['revision']}",
+            )
+        # Reuse identical controller identities and idempotency keys as Temporal delivery.
+        seeded = Activities(service, executor).apply_experiment_command(
+            {
+                "project_id": actor.project_id,
+                "aggregate_id": experiment_id,
+                "kind": "experiment.queued",
+            }
+        )
+        result = asyncio.run(
+            ResearchTeamRunner(service, executor=executor).run(
+                TeamRunManifest(
+                    experiment_id=experiment_id,
+                    project_id=actor.project_id,
+                    mode="live",
+                    task_ids=seeded["task_ids"],
+                    **limits.model_dump(),
+                )
+            )
+        )
+    except typer.Exit:
+        raise
+    except Exception as error:
+        fail(error)
+    output(result)
+    if result.get("status") != "completed":
+        raise typer.Exit(1)
+
+
 @app.command("init")
 def initialize(project: str = "local-lab", directory: Path = Path(".state")):
     """Create a development database and separate identity files, refusing overwrite."""
