@@ -3,6 +3,8 @@
 Updated 2026-09-22 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) remains the scope.
 Every wave is **unqualified**. Several components are implemented and tested; none of the live
 scientific/fleet exit criteria has been substituted with a mock or a schema check.
+The [current Wave 0/1 delivery](../work/wave01/DELIVERY-2026-09-22.md) records the
+final 8 GiB control evidence and completed physics reports in both kernel modes.
 
 ## Initial development evidence
 
@@ -82,9 +84,18 @@ canonical team runner. The current delivery evidence is in
   nonacceptance controls and nine valid semantic-hold controls), separate from the tiny algebra
   controls. Their references were historically elaborated, but scientific human review,
   calibration and contamination decisions remain pending.
-- Wave 1 resource enforcement, qualification parsing and limited control evidence exist. The
-  current 8 GiB image benchmark, fixed boundary evidence, complete qualification assessment and
-  deployment/human gates remain pending; the older 2 GiB reports are historical only.
+- Wave 1 resource enforcement and qualification parsing have current 8 GiB control evidence:
+  image `sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67`,
+  final scope `e8f8c011e29242aa16f7464522b061545ac189f392c729655c57183a578ddb42`,
+  24/24 core/library expected outcomes across both modes, and 16/16 fixed boundary
+  observations. All 10 automatic qualification checks were mechanically satisfied;
+  production approval and scientific review remain pending. Both 60-case physics
+  modes passed all expected outcomes: per mode, 40 positive references verified,
+  11 mechanical controls blocked, and nine valid semantic controls mechanically
+  verified but expert-held. The independent audit matched the stored full-suite
+  assessment without discrepancies; older 2 GiB reports are historical only.
+  [CI run 35796735015](https://github.com/zubadestroyer1/PhysHarness2/actions/runs/35796735015)
+  passed all five jobs at `a58b94d`.
 
 | Wave | Implemented engineering | Required before the wave can qualify |
 |---|---|---|
@@ -130,8 +141,10 @@ The PR #1 correction run did not execute a live provider, a Lean kernel or a man
 The wave observations below apply to their recorded source/image hashes; changed verifier bytes
 require a separate rebuild, rerun and repinning.
 
-A dedicated local Colima VM was used for real Linux builds and proof tests; its lifecycle and
-final image preservation are recorded in the delivery report. Lean candidate execution stays
+A dedicated local Colima VM was used for real Linux builds and proof tests. Both the current
+and historical images were archived with a recorded SHA-256 and passing `zstd -t`; the
+VM was observed stopped on 2026-09-22. A fresh-VM restore remains untested. Details are
+in the [current delivery](../work/wave01/DELIVERY-2026-09-22.md). Lean candidate execution stays
 inside that Linux boundary, not the Mac's default environment. The temporary PostgreSQL container
 and tunnel were removed after the concurrency test. Hosted-model identifiers, credentials,
 qualified E2B templates, reviewed proof bundles, cloud inputs and explicit live experiment

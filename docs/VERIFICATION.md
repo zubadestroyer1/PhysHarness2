@@ -2,6 +2,14 @@
 
 The real Linux engineering suite passed on 2026-09-15: two algebraic fixtures passed Lean replay and seven adversarial fixtures were blocked, in both single-kernel and independent nanoda modes. The complete outputs, executable pins, runtime observation and hashes are archived in [acceptance evidence](../work/acceptance-evidence/index.json). No expert scientific review or production sandbox qualification is claimed by these results. The application defaults to `UnavailableVerifier` until an operator supplies an independently approved deployment configuration.
 
+The current 8 GiB scope has fresh core and library controls: 9/9 and 3/3 expected
+outcomes respectively in each kernel mode, plus 16/16 fixed boundary observations.
+The independent [control audit](../work/wave01/current-evidence-audit.md) found all
+10 automatic qualification checks mechanically satisfied. The completed kernel
+physics reports passed 60/60 expected reference/control outcomes in each of kernel and
+independent-kernel modes; human gates remain pending. See the
+[current delivery](../work/wave01/DELIVERY-2026-09-22.md).
+
 ## Scientific acceptance and engineering observations
 
 `ComparatorVerifier.verify(VerificationRequest)` is the scientific acceptance interface. Its service-owned `ComparatorConfig` requires a `LinuxQualification` record. The service constructs requests from stored problem, review and artifact records; public clients cannot supply authoritative checker outcomes or semantic-review flags.
