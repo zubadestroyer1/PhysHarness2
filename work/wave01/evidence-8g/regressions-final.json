@@ -1,0 +1,26 @@
+{
+  "protocol": "physharness-regression-evidence-v1",
+  "purpose": "engineering_regression",
+  "production_qualified": false,
+  "scope_sha256": "e8f8c011e29242aa16f7464522b061545ac189f392c729655c57183a578ddb42",
+  "exit_code": 0,
+  "command": [
+    ".venv/bin/pytest",
+    "-q",
+    "tests/test_acceptance_corrections.py",
+    "tests/test_acceptance_integration.py",
+    "tests/test_authority.py",
+    "tests/test_qualification_diagnostics.py",
+    "tests/test_research_services.py",
+    "tests/test_verification.py",
+    "tests/test_verifier_boundary_probe.py",
+    "tests/test_verifier_registry.py",
+    "tests/test_verifier_resource_bootstrap.py",
+    "tests/test_verifier_resources.py",
+    "--junitxml=work/wave01/evidence-8g/regressions-final.xml"
+  ],
+  "junit": {
+    "path": "work/wave01/evidence-8g/regressions-final.xml",
+    "sha256": "869eebdb7d8cb3ad0e4965725464277f3a25732e5c031d58da717cdac5185ed6"
+  }
+}
