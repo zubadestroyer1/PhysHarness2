@@ -35,6 +35,18 @@ The table is a navigation aid. The [approved specification](IMPLEMENTATION_PLAN.
 the full requirements, including later domain expansion, self-hosted infrastructure and learning.
 Scientific discovery remains a research outcome even when its infrastructure passes qualification.
 
+Wave 0's current benchmark inventory is 40 proposed real physics targets plus 20 altered cases;
+these are distinct from the tiny algebra controls. References have historical elaboration
+evidence, while human scientific review, calibration and contamination review remain open.
+The 20 altered cases comprise 11 mechanical nonacceptance controls and nine valid semantic-hold
+controls. Wave 1 has current 8 GiB core/library, fixed boundary and host regression evidence;
+all 10 automatic qualification checks are mechanically satisfied. Both physics modes
+have 60/60 expected reference/control outcomes, with the combined assessment
+independently rechecked. Deployment and human gates remain open. See the
+[current delivery](../work/wave01/DELIVERY-2026-09-22.md).
+These observations apply to the recorded source scope; PR integration changed pinned
+input hashes, so current-source qualification requires a fresh scoped run and review.
+
 ## Dependency order
 
 ```mermaid
@@ -62,10 +74,13 @@ they do not establish the full sustained-campaign capability or bypass acceptanc
 
 ## Next deliverable
 
-Concentrate the next integration cycle on the Wave 0/1 boundary: a reproducible pinned Linux
-formal environment, audited declarations and reviewed targets, followed by real proof acceptance
-and attack runs. Keep expert interpretation work and engineering work as separate, linked tasks.
-Only then can a live model trial substantiate the single-agent exit criterion.
+The pinned Linux build and both-mode engineering reference/control runs are recorded.
+Next, conduct expert review of the exact targets and altered cases under the
+[benchmark procedure](PHYSICS_BENCHMARK_REVIEW.md), review the
+[scoped qualification packet](../work/wave01/evidence-8g/QUALIFICATION_REVIEW.md)
+and coverage gaps with deployment authority, and test the preserved images in a fresh
+VM before claiming recovery. Later model calibration and a reviewed live trial are
+needed to substantiate the single-agent exit criterion.
 
 In parallel, address actual CI failures and recruit an independent reviewer for acceptance,
 credentials and result promotion. Later-wave scaffolding is available for development but should

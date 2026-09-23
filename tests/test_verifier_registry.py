@@ -8,10 +8,14 @@ from test_verification import configured, fake_result, sha
 from physharness import verification as v
 from physharness.bootstrap import build_service
 from physharness.config import Settings
+from physharness.verification import resource_policy
+from physharness.verification.registry import RegistryDocument
 
 
 def registry_file(tmp_path):
     entries, requests, configs = [], [], []
+    profile = tmp_path / "verifier-resources.json"
+    profile.write_bytes(resource_policy.profile_bytes(resource_policy.DEFAULT_PROFILE))
     for index in range(2):
         root = tmp_path / f"bundle{index}"
         root.mkdir()
@@ -25,7 +29,13 @@ def registry_file(tmp_path):
         request = request.model_copy(
             update={"problem_revision_id": revision, "target_digest": manifest["target_digest"]}
         )
-        entries.append({"problem_revision_id": revision, "config": config.model_dump(mode="json")})
+        entries.append(
+            {
+                "problem_revision_id": revision,
+                "resource_profile": str(profile),
+                "config": config.model_dump(mode="json"),
+            }
+        )
         requests.append(request)
         configs.append(config)
     path = tmp_path / "registry.json"
@@ -68,6 +78,69 @@ def test_registry_rejects_ambiguous_or_unpinned_routes(tmp_path, corruption):
         config = doc["entries"][0]["config"]
         config["execution"] = config.pop("qualification")
     path.write_text(json.dumps(doc))
+    with pytest.raises(ValueError):
+        v.VerifierRegistry.from_file(path)
+
+
+def test_registry_checks_actual_profile_bytes_in_both_construction_paths(tmp_path):
+    path, requests, _ = registry_file(tmp_path)
+    document = RegistryDocument.model_validate_json(path.read_bytes())
+    assert v.VerifierRegistry(document).preflight(requests[0]).code == "configured_unprobed"
+    assert v.VerifierRegistry.from_file(path).preflight(requests[0]).code == "configured_unprobed"
+    profile = tmp_path / "verifier-resources.json"
+    profile.write_bytes(profile.read_bytes() + b" ")
+    constructors = (
+        lambda: v.VerifierRegistry(document),
+        lambda: v.VerifierRegistry.from_file(path),
+    )
+    for construct in constructors:
+        with pytest.raises(ValueError, match="resource profile source"):
+            construct()
+
+
+def test_registry_rejects_changed_values_even_with_updated_source_hash(tmp_path):
+    path, _, _ = registry_file(tmp_path)
+    profile = tmp_path / "verifier-resources.json"
+    data = json.loads(profile.read_bytes())
+    data["cpus"] = 2
+    profile.write_text(json.dumps(data))
+    document = json.loads(path.read_bytes())
+    source_hash = sha(profile.read_bytes())
+    config = document["entries"][0]["config"]
+    config["resource_profile_source_sha256"] = source_hash
+    config["qualification"]["resource_profile_source_sha256"] = source_hash
+    path.write_text(json.dumps(document))
+    with pytest.raises(ValueError, match="resource profile source"):
+        v.VerifierRegistry.from_file(path)
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    ["legacy_path", "relative_path", "value", "symlink", "missing", "oversized", "duplicate"],
+)
+def test_registry_rejects_invalid_profile_source_before_routes_exist(tmp_path, corruption):
+    path, _, _ = registry_file(tmp_path)
+    document = json.loads(path.read_bytes())
+    profile = tmp_path / "verifier-resources.json"
+    if corruption == "legacy_path":
+        del document["entries"][0]["resource_profile"]
+    elif corruption == "relative_path":
+        document["entries"][0]["resource_profile"] = "verifier-resources.json"
+    elif corruption == "value":
+        data = json.loads(profile.read_bytes())
+        data["cpus"] = 2
+        profile.write_text(json.dumps(data))
+    elif corruption == "symlink":
+        target = tmp_path / "other-resources.json"
+        profile.rename(target)
+        profile.symlink_to(target)
+    elif corruption == "missing":
+        profile.unlink()
+    elif corruption == "oversized":
+        profile.write_bytes(b" " * 16_385)
+    else:
+        profile.write_text('{"cpus":4,"cpus":2}')
+    path.write_text(json.dumps(document))
     with pytest.raises(ValueError):
         v.VerifierRegistry.from_file(path)
 

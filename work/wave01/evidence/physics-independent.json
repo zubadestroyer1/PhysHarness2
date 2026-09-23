@@ -1,0 +1,257 @@
+{
+  "status": "blocked",
+  "run_id": "ec98f07a-6a1b-46a0-9f98-91dd82093cca",
+  "results": [
+    {
+      "id": "quantum.gates.hadamard_basis_exchange",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "0e92c2a24c667fb531cf5fd7bd57bf39521ca04f6c1d3a744d146c11fc18c595",
+        "challenge_sha256": "bc13aceb42a92825f8e4280c81bff513443818c70de1309eb0b169f44587f513",
+        "candidate_sha256": "7cf58d4df907a22c8f92ca1dae1a949edeb58e5323a40078bf7cdb1138783da5",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "Building Challenge\n\u26a0 [8761/8762] Built Challenge (1.8s)\nwarning: Challenge.lean:7:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [8761/8762] Built Solution (2.1s)\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-eb2da1dc6f1445ec89e0d5426bd6575b",
+            "exit_code": 0,
+            "output": "physharness-check-eb2da1dc6f1445ec89e0d5426bd6575b\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "quantum.gates.pauli_commutator",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "a443477c7d23646c0e2bf50f78bd0dd37e6d9eb908487c68ce33f008321b6fc6",
+        "challenge_sha256": "7c3efe6cd9f3f0ade637dff7f518f970d49f4b265306ba07bc8bbcf10ed33046",
+        "candidate_sha256": "52294bfcac164c8ad63abbbbf5b7c5c02785e250f0259de2fac5eecbafe7e969",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "Building Challenge\n\u26a0 [8761/8762] Built Challenge (1.0s)\nwarning: Challenge.lean:7:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [8761/8762] Built Solution (2.2s)\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-977be81cd7924259812c5e8feb2a0539",
+            "exit_code": 0,
+            "output": "physharness-check-977be81cd7924259812c5e8feb2a0539\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "quantum.gates.controlled_involution",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "adaead94dc5e7468dbd7189c9affeaae48748b224ffc64208fa8280f241b0ccb",
+        "challenge_sha256": "2a5d45b9b0e4d3cfbda891c6843652e0ff938d708fdc8fafd11ff2c9f1ae189b",
+        "candidate_sha256": "e7cfe2d2964f6ad39cf2ad89ca1a65f685369888ae20256705b08dc7949cf31b",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "Building Challenge\n\u26a0 [8761/8762] Built Challenge (1.9s)\nwarning: Challenge.lean:9:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [8761/8762] Built Solution (1.0s)\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-d6008e28269a4ea49f44cded58cadccd",
+            "exit_code": 0,
+            "output": "physharness-check-d6008e28269a4ea49f44cded58cadccd\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "quantum.effects.binary_normalization",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "8237248dcdd3ba45e3b5934d3eecb692df96cc9ef5e590c21a7b39bb3f98b480",
+        "challenge_sha256": "38e7f1ce9f379e193135afddf4fc426f3db5a89effb222faa83a85a4620ced36",
+        "candidate_sha256": "f1e8f71001e466dd505732645f38e5d72c0a8bedde2c834d0e2a9a7aa9b6f10c",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "Building Challenge\n\u26a0 [8761/8762] Built Challenge (2.1s)\nwarning: Challenge.lean:9:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [8761/8762] Built Solution (2.3s)\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-93a096ee705e49e7bfaabf9fc708f8b0",
+            "exit_code": 0,
+            "output": "physharness-check-93a096ee705e49e7bfaabf9fc708f8b0\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "quantum.effects.observable_interval",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "d9884486e66731caf2f7c7a595ddb064c52cc63ce0a75dc0ee40e981a7230ae3",
+        "challenge_sha256": "162ca34ad1ca85bc6f24b4ee83be1308a5c707527c28cf91d17a408659857f98",
+        "candidate_sha256": "1925d1efbcd1b7861a65562caaede78c5401430c36b8fba92c09719cf2104415",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "Building Challenge\n\u26a0 [8761/8762] Built Challenge (2.0s)\nwarning: Challenge.lean:9:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [8761/8762] Built Solution (2.0s)\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-58b538f5088444aa8e21b4dd2ce812aa",
+            "exit_code": 0,
+            "output": "physharness-check-58b538f5088444aa8e21b4dd2ce812aa\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "quantum.effects.zero_subeffect_support",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_terminated",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "7bcfac84a1a9c12f1ee005bb86c8ef096bc9e6dd5181d7b506b82e33198e710d",
+        "challenge_sha256": "a9f657f3403cfa4b2c6a22f0b2f5e6a65525a393c7d07c2caf56ec28ab657000",
+        "candidate_sha256": "84aa9352c0189f2636f620cf2cee831369ac747317e1de0810c2b2bd17e871ac",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 137,
+          "comparator_output": "Building Challenge\n\u26a0 [8761/8762] Built Challenge (2.1s)\nwarning: Challenge.lean:9:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [8761/8762] Built Solution (2.3s)\nBuild completed successfully (8762 jobs).\nError: EOF while parsing an object at line 1 column 42\n\nrun with `-h` or `--help` for help\n",
+          "axioms_are_policy_upper_bound": true,
+          "possible_termination_signal": 9,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-7c28aa6ff2894825962c996778d9644a",
+            "exit_code": 0,
+            "output": "physharness-check-7c28aa6ff2894825962c996778d9644a\n"
+          }
+        }
+      }
+    }
+  ],
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "image_digest": "sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246",
+  "image_metadata_sha256": "75be3be77a1ca65a153fb594d7e71ec72a5ec27b3aabe1e5e75323c580b9f573",
+  "fixtures_sha256": "cb31c7bf0004d166449a8169692f1aa1d7540f4c73867e5400d117aa01d2574a",
+  "independent_kernel_requested": true,
+  "launcher_sha256": "aa6ce2b9e18cb24557b7732ae833d3d2062ea67b07f8df05b6370c41cbcee852",
+  "driver_sha256": "0aa043a827abe8dd79960b59e3fcd3d249f5b0600e5e2c68aeb6dfb69e34445f",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "runner_sha256": "9717278932fc768b3a7d22bd4d5ceda77fda8a467acc94db444196d7f1be4476",
+  "runtime_identity_sha256": "6d45b4cc785e74c75883e6c2bdb42ef3ba50639b7c89bb0614c990d0142474e5",
+  "error_type": "RuntimeError",
+  "reason": "Verification case quantum.effects.zero_subeffect_support did not match its exact expected outcome"
+}

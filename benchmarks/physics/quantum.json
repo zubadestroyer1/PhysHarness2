@@ -1,0 +1,1044 @@
+{
+  "version": 1,
+  "program": "quantum",
+  "tasks": [
+    {
+      "id": "quantum.gates.hadamard_basis_exchange",
+      "family": "gates",
+      "split": "development",
+      "title": "Hadamard conjugation exchanges X and Z",
+      "difficulty_band": "foundation",
+      "difficulty_rationale": "Elementary gate algebra; the reference composes an intertwining relation with involution. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Compose a gate intertwining lemma with involution",
+        "Track multiplication order"
+      ],
+      "statement": "H X H = Z as complex unitary matrices.",
+      "assumptions": [],
+      "physical_scope": "An ideal single-qubit basis change; multiplication applies the rightmost gate first.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Pure/Qubit.lean",
+          "locator": "H_mul_X_eq_Z_mul_H; H_sq",
+          "note": "Pinned definitions and exact ingredients."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target : Qubit.H * Qubit.X * Qubit.H = Qubit.Z := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target : Qubit.H * Qubit.X * Qubit.H = Qubit.Z := by\n  rw [Qubit.H_mul_X_eq_Z_mul_H, mul_assoc, Qubit.H_sq, mul_one]\n",
+      "reference_outline": "Compose a gate intertwining lemma with involution; Track multiplication order.",
+      "known_shortcuts": [
+        {
+          "declaration": "Qubit.H_mul_X_eq_Z_mul_H",
+          "note": "One rewrite plus H_sq solves the target; this is explicitly a foundation task."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.gates.pauli_commutator",
+      "family": "gates",
+      "split": "development",
+      "title": "Complex Pauli commutator",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "The domain identity is elementary; formal work crosses bundled gates, complex scalars, and matrix subtraction. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Expand operator products in a finite basis",
+        "Handle complex phases and commutator sign"
+      ],
+      "statement": "[Z,X] = 2 i Y.",
+      "assumptions": [],
+      "physical_scope": "The unscaled Pauli matrices; spin observables hbar/2 times these matrices would change the prefactor.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Pure/Qubit.lean",
+          "locator": "definitions Z, X, Y; Z_X_anticomm",
+          "note": "The matrix definitions fix the sign and normalization."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target : (Qubit.Z : Matrix Qubit Qubit ℂ) * (Qubit.X : Matrix Qubit Qubit ℂ) -\n    (Qubit.X : Matrix Qubit Qubit ℂ) * (Qubit.Z : Matrix Qubit Qubit ℂ) =\n    (2 * Complex.I) • (Qubit.Y : Matrix Qubit Qubit ℂ) := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target : (Qubit.Z : Matrix Qubit Qubit ℂ) * (Qubit.X : Matrix Qubit Qubit ℂ) -\n    (Qubit.X : Matrix Qubit Qubit ℂ) * (Qubit.Z : Matrix Qubit Qubit ℂ) =\n    (2 * Complex.I) • (Qubit.Y : Matrix Qubit Qubit ℂ) := by\n  matrix_expand [Qubit.Z, Qubit.X, Qubit.Y]\n",
+      "reference_outline": "Expand operator products in a finite basis; Handle complex phases and commutator sign.",
+      "known_shortcuts": [
+        {
+          "declaration": "matrix_expand",
+          "note": "The imported specialized matrix tactic can solve this exact finite identity; no hard reasoning claim is made."
+        },
+        {
+          "declaration": "Qubit.Z_X_anticomm",
+          "note": "Reduces the commutator to twice ZX but does not identify its phase by itself."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.gates.controlled_involution",
+      "family": "gates",
+      "split": "development",
+      "title": "Controlled involution cancels coherently",
+      "difficulty_band": "foundation",
+      "difficulty_rationale": "Two imported functoriality lemmas expose the controlled-gate structure. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Lift an algebraic invariant through a controlled construction"
+      ],
+      "statement": "If g squared is identity, its controlled gate squared is identity, including superposed controls.",
+      "assumptions": [
+        "g is a bundled unitary on a finite basis.",
+        "g * g = 1."
+      ],
+      "physical_scope": "An ideal controlled unitary on a qubit tensor the target system.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Pure/Qubit.lean",
+          "locator": "controllize; controllize_mul; controllize_one",
+          "note": "The control is the first tensor factor; all matrix blocks are included."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (g : 𝐔[d]) (hg : g * g = 1) :\n    Qubit.controllize g * Qubit.controllize g = 1 := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (g : 𝐔[d]) (hg : g * g = 1) :\n    Qubit.controllize g * Qubit.controllize g = 1 := by\n  rw [Qubit.controllize_mul, hg, Qubit.controllize_one]\n",
+      "reference_outline": "Lift an algebraic invariant through a controlled construction.",
+      "known_shortcuts": [
+        {
+          "declaration": "Qubit.controllize_mul",
+          "note": "Together with controllize_one gives a short exact solution."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.effects.binary_normalization",
+      "family": "effects",
+      "split": "development",
+      "title": "Binary effect probabilities are normalized",
+      "difficulty_band": "foundation",
+      "difficulty_rationale": "The physical result is elementary; the proof uses positivity, normalization, and linearity. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Translate operator positivity to Born probabilities",
+        "Use trace normalization and complement linearity"
+      ],
+      "statement": "For 0 ≤ E ≤ I, the two Born probabilities of E and I-E are nonnegative and sum to one.",
+      "assumptions": [
+        "rho is positive semidefinite and trace one through MState.",
+        "E is Hermitian and lies between zero and identity in Loewner order."
+      ],
+      "physical_scope": "A two-outcome POVM; E need not be a projector.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "exp_val_nonneg; exp_val_le_one; exp_val_sub",
+          "note": "These follow from the PSD trace-one density model."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.3, Measurements",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (E : HermitianMat d ℂ) (h0 : 0 ≤ E) (h1 : E ≤ 1) :\n    0 ≤ ρ.exp_val E ∧ 0 ≤ ρ.exp_val (1 - E) ∧\n    ρ.exp_val E + ρ.exp_val (1 - E) = 1 := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (E : HermitianMat d ℂ) (h0 : 0 ≤ E) (h1 : E ≤ 1) :\n    0 ≤ ρ.exp_val E ∧ 0 ≤ ρ.exp_val (1 - E) ∧\n    ρ.exp_val E + ρ.exp_val (1 - E) = 1 := by\n  have hp := ρ.exp_val_nonneg h0\n  have hu := ρ.exp_val_le_one h1\n  rw [ρ.exp_val_sub, ρ.exp_val_one]\n  exact ⟨hp, sub_nonneg.mpr hu, by ring⟩\n",
+      "reference_outline": "Translate operator positivity to Born probabilities; Use trace normalization and complement linearity.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.exp_val_prob",
+          "note": "Directly proves the first effect lies in [0,1], but complement and total remain to compose."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.effects.observable_interval",
+      "family": "effects",
+      "split": "development",
+      "title": "Spectral operator bounds bound expectations",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Combines operator order with scalar identity expectations, rather than assuming the scalar conclusion. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Transfer Loewner bounds to measurement averages",
+        "Normalize scalar multiples of the identity"
+      ],
+      "statement": "If a I ≤ A ≤ b I then a ≤ expectation(A) ≤ b.",
+      "assumptions": [
+        "rho is an MState.",
+        "A is Hermitian; a,b are real bounds in Loewner order."
+      ],
+      "physical_scope": "Bounded finite-system observables in consistent units; a and b have the same units as A.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "exp_val_le_exp_val; exp_val_smul; exp_val_one",
+          "note": "Monotonicity and normalization imply the statement."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.3, Measurements",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (A : HermitianMat d ℂ) (a b : ℝ)\n    (ha : a • (1 : HermitianMat d ℂ) ≤ A)\n    (hb : A ≤ b • (1 : HermitianMat d ℂ)) :\n    a ≤ ρ.exp_val A ∧ ρ.exp_val A ≤ b := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (A : HermitianMat d ℂ) (a b : ℝ)\n    (ha : a • (1 : HermitianMat d ℂ) ≤ A)\n    (hb : A ≤ b • (1 : HermitianMat d ℂ)) :\n    a ≤ ρ.exp_val A ∧ ρ.exp_val A ≤ b := by\n  constructor\n  · simpa using ρ.exp_val_le_exp_val ha\n  · simpa using ρ.exp_val_le_exp_val hb\n",
+      "reference_outline": "Transfer Loewner bounds to measurement averages; Normalize scalar multiples of the identity.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.exp_val_le_exp_val",
+          "note": "Applies separately to the two operator bounds; simp closes scalar identities."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.effects.zero_subeffect_support",
+      "family": "effects",
+      "split": "development",
+      "title": "A zero-probability effect excludes every subeffect",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Uses an order sandwich and then the support/kernel characterization; no vanishing subeffect conclusion is assumed. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Infer a zero expectation by order sandwich",
+        "Convert zero expectation to a support/kernel relation"
+      ],
+      "statement": "If 0 ≤ B ≤ A and expectation(A)=0, then the support of rho lies in the kernel of B.",
+      "assumptions": [
+        "rho is an MState.",
+        "A,B are Hermitian with 0 ≤ B ≤ A.",
+        "expectation(A)=0."
+      ],
+      "physical_scope": "Impossible positive measurement outcomes and their positive refinements.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "exp_val_eq_zero_iff; exp_val_le_exp_val",
+          "note": "PSD is essential for support containment."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.3, Measurements",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (A B : HermitianMat d ℂ)\n    (hB : 0 ≤ B) (hBA : B ≤ A) (hA : ρ.exp_val A = 0) :\n    ρ.M.support ≤ B.ker := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (A B : HermitianMat d ℂ)\n    (hB : 0 ≤ B) (hBA : B ≤ A) (hA : ρ.exp_val A = 0) :\n    ρ.M.support ≤ B.ker := by\n  apply (ρ.exp_val_eq_zero_iff hB).mp\n  apply le_antisymm\n  · simpa [hA] using ρ.exp_val_le_exp_val hBA\n  · exact ρ.exp_val_nonneg hB\n",
+      "reference_outline": "Infer a zero expectation by order sandwich; Convert zero expectation to a support/kernel relation.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.exp_val_eq_zero_iff",
+          "note": "Directly solves the final conversion, but zero expectation for B must first be proved."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.geometry.orthogonal_projectors",
+      "family": "geometry",
+      "split": "holdout",
+      "title": "Orthogonal pure-state projectors annihilate",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Finite complex linear algebra requires identifying a bra-ket contraction inside a matrix product. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Contract rank-one operators",
+        "Match bra-ket overlap with dotProduct"
+      ],
+      "statement": "If the ket overlap is zero, the product of their rank-one density projectors is zero.",
+      "assumptions": [
+        "psi and phi are normalized complex Kets.",
+        "Their complex bra-ket overlap is zero."
+      ],
+      "physical_scope": "Perfectly distinguishable pure states, with complex conjugation in the first slot.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "pure; pure_mul_self",
+          "note": "Density projectors use an outer product with the conjugate bra."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Pure/Braket.lean",
+          "locator": "Braket.dot_eq_dotProduct",
+          "note": "The contraction convention is explicit."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ψ φ : Ket d) (h : Braket.dot ψ φ = 0) :\n    (MState.pure ψ).m * (MState.pure φ).m = 0 := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ψ φ : Ket d) (h : Braket.dot ψ φ = 0) :\n    (MState.pure ψ).m * (MState.pure φ).m = 0 := by\n  change Matrix.vecMulVec (ψ : d → ℂ) ((ψ : Bra d) : d → ℂ) *\n    Matrix.vecMulVec (φ : d → ℂ) ((φ : Bra d) : d → ℂ) = 0\n  rw [Matrix.vecMulVec_mul_vecMulVec]\n  rw [← Braket.dot_eq_dotProduct, h, zero_smul]\n  simp\n",
+      "reference_outline": "Contract rank-one operators; Match bra-ket overlap with dotProduct.",
+      "known_shortcuts": [
+        {
+          "declaration": "Matrix.vecMulVec_mul_vecMulVec",
+          "note": "Reduces the result to the zero-overlap assumption in one algebraic step."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.geometry.global_phase_measurement",
+      "family": "geometry",
+      "split": "holdout",
+      "title": "Global phase leaves all observable expectations invariant",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Joins phase equivalence of kets with the density-operator measurement representation. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Use physical equivalence under global phase",
+        "Transport equality through the Born expectation map"
+      ],
+      "statement": "Normalized kets differing by a unit-modulus complex phase have equal expectations for every Hermitian observable.",
+      "assumptions": [
+        "psi and phi are normalized complex Kets.",
+        "z has complex norm one and psi.vec = z times phi.vec.",
+        "A is any Hermitian observable."
+      ],
+      "physical_scope": "Global phase, not a relative phase between basis amplitudes.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "pure_eq_pure_iff; exp_val",
+          "note": "The imported equivalence contains the substantive phase-invariance theorem."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ψ φ : Ket d) (z : ℂ) (hz : ‖z‖ = 1)\n    (hψ : ψ.vec = z • φ.vec) (A : HermitianMat d ℂ) :\n    (MState.pure ψ).exp_val A = (MState.pure φ).exp_val A := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ψ φ : Ket d) (z : ℂ) (hz : ‖z‖ = 1)\n    (hψ : ψ.vec = z • φ.vec) (A : HermitianMat d ℂ) :\n    (MState.pure ψ).exp_val A = (MState.pure φ).exp_val A := by\n  have heq : MState.pure ψ = MState.pure φ :=\n    (MState.pure_eq_pure_iff ψ φ).mpr ⟨z, hz, hψ⟩\n  rw [heq]\n",
+      "reference_outline": "Use physical equivalence under global phase; Transport equality through the Born expectation map.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.pure_eq_pure_iff",
+          "note": "This supplies the core domain theorem; the target only composes it with measurement."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.composites.product_pure_iff",
+      "family": "composites",
+      "split": "development",
+      "title": "A product density operator is pure exactly when both factors are pure",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Composes multiplicativity with the endpoint arithmetic of probabilities and the density characterization of purity. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Relate ket representability to purity",
+        "Use tensor multiplicativity and probability endpoints"
+      ],
+      "statement": "A product density state has a ket representative iff each of its factors does.",
+      "assumptions": [
+        "rho and sigma are positive trace-one density states on finite bases."
+      ],
+      "physical_scope": "Tensor products of independent preparations; no claim that every bipartite state factorizes.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "pure_iff_purity_one; purity_prod",
+          "note": "The proof composes two separate state-theory facts."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.1.3, Reductions and purifications",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ : Type*} [Fintype d₁] [Fintype d₂]\n  [DecidableEq d₁] [DecidableEq d₂]\n\ntheorem physics_target (ρ : MState d₁) (σ : MState d₂) :\n    (∃ ψ, ρ.prod σ = MState.pure ψ) ↔\n    (∃ ψ, ρ = MState.pure ψ) ∧ (∃ φ, σ = MState.pure φ) := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ : Type*} [Fintype d₁] [Fintype d₂]\n  [DecidableEq d₁] [DecidableEq d₂]\n\ntheorem physics_target (ρ : MState d₁) (σ : MState d₂) :\n    (∃ ψ, ρ.prod σ = MState.pure ψ) ↔\n    (∃ ψ, ρ = MState.pure ψ) ∧ (∃ φ, σ = MState.pure φ) := by\n  rw [MState.pure_iff_purity_one, MState.purity_prod, Prob.mul_eq_one_iff]\n  rw [MState.pure_iff_purity_one, MState.pure_iff_purity_one]\n",
+      "reference_outline": "Relate ket representability to purity; Use tensor multiplicativity and probability endpoints.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.purity_prod",
+          "note": "Supplies multiplicativity."
+        },
+        {
+          "declaration": "MState.pure_iff_purity_one",
+          "note": "Supplies the rank-one characterization; the equivalence is a short composition."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.composites.entanglement_reduced_purity",
+      "family": "composites",
+      "split": "development",
+      "title": "Pure-state entanglement is detected by reduced-state impurity",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "The domain theorem is substantial upstream; this target tests composing separability and purity equivalences, with that shortcut disclosed. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Distinguish pure-state from mixed-state entanglement",
+        "Compose separability, product-ket, and reduced-purity equivalences"
+      ],
+      "statement": "A bipartite ket is entangled iff its right marginal has purity different from one.",
+      "assumptions": [
+        "psi is a normalized bipartite complex Ket."
+      ],
+      "physical_scope": "The global state is pure. Reduced impurity does not characterize entanglement for arbitrary mixed global states.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "pure_separable_iff_IsProd; pure_separable_iff_traceLeft_pure; pure_iff_purity_one",
+          "note": "The difficult Schmidt/rank arguments already exist upstream."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.1.3, Reductions and purifications",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ : Type*} [Fintype d₁] [Fintype d₂]\n  [DecidableEq d₁] [DecidableEq d₂]\n\ntheorem physics_target (ψ : Ket (d₁ × d₂)) :\n    ψ.IsEntangled ↔ (MState.pure ψ).traceLeft.purity ≠ 1 := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ : Type*} [Fintype d₁] [Fintype d₂]\n  [DecidableEq d₁] [DecidableEq d₂]\n\ntheorem physics_target (ψ : Ket (d₁ × d₂)) :\n    ψ.IsEntangled ↔ (MState.pure ψ).traceLeft.purity ≠ 1 := by\n  have hs := MState.pure_separable_iff_IsProd ψ\n  have ht := MState.pure_separable_iff_traceLeft_pure ψ\n  have hp := MState.pure_iff_purity_one (MState.pure ψ).traceLeft\n  simp only [Ket.IsEntangled]\n  constructor\n  · intro hn hpur\n    obtain ⟨φ, hφ⟩ := hp.mpr hpur\n    exact hn (hs.mp (ht.mpr ⟨φ, hφ.symm⟩))\n  · intro hn hprod\n    obtain ⟨φ, hφ⟩ := ht.mp (hs.mpr hprod)\n    exact hn (hp.mp ⟨φ, hφ.symm⟩)\n",
+      "reference_outline": "Distinguish pure-state from mixed-state entanglement; Compose separability, product-ket, and reduced-purity equivalences.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.pure_separable_iff_traceLeft_pure",
+          "note": "The core entanglement theorem is imported; target is API composition rather than a fresh Schmidt proof."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.composites.purification_with_pure_global",
+      "family": "composites",
+      "split": "development",
+      "title": "Every mixed state has a pure extension",
+      "difficulty_band": "foundation",
+      "difficulty_rationale": "Purification is a major domain result, but the library gives a direct witness and purity characterization. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Construct an extension using spectral purification",
+        "Certify the extension is globally pure"
+      ],
+      "statement": "There exists a bipartite ket whose left marginal equals rho and whose global density purity is one.",
+      "assumptions": [
+        "rho is an MState on a finite complex basis."
+      ],
+      "physical_scope": "Ancilla dimension equals system dimension; this is existence, not minimal ancilla size or uniqueness.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "purify; purify_spec; pure_iff_purity_one",
+          "note": "The spectral purification construction is already formalized upstream."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.1.3, Reductions and purifications",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) :\n    ∃ ψ : Ket (d × d), (MState.pure ψ).traceRight = ρ ∧\n      (MState.pure ψ).purity = 1 := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) :\n    ∃ ψ : Ket (d × d), (MState.pure ψ).traceRight = ρ ∧\n      (MState.pure ψ).purity = 1 := by\n  refine ⟨ρ.purify, ρ.purify_spec, ?_⟩\n  exact (MState.pure_iff_purity_one _).mp ⟨ρ.purify, rfl⟩\n",
+      "reference_outline": "Construct an extension using spectral purification; Certify the extension is globally pure.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.purifyX",
+          "note": "Immediately gives the witness and marginal equation."
+        },
+        {
+          "declaration": "MState.pure_iff_purity_one",
+          "note": "Immediately adds the global-purity certificate."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.cloning.nonorthogonal_no_common_cloner",
+      "family": "cloning",
+      "split": "holdout",
+      "title": "Nonorthogonal distinct pure states have no common perfect cloner",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "No-cloning is a major physical obstruction, but an imported theorem supplies its hard step; the task adds existence negation and overlap conversion. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Exclude simultaneous unitary cloning",
+        "Translate Hilbert-Schmidt pure-state overlap to squared bra-ket norm",
+        "Use strict bounds to contradict zero overlap"
+      ],
+      "statement": "Two normalized kets with overlap norm strictly between zero and one cannot both be perfectly cloned by one unitary with the same blank ket.",
+      "assumptions": [
+        "psi, phi, and blank are normalized complex Kets.",
+        "0 < norm of overlap < 1.",
+        "A putative cloner is unitary on system tensor blank and must clone both density states exactly."
+      ],
+      "physical_scope": "Deterministic perfect cloning of two pure-state rays; no claim about approximate, probabilistic, or state-dependent cloners.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/Operators/Unitary.lean",
+          "locator": "no_cloning; inner_uConj",
+          "note": "The imported theorem is phase insensitive because it compares density operators."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "pure_inner",
+          "note": "Converts density overlap to a bra-ket probability."
+        },
+        {
+          "uri": "https://www.nature.com/articles/299802a0",
+          "locator": "Wootters and Zurek, Nature 299, 802–803 (1982), DOI 10.1038/299802a0",
+          "note": "Original no-cloning paper; the benchmark uses the finite-dimensional, two-input unitary formulation in the pinned formal library."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\nopen scoped MState InnerProductSpace\n\ntheorem physics_target (ψ φ b : Ket d) (hpos : 0 < ‖Braket.dot ψ φ‖)\n    (hlt : ‖Braket.dot ψ φ‖ < 1) :\n    ¬ ∃ U : 𝐔[d × d],\n      (MState.pure (ψ.prod b)).uConj U = MState.pure (ψ.prod ψ) ∧\n      (MState.pure (φ.prod b)).uConj U = MState.pure (φ.prod φ) := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\nopen scoped MState InnerProductSpace\n\ntheorem physics_target (ψ φ b : Ket d) (hpos : 0 < ‖Braket.dot ψ φ‖)\n    (hlt : ‖Braket.dot ψ φ‖ < 1) :\n    ¬ ∃ U : 𝐔[d × d],\n      (MState.pure (ψ.prod b)).uConj U = MState.pure (ψ.prod ψ) ∧\n      (MState.pure (φ.prod b)).uConj U = MState.pure (φ.prod φ) := by\n  rintro ⟨U, hψ, hφ⟩\n  have hsmall : (⟪MState.pure ψ, MState.pure φ⟫_Prob : ℝ) < 1 := by\n    rw [MState.pure_inner]\n    nlinarith [norm_nonneg (Braket.dot ψ φ)]\n  have hz := MState.no_cloning hψ hφ hsmall\n  rw [MState.pure_inner] at hz\n  nlinarith\n",
+      "reference_outline": "Exclude simultaneous unitary cloning; Translate Hilbert-Schmidt pure-state overlap to squared bra-ket norm; Use strict bounds to contradict zero overlap.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.no_cloning",
+          "note": "Directly supplies the impossibility core once overlap bounds are translated; no fresh no-cloning discovery is claimed."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.channels.sequential_heisenberg",
+      "family": "channels",
+      "split": "holdout",
+      "title": "Sequential channels reverse order in the Heisenberg picture",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Requires two duality applications with careful trace cycling and type flow between three spaces. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Track composable input and output Hilbert spaces",
+        "Cycle the trace",
+        "Apply dual maps in reverse temporal order"
+      ],
+      "statement": "Expectation after Phi then Psi equals the initial-state expectation of Phi-dual applied to Psi-dual of the observable.",
+      "assumptions": [
+        "Phi and Psi are composable finite-dimensional CPTP maps.",
+        "rho is an input density state.",
+        "A is an output matrix; its Hermitian specialization is an observable."
+      ],
+      "physical_scope": "Exact Schrodinger/Heisenberg equivalence for two channels; exp_val_ℂ retains complex traces for arbitrary A.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/Channels/Dual.lean",
+          "locator": "MatrixMap.Dual.trace_eq",
+          "note": "The dual uses the bilinear trace pairing and reverses the channel direction."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/Channels/CPTP.lean",
+          "locator": "mat_coe_eq_apply_mat",
+          "note": "Connects bundled density outputs to linear matrix maps."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.2, Quantum channels",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ d₃ : Type*} [Fintype d₁] [Fintype d₂] [Fintype d₃]\n  [DecidableEq d₁] [DecidableEq d₂] [DecidableEq d₃]\n\ntheorem physics_target (Φ : CPTPMap d₁ d₂) (Ψ : CPTPMap d₂ d₃)\n    (ρ : MState d₁) (A : Matrix d₃ d₃ ℂ) :\n    (Ψ (Φ ρ)).exp_val_ℂ A = ρ.exp_val_ℂ (Φ.map.dual (Ψ.map.dual A)) := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ d₃ : Type*} [Fintype d₁] [Fintype d₂] [Fintype d₃]\n  [DecidableEq d₁] [DecidableEq d₂] [DecidableEq d₃]\n\ntheorem physics_target (Φ : CPTPMap d₁ d₂) (Ψ : CPTPMap d₂ d₃)\n    (ρ : MState d₁) (A : Matrix d₃ d₃ ℂ) :\n    (Ψ (Φ ρ)).exp_val_ℂ A = ρ.exp_val_ℂ (Φ.map.dual (Ψ.map.dual A)) := by\n  simp only [MState.exp_val_ℂ, CPTPMap.mat_coe_eq_apply_mat]\n  calc\n    (A * Ψ.map (Φ.map ρ.m)).trace = (Ψ.map (Φ.map ρ.m) * A).trace :=\n      Matrix.trace_mul_comm _ _\n    _ = (Φ.map ρ.m * Ψ.map.dual A).trace := MatrixMap.Dual.trace_eq _ _ _\n    _ = (ρ.m * Φ.map.dual (Ψ.map.dual A)).trace := MatrixMap.Dual.trace_eq _ _ _\n    _ = (Φ.map.dual (Ψ.map.dual A) * ρ.m).trace := Matrix.trace_mul_comm _ _\n",
+      "reference_outline": "Track composable input and output Hilbert spaces; Cycle the trace; Apply dual maps in reverse temporal order.",
+      "known_shortcuts": [
+        {
+          "declaration": "MatrixMap.Dual.trace_eq",
+          "note": "Two uses plus trace cyclicity solve the target; all CPTP-specific properties are stronger than this algebraic identity requires."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.channels.replacement_absorbs_history",
+      "family": "channels",
+      "split": "holdout",
+      "title": "A replacement channel erases the preceding channel",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Uses channel extensionality to lift equality on all density inputs; elementary domain content. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Prove equality of channels by action on every density state",
+        "Compose deterministic erasure with arbitrary prior processing"
+      ],
+      "statement": "Replacing a state by fixed sigma after any channel equals the replacement channel itself.",
+      "assumptions": [
+        "Phi is a CPTP map.",
+        "sigma is a fixed output MState.",
+        "Input and intermediate bases are nonempty."
+      ],
+      "physical_scope": "Complete erasure to a fixed preparation; no preservation of classical labels or correlations is asserted.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/Channels/CPTP.lean",
+          "locator": "replacement; replacement_apply; funext; compose_eq",
+          "note": "The replacement map is a trace-preserving linear map, not a constant map on all matrices."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.2, Quantum channels",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ d₃ : Type*} [Fintype d₁] [Fintype d₂] [Fintype d₃]\n  [DecidableEq d₁] [DecidableEq d₂] [DecidableEq d₃]\n\ntheorem physics_target [Nonempty d₁] [Nonempty d₂] (Φ : CPTPMap d₁ d₂) (σ : MState d₃) :\n    CPTPMap.compose (CPTPMap.replacement (dIn := d₂) σ) Φ =\n      CPTPMap.replacement (dIn := d₁) σ := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ d₃ : Type*} [Fintype d₁] [Fintype d₂] [Fintype d₃]\n  [DecidableEq d₁] [DecidableEq d₂] [DecidableEq d₃]\n\ntheorem physics_target [Nonempty d₁] [Nonempty d₂] (Φ : CPTPMap d₁ d₂) (σ : MState d₃) :\n    CPTPMap.compose (CPTPMap.replacement (dIn := d₂) σ) Φ =\n      CPTPMap.replacement (dIn := d₁) σ := by\n  apply CPTPMap.funext\n  intro ρ\n  simp [CPTPMap.compose_eq, CPTPMap.replacement_apply]\n",
+      "reference_outline": "Prove equality of channels by action on every density state; Compose deterministic erasure with arbitrary prior processing.",
+      "known_shortcuts": [
+        {
+          "declaration": "CPTPMap.replacement_apply",
+          "note": "Combined with compose_eq and funext makes a short exact proof."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.channels.independent_outputs_marginal",
+      "family": "channels",
+      "split": "holdout",
+      "title": "Independent local channels preserve product preparation and its marginal",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Composes the tensor channel action, separability of product states, and partial trace. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Preserve product structure under local channel tensor products",
+        "Certify separability",
+        "Compute the marginal after local processing"
+      ],
+      "statement": "Local channels acting on a product input produce a separable output whose right marginal depends only on the right channel and input.",
+      "assumptions": [
+        "Phi and Psi are CPTP maps.",
+        "The joint input is explicitly the product rho tensor sigma."
+      ],
+      "physical_scope": "Independent preparations only. This restricted result does not establish no-signalling on entangled inputs.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/Channels/CPTP.lean",
+          "locator": "prod_apply_prod",
+          "note": "The result is restricted to product inputs."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "IsSeparable_prod; traceLeft_prod_eq",
+          "note": "Product states are separable and normalized factors trace out."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.2, Quantum channels",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ d₃ : Type*} [Fintype d₁] [Fintype d₂] [Fintype d₃]\n  [DecidableEq d₁] [DecidableEq d₂] [DecidableEq d₃]\n\ntheorem physics_target (Φ : CPTPMap d₁ d₁) (Ψ : CPTPMap d₂ d₂)\n    (ρ : MState d₁) (σ : MState d₂) :\n    MState.IsSeparable ((CPTPMap.prod Φ Ψ) (ρ.prod σ)) ∧\n    ((CPTPMap.prod Φ Ψ) (ρ.prod σ)).traceLeft = Ψ σ := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d₁ d₂ d₃ : Type*} [Fintype d₁] [Fintype d₂] [Fintype d₃]\n  [DecidableEq d₁] [DecidableEq d₂] [DecidableEq d₃]\n\ntheorem physics_target (Φ : CPTPMap d₁ d₁) (Ψ : CPTPMap d₂ d₂)\n    (ρ : MState d₁) (σ : MState d₂) :\n    MState.IsSeparable ((CPTPMap.prod Φ Ψ) (ρ.prod σ)) ∧\n    ((CPTPMap.prod Φ Ψ) (ρ.prod σ)).traceLeft = Ψ σ := by\n  rw [CPTPMap.prod_apply_prod]\n  exact ⟨MState.IsSeparable_prod _ _, MState.traceLeft_prod_eq _ _⟩\n",
+      "reference_outline": "Preserve product structure under local channel tensor products; Certify separability; Compute the marginal after local processing.",
+      "known_shortcuts": [
+        {
+          "declaration": "CPTPMap.prod_apply_prod",
+          "note": "One rewrite exposes both direct library conclusions; this is not a hard channel theorem."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.decoherence.complete_dephasing_projection",
+      "family": "decoherence",
+      "split": "development",
+      "title": "Complete Z dephasing removes coherences and is idempotent",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "The proof unfolds a physically motivated average of two unitary conjugations and computes all complex matrix entries. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Translate random unitary conjugation into a matrix formula",
+        "Compute retained populations and removed coherences",
+        "Prove idempotence of a measurement channel"
+      ],
+      "statement": "A fifty-fifty average of identity and Z conjugation deletes off-diagonal entries and applying it twice has no further effect.",
+      "assumptions": [
+        "rho is an MState on a qubit.",
+        "dephase is exactly the equal mixture of the identity and Pauli-Z unitary actions."
+      ],
+      "physical_scope": "Nonselective computational-basis dephasing on density matrices. The definition returns a matrix; this target does not separately bundle its CPTP certificate.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Pure/Qubit.lean",
+          "locator": "Z",
+          "note": "The diagonal entries are exactly +1 and -1."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "m; Hermitian",
+          "note": "The input is a physical density matrix."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.2.3, Examples of channels",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ :=\n  (1 / 2 : ℂ) • (R + (Qubit.Z : Matrix Qubit Qubit ℂ) * R *\n    (Qubit.Z : Matrix Qubit Qubit ℂ))\n\ntheorem physics_target (ρ : MState Qubit) :\n    dephase ρ.m = Matrix.diagonal (fun i => ρ.m i i) ∧\n    dephase (dephase ρ.m) = dephase ρ.m := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ :=\n  (1 / 2 : ℂ) • (R + (Qubit.Z : Matrix Qubit Qubit ℂ) * R *\n    (Qubit.Z : Matrix Qubit Qubit ℂ))\n\ntheorem physics_target (ρ : MState Qubit) :\n    dephase ρ.m = Matrix.diagonal (fun i => ρ.m i i) ∧\n    dephase (dephase ρ.m) = dephase ρ.m := by\n  have hdiag (R : Matrix Qubit Qubit ℂ) :\n      dephase R = Matrix.diagonal (fun i => R i i) := by\n    matrix_expand [dephase, Qubit.Z, Matrix.diagonal, Matrix.vecMul, dotProduct]\n  constructor\n  · exact hdiag ρ.m\n  · rw [hdiag, hdiag]\n    ext i j\n    simp\n",
+      "reference_outline": "Translate random unitary conjugation into a matrix formula; Compute retained populations and removed coherences; Prove idempotence of a measurement channel.",
+      "known_shortcuts": [
+        {
+          "declaration": "matrix_expand",
+          "note": "Can prove the generic diagonalization formula directly; no exact dephase declaration was found in the selected sources."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.decoherence.purity_loss",
+      "family": "decoherence",
+      "split": "development",
+      "title": "Qubit dephasing loses exactly twice the coherence magnitude squared",
+      "difficulty_band": "stretch",
+      "difficulty_rationale": "Requires Hermiticity to relate off-diagonal complex entries, expands trace squares, and connects complex products to a real nonnegative coherence measure. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Extract conjugate symmetry from density-matrix Hermiticity",
+        "Expand quadratic matrix traces",
+        "Isolate lost coherence as a squared complex magnitude"
+      ],
+      "statement": "Tr(rho squared) minus Tr(dephase(rho) squared) equals 2 times normSq(rho_01).",
+      "assumptions": [
+        "rho is a normalized positive semidefinite Hermitian qubit density matrix.",
+        "dephase is the equal identity/Z mixture."
+      ],
+      "physical_scope": "The equality uses complex traces with a real right-hand side embedded into complex numbers; it implies nonincrease of the usual real purity.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Pure/Qubit.lean",
+          "locator": "Z",
+          "note": "Fixes the phase-flip channel."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "Hermitian; purity",
+          "note": "Density Hermiticity and purity interpretation."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/Operators/Unitary.lean",
+          "locator": "inner_uConj",
+          "note": "Individual unitary branches preserve overlap; their mixture can reduce purity."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.2.3, Examples of channels",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ :=\n  (1 / 2 : ℂ) • (R + (Qubit.Z : Matrix Qubit Qubit ℂ) * R *\n    (Qubit.Z : Matrix Qubit Qubit ℂ))\n\ntheorem physics_target (ρ : MState Qubit) :\n    (ρ.m * ρ.m).trace - (dephase ρ.m * dephase ρ.m).trace =\n      (2 : ℂ) * (Complex.normSq (ρ.m 0 1) : ℂ) := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ :=\n  (1 / 2 : ℂ) • (R + (Qubit.Z : Matrix Qubit Qubit ℂ) * R *\n    (Qubit.Z : Matrix Qubit Qubit ℂ))\n\ntheorem physics_target (ρ : MState Qubit) :\n    (ρ.m * ρ.m).trace - (dephase ρ.m * dephase ρ.m).trace =\n      (2 : ℂ) * (Complex.normSq (ρ.m 0 1) : ℂ) := by\n  have hc : ρ.m 1 0 = conj (ρ.m 0 1) := by\n    have h := congrFun (congrFun ρ.Hermitian 0) 1\n    simpa [Matrix.conjTranspose_apply] using congrArg conj h\n  simp [dephase, Qubit.Z, Matrix.trace, Matrix.mul_apply, Fin.sum_univ_two,\n    hc, Complex.normSq_eq_conj_mul_self, Matrix.vecMul, dotProduct]\n  ring\n",
+      "reference_outline": "Extract conjugate symmetry from density-matrix Hermiticity; Expand quadratic matrix traces; Isolate lost coherence as a squared complex magnitude.",
+      "known_shortcuts": [
+        {
+          "declaration": "matrix_expand",
+          "note": "May shorten the component algebra, but a Hermiticity/coherence argument is still necessary."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review.",
+        "Reference proof uses only Hermiticity algebraically; positivity and normalization are included to make the input a physical state."
+      ]
+    },
+    {
+      "id": "quantum.dynamics.commuting_energy_conservation",
+      "family": "dynamics",
+      "split": "holdout",
+      "title": "A commuting unitary preserves the energy expectation",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "A short but order-sensitive composition of trace cyclicity, commutation, and unitarity; independent AI review suggested intermediate rather than stretch. This is an author estimate only, with domain difficulty and Lean/API effort uncalibrated on models.",
+      "capabilities": [
+        "Translate a commuting symmetry into conservation",
+        "Cycle a trace without commuting arbitrary factors",
+        "Cancel U-adjoint U"
+      ],
+      "statement": "If the evolution unitary commutes with the Hermitian Hamiltonian, its action preserves the energy expectation.",
+      "assumptions": [
+        "rho is an MState.",
+        "H is Hermitian.",
+        "U is unitary and U H = H U."
+      ],
+      "physical_scope": "A finite closed-system evolution step commuting with a fixed Hamiltonian. This is not a derivation of U from the Schrodinger equation.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/Operators/Unitary.lean",
+          "locator": "uConj",
+          "note": "Unitary evolution is matrix conjugation U rho U-adjoint."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/ForMathlib/HermitianMat/Unitary.lean",
+          "locator": "conj",
+          "note": "The Hamiltonian is modeled by a finite Hermitian matrix."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (H : HermitianMat d ℂ) (U : 𝐔[d])\n    (hcomm : (U : Matrix d d ℂ) * H.mat = H.mat * (U : Matrix d d ℂ)) :\n    ((U : Matrix d d ℂ) * ρ.m * star (U : Matrix d d ℂ) * H.mat).trace =\n      (ρ.m * H.mat).trace := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (H : HermitianMat d ℂ) (U : 𝐔[d])\n    (hcomm : (U : Matrix d d ℂ) * H.mat = H.mat * (U : Matrix d d ℂ)) :\n    ((U : Matrix d d ℂ) * ρ.m * star (U : Matrix d d ℂ) * H.mat).trace =\n      (ρ.m * H.mat).trace := by\n  have hU : star (U : Matrix d d ℂ) * (U : Matrix d d ℂ) = 1 := U.2.1\n  calc\n    ((U : Matrix d d ℂ) * ρ.m * star (U : Matrix d d ℂ) * H.mat).trace =\n        (ρ.m * (star (U : Matrix d d ℂ) * H.mat * (U : Matrix d d ℂ))).trace := by\n      rw [Matrix.mul_assoc, Matrix.mul_assoc, Matrix.trace_mul_comm]\n      simp only [Matrix.mul_assoc]\n    _ = (ρ.m * H.mat).trace := by\n      rw [Matrix.mul_assoc (star (U : Matrix d d ℂ)), ← hcomm,\n        ← Matrix.mul_assoc (star (U : Matrix d d ℂ)), hU, Matrix.one_mul]\n",
+      "reference_outline": "Translate a commuting symmetry into conservation; Cycle a trace without commuting arbitrary factors; Cancel U-adjoint U.",
+      "known_shortcuts": [
+        {
+          "declaration": "Matrix.trace_mul_comm",
+          "note": "Together with associativity and unitarity supplies the algebraic mechanism; no exact conservation theorem was found in the selected source."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review.",
+        "The trace-order convention is equivalent by cyclicity to MState.exp_val_ℂ. Hermiticity ensures a real physical expectation although the equality is stated in complex numbers."
+      ]
+    },
+    {
+      "id": "quantum.dynamics.unitary_purity_conservation",
+      "family": "dynamics",
+      "split": "holdout",
+      "title": "Unitary evolution preserves purity and pure-state representability",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "The imported overlap invariant makes purity preservation short; the second conclusion requires transporting the purity characterization. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Relate purity to self-overlap",
+        "Use unitary invariance",
+        "Transport the pure-state characterization"
+      ],
+      "statement": "Unitary conjugation preserves density purity and preserves whether a state is representable by a single ket.",
+      "assumptions": [
+        "rho is an MState.",
+        "U is unitary."
+      ],
+      "physical_scope": "Finite closed-system evolution; a general CPTP channel need not preserve purity.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/Operators/Unitary.lean",
+          "locator": "inner_uConj",
+          "note": "Unitary conjugation preserves the real density inner product."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "pure_iff_purity_one",
+          "note": "Purity one characterizes pure density operators."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (U : 𝐔[d]) :\n    (ρ.uConj U).purity = ρ.purity ∧\n    ((∃ ψ, ρ.uConj U = MState.pure ψ) ↔ (∃ φ, ρ = MState.pure φ)) := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (U : 𝐔[d]) :\n    (ρ.uConj U).purity = ρ.purity ∧\n    ((∃ ψ, ρ.uConj U = MState.pure ψ) ↔ (∃ φ, ρ = MState.pure φ)) := by\n  have hp : (ρ.uConj U).purity = ρ.purity := by\n    exact MState.inner_uConj ρ ρ U\n  refine ⟨hp, ?_⟩\n  rw [MState.pure_iff_purity_one, MState.pure_iff_purity_one, hp]\n",
+      "reference_outline": "Relate purity to self-overlap; Use unitary invariance; Transport the pure-state characterization.",
+      "known_shortcuts": [
+        {
+          "declaration": "MState.inner_uConj",
+          "note": "The direct imported overlap invariant supplies the core conclusion."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "quantum.bell.entangled_with_mixed_marginal",
+      "family": "bell",
+      "split": "holdout",
+      "title": "The Bell state is entangled while its local density is maximally mixed",
+      "difficulty_band": "stretch",
+      "difficulty_rationale": "Combines a general entanglement theorem with an explicit finite partial trace calculation involving square roots and complex conjugation. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Distinguish joint entanglement from locally mixed statistics",
+        "Compute a partial trace with explicit normalization",
+        "Control basis ordering in a tensor product"
+      ],
+      "statement": "The canonical two-qubit Bell ket is entangled and its left marginal is I/2.",
+      "assumptions": [
+        "Ket.MES Qubit is the normalized all-positive maximally entangled ket."
+      ],
+      "physical_scope": "The Bell state (|00>+|11>)/sqrt(2); partial trace removes the right factor and yields the left qubit state.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Pure/Braket.lean",
+          "locator": "Ket.MES; Ket.MES_isEntangled",
+          "note": "The chosen MES has positive equal diagonal amplitudes."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "pure; traceRight",
+          "note": "Partial trace sums the right-factor diagonal blocks."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.1.3, Reductions and purifications",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target  : (Ket.MES Qubit).IsEntangled ∧\n    (MState.pure (Ket.MES Qubit)).traceRight.m =\n      (1 / 2 : ℂ) • (1 : Matrix Qubit Qubit ℂ) := by\n  sorry\n",
+      "reference_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target  : (Ket.MES Qubit).IsEntangled ∧\n    (MState.pure (Ket.MES Qubit)).traceRight.m =\n      (1 / 2 : ℂ) • (1 : Matrix Qubit Qubit ℂ) := by\n  constructor\n  · exact Ket.MES_isEntangled\n  · matrix_expand [MState.traceRight, MState.m, HermitianMat.traceRight,\n      Matrix.traceRight, MState.pure, Ket.MES, Ket.apply,\n      Matrix.vecMulVec_apply, Bra.eq_conj]\n",
+      "reference_outline": "Distinguish joint entanglement from locally mixed statistics; Compute a partial trace with explicit normalization; Control basis ordering in a tensor product.",
+      "known_shortcuts": [
+        {
+          "declaration": "Ket.MES_isEntangled",
+          "note": "Directly proves entanglement; the maximally mixed marginal still requires a matrix calculation."
+        },
+        {
+          "declaration": "matrix_expand",
+          "note": "The specialized tactic can automate much of the finite partial trace calculation."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "quantum.gates.altered_commutator_sign",
+      "parent_id": "quantum.gates.pauli_commutator",
+      "category": "wrong_operator_phase",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target : (Qubit.Z : Matrix Qubit Qubit ℂ) * (Qubit.X : Matrix Qubit Qubit ℂ) -\n    (Qubit.X : Matrix Qubit Qubit ℂ) * (Qubit.Z : Matrix Qubit Qubit ℂ) =\n    (-2 * Complex.I) • (Qubit.Y : Matrix Qubit Qubit ℂ) := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target : (Qubit.Z : Matrix Qubit Qubit ℂ) * (Qubit.X : Matrix Qubit Qubit ℂ) -\n    (Qubit.X : Matrix Qubit Qubit ℂ) * (Qubit.Z : Matrix Qubit Qubit ℂ) =\n    (-2 * Complex.I) • (Qubit.Y : Matrix Qubit Qubit ℂ) := by\n  matrix_expand [Qubit.Z, Qubit.X, Qubit.Y]\n",
+      "rationale": "Reversing the commutator phase gives the negative of the actual matrix. The (0,1) entry witnesses the discrepancy. The component proof must not certify this source.",
+      "required_diagnostics": [
+        "unsolved goals"
+      ],
+      "semantic_change": "Changes [Z,X] from +2 i Y to -2 i Y."
+    },
+    {
+      "id": "quantum.gates.altered_wrong_conjugate",
+      "parent_id": "quantum.gates.hadamard_basis_exchange",
+      "category": "wrong_observable",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target : Qubit.H * Qubit.X * Qubit.H = Qubit.X := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target : Qubit.H * Qubit.X * Qubit.H = Qubit.X := by\n  rw [Qubit.H_mul_X_eq_Z_mul_H, mul_assoc, Qubit.H_sq, mul_one]\n  matrix_expand [Qubit.X, Qubit.Z]\n",
+      "rationale": "Hadamard swaps X and Z. Claiming it leaves X invariant is false, as the diagonal entries show.",
+      "required_diagnostics": [
+        "unsolved goals"
+      ],
+      "semantic_change": "Changes the observable after the basis change from Z to X."
+    },
+    {
+      "id": "quantum.effects.altered_duplicate_outcome",
+      "parent_id": "quantum.effects.binary_normalization",
+      "category": "wrong_measurement_completeness",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (E : HermitianMat d ℂ) (h0 : 0 ≤ E) (h1 : E ≤ 1) :\n    0 ≤ ρ.exp_val E ∧ 0 ≤ ρ.exp_val (1 - E) ∧\n    ρ.exp_val E + ρ.exp_val E = 1 := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (E : HermitianMat d ℂ) (h0 : 0 ≤ E) (h1 : E ≤ 1) :\n    0 ≤ ρ.exp_val E ∧ 0 ≤ ρ.exp_val (1 - E) ∧\n    ρ.exp_val E + ρ.exp_val E = 1 := by\n  have hp := ρ.exp_val_nonneg h0\n  have hu := ρ.exp_val_le_one h1\n  rw [ρ.exp_val_sub, ρ.exp_val_one]\n  constructor\n  · exact hp\n  · constructor\n    · exact sub_nonneg.mpr hu\n    · nlinarith\n",
+      "rationale": "E and E are not a normalized binary POVM in general: E=0 makes their total probability zero. Positivity and E≤I alone do not imply E=I/2.",
+      "required_diagnostics": [
+        "linarith failed to find a contradiction"
+      ],
+      "semantic_change": "Duplicates E instead of using the complementary effect I-E."
+    },
+    {
+      "id": "quantum.decoherence.altered_missing_mixture_weight",
+      "parent_id": "quantum.decoherence.complete_dephasing_projection",
+      "category": "missing_normalization",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ :=\n  (1 : ℂ) • (R + (Qubit.Z : Matrix Qubit Qubit ℂ) * R *\n    (Qubit.Z : Matrix Qubit Qubit ℂ))\n\ntheorem physics_target (ρ : MState Qubit) :\n    dephase ρ.m = Matrix.diagonal (fun i => ρ.m i i) ∧\n    dephase (dephase ρ.m) = dephase ρ.m := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ :=\n  (1 : ℂ) • (R + (Qubit.Z : Matrix Qubit Qubit ℂ) * R *\n    (Qubit.Z : Matrix Qubit Qubit ℂ))\n\ntheorem physics_target (ρ : MState Qubit) :\n    dephase ρ.m = Matrix.diagonal (fun i => ρ.m i i) ∧\n    dephase (dephase ρ.m) = dephase ρ.m := by\n  have hdiag (R : Matrix Qubit Qubit ℂ) :\n      dephase R = Matrix.diagonal (fun i => R i i) := by\n    matrix_expand [dephase, Qubit.Z, Matrix.diagonal, Matrix.vecMul, dotProduct]\n  constructor\n  · exact hdiag ρ.m\n  · rw [hdiag, hdiag]\n    ext i j\n    simp\n",
+      "rationale": "Omitting the half-weight doubles diagonal populations, doubles trace, and destroys idempotence. A computational-basis pure state is a counterexample.",
+      "required_diagnostics": [
+        "unsolved goals"
+      ],
+      "semantic_change": "Replaces the equal probabilistic mixture by the unnormalized sum of the two unitary branches."
+    },
+    {
+      "id": "quantum.bell.altered_unnormalized_marginal",
+      "parent_id": "quantum.bell.entangled_with_mixed_marginal",
+      "category": "wrong_partial_trace_normalization",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target  : (Ket.MES Qubit).IsEntangled ∧\n    (MState.pure (Ket.MES Qubit)).traceRight.m =\n      (1 : ℂ) • (1 : Matrix Qubit Qubit ℂ) := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target  : (Ket.MES Qubit).IsEntangled ∧\n    (MState.pure (Ket.MES Qubit)).traceRight.m =\n      (1 : ℂ) • (1 : Matrix Qubit Qubit ℂ) := by\n  constructor\n  · exact Ket.MES_isEntangled\n  · matrix_expand [MState.traceRight, MState.m, HermitianMat.traceRight,\n      Matrix.traceRight, MState.pure, Ket.MES, Ket.apply,\n      Matrix.vecMulVec_apply, Bra.eq_conj]\n",
+      "rationale": "The Bell marginal has trace one and equals I/2. The identity has trace two on a qubit, so it cannot be this reduced MState.",
+      "required_diagnostics": [
+        "unsolved goals"
+      ],
+      "semantic_change": "Drops the factor 1/2 from the purported Bell reduced density matrix."
+    },
+    {
+      "id": "quantum.geometry.altered_only_equal_kets",
+      "parent_id": "quantum.geometry.global_phase_measurement",
+      "category": "restricted_scope",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ψ φ : Ket d) (h : ψ = φ) (A : HermitianMat d ℂ) :\n    (MState.pure ψ).exp_val A = (MState.pure φ).exp_val A := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ψ φ : Ket d) (h : ψ = φ) (A : HermitianMat d ℂ) :\n    (MState.pure ψ).exp_val A = (MState.pure φ).exp_val A := by\n  rw [h]\n",
+      "rationale": "The theorem is valid, but exact equality of kets removes the global-phase equivalence that the parent measures. It cannot substitute for the parent even when its proof is accepted.",
+      "required_diagnostics": [],
+      "semantic_change": "Replaces phase equivalence with equality of vector representatives."
+    },
+    {
+      "id": "quantum.dynamics.altered_identity_evolution_only",
+      "parent_id": "quantum.dynamics.commuting_energy_conservation",
+      "category": "restricted_dynamics",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (H : HermitianMat d ℂ) (U : 𝐔[d])\n    (hidentity : U = 1)\n    (hcomm : (U : Matrix d d ℂ) * H.mat = H.mat * (U : Matrix d d ℂ)) :\n    ((U : Matrix d d ℂ) * ρ.m * star (U : Matrix d d ℂ) * H.mat).trace =\n      (ρ.m * H.mat).trace := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (H : HermitianMat d ℂ) (U : 𝐔[d])\n    (hidentity : U = 1)\n    (hcomm : (U : Matrix d d ℂ) * H.mat = H.mat * (U : Matrix d d ℂ)) :\n    ((U : Matrix d d ℂ) * ρ.m * star (U : Matrix d d ℂ) * H.mat).trace =\n      (ρ.m * H.mat).trace := by\n  subst U\n  simp\n",
+      "rationale": "Identity evolution preserves energy, but adding this assumption removes every nontrivial commuting evolution from the claim. Kernel acceptance cannot certify the intended conservation scope.",
+      "required_diagnostics": [],
+      "semantic_change": "Restricts the permitted evolution unitary to the identity."
+    },
+    {
+      "id": "quantum.effects.altered_circular_support_premise",
+      "parent_id": "quantum.effects.zero_subeffect_support",
+      "category": "assumed_conclusion",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (A B : HermitianMat d ℂ)\n    (hB : 0 ≤ B) (hBA : B ≤ A) (hA : ρ.exp_val A = 0)\n    (already : ρ.M.support ≤ B.ker) :\n    ρ.M.support ≤ B.ker := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nvariable {d : Type*} [Fintype d] [DecidableEq d]\n\ntheorem physics_target (ρ : MState d) (A B : HermitianMat d ℂ)\n    (hB : 0 ≤ B) (hBA : B ≤ A) (hA : ρ.exp_val A = 0)\n    (already : ρ.M.support ≤ B.ker) :\n    ρ.M.support ≤ B.ker := by\n  exact already\n",
+      "rationale": "The support-containment conclusion has been inserted as an extra premise. This is logically valid and mathematically circular as a replacement for the intended deduction.",
+      "required_diagnostics": [],
+      "semantic_change": "Assumes exactly the support/kernel containment that the task is meant to derive."
+    },
+    {
+      "id": "quantum.decoherence.altered_arbitrary_matrix_called_state",
+      "parent_id": "quantum.decoherence.complete_dephasing_projection",
+      "category": "changed_state_model",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ :=\n  (1 / 2 : ℂ) • (R + (Qubit.Z : Matrix Qubit Qubit ℂ) * R *\n    (Qubit.Z : Matrix Qubit Qubit ℂ))\n\ntheorem physics_target (R : Matrix Qubit Qubit ℂ) :\n    dephase R = Matrix.diagonal (fun i => R i i) ∧\n    dephase (dephase R) = dephase R := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ :=\n  (1 / 2 : ℂ) • (R + (Qubit.Z : Matrix Qubit Qubit ℂ) * R *\n    (Qubit.Z : Matrix Qubit Qubit ℂ))\n\ntheorem physics_target (R : Matrix Qubit Qubit ℂ) :\n    dephase R = Matrix.diagonal (fun i => R i i) ∧\n    dephase (dephase R) = dephase R := by\n  have hdiag (A : Matrix Qubit Qubit ℂ) :\n      dephase A = Matrix.diagonal (fun i => A i i) := by\n    matrix_expand [dephase, Qubit.Z, Matrix.diagonal, Matrix.vecMul, dotProduct]\n  constructor\n  · exact hdiag R\n  · rw [hdiag, hdiag]\n    ext i j\n    simp\n",
+      "rationale": "This algebraic statement is true for every complex matrix. It does not make every input a physical density state: for example -I lacks positivity and trace normalization. It is held when substituted under the parent physical-state interpretation; it could be a valid separately reviewed algebra task.",
+      "required_diagnostics": [],
+      "semantic_change": "Replaces the PSD trace-one MState domain with unrestricted matrices while retaining a physical-state interpretation."
+    },
+    {
+      "id": "quantum.decoherence.altered_identity_named_dephasing",
+      "parent_id": "quantum.decoherence.complete_dephasing_projection",
+      "category": "definition_and_target_drift",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ := R\n\ntheorem physics_target (ρ : MState Qubit) :\n    dephase (dephase ρ.m) = dephase ρ.m := by\n  sorry\n",
+      "candidate_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\nnoncomputable def dephase (R : Matrix Qubit Qubit ℂ) : Matrix Qubit Qubit ℂ := R\n\ntheorem physics_target (ρ : MState Qubit) :\n    dephase (dephase ρ.m) = dephase ρ.m := by\n  rfl\n",
+      "rationale": "The identity map is idempotent but preserves all coherences. Renaming it dephase and retaining only idempotence can pass the kernel while failing the intended computational-basis decoherence claim.",
+      "required_diagnostics": [],
+      "semantic_change": "Changes the channel definition to identity and removes the diagonalization conclusion."
+    }
+  ]
+}

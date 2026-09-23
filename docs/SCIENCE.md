@@ -159,6 +159,12 @@ an error-bound certifier. Numerical values never become proof receipts.
 
 ## Benchmark registry
 
+The new [physics inventory and review workflow](PHYSICS_BENCHMARK_REVIEW.md) supplies
+40 mathematical-physics targets and 20 altered cases with exact sources, known shortcuts,
+family-separated exports and independent evidence assessment. Its human scientific review
+is pending; estimated difficulty is not measured model performance. The legacy fixtures
+below retain their original status and purpose.
+
 `benchmarks/registry.json` contains 20 quantum-program algebra prerequisites,
 20 classical-program algebra prerequisites, and 20 altered/invalid cases. Their
 original local source is `benchmarks/sources.md`, with full digest and line provenance.
