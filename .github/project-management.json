@@ -238,9 +238,7 @@
       "title": "Wave 11 \u2014 Sustained open-problem campaigns",
       "description": "Qualification gate: Nontrivial new results with expert-confirmed meaning and novelty, independent proofs and reproducible sustained campaigns toward difficult root targets. No fixed due date. Full scope: docs/IMPLEMENTATION_PLAN.md.",
       "dependencies": [
-        8,
-        9,
-        10
+        8
       ],
       "area": "science"
     }
