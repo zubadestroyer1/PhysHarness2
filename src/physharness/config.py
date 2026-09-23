@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     verification_bundle: Path | None = None
     verification_manifest_sha256: str | None = None
     verification_qualification: Path | None = None
+    verification_resources: Path | None = None
 
     def __init__(self, **values):
         try:
@@ -91,9 +92,29 @@ class Settings(BaseSettings):
                 self.verification_bundle,
                 self.verification_manifest_sha256,
                 self.verification_qualification,
+                self.verification_resources,
             )
         ):
             raise ValueError("Configure either a verifier registry or a single bundle, not both.")
+        if self.verification_resources and not all(
+            (
+                self.verification_bundle,
+                self.verification_manifest_sha256,
+                self.verification_qualification,
+            )
+        ):
+            raise ValueError("A resource override requires a complete single-bundle verifier.")
+        if (
+            all(
+                (
+                    self.verification_bundle,
+                    self.verification_manifest_sha256,
+                    self.verification_qualification,
+                )
+            )
+            and not self.verification_resources
+        ):
+            raise ValueError("A single-bundle verifier requires an explicit resource profile.")
         if not self.auth_tokens and self.auth_file.is_file():
             self.auth_tokens = _authentication(json.loads(self.auth_file.read_text()))
         if self.mode == "production":

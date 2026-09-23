@@ -1,0 +1,136 @@
+{
+  "status": "passed",
+  "run_id": "be679caf-ceac-4852-992c-fc79fe4e1cd8",
+  "results": [
+    {
+      "id": "library-classical-positive",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "9ad8f7bee5711a86d2eff3b06a41fb82332087bac574ed191786ab1e29a445d9",
+        "challenge_sha256": "8d48b54c1c79ee3e3190d3f964b25fdacec4fc7d5f83e218d6ad371496fe7c35",
+        "candidate_sha256": "776ca7e864d14c1148c9aec36d2736dea769ab470acb5ba5f5f94c519a579968",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "Building Challenge\n\u26a0 [3196/3197] Built Challenge (2.9s)\nwarning: Challenge.lean:4:8: declaration uses `sorry`\nBuild completed successfully (3197 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, library_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [3196/3197] Built Solution (1.2s)\nBuild completed successfully (3197 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, library_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-43d7bf03e7984eada04e1919b9c1a6ff",
+            "exit_code": 0,
+            "output": "physharness-check-43d7bf03e7984eada04e1919b9c1a6ff\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "library-quantum-positive",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "f76881a67680382e44c41bdb27288f8cb4055c2306451b03cebf08447be00b9e",
+        "challenge_sha256": "30f6b8687af64fcec66a1bebc71e2a1671636877af5edaba81f683e934a5c4d4",
+        "candidate_sha256": "e9a3089ef19ee93f60504cd91485b60420ac4cab893a7cd476bf8aec9d858b5b",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 0,
+          "comparator_output": "Building Challenge\n\u26a0 [8761/8762] Built Challenge (14s)\nwarning: Challenge.lean:4:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, library_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [8761/8762] Built Solution (16s)\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, library_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-cfc3ecf24468458788df1174f103a51b",
+            "exit_code": 0,
+            "output": "physharness-check-cfc3ecf24468458788df1174f103a51b\n"
+          }
+        }
+      }
+    },
+    {
+      "id": "library-quantum-sorry",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'sorryAx'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "6c1300f5a4a28ffc67ab2f4110872c938964de505df0cd176469f483a5cb8b65",
+        "challenge_sha256": "30f6b8687af64fcec66a1bebc71e2a1671636877af5edaba81f683e934a5c4d4",
+        "candidate_sha256": "30f6b8687af64fcec66a1bebc71e2a1671636877af5edaba81f683e934a5c4d4",
+        "environment_digest": "1fce163a151f2531725d0b3cf70f2c7529906dcfb60d9c6fbfbda710de1b6849",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "comparator_exit_code": 1,
+          "comparator_output": "Building Challenge\n\u26a0 [8761/8762] Built Challenge (3.7s)\nwarning: Challenge.lean:4:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, library_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u26a0 [8761/8762] Built Solution (3.1s)\nwarning: Solution.lean:4:8: declaration uses `sorry`\nBuild completed successfully (8762 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, library_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'sorryAx'\n",
+          "axioms_are_policy_upper_bound": true,
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-d4184f3c5ac04c0a90f548116f5fb254",
+            "exit_code": 0,
+            "output": "physharness-check-d4184f3c5ac04c0a90f548116f5fb254\n"
+          }
+        }
+      }
+    }
+  ],
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "image_digest": "sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246",
+  "image_metadata_sha256": "75be3be77a1ca65a153fb594d7e71ec72a5ec27b3aabe1e5e75323c580b9f573",
+  "fixtures_sha256": "948a6ebb1a7ded60fd4b139bfd2af2f923fa35d4684031ca738e95a443b363e0",
+  "independent_kernel_requested": true,
+  "launcher_sha256": "aa6ce2b9e18cb24557b7732ae833d3d2062ea67b07f8df05b6370c41cbcee852",
+  "driver_sha256": "0aa043a827abe8dd79960b59e3fcd3d249f5b0600e5e2c68aeb6dfb69e34445f",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "runner_sha256": "9717278932fc768b3a7d22bd4d5ceda77fda8a467acc94db444196d7f1be4476",
+  "runtime_identity_sha256": "6d45b4cc785e74c75883e6c2bdb42ef3ba50639b7c89bb0614c990d0142474e5"
+}

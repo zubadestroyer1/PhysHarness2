@@ -1,0 +1,190 @@
+{
+  "protocol": "physharness-deployment-review-packet-v1",
+  "purpose": "deployment_review_packet",
+  "scope_sha256": "de7476c9d13aab9bd3654a613fd63d147e42efe24926ce48a0577604a0ddec40",
+  "scope": {
+    "protocol": "physharness-qualification-scope-v1",
+    "image_metadata": {
+      "path": "work/wave01/evidence/image-metadata.json",
+      "sha256": "75be3be77a1ca65a153fb594d7e71ec72a5ec27b3aabe1e5e75323c580b9f573"
+    },
+    "runtime_identity": {
+      "path": "work/wave01/evidence/runtime-identity.json",
+      "sha256": "6d45b4cc785e74c75883e6c2bdb42ef3ba50639b7c89bb0614c990d0142474e5"
+    },
+    "image_digest": "sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246",
+    "launcher_sha256": "aa6ce2b9e18cb24557b7732ae833d3d2062ea67b07f8df05b6370c41cbcee852",
+    "driver_sha256": "0aa043a827abe8dd79960b59e3fcd3d249f5b0600e5e2c68aeb6dfb69e34445f",
+    "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+    "checker_versions": {
+      "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+      "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+      "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+      "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+      "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+    },
+    "binaries": {
+      "lean": "79fb1d26fa5a39385d59fdc48a711a14b0710ca6480271acce99b4d177cea085",
+      "lake": "8229bc302b0b7d0e7679e28cc2b830c5aec995ffe5714833503360252f1490ba",
+      "comparator": "227f482d9fd760fb7b19646d6f6e1abbed3b1a2b62fc77e4a6bb69d2d7693cab",
+      "lean4export": "4bac3563125b296123283eecc7a49dc91a1c30bc41c199113c41c9258b42ef28",
+      "landrun": "ff652d627fc822fd5ece4c939446e789cec4ba30814446dabd93234f9bf1615f",
+      "nanoda": "9fe6d27927d156dd2f053b644f2665521ef42db71d1db8ddd856d9c238482196"
+    },
+    "inputs": {
+      "formal/Dockerfile": "8cb18d42205e889c4b62276e731f8bc400c2b6c822a09ddd17541f7c493b43f9",
+      "formal/adversarial/Challenge.lean": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+      "formal/adversarial/ChangedDependency.lean": "9666a74d27bc06fb9991626b9595908cfe5da46b5d9588004440291bb88c8f90",
+      "formal/adversarial/ConfigOverwrite.lean": "d4522f4dc790e31093fe61695093cc74b6c60554b4075ce028655dcce5cdb665",
+      "formal/adversarial/DependencyChallenge.lean": "b89f123dd16c1ff8093bb9d37109d1e54cfbd079af93ab4d8e9593215aeec747",
+      "formal/adversarial/ExtraAxiom.lean": "2cbf645decd6282725fa417be347ab63284152d0e4a8bc59cbb59e818e4027cf",
+      "formal/adversarial/ForgedReceipt.lean": "ad988b0da62e9d2b549f9683f1f175a8386c8393bb1cfe1f50e8004095bba724",
+      "formal/adversarial/NativeChallenge.lean": "6b53e795ec932817d7c00ea6f9272c3c7d0cfd9cbdfcad66938b033fef9c5d2a",
+      "formal/adversarial/NativeDecide.lean": "c43697602bba926564b7495daff5952498f045ae8d3c851cd0199e078db65ccc",
+      "formal/adversarial/Sorry.lean": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+      "formal/adversarial/TargetOverwrite.lean": "140e7da3ccc03802949f467dbd4926b08bcadae88cfd594548326074996f7e0a",
+      "formal/adversarial/cases.json": "d317cbbc7cf16d57c50c63a839b0b50c60ec8a74a7458cf333605f5ebf71754a",
+      "formal/adversarial/classical/Challenge.lean": "1b206be36da6d259a7657f8a84df800295ff2f3979beed585c134dce8a30bee0",
+      "formal/adversarial/classical/Solution.lean": "bda7c502df00a4f8a99ede6fa04f7ec09cbd3a218048703c02b483b63bea6856",
+      "formal/adversarial/lakefile.toml": "2c78e0ccd39805b3336234717f9682bde2359863261858f18f08cf6433c43d16",
+      "formal/adversarial/lean-toolchain": "302cd63c54178885b89e669f33b38f12f4dd7ae7e5cac537b3203e3768d8fb2b",
+      "formal/adversarial/quantum/Challenge.lean": "3acabdcd3b91a336d513367975589a98b21c53328053f24ef0afc6bbabab4ba9",
+      "formal/adversarial/quantum/Solution.lean": "cecd83e75f1baa95f6825a021f7a1cd8bee9a8ab1de11c366972f6cae79bb225",
+      "formal/environment.lock.json": "c5615b4f818bb8dfefc0281f116d2ece500597a488eb4ee244b330d41c9235c5",
+      "formal/lake-manifest.physics.json": "d57958f7fdca5622cc6dfc82a2920f8714fdc8608149477d9b32831a8e7dfd38",
+      "formal/lakefile.physics.toml": "e3557e21d4bd9d2923997d206e44459786a19d348946ad6a833bc668545e7593",
+      "formal/lean-toolchain": "302cd63c54178885b89e669f33b38f12f4dd7ae7e5cac537b3203e3768d8fb2b",
+      "formal/library-cases.json": "948a6ebb1a7ded60fd4b139bfd2af2f923fa35d4684031ca738e95a443b363e0",
+      "formal/prepare_lake.py": "4aff00dfabebcf860e25fa84543356a32be09d8e610276d0d3e4b554eb44c572",
+      "formal/qualification-matrix.json": "081ed6158b06bdfc6ac80906ab2e6427790fa0d16beeb25221c4158fe1346bcb",
+      "formal/record_build.py": "0f579a352b1891d6c9ee54f04c063290332da1ca5084d56953a21595fc9c0866",
+      "formal/smoke/library-classical/Challenge.lean": "8d48b54c1c79ee3e3190d3f964b25fdacec4fc7d5f83e218d6ad371496fe7c35",
+      "formal/smoke/library-classical/Solution.lean": "776ca7e864d14c1148c9aec36d2736dea769ab470acb5ba5f5f94c519a579968",
+      "formal/smoke/library-quantum/Challenge.lean": "30f6b8687af64fcec66a1bebc71e2a1671636877af5edaba81f683e934a5c4d4",
+      "formal/smoke/library-quantum/Solution.lean": "e9a3089ef19ee93f60504cd91485b60420ac4cab893a7cd476bf8aec9d858b5b",
+      "formal/smoke/library-quantum/Sorry.lean": "30f6b8687af64fcec66a1bebc71e2a1671636877af5edaba81f683e934a5c4d4",
+      "infra/probe_verifier_boundary.py": "e77b80d7edc8460fbec3cb0434b1c36eac5c5d9f5410c103082ea05072314aeb",
+      "infra/run_qualified_lean.py": "9717278932fc768b3a7d22bd4d5ceda77fda8a467acc94db444196d7f1be4476",
+      "pyproject.toml": "8a550ace9c68290539f403a255d934032a4d7fdca94b15b9f17027f0d73f54a9",
+      "src/physharness/acceptance.py": "521c2ed0672a76389bfab37b2f537af93721ed6a6f3d111b7cc891ac1a733dbb",
+      "src/physharness/bootstrap.py": "47dbb328e31df2471ed8df680355e66505113d27d172d40e2268f3c7af775d18",
+      "src/physharness/config.py": "55f885ba1bc496616fd5aa39f2f029051bf77be7eb46c5d86c236baf99353036",
+      "src/physharness/domain.py": "79b48005bee551e69f26f5ebfbb320b3d71b80040986b3f855f4ec162506740e",
+      "src/physharness/evaluation/evidence.py": "8d16ce3e23ca96b0e075499e52ead1b7a84e0d9f8c95673e465972f6e0fc7009",
+      "src/physharness/service.py": "96c9299c13786cc9c4a33af5d23685ba29d4a852b07e7f2bde4c5b465a5b26ae",
+      "src/physharness/verification/boundary.py": "aa6ce2b9e18cb24557b7732ae833d3d2062ea67b07f8df05b6370c41cbcee852",
+      "src/physharness/verification/bundles.py": "63c18e38940f9a3bddd46f1b663cfa071e1ad503acaf90fab47811a85c54f264",
+      "src/physharness/verification/container_driver.py": "0aa043a827abe8dd79960b59e3fcd3d249f5b0600e5e2c68aeb6dfb69e34445f",
+      "src/physharness/verification/preparation.py": "c4fae22c5bdb5d060e67b0133b3326fde288edbca923c2e19b0ec84eca4e3488",
+      "src/physharness/verification/qualification.py": "e161b0730b44deb41edceccba937ee4860816c9c5c67ebe656ae50dd249dabc1",
+      "src/physharness/verification/registry.py": "62ce492e30aae0bbbd25f46fbe8e2317cd7c9b8a7b4050af8e2a40dd4a20bd5c",
+      "tests/conftest.py": "a65b3fe9e61a134fdcb150c220ee998e8e404f25bc0798ea651d110031ccba3f",
+      "tests/test_acceptance_corrections.py": "e2beefa88f5b0bda090544c7d50f9e9c49ebf502eab3d08e8c9ff34adf8f0741",
+      "tests/test_acceptance_integration.py": "5ee17f565446e052612f8efddfc48d6574853d9e3f426fe215ca54af32be0f53",
+      "tests/test_authority.py": "573f327bbc532b2a6e880a83287a2ddc9e4383225c1da2939eb337ea83b9adc2",
+      "tests/test_qualification_diagnostics.py": "bfac292c91d7542a8f6476db41d6226c8d29a6c24151d30ad5be4da66666ae9f",
+      "tests/test_research_services.py": "474550c52216f47c6165d8ca5dade0a0c33bca1df885102a0098c9d6c44fdffe",
+      "tests/test_verification.py": "7704335f0aa65d255b4539302b4ec43fdc3e2826021e9e5a5cc5a36c2a53b5f3",
+      "tests/test_verifier_boundary_probe.py": "ff9679798d8e24a6b507635c171ed61197f82320f657758853d70c86b8c892b7",
+      "tests/test_verifier_qualification.py": "7f58eeabb1779f75e6627142ceb12ee3cef0188866b996f40628a62c9c3b5a40",
+      "uv.lock": "2556e86db287163180bd8d8b022c20e6d14dfe171536ca079a83ccdca18a0990"
+    }
+  },
+  "mechanical_status": "satisfied",
+  "checks": [
+    {
+      "id": "current-inputs",
+      "status": "observed",
+      "detail": "All scoped current input hashes match.",
+      "evidence_sha256": null
+    },
+    {
+      "id": "core/kernel",
+      "status": "observed",
+      "detail": "Exact fixed cases, modes, sources, causal outcomes and cleanup match.",
+      "evidence_sha256": "3334631bb7185043bcb8550b1e6efeb53f2454a65c25da6c6db9e0f74f92e1d4"
+    },
+    {
+      "id": "core/independent_kernel",
+      "status": "observed",
+      "detail": "Exact fixed cases, modes, sources, causal outcomes and cleanup match.",
+      "evidence_sha256": "5e7e86256cb44f76e3c03ee51cbdebf6d5ff71ac5b2bce21f56002456c0d435f"
+    },
+    {
+      "id": "library/kernel",
+      "status": "observed",
+      "detail": "Exact fixed cases, modes, sources, causal outcomes and cleanup match.",
+      "evidence_sha256": "071ba77355a37bd016a7ee4ba0605c542d7b7e5fcce6c7585d47c383a25b4364"
+    },
+    {
+      "id": "library/independent_kernel",
+      "status": "observed",
+      "detail": "Exact fixed cases, modes, sources, causal outcomes and cleanup match.",
+      "evidence_sha256": "cd9124b6f7de592fd2fcfdc5ef21d21f4733636f956677f1914781bf5c3fd58d"
+    },
+    {
+      "id": "fixed-boundary",
+      "status": "observed",
+      "detail": "Fixed process, syscall, canary, writable control, inspected configuration and cleanup observations match.",
+      "evidence_sha256": "db3915dd583c527f10c67a40fd8c30ee474094fcd1c484b121df5f5ef72afbe6"
+    },
+    {
+      "id": "transport-and-isolation",
+      "status": "observed",
+      "detail": "Required host regressions passed; synthetic transport tests remain distinct from real isolation.",
+      "evidence_sha256": "89e2dc04e98a4fa8ae95788009c174c5c17672444cdb36ec90823f039d77cacc"
+    },
+    {
+      "id": "authority-and-atomicity",
+      "status": "observed",
+      "detail": "Required host regressions passed; synthetic transport tests remain distinct from real isolation.",
+      "evidence_sha256": "89e2dc04e98a4fa8ae95788009c174c5c17672444cdb36ec90823f039d77cacc"
+    },
+    {
+      "id": "evidence-reporting",
+      "status": "observed",
+      "detail": "Required host regressions passed; synthetic transport tests remain distinct from real isolation.",
+      "evidence_sha256": "89e2dc04e98a4fa8ae95788009c174c5c17672444cdb36ec90823f039d77cacc"
+    }
+  ],
+  "coverage_gaps": [
+    {
+      "id": "process-exit",
+      "reason": "Optional process-exit probe was stopped after a security filter; initializer failed syntax before execution. Remains incomplete and must not be retried in this task."
+    },
+    {
+      "id": "host-containment",
+      "reason": "Fixed fixtures and host protocol regressions do not establish complete Landlock/seccomp/kernel isolation or cover every syscall or host resource interaction."
+    },
+    {
+      "id": "runtime-resource-stress",
+      "reason": "Host timeout/output-limit regressions do not establish actual cgroup memory, PID, CPU, filesystem exhaustion or all cancellation behavior inside this deployment."
+    },
+    {
+      "id": "database-review-race",
+      "reason": "Prior real PostgreSQL locking evidence is historical; this scoped host matrix does not rerun a current deployment database concurrency check."
+    },
+    {
+      "id": "driver-resource-deadline",
+      "reason": "The pinned driver enforces 110 seconds and 100000 Comparator output bytes independently of the host timeout/output configuration. A contended library run reached this deadline and safely returned blocked/boundary_unqualified with cleanup. The generic code does not distinguish deadline from other boundary faults; larger host limits do not extend the driver limit."
+    }
+  ],
+  "review_gates": [
+    {
+      "id": "deployment-authority",
+      "reason": "An authorized human must assess the actual runtime, evidence provenance and deployment controls; this module cannot issue approval."
+    },
+    {
+      "id": "scientific-semantics",
+      "reason": "Scientific target interpretation and assumptions need their own authorized review; kernel and fixture reports supply no such review."
+    },
+    {
+      "id": "consolidated-rebuild",
+      "reason": "Reviewer must verify the consolidated recipe was built and recovered in a fresh environment; old recovery-layer evidence cannot establish this."
+    }
+  ],
+  "production_qualified": false,
+  "deployment_approval": "pending",
+  "scientific_review": "not_provided",
+  "provenance_limit": "Input hashes cannot authenticate reports or grant authority; an authorized human must review their provenance."
+}

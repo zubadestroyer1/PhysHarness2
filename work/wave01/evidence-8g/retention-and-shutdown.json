@@ -1,0 +1,67 @@
+{
+  "kind": "operator_retention_and_shutdown_observation",
+  "observed_date_utc": "2026-09-22",
+  "scientific_approval": false,
+  "production_qualification": false,
+  "archive": {
+    "path": ".state/formal/wave01-verifier-images-2026-09-22.tar.zst",
+    "retention": "local_ignored_not_uploaded_to_github",
+    "bytes": 7366704235,
+    "sha256": "b596b1ec1fb827b74e93fbadb2fc3771af91f32ea6db99d0c0d753b64babb353",
+    "images": [
+      {
+        "tag": "physharness-formal:wave01-resources",
+        "image_id": "sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67"
+      },
+      {
+        "tag": "physharness-formal:wave01-final",
+        "image_id": "sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246"
+      }
+    ],
+    "export_pipeline": "docker image save physharness-formal:wave01-resources physharness-formal:wave01-final | zstd -T2 -3",
+    "pipeline_exit_code": 0,
+    "zstd_integrity_exit_code": 0,
+    "archive_index_and_tags_match": true,
+    "existing_older_archive_overwritten": false,
+    "fresh_vm_restore_tested": false
+  },
+  "shutdown": {
+    "no_containers_before_stop": true,
+    "normal_colima_stop": "reported not running because temporary control metadata was missing; did not stop live VM",
+    "fallback": "SIGINT sent only after verifying exact limactl hostagent command and ha.sock ownership for the dedicated VM",
+    "verified_hostagent_pid": 70453,
+    "vm_stopped_at": "2026-09-22T23:50:55Z",
+    "stopped_log_observed": true,
+    "hostagent_process_absent": true,
+    "virtualization_process_absent": true,
+    "ssh_forwarder_absent": true,
+    "docker_endpoint_unavailable": true,
+    "data_disk_has_no_open_handles": true,
+    "force_kill_used": false
+  },
+  "local_logs": {
+    ".state/wave01/archive-export.log": {
+      "sha256": "69827c6bfe97350e6a970a4b65225c1e0e34beaafcf37f976f2913f45ba9b330"
+    },
+    ".state/wave01/archive-integrity.log": {
+      "sha256": "455f8a6b4b8465a57c90bb49d9e091863b0bfa1859075183c603d6625aedd3cb"
+    },
+    ".state/wave01/archive-manifests.json": {
+      "sha256": "54bd3a284317982582379fafd8438a05fdcbbffe7661f00e612f6ed1da62a019"
+    },
+    ".state/wave01/preserved-images-inspect.json": {
+      "sha256": "3f4b9a5a196d82f7e59e283f67eb8bedaca38898dfa46d50fb6d34fe7382b5a2"
+    },
+    ".state/wave01/vm-shutdown-identity.log": {
+      "sha256": "654b7f76ee4b5c3161ad616bcff74c249684bcec3c7ac898f5de956f1fcbe262"
+    },
+    ".state/wave01/vm-shutdown-final.log": {
+      "sha256": "67602814dbc8f75322d5e745c277c198757452513c840143a52b671ba555abec"
+    }
+  },
+  "limitations": [
+    "Archive integrity and manifest identity were checked; a fresh-VM image restore was not performed.",
+    "Temporary Colima metadata loss remains an operational recovery issue; future provisioning uses persistent state.",
+    "These are operator observations, not authenticated proof receipts or deployment approval."
+  ]
+}

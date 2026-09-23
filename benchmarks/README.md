@@ -1,5 +1,8 @@
 # Unqualified algebra-prerequisite fixtures
 
+The separate [physics inventory](physics/README.md) now supplies actual mathematical-physics
+targets and review tooling. The scope and status below apply only to this original registry.
+
 The registry contains 40 original local candidate tasks and 20 altered cases. All
 remain pending expert review and uncompiled. They are tiny rational/component
 prerequisites for the two research programs, not validated physics problems or
