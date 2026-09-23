@@ -1,0 +1,984 @@
+{
+  "version": 1,
+  "program": "classical",
+  "tasks": [
+    {
+      "id": "classical.oscillator_formulations.newton_equivalence",
+      "family": "oscillator_formulations",
+      "split": "development",
+      "title": "Variational oscillator equation equals Newton dynamics",
+      "difficulty_band": "foundation",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning is formulation recognition; Lean work can be one exact library invocation.",
+      "capabilities": [
+        "connect variational and Newtonian formulations",
+        "preserve smoothness and model assumptions"
+      ],
+      "statement": "For every smooth oscillator trajectory, the variational equation is equivalent to mass times acceleration equaling the restoring force.",
+      "assumptions": [
+        "The Physlib structure enforces m > 0 and k > 0.",
+        "The trajectory is C∞ on all Physlib Time."
+      ],
+      "physical_scope": "One-dimensional Euclidean configuration space; autonomous ideal spring without damping.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/Physlib/ClassicalMechanics/HarmonicOscillator/Basic.lean",
+          "locator": "§E.3, equationOfMotion_iff_newtons_2nd_law",
+          "note": "Pinned formal source is the primary provenance for this exact model."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1))\n    (hq : ContDiff ℝ ∞ q) :\n    S.EquationOfMotion q ↔ ∀ t, S.m • Time.deriv (Time.deriv q) t = S.force (q t) := by\n  sorry\n",
+      "reference_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1))\n    (hq : ContDiff ℝ ∞ q) :\n    S.EquationOfMotion q ↔ ∀ t, S.m • Time.deriv (Time.deriv q) t = S.force (q t) := by\n  exact S.equationOfMotion_iff_newtons_2nd_law q hq\n",
+      "reference_outline": "connect variational and Newtonian formulations; preserve smoothness and model assumptions",
+      "known_shortcuts": [
+        {
+          "declaration": "ClassicalMechanics.HarmonicOscillator.equationOfMotion_iff_newtons_2nd_law",
+          "note": "Exact target shortcut; this is an API/formulation control, not evidence of deriving the variational theorem."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models."
+      ]
+    },
+    {
+      "id": "classical.oscillator_formulations.legendre_energy_bridge",
+      "family": "oscillator_formulations",
+      "split": "development",
+      "title": "Oscillator Hamiltonian equals trajectory energy",
+      "difficulty_band": "foundation",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning is a Legendre-transform bridge; Lean API effort is small.",
+      "capabilities": [
+        "identify canonical momentum substitution",
+        "extract a pointwise identity from function equality"
+      ],
+      "statement": "Evaluating the Legendre Hamiltonian on canonical momentum agrees pointwise with kinetic plus potential energy.",
+      "assumptions": [
+        "m > 0 and k > 0 are in S.",
+        "No trajectory differentiability is needed for this algebraic identity; both sides use the same totalized Time.deriv."
+      ],
+      "physical_scope": "One oscillator; an off-shell identity, which becomes a velocity-energy interpretation on differentiable trajectories.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/Physlib/ClassicalMechanics/HarmonicOscillator/Basic.lean",
+          "locator": "§G.3, hamiltonian_eq_energy",
+          "note": "Exact source defines the argument order as time, momentum, position."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1)) (t : Time) :\n    S.hamiltonian t (S.toCanonicalMomentum t (q t) (Time.deriv q t)) (q t) = S.energy q t := by\n  sorry\n",
+      "reference_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1)) (t : Time) :\n    S.hamiltonian t (S.toCanonicalMomentum t (q t) (Time.deriv q t)) (q t) = S.energy q t := by\n  exact congrFun (S.hamiltonian_eq_energy q) t\n",
+      "reference_outline": "identify canonical momentum substitution; extract a pointwise identity from function equality",
+      "known_shortcuts": [
+        {
+          "declaration": "ClassicalMechanics.HarmonicOscillator.hamiltonian_eq_energy",
+          "note": "Exact function equality; congrFun supplies the pointwise target."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "The identity alone does not assert conservation or existence of a derivative."
+      ]
+    },
+    {
+      "id": "classical.oscillator_formulations.hamilton_equivalence",
+      "family": "oscillator_formulations",
+      "split": "development",
+      "title": "Variational oscillator equation equals Hamilton equations",
+      "difficulty_band": "foundation",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. The formulation involves a nontrivial Legendre correspondence; exact upstream theorem makes the reference short.",
+      "capabilities": [
+        "connect Lagrangian and Hamiltonian dynamics",
+        "track canonical momentum and phase-space convention"
+      ],
+      "statement": "The variational oscillator equation is equivalent to vanishing of the Hamilton equation operator after canonical momentum substitution.",
+      "assumptions": [
+        "m > 0 and k > 0 are in S.",
+        "q is C∞ on Time."
+      ],
+      "physical_scope": "The pinned one-dimensional oscillator, with canonical momentum p = m q̇ and its library sign convention.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/Physlib/ClassicalMechanics/HarmonicOscillator/Basic.lean",
+          "locator": "§G.5",
+          "note": "Pinned equivalence and definitions."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1))\n    (hq : ContDiff ℝ ∞ q) :\n    S.EquationOfMotion q ↔\n      S.hamiltonEqOp (fun t => S.toCanonicalMomentum t (q t) (Time.deriv q t)) q = 0 := by\n  sorry\n",
+      "reference_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1))\n    (hq : ContDiff ℝ ∞ q) :\n    S.EquationOfMotion q ↔\n      S.hamiltonEqOp (fun t => S.toCanonicalMomentum t (q t) (Time.deriv q t)) q = 0 := by\n  exact S.equationOfMotion_iff_hamiltonEqOp_eq_zero q hq\n",
+      "reference_outline": "connect Lagrangian and Hamiltonian dynamics; track canonical momentum and phase-space convention",
+      "known_shortcuts": [
+        {
+          "declaration": "ClassicalMechanics.HarmonicOscillator.equationOfMotion_iff_hamiltonEqOp_eq_zero",
+          "note": "Exact shortcut; intended physics sophistication exceeds reference Lean effort."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models."
+      ]
+    },
+    {
+      "id": "classical.oscillator_formulations.newton_energy_two_times",
+      "family": "oscillator_formulations",
+      "split": "development",
+      "title": "Newton oscillator dynamics conserve energy between any times",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Intended capability is theorem composition across formulations; Lean effort is modest.",
+      "capabilities": [
+        "translate explicit force law to variational dynamics",
+        "compose energy conservation at two arbitrary times"
+      ],
+      "statement": "A smooth trajectory satisfying the explicit restoring-force Newton law has equal energy at any two times.",
+      "assumptions": [
+        "m > 0 and k > 0 are in S.",
+        "q is C∞ on all Time.",
+        "At every t, m q̈ = −k q."
+      ],
+      "physical_scope": "Global smooth solutions of the unforced positive spring oscillator; existence of such a solution is not proved here.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/Physlib/ClassicalMechanics/HarmonicOscillator/Basic.lean",
+          "locator": "§E.3 and §F.2",
+          "note": "Source states both the dynamics bridge and global energy theorem."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1))\n    (hq : ContDiff ℝ ∞ q)\n    (hN : ∀ t, S.m • Time.deriv (Time.deriv q) t = -S.k • q t)\n    (a b : Time) : S.energy q a = S.energy q b := by\n  sorry\n",
+      "reference_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1))\n    (hq : ContDiff ℝ ∞ q)\n    (hN : ∀ t, S.m • Time.deriv (Time.deriv q) t = -S.k • q t)\n    (a b : Time) : S.energy q a = S.energy q b := by\n  have heom : S.EquationOfMotion q :=\n    (S.equationOfMotion_iff_newtons_2nd_law q hq).2 (by\n      intro t\n      simpa only [HarmonicOscillator.force_eq_linear] using hN t)\n  exact (S.energy_conservation_of_equationOfMotion' q hq heom a).trans\n    (S.energy_conservation_of_equationOfMotion' q hq heom b).symm\n",
+      "reference_outline": "translate explicit force law to variational dynamics; compose energy conservation at two arbitrary times",
+      "known_shortcuts": [
+        {
+          "declaration": "ClassicalMechanics.HarmonicOscillator.energy_conservation_of_equationOfMotion'",
+          "note": "Conservation shortcut still requires the Newton-to-variational bridge."
+        },
+        {
+          "declaration": "ClassicalMechanics.HarmonicOscillator.equationOfMotion_iff_newtons_2nd_law",
+          "note": "Converts the dynamical hypothesis after force normalization."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models."
+      ]
+    },
+    {
+      "id": "classical.work_energy.conservative_power",
+      "family": "work_energy",
+      "split": "development",
+      "title": "Local mechanical energy conservation for a differentiable potential",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning is the work-energy cancellation; Lean effort is composing derivative certificates.",
+      "capabilities": [
+        "apply product and chain rules",
+        "substitute Newton force balance"
+      ],
+      "statement": "If q̇ = v, v̇ = a, U′(q) = g and m a = −g, then the derivative of m v²/2 + U(q) is zero.",
+      "assumptions": [
+        "m > 0.",
+        "HasDerivAt supplies q̇, v̇ and U′ at the exact evaluation points.",
+        "Newton force balance m a = −g."
+      ],
+      "physical_scope": "One-dimensional constant-mass particle in a time-independent potential; local statement at t.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.2.3, equations (1.5)–(1.10)",
+          "note": "The target is an original local scalar specialization of the work-energy argument."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v U : ℝ → ℝ) (m a g t : ℝ) (hm : 0 < m)\n    (hq : HasDerivAt q (v t) t) (hv : HasDerivAt v a t)\n    (hU : HasDerivAt U g (q t)) (hN : m * a = -g) :\n    HasDerivAt (fun s => m / 2 * (v s)^2 + U (q s)) 0 t := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v U : ℝ → ℝ) (m a g t : ℝ) (hm : 0 < m)\n    (hq : HasDerivAt q (v t) t) (hv : HasDerivAt v a t)\n    (hU : HasDerivAt U g (q t)) (hN : m * a = -g) :\n    HasDerivAt (fun s => m / 2 * (v s)^2 + U (q s)) 0 t := by\n  have h := ((hv.pow 2).const_mul (m / 2)).add (hU.comp t hq)\n  convert! h using 1 <;> nlinarith [congrArg (fun z : ℝ => z * v t) hN]\n",
+      "reference_outline": "apply product and chain rules; substitute Newton force balance",
+      "known_shortcuts": [
+        {
+          "declaration": "HasDerivAt.pow",
+          "note": "Generic calculus rule, not the physics conclusion."
+        },
+        {
+          "declaration": "HasDerivAt.comp",
+          "note": "Generic potential chain rule; force balance must still cancel terms."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models."
+      ]
+    },
+    {
+      "id": "classical.work_energy.forced_damped_power",
+      "family": "work_energy",
+      "split": "development",
+      "title": "External work minus viscous dissipation",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Requires the sign of damping and the distinction between energy rate and force; API effort resembles the conservative family case.",
+      "capabilities": [
+        "differentiate kinetic and potential energy",
+        "separate supplied power from nonnegative dissipation"
+      ],
+      "statement": "For m v̇ = F − γv − U′(q), mechanical energy has derivative Fv − γv².",
+      "assumptions": [
+        "m > 0 and γ ≥ 0.",
+        "HasDerivAt gives q̇ = v, v̇ = a, and U′(q) = g at t.",
+        "m a = F − γ v(t) − g."
+      ],
+      "physical_scope": "A local scalar particle model with linear viscous damping and arbitrary instantaneous applied force F.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.2.3 and §1.2.4 example 2",
+          "note": "Original forced generalization of the work-energy and damped-oscillator equations."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v U : ℝ → ℝ) (m γ F a g t : ℝ) (hm : 0 < m) (hγ : 0 ≤ γ)\n    (hq : HasDerivAt q (v t) t) (hv : HasDerivAt v a t)\n    (hU : HasDerivAt U g (q t)) (hN : m * a = F - γ * v t - g) :\n    HasDerivAt (fun s => m / 2 * (v s)^2 + U (q s))\n      (F * v t - γ * (v t)^2) t := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v U : ℝ → ℝ) (m γ F a g t : ℝ) (hm : 0 < m) (hγ : 0 ≤ γ)\n    (hq : HasDerivAt q (v t) t) (hv : HasDerivAt v a t)\n    (hU : HasDerivAt U g (q t)) (hN : m * a = F - γ * v t - g) :\n    HasDerivAt (fun s => m / 2 * (v s)^2 + U (q s))\n      (F * v t - γ * (v t)^2) t := by\n  have h := ((hv.pow 2).const_mul (m / 2)).add (hU.comp t hq)\n  convert! h using 1 <;> nlinarith [congrArg (fun z : ℝ => z * v t) hN]\n",
+      "reference_outline": "differentiate kinetic and potential energy; separate supplied power from nonnegative dissipation",
+      "known_shortcuts": [
+        {
+          "declaration": "HasDerivAt.pow",
+          "note": "Calculus automation leaves the force and power convention to the author."
+        },
+        {
+          "declaration": "HasDerivAt.comp",
+          "note": "Generic chain rule only."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "No assertion that driven energy decreases; forcing can supply more power than damping removes."
+      ]
+    },
+    {
+      "id": "classical.work_energy.damped_energy_antitone",
+      "family": "work_energy",
+      "split": "development",
+      "title": "Damped oscillator energy never increases",
+      "difficulty_band": "stretch",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning combines dissipation with a global argument; Lean work includes rational normalization and the mean-value API.",
+      "capabilities": [
+        "derive the dissipative energy rate from the ODE",
+        "lift a derivative sign to a global order property"
+      ],
+      "statement": "Every global differentiable solution of q̇ = v and m v̇ = −kq − γv has antitone mechanical energy.",
+      "assumptions": [
+        "m > 0, k > 0, γ ≥ 0.",
+        "The two HasDerivAt equations hold at every real time."
+      ],
+      "physical_scope": "Unforced scalar viscously damped harmonic oscillator on all ℝ. The theorem is conditional on a global solution.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.2.4 example 2",
+          "note": "Exact monotonicity is a formal refinement of the stated loss of oscillator energy."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v : ℝ → ℝ) (m k γ : ℝ) (hm : 0 < m) (hk : 0 < k) (hγ : 0 ≤ γ)\n    (hq : ∀ t, HasDerivAt q (v t) t)\n    (hv : ∀ t, HasDerivAt v ((-k * q t - γ * v t) / m) t) :\n    Antitone (fun t => m / 2 * (v t)^2 + k / 2 * (q t)^2) := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v : ℝ → ℝ) (m k γ : ℝ) (hm : 0 < m) (hk : 0 < k) (hγ : 0 ≤ γ)\n    (hq : ∀ t, HasDerivAt q (v t) t)\n    (hv : ∀ t, HasDerivAt v ((-k * q t - γ * v t) / m) t) :\n    Antitone (fun t => m / 2 * (v t)^2 + k / 2 * (q t)^2) := by\n  have hd : ∀ t, HasDerivAt (fun s => m / 2 * (v s)^2 + k / 2 * (q s)^2)\n      (-γ * (v t)^2) t := by\n    intro t\n    have h := (((hv t).pow 2).const_mul (m / 2)).add\n      (((hq t).pow 2).const_mul (k / 2))\n    convert! h using 1 <;> field_simp [ne_of_gt hm] <;> ring\n  apply antitone_of_deriv_nonpos (fun t => (hd t).differentiableAt)\n  intro t\n  rw [(hd t).deriv]\n  exact mul_nonpos_of_nonpos_of_nonneg (neg_nonpos.mpr hγ) (sq_nonneg _)\n",
+      "reference_outline": "derive the dissipative energy rate from the ODE; lift a derivative sign to a global order property",
+      "known_shortcuts": [
+        {
+          "declaration": "antitone_of_deriv_nonpos",
+          "note": "Mean-value theorem supplies global monotonicity after the energy rate is proved."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "Nonincrease is proved, not convergence to equilibrium or strict decay for all distinct times."
+      ]
+    },
+    {
+      "id": "classical.finite_power.kinetic_work",
+      "family": "finite_power",
+      "split": "holdout",
+      "title": "Finite-coordinate kinetic energy obeys the power law",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Reasoning is a finite-dimensional work theorem; Lean effort is coordinating sums, derivative certificates and mass division.",
+      "capabilities": [
+        "differentiate a finite energy sum",
+        "use coordinatewise Newton equations with nonzero masses"
+      ],
+      "statement": "For finitely many velocity components with mᵢ v̇ᵢ = Fᵢ, the derivative of summed kinetic energy is summed force times velocity.",
+      "assumptions": [
+        "n is arbitrary, including zero.",
+        "Every mᵢ > 0 is constant.",
+        "Every velocity component has derivative Fᵢ/mᵢ at t."
+      ],
+      "physical_scope": "Finite collection of scalar degrees of freedom, equally usable for coordinates or particles; no continuum limit.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.2.3 equation (1.5) and §1.3",
+          "note": "Original finite-coordinate power specialization."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (m F : Fin n → ℝ) (v : Fin n → ℝ → ℝ) (t : ℝ)\n    (hm : ∀ i, 0 < m i)\n    (hv : ∀ i, HasDerivAt (v i) (F i / m i) t) :\n    HasDerivAt (fun s => ∑ i, m i / 2 * (v i s)^2)\n      (∑ i, F i * v i t) t := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (m F : Fin n → ℝ) (v : Fin n → ℝ → ℝ) (t : ℝ)\n    (hm : ∀ i, 0 < m i)\n    (hv : ∀ i, HasDerivAt (v i) (F i / m i) t) :\n    HasDerivAt (fun s => ∑ i, m i / 2 * (v i s)^2)\n      (∑ i, F i * v i t) t := by\n  apply HasDerivAt.fun_sum\n  intro i hi\n  convert! ((hv i).pow 2).const_mul (m i / 2) using 1 <;>\n    field_simp [ne_of_gt (hm i)] <;> ring\n",
+      "reference_outline": "differentiate a finite energy sum; use coordinatewise Newton equations with nonzero masses",
+      "known_shortcuts": [
+        {
+          "declaration": "HasDerivAt.fun_sum",
+          "note": "Finite sum derivative rule; no direct library statement of this physics target."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "F denotes instantaneous forces; trajectories and force fields away from t are not specified."
+      ]
+    },
+    {
+      "id": "classical.central_force.zero_torque",
+      "family": "central_force",
+      "split": "holdout",
+      "title": "Radial acceleration gives zero angular-momentum rate",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning identifies torque cancellation; Lean effort is local differential algebra.",
+      "capabilities": [
+        "differentiate angular momentum by the product rule",
+        "cancel the torque for radial acceleration"
+      ],
+      "statement": "If planar acceleration is a scalar multiple of position, the out-of-plane angular momentum has zero derivative.",
+      "assumptions": [
+        "m > 0 is constant.",
+        "Position derivatives are the two velocity components.",
+        "Acceleration components are c x and c y with the same real c at t."
+      ],
+      "physical_scope": "Planar central acceleration about a fixed origin. c can have either sign; no singular force law or collision domain is asserted.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.2.2, angular momentum for a central force",
+          "note": "Original planar component formalization of the central-force argument."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (x y u v : ℝ → ℝ) (m c t : ℝ) (hm : 0 < m)\n    (hx : HasDerivAt x (u t) t) (hy : HasDerivAt y (v t) t)\n    (hu : HasDerivAt u (c * x t) t) (hv : HasDerivAt v (c * y t) t) :\n    HasDerivAt (fun s => m * (x s * v s - y s * u s)) 0 t := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (x y u v : ℝ → ℝ) (m c t : ℝ) (hm : 0 < m)\n    (hx : HasDerivAt x (u t) t) (hy : HasDerivAt y (v t) t)\n    (hu : HasDerivAt u (c * x t) t) (hv : HasDerivAt v (c * y t) t) :\n    HasDerivAt (fun s => m * (x s * v s - y s * u s)) 0 t := by\n  have h := ((hx.mul hv).sub (hy.mul hu)).const_mul m\n  convert! h using 1 <;> ring\n",
+      "reference_outline": "differentiate angular momentum by the product rule; cancel the torque for radial acceleration",
+      "known_shortcuts": [
+        {
+          "declaration": "HasDerivAt.mul",
+          "note": "Generic product rule; radial torque cancellation remains to be proved."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models."
+      ]
+    },
+    {
+      "id": "classical.central_force.angular_momentum_constant",
+      "family": "central_force",
+      "split": "holdout",
+      "title": "Central-force angular momentum is a global invariant",
+      "difficulty_band": "stretch",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Adds quantifier discipline and a global mean-value argument to local torque cancellation.",
+      "capabilities": [
+        "derive the local angular-momentum rate",
+        "use connected real time to obtain a global invariant"
+      ],
+      "statement": "A planar trajectory with radial acceleration at every real time has the same angular momentum at any two times.",
+      "assumptions": [
+        "m > 0 is constant.",
+        "ẋ = u and ẏ = v everywhere.",
+        "u̇ = c(t)x and v̇ = c(t)y everywhere; c need not itself be differentiable."
+      ],
+      "physical_scope": "Global planar trajectories under a central acceleration, conditional on the displayed derivative equations.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.2.2",
+          "note": "Original local-to-global formalization; this is related to but distinct from the local torque target."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (x y u v c : ℝ → ℝ) (m : ℝ) (hm : 0 < m)\n    (hx : ∀ t, HasDerivAt x (u t) t) (hy : ∀ t, HasDerivAt y (v t) t)\n    (hu : ∀ t, HasDerivAt u (c t * x t) t)\n    (hv : ∀ t, HasDerivAt v (c t * y t) t) (a b : ℝ) :\n    m * (x a * v a - y a * u a) = m * (x b * v b - y b * u b) := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (x y u v c : ℝ → ℝ) (m : ℝ) (hm : 0 < m)\n    (hx : ∀ t, HasDerivAt x (u t) t) (hy : ∀ t, HasDerivAt y (v t) t)\n    (hu : ∀ t, HasDerivAt u (c t * x t) t)\n    (hv : ∀ t, HasDerivAt v (c t * y t) t) (a b : ℝ) :\n    m * (x a * v a - y a * u a) = m * (x b * v b - y b * u b) := by\n  have hd : ∀ t, HasDerivAt (fun s => m * (x s * v s - y s * u s)) 0 t := by\n    intro t\n    have h := (((hx t).mul (hv t)).sub ((hy t).mul (hu t))).const_mul m\n    convert! h using 1 <;> ring\n  exact is_const_of_deriv_eq_zero (fun t => (hd t).differentiableAt)\n    (fun t => (hd t).deriv) a b\n",
+      "reference_outline": "derive the local angular-momentum rate; use connected real time to obtain a global invariant",
+      "known_shortcuts": [
+        {
+          "declaration": "is_const_of_deriv_eq_zero",
+          "note": "Global calculus shortcut requires both differentiability and the locally derived zero derivative."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "For singular gravity, collision-free interval versions require a separate domain theorem."
+      ]
+    },
+    {
+      "id": "classical.many_body.two_body_momentum",
+      "family": "many_body",
+      "split": "development",
+      "title": "Action and reaction conserve two-body momentum",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Action/reaction cancellation and a global invariant are the reasoning target; Lean effort includes nonzero mass divisions.",
+      "capabilities": [
+        "differentiate total momentum",
+        "cancel internal forces",
+        "obtain global constancy"
+      ],
+      "statement": "Two constant positive masses experiencing opposite internal forces have constant total momentum.",
+      "assumptions": [
+        "m₁ > 0 and m₂ > 0.",
+        "At every real time, v̇₁ = F/m₁ and v̇₂ = −F/m₂.",
+        "There are no external-force terms."
+      ],
+      "physical_scope": "One Cartesian component of an isolated two-body Newtonian system; F can depend arbitrarily on time along the solution.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.3, Newtonian mechanics of many particles",
+          "note": "Original two-body component specialization of total-momentum conservation."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (v₁ v₂ F : ℝ → ℝ) (m₁ m₂ : ℝ) (hm₁ : 0 < m₁) (hm₂ : 0 < m₂)\n    (h₁ : ∀ t, HasDerivAt v₁ (F t / m₁) t)\n    (h₂ : ∀ t, HasDerivAt v₂ (-F t / m₂) t) (a b : ℝ) :\n    m₁ * v₁ a + m₂ * v₂ a = m₁ * v₁ b + m₂ * v₂ b := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (v₁ v₂ F : ℝ → ℝ) (m₁ m₂ : ℝ) (hm₁ : 0 < m₁) (hm₂ : 0 < m₂)\n    (h₁ : ∀ t, HasDerivAt v₁ (F t / m₁) t)\n    (h₂ : ∀ t, HasDerivAt v₂ (-F t / m₂) t) (a b : ℝ) :\n    m₁ * v₁ a + m₂ * v₂ a = m₁ * v₁ b + m₂ * v₂ b := by\n  have hd : ∀ t, HasDerivAt (fun s => m₁ * v₁ s + m₂ * v₂ s) 0 t := by\n    intro t\n    have h := ((h₁ t).const_mul m₁).add ((h₂ t).const_mul m₂)\n    convert! h using 1 <;> field_simp [ne_of_gt hm₁, ne_of_gt hm₂] <;> ring\n  exact is_const_of_deriv_eq_zero (fun t => (hd t).differentiableAt)\n    (fun t => (hd t).deriv) a b\n",
+      "reference_outline": "differentiate total momentum; cancel internal forces; obtain global constancy",
+      "known_shortcuts": [
+        {
+          "declaration": "is_const_of_deriv_eq_zero",
+          "note": "Handles the final connected-domain calculus step, not force cancellation."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models."
+      ]
+    },
+    {
+      "id": "classical.many_body.finite_internal_force",
+      "family": "many_body",
+      "split": "development",
+      "title": "Antisymmetric pair forces give zero total momentum rate",
+      "difficulty_band": "stretch",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Reasoning connects Newton equations, antisymmetry, and summation; Lean work requires a double-sum transpose and derivative normalization.",
+      "capabilities": [
+        "differentiate total momentum as a finite sum",
+        "cancel pair forces using index interchange"
+      ],
+      "statement": "For arbitrary finite n, antisymmetric pair forces and Newton component equations imply zero derivative of total momentum.",
+      "assumptions": [
+        "All constant masses mᵢ are positive.",
+        "Fᵢⱼ = −Fⱼᵢ, including the consequent zero diagonal.",
+        "v̇ᵢ(t) = (Σⱼ Fᵢⱼ)/mᵢ at the specified time."
+      ],
+      "physical_scope": "One Cartesian component of n interacting particles without external forces; instantaneous pair-force data.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.3",
+          "note": "Original finite sum formalization of the internal-force cancellation."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (m : Fin n → ℝ) (F : Fin n → Fin n → ℝ)\n    (v : Fin n → ℝ → ℝ) (t : ℝ) (hm : ∀ i, 0 < m i)\n    (hF : ∀ i j, F i j = -F j i)\n    (hv : ∀ i, HasDerivAt (v i) ((∑ j, F i j) / m i) t) :\n    HasDerivAt (fun s => ∑ i, m i * v i s) 0 t := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (m : Fin n → ℝ) (F : Fin n → Fin n → ℝ)\n    (v : Fin n → ℝ → ℝ) (t : ℝ) (hm : ∀ i, 0 < m i)\n    (hF : ∀ i j, F i j = -F j i)\n    (hv : ∀ i, HasDerivAt (v i) ((∑ j, F i j) / m i) t) :\n    HasDerivAt (fun s => ∑ i, m i * v i s) 0 t := by\n  have hs : (∑ i, ∑ j, F i j) = -(∑ i, ∑ j, F i j) := by\n    calc\n      (∑ i, ∑ j, F i j) = ∑ i, ∑ j, -F j i := by\n        apply Finset.sum_congr rfl\n        intro i hi\n        apply Finset.sum_congr rfl\n        intro j hj\n        exact hF i j\n      _ = -(∑ i, ∑ j, F j i) := by simp only [Finset.sum_neg_distrib]\n      _ = -(∑ i, ∑ j, F i j) := by rw [Finset.sum_comm]\n  have hz : (∑ i, ∑ j, F i j) = 0 := by linarith\n  rw [← hz]\n  apply HasDerivAt.fun_sum\n  intro i hi\n  convert! (hv i).const_mul (m i) using 1 <;>\n    field_simp [ne_of_gt (hm i)]\n",
+      "reference_outline": "differentiate total momentum as a finite sum; cancel pair forces using index interchange",
+      "known_shortcuts": [
+        {
+          "declaration": "Finset.sum_comm",
+          "note": "Reindexing shortcut exposes antisymmetry; the force cancellation is not supplied as a hypothesis."
+        },
+        {
+          "declaration": "HasDerivAt.fun_sum",
+          "note": "Generic calculus over finite sums."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models."
+      ]
+    },
+    {
+      "id": "classical.exact_oscillator.trajectory_derivatives",
+      "family": "exact_oscillator",
+      "split": "development",
+      "title": "Trigonometric oscillator trajectory solves the first-order system",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning checks a proposed solution; Lean work combines trigonometric chain rules and polynomial normalization.",
+      "capabilities": [
+        "differentiate an explicit trajectory twice",
+        "verify both first-order oscillator equations"
+      ],
+      "statement": "q(t) = A cos(ωt) + B sin(ωt), with its explicit velocity, satisfies q̇ = v and v̇ = −ω²q.",
+      "assumptions": [
+        "ω > 0.",
+        "A, B and the evaluation time are arbitrary real numbers."
+      ],
+      "physical_scope": "Scalar harmonic oscillator with angular frequency ω; corresponding k/m = ω². This verifies the displayed solution, not uniqueness.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.2.4 example 1",
+          "note": "Original explicit trigonometric solution verification for the stated oscillator force law."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (A B ω t : ℝ) (hω : 0 < ω) :\n    HasDerivAt (fun s => A * Real.cos (ω * s) + B * Real.sin (ω * s))\n      (-A * ω * Real.sin (ω * t) + B * ω * Real.cos (ω * t)) t ∧\n    HasDerivAt (fun s => -A * ω * Real.sin (ω * s) + B * ω * Real.cos (ω * s))\n      (-ω^2 * (A * Real.cos (ω * t) + B * Real.sin (ω * t))) t := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (A B ω t : ℝ) (hω : 0 < ω) :\n    HasDerivAt (fun s => A * Real.cos (ω * s) + B * Real.sin (ω * s))\n      (-A * ω * Real.sin (ω * t) + B * ω * Real.cos (ω * t)) t ∧\n    HasDerivAt (fun s => -A * ω * Real.sin (ω * s) + B * ω * Real.cos (ω * s))\n      (-ω^2 * (A * Real.cos (ω * t) + B * Real.sin (ω * t))) t := by\n  have ha : HasDerivAt (fun s : ℝ => ω * s) ω t := hasDerivAt_const_mul ω\n  constructor\n  · convert! (ha.cos.const_mul A).add (ha.sin.const_mul B) using 1 <;> ring\n  · convert! (ha.sin.const_mul (-A * ω)).add (ha.cos.const_mul (B * ω)) using 1 <;> ring\n",
+      "reference_outline": "differentiate an explicit trajectory twice; verify both first-order oscillator equations",
+      "known_shortcuts": [
+        {
+          "declaration": "HasDerivAt.sin",
+          "note": "Generic trigonometric chain rule."
+        },
+        {
+          "declaration": "HasDerivAt.cos",
+          "note": "Generic trigonometric chain rule; coefficient signs and frequency powers still matter."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "The ω = 0 free-particle family is outside this target."
+      ]
+    },
+    {
+      "id": "classical.hamiltonian_flow.finite_energy_rate",
+      "family": "hamiltonian_flow",
+      "split": "holdout",
+      "title": "General finite-dimensional autonomous Hamiltonian energy rate",
+      "difficulty_band": "stretch",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. The reasoning is general canonical energy conservation; Lean API effort concerns products, finite spaces, and a Fréchet derivative certificate.",
+      "capabilities": [
+        "apply the full phase-space chain rule",
+        "use canonical Hamiltonian signs",
+        "cancel a finite contraction"
+      ],
+      "statement": "For any finite-dimensional Hamiltonian with the displayed Fréchet differential, Hamilton equations imply zero derivative of H along the trajectory.",
+      "assumptions": [
+        "n is finite.",
+        "H has no explicit time argument.",
+        "HasFDerivAt H L identifies the full differential at (q(t), p(t)).",
+        "L(δq,δp) = Σᵢ(gqᵢ δqᵢ + gpᵢ δpᵢ) for all variations.",
+        "q̇ = gp and ṗ = −gq at t."
+      ],
+      "physical_scope": "Arbitrary autonomous C1-at-the-point canonical Hamiltonian on ℝⁿ × ℝⁿ, including nonseparable Hamiltonians; local in time.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/dynhtml/S4.html",
+          "locator": "§4.1.4, conservation when ∂H/∂t = 0",
+          "note": "Original finite-dimensional differential-certificate formalization."
+        },
+        {
+          "uri": "https://www.unige.ch/~hairer/preprints/hairer-pisa.pdf",
+          "locator": "§2, pp.2–3",
+          "note": "Confirms canonical equations and energy preservation conventions."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (H : ((Fin n → ℝ) × (Fin n → ℝ)) → ℝ)\n    (L : ((Fin n → ℝ) × (Fin n → ℝ)) →L[ℝ] ℝ)\n    (q p : ℝ → Fin n → ℝ) (gq gp : Fin n → ℝ) (t : ℝ)\n    (hH : HasFDerivAt H L (q t, p t))\n    (hL : ∀ dq dp, L (dq, dp) = ∑ i, (gq i * dq i + gp i * dp i))\n    (hq : HasDerivAt q gp t) (hp : HasDerivAt p (fun i => -gq i) t) :\n    HasDerivAt (fun s => H (q s, p s)) 0 t := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (H : ((Fin n → ℝ) × (Fin n → ℝ)) → ℝ)\n    (L : ((Fin n → ℝ) × (Fin n → ℝ)) →L[ℝ] ℝ)\n    (q p : ℝ → Fin n → ℝ) (gq gp : Fin n → ℝ) (t : ℝ)\n    (hH : HasFDerivAt H L (q t, p t))\n    (hL : ∀ dq dp, L (dq, dp) = ∑ i, (gq i * dq i + gp i * dp i))\n    (hq : HasDerivAt q gp t) (hp : HasDerivAt p (fun i => -gq i) t) :\n    HasDerivAt (fun s => H (q s, p s)) 0 t := by\n  have h := hH.comp_hasDerivAt t (hq.prodMk hp)\n  have hz : L (gp, fun i => -gq i) = 0 := by\n    rw [hL]\n    apply Finset.sum_eq_zero\n    intro i hi\n    ring\n  simpa only [Function.comp_def, hz] using! h\n",
+      "reference_outline": "apply the full phase-space chain rule; use canonical Hamiltonian signs; cancel a finite contraction",
+      "known_shortcuts": [
+        {
+          "declaration": "HasFDerivAt.comp_hasDerivAt",
+          "note": "Generic Fréchet-to-trajectory chain rule, not a Hamiltonian conservation theorem."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "The derivative representation is input data for a local theorem; separate tasks are needed to compute it for particular nonseparable H.",
+        "No flow existence, global conservation, or symplecticity theorem is asserted."
+      ]
+    },
+    {
+      "id": "classical.lagrangian_energy.autonomous_energy_rate",
+      "family": "lagrangian_energy",
+      "split": "holdout",
+      "title": "Euler–Lagrange dynamics give the autonomous energy rate",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning distinguishes energy from Lagrangian and canonical momentum from velocity; Lean effort is composing differential certificates.",
+      "capabilities": [
+        "identify canonical momentum from the Lagrangian differential",
+        "combine Euler–Lagrange and chain rules",
+        "cancel the energy rate"
+      ],
+      "statement": "For a time-independent one-coordinate Lagrangian, the Euler–Lagrange momentum equation makes d(pv − L)/dt vanish.",
+      "assumptions": [
+        "Lagr : ℝ × ℝ → ℝ is differentiable at (q(t),v(t)), with full differential D.",
+        "D(dq,dv) = Lq*dq + p(t)*dv for all variations, identifying canonical momentum.",
+        "q̇ = v, v̇ = a and ṗ = Lq at t."
+      ],
+      "physical_scope": "Local autonomous finite-dimensional Lagrangian mechanics with one coordinate. No regular Legendre inverse is required for this energy-rate identity.",
+      "provenance": [
+        {
+          "uri": "https://davidtong.org/pdfs/teaching/classical-dynamics/clas2.pdf",
+          "locator": "§2.4 equations (2.47)–(2.48)",
+          "note": "Original local formalization of the autonomous Lagrangian energy argument."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (Lagr : ℝ × ℝ → ℝ) (D : (ℝ × ℝ) →L[ℝ] ℝ)\n    (q v p : ℝ → ℝ) (Lq a t : ℝ)\n    (hL : HasFDerivAt Lagr D (q t, v t))\n    (hD : ∀ dq dv, D (dq, dv) = Lq * dq + p t * dv)\n    (hq : HasDerivAt q (v t) t) (hv : HasDerivAt v a t)\n    (hEL : HasDerivAt p Lq t) :\n    HasDerivAt (fun s => p s * v s - Lagr (q s, v s)) 0 t := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (Lagr : ℝ × ℝ → ℝ) (D : (ℝ × ℝ) →L[ℝ] ℝ)\n    (q v p : ℝ → ℝ) (Lq a t : ℝ)\n    (hL : HasFDerivAt Lagr D (q t, v t))\n    (hD : ∀ dq dv, D (dq, dv) = Lq * dq + p t * dv)\n    (hq : HasDerivAt q (v t) t) (hv : HasDerivAt v a t)\n    (hEL : HasDerivAt p Lq t) :\n    HasDerivAt (fun s => p s * v s - Lagr (q s, v s)) 0 t := by\n  have hc := hL.comp_hasDerivAt t (hq.prodMk hv)\n  have h := (hEL.mul hv).sub hc\n  have hz : Lq * v t + p t * a - D (v t, a) = 0 := by rw [hD]; ring\n  simpa only [Function.comp_def, hz] using! h\n",
+      "reference_outline": "identify canonical momentum from the Lagrangian differential; combine Euler–Lagrange and chain rules; cancel the energy rate",
+      "known_shortcuts": [
+        {
+          "declaration": "HasFDerivAt.comp_hasDerivAt",
+          "note": "Generic chain rule; Euler–Lagrange cancellation remains explicit."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "The quantity pv − L is the canonical energy; identifying it with kinetic plus potential energy needs additional form assumptions."
+      ]
+    },
+    {
+      "id": "classical.lagrangian_energy.finite_legendre_identity",
+      "family": "lagrangian_energy",
+      "split": "holdout",
+      "title": "Differentiated quadratic momenta give the Legendre energy",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Reasoning links velocity derivatives to a Legendre transform; Lean work requires differentiation and finite-sum normalization.",
+      "capabilities": [
+        "compute canonical momenta by differentiation",
+        "assemble a finite Legendre energy identity"
+      ],
+      "statement": "For finitely many diagonal quadratic kinetic terms, deriving each canonical momentum and taking Σpᵢvᵢ − L yields kinetic plus potential energy.",
+      "assumptions": [
+        "Every constant diagonal mass mᵢ is positive.",
+        "U is a real potential value held fixed during each velocity derivative.",
+        "The configuration has n finite velocity coordinates."
+      ],
+      "physical_scope": "Natural Lagrangian with diagonal constant positive mass matrix at a fixed configuration; a finite-dimensional velocity-side identity.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/dynhtml/S4.html",
+          "locator": "§4.1, Legendre transform and canonical momenta",
+          "note": "Original diagonal finite-coordinate specialization; other velocity coordinates contribute constants to each partial derivative."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (m v : Fin n → ℝ) (U : ℝ) (hm : ∀ i, 0 < m i) :\n    (∑ i, deriv (fun w : ℝ => m i / 2 * w^2 - U) (v i) * v i) -\n      ((∑ i, m i / 2 * (v i)^2) - U) =\n      (∑ i, m i / 2 * (v i)^2) + U := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (m v : Fin n → ℝ) (U : ℝ) (hm : ∀ i, 0 < m i) :\n    (∑ i, deriv (fun w : ℝ => m i / 2 * w^2 - U) (v i) * v i) -\n      ((∑ i, m i / 2 * (v i)^2) - U) =\n      (∑ i, m i / 2 * (v i)^2) + U := by\n  have hp : ∀ i, deriv (fun w : ℝ => m i / 2 * w^2 - U) (v i) = m i * v i := by\n    intro i\n    have h := ((hasDerivAt_pow 2 (v i)).const_mul (m i / 2)).sub_const U\n    convert! h.deriv using 1 <;> ring\n  simp only [hp]\n  have hs : (∑ i, m i * v i * v i) = 2 * ∑ i, m i / 2 * (v i)^2 := by\n    rw [Finset.mul_sum]\n    apply Finset.sum_congr rfl\n    intro i hi\n    ring\n  rw [hs]\n  ring\n",
+      "reference_outline": "compute canonical momenta by differentiation; assemble a finite Legendre energy identity",
+      "known_shortcuts": [
+        {
+          "declaration": "hasDerivAt_pow",
+          "note": "Power derivative computes momenta, leaving the Legendre sum algebra."
+        },
+        {
+          "declaration": "Finset.mul_sum",
+          "note": "Distributes the energy factor through the finite sum."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "The derivative uses the i-th kinetic term minus U; omitted kinetic terms are independent of that velocity and hence have zero partial derivative.",
+        "This target proves no equations of motion."
+      ]
+    },
+    {
+      "id": "classical.canonical_maps.drift_shear",
+      "family": "canonical_maps",
+      "split": "development",
+      "title": "Free drift preserves the canonical alternating form",
+      "difficulty_band": "foundation",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning identifies a canonical shear; Lean proof reduces to exact polynomial algebra.",
+      "capabilities": [
+        "evaluate a phase-space map on tangent vectors",
+        "prove preservation of the canonical alternating form"
+      ],
+      "statement": "The linear phase-space shear (q,p) ↦ (q+hp,p) preserves dq∧dp on all vector pairs.",
+      "assumptions": [
+        "h and all vector components are arbitrary real numbers.",
+        "canonicalForm is the explicit bilinear alternating form q₁p₂ − p₁q₂."
+      ],
+      "physical_scope": "One canonical degree of freedom; h absorbs the time step divided by mass for free drift.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/dynhtml/S4.html",
+          "locator": "§4.4, canonical transformations",
+          "note": "Original linear shear instance of canonical form preservation."
+        },
+        {
+          "uri": "https://www.unige.ch/~hairer/preprints/hairer-pisa.pdf",
+          "locator": "§2, symplectic flow condition",
+          "note": "Provides the geometric numerical mechanics context."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ndef canonicalForm (u v : ℝ × ℝ) : ℝ := u.1 * v.2 - u.2 * v.1\n\ndef driftShear (h : ℝ) (u : ℝ × ℝ) : ℝ × ℝ := (u.1 + h * u.2, u.2)\n\ntheorem classical_target (h : ℝ) (u v : ℝ × ℝ) :\n    canonicalForm (driftShear h u) (driftShear h v) = canonicalForm u v := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ndef canonicalForm (u v : ℝ × ℝ) : ℝ := u.1 * v.2 - u.2 * v.1\n\ndef driftShear (h : ℝ) (u : ℝ × ℝ) : ℝ × ℝ := (u.1 + h * u.2, u.2)\n\ntheorem classical_target (h : ℝ) (u v : ℝ × ℝ) :\n    canonicalForm (driftShear h u) (driftShear h v) = canonicalForm u v := by\n  dsimp [canonicalForm, driftShear]\n  ring\n",
+      "reference_outline": "evaluate a phase-space map on tangent vectors; prove preservation of the canonical alternating form",
+      "known_shortcuts": [
+        {
+          "declaration": "ring",
+          "note": "Complete polynomial shortcut after definitions unfold; this is a transparent foundation control."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "This is a constant linear shear, not a theorem that every volume-preserving map is symplectic in higher dimensions."
+      ]
+    },
+    {
+      "id": "classical.canonical_maps.composition_injective",
+      "family": "canonical_maps",
+      "split": "development",
+      "title": "Canonical linear compositions preserve form and are injective",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Composition alone is easy; recovering injectivity from the alternating form adds the meaningful reasoning step.",
+      "capabilities": [
+        "compose preservation identities",
+        "exploit nondegeneracy with canonical basis vectors"
+      ],
+      "statement": "The composition of two linear maps preserving the canonical alternating form preserves that form and is injective.",
+      "assumptions": [
+        "S and T are real linear maps on ℝ².",
+        "Each preserves canonicalForm for all vector pairs."
+      ],
+      "physical_scope": "Composition law and nondegeneracy consequence for one-degree-of-freedom linear canonical transformations.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/dynhtml/S4.html",
+          "locator": "§4.4, canonical transformations",
+          "note": "Original ℝ² linear composition and injectivity theorem."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ndef canonicalForm (u v : ℝ × ℝ) : ℝ := u.1 * v.2 - u.2 * v.1\n\ndef driftShear (h : ℝ) (u : ℝ × ℝ) : ℝ × ℝ := (u.1 + h * u.2, u.2)\n\ntheorem classical_target (S T : (ℝ × ℝ) →ₗ[ℝ] (ℝ × ℝ))\n    (hS : ∀ u v, canonicalForm (S u) (S v) = canonicalForm u v)\n    (hT : ∀ u v, canonicalForm (T u) (T v) = canonicalForm u v) :\n    (∀ u v, canonicalForm ((S.comp T) u) ((S.comp T) v) = canonicalForm u v) ∧\n      Function.Injective (S.comp T) := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ndef canonicalForm (u v : ℝ × ℝ) : ℝ := u.1 * v.2 - u.2 * v.1\n\ndef driftShear (h : ℝ) (u : ℝ × ℝ) : ℝ × ℝ := (u.1 + h * u.2, u.2)\n\ntheorem classical_target (S T : (ℝ × ℝ) →ₗ[ℝ] (ℝ × ℝ))\n    (hS : ∀ u v, canonicalForm (S u) (S v) = canonicalForm u v)\n    (hT : ∀ u v, canonicalForm (T u) (T v) = canonicalForm u v) :\n    (∀ u v, canonicalForm ((S.comp T) u) ((S.comp T) v) = canonicalForm u v) ∧\n      Function.Injective (S.comp T) := by\n  have hc : ∀ u v, canonicalForm ((S.comp T) u) ((S.comp T) v) = canonicalForm u v := by\n    intro u v\n    exact (hS (T u) (T v)).trans (hT u v)\n  refine ⟨hc, ?_⟩\n  intro u v huv\n  apply Prod.ext\n  · have hu := hc u (0, 1)\n    have hv := hc v (0, 1)\n    rw [huv] at hu\n    simpa [canonicalForm] using hu.symm.trans hv\n  · have hu := hc u (1, 0)\n    have hv := hc v (1, 0)\n    rw [huv] at hu\n    have he := hu.symm.trans hv\n    dsimp [canonicalForm] at he\n    linarith\n",
+      "reference_outline": "compose preservation identities; exploit nondegeneracy with canonical basis vectors",
+      "known_shortcuts": [
+        {
+          "declaration": "LinearMap.comp_apply",
+          "note": "The composition identity is definitional; injectivity still requires nondegeneracy."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "Does not formalize a general symplectic manifold or differentiable nonlinear canonical transformation."
+      ]
+    },
+    {
+      "id": "classical.discrete_oscillator.modified_energy_iterates",
+      "family": "discrete_oscillator",
+      "split": "holdout",
+      "title": "Symplectic Euler preserves its modified quadratic invariant",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. The intended reasoning is recognizing and proving the supplied modified invariant, then iterating it; Lean effort is polynomial algebra plus induction.",
+      "capabilities": [
+        "derive a modified invariant from the actual update map",
+        "propagate a one-step identity to all iterates"
+      ],
+      "statement": "Every iterate of kick-then-drift symplectic Euler preserves q²+p²−hqp for the unit oscillator.",
+      "assumptions": [
+        "h is a fixed real step throughout the iteration.",
+        "The map is exactly p′=p−hq, q′=q+hp′.",
+        "n is any nonnegative integer."
+      ],
+      "physical_scope": "Nondimensional unit-mass, unit-stiffness oscillator under a discrete integrator, not the exact continuous flow.",
+      "provenance": [
+        {
+          "uri": "https://www.unige.ch/~hairer/preprints/hairer-pisa.pdf",
+          "locator": "§2, pp.3–4, symplectic Euler and modified Hamiltonians",
+          "note": "The exact unit-oscillator quadratic invariant is an original specialization; it is not the general asymptotic series theorem."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ndef symplecticEuler (h : ℝ) (z : ℝ × ℝ) : ℝ × ℝ :=\n  (z.1 + h * (z.2 - h * z.1), z.2 - h * z.1)\n\ndef modifiedEnergy (h : ℝ) (z : ℝ × ℝ) : ℝ :=\n  z.1^2 + z.2^2 - h * z.1 * z.2\n\ntheorem classical_target (h : ℝ) (z : ℝ × ℝ) (n : ℕ) :\n    modifiedEnergy h ((symplecticEuler h)^[n] z) = modifiedEnergy h z := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ndef symplecticEuler (h : ℝ) (z : ℝ × ℝ) : ℝ × ℝ :=\n  (z.1 + h * (z.2 - h * z.1), z.2 - h * z.1)\n\ndef modifiedEnergy (h : ℝ) (z : ℝ × ℝ) : ℝ :=\n  z.1^2 + z.2^2 - h * z.1 * z.2\n\ntheorem classical_target (h : ℝ) (z : ℝ × ℝ) (n : ℕ) :\n    modifiedEnergy h ((symplecticEuler h)^[n] z) = modifiedEnergy h z := by\n  have hstep : ∀ w, modifiedEnergy h (symplecticEuler h w) = modifiedEnergy h w := by\n    intro w\n    dsimp [modifiedEnergy, symplecticEuler]\n    ring\n  induction n with\n  | zero => rfl\n  | succ n ih =>\n      rw [Function.iterate_succ_apply', hstep, ih]\n",
+      "reference_outline": "derive a modified invariant from the actual update map; propagate a one-step identity to all iterates",
+      "known_shortcuts": [
+        {
+          "declaration": "ring",
+          "note": "Proves the one-step polynomial invariant once the correct modified energy is chosen."
+        },
+        {
+          "declaration": "Function.iterate_succ_apply'",
+          "note": "Iteration recursion makes the induction short."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "modifiedEnergy is twice a modified Hamiltonian, not the physical energy q²/2+p²/2.",
+        "The identity holds for every h; positivity, stability and a physical-energy error bound need extra step restrictions and are not claimed."
+      ]
+    },
+    {
+      "id": "classical.discrete_oscillator.midpoint_energy",
+      "family": "discrete_oscillator",
+      "split": "holdout",
+      "title": "Implicit midpoint preserves physical oscillator energy",
+      "difficulty_band": "intermediate",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. The reasoning is a discrete work-energy identity; Lean effort is algebra with nonzero mass and the two update equations.",
+      "capabilities": [
+        "use midpoint update equations",
+        "factor differences of quadratic energies",
+        "cancel position and momentum work"
+      ],
+      "statement": "Any pair of states satisfying the implicit midpoint update for a positive-mass positive-spring oscillator have exactly equal physical energy.",
+      "assumptions": [
+        "m > 0 and k > 0.",
+        "The step h is arbitrary real.",
+        "m(q₁−q₀)=h(p₁+p₀)/2 and p₁−p₀=−hk(q₁+q₀)/2."
+      ],
+      "physical_scope": "One step of implicit midpoint for the scalar harmonic oscillator, with canonical momentum p=mq̇.",
+      "provenance": [
+        {
+          "uri": "https://www.unige.ch/~hairer/preprints/hairer-pisa.pdf",
+          "locator": "§2, canonical oscillator equations and geometric integration",
+          "note": "The displayed implicit-midpoint energy calculation is an original direct quadratic specialization, not a quotation of a general preservation theorem."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (m k h q₀ q₁ p₀ p₁ : ℝ) (hm : 0 < m) (hk : 0 < k)\n    (hq : m * (q₁ - q₀) = h * (p₁ + p₀) / 2)\n    (hp : p₁ - p₀ = -h * k * (q₁ + q₀) / 2) :\n    p₁^2 / (2*m) + k / 2 * q₁^2 = p₀^2 / (2*m) + k / 2 * q₀^2 := by\n  sorry\n",
+      "reference_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (m k h q₀ q₁ p₀ p₁ : ℝ) (hm : 0 < m) (hk : 0 < k)\n    (hq : m * (q₁ - q₀) = h * (p₁ + p₀) / 2)\n    (hp : p₁ - p₀ = -h * k * (q₁ + q₀) / 2) :\n    p₁^2 / (2*m) + k / 2 * q₁^2 = p₀^2 / (2*m) + k / 2 * q₀^2 := by\n  have h₁ := congrArg (fun z : ℝ => z * k * (q₁ + q₀)) hq\n  have h₂ := congrArg (fun z : ℝ => z * (p₁ + p₀)) hp\n  field_simp [ne_of_gt hm]\n  nlinarith [h₁, h₂]\n",
+      "reference_outline": "use midpoint update equations; factor differences of quadratic energies; cancel position and momentum work",
+      "known_shortcuts": [
+        {
+          "declaration": "nlinarith",
+          "note": "After denominator clearing, the energy identity follows from weighted update equations."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "Conditional on states satisfying the update; solver existence, uniqueness, roundoff and nonlinear-potential energy preservation are not asserted."
+      ]
+    }
+  ],
+  "negative_cases": [
+    {
+      "id": "classical.altered.proof_hole",
+      "parent_id": "classical.oscillator_formulations.newton_energy_two_times",
+      "category": "proof_hole",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1))\n    (hq : ContDiff ℝ ∞ q)\n    (hN : ∀ t, S.m • Time.deriv (Time.deriv q) t = -S.k • q t)\n    (a b : Time) : S.energy q a = S.energy q b := by\n  sorry\n",
+      "candidate_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (q : Time → EuclideanSpace ℝ (Fin 1))\n    (hq : ContDiff ℝ ∞ q)\n    (hN : ∀ t, S.m • Time.deriv (Time.deriv q) t = -S.k • q t)\n    (a b : Time) : S.energy q a = S.energy q b := by\n  sorry\n",
+      "rationale": "The physical target is unchanged but the candidate leaves a proof hole. Target-side sorry is permitted only to declare the challenge; candidate-side sorry must not be accepted.",
+      "required_diagnostics": [
+        "sorryAx"
+      ],
+      "semantic_change": "No statement change; a proof hole is substituted for the reference proof."
+    },
+    {
+      "id": "classical.altered.restoring_force_sign",
+      "parent_id": "classical.oscillator_formulations.newton_equivalence",
+      "category": "force_sign",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (x : EuclideanSpace ℝ (Fin 1)) :\n    S.force x = S.k • x := by\n  sorry\n",
+      "candidate_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (x : EuclideanSpace ℝ (Fin 1)) :\n    S.force x = S.k • x := by\n  exact S.force_eq_linear x\n",
+      "rationale": "For positive stiffness, a nonzero displacement experiences force −kx. The candidate tries to reuse that theorem to assert +kx; an exact-type mismatch is expected.",
+      "required_diagnostics": [
+        "Type mismatch"
+      ],
+      "semantic_change": "The restoring force is changed into a repulsive force without changing the positive-spring model."
+    },
+    {
+      "id": "classical.altered.totalized_cusp_derivative",
+      "parent_id": "classical.work_energy.conservative_power",
+      "category": "regularity_loss",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target : deriv (fun t : ℝ => |t|) 0 = 0 := by\n  sorry\n",
+      "candidate_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target : deriv (fun t : ℝ => |t|) 0 = 0 := by\n  exact deriv_abs_zero\n",
+      "rationale": "Mathlib deliberately sets deriv to zero where differentiability fails. The real absolute-value trajectory has a cusp at zero, so this valid equality cannot certify a classical velocity or a stationary trajectory. The parent uses HasDerivAt specifically to avoid this interpretation.",
+      "required_diagnostics": [],
+      "semantic_change": "Replace the genuine derivative certificate with a bare totalized derivative equality at a nondifferentiable point."
+    },
+    {
+      "id": "classical.altered.unrestricted_damping",
+      "parent_id": "classical.work_energy.forced_damped_power",
+      "category": "coefficient_domain",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v U : ℝ → ℝ) (m γ F a g t : ℝ) (hm : 0 < m)\n    (hq : HasDerivAt q (v t) t) (hv : HasDerivAt v a t)\n    (hU : HasDerivAt U g (q t)) (hN : m * a = F - γ * v t - g) :\n    HasDerivAt (fun s => m / 2 * (v s)^2 + U (q s))\n      (F * v t - γ * (v t)^2) t := by\n  sorry\n",
+      "candidate_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v U : ℝ → ℝ) (m γ F a g t : ℝ) (hm : 0 < m)\n    (hq : HasDerivAt q (v t) t) (hv : HasDerivAt v a t)\n    (hU : HasDerivAt U g (q t)) (hN : m * a = F - γ * v t - g) :\n    HasDerivAt (fun s => m / 2 * (v s)^2 + U (q s))\n      (F * v t - γ * (v t)^2) t := by\n  have h := ((hv.pow 2).const_mul (m / 2)).add (hU.comp t hq)\n  convert! h using 1 <;> nlinarith [congrArg (fun z : ℝ => z * v t) hN]\n",
+      "rationale": "The power identity remains mathematically true for negative γ, but calling γv² dissipated power is then wrong: the velocity force supplies energy. The kernel should not enforce a scientific sign interpretation absent from the proposition.",
+      "required_diagnostics": [],
+      "semantic_change": "Remove γ ≥ 0 while keeping the physical interpretation of γ as dissipative damping."
+    },
+    {
+      "id": "classical.altered.damping_monotonicity_reversed",
+      "parent_id": "classical.work_energy.damped_energy_antitone",
+      "category": "order_direction",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v : ℝ → ℝ) (m k γ : ℝ) (hm : 0 < m) (hk : 0 < k) (hγ : 0 ≤ γ)\n    (hq : ∀ t, HasDerivAt q (v t) t)\n    (hv : ∀ t, HasDerivAt v ((-k * q t - γ * v t) / m) t) :\n    Monotone (fun t => m / 2 * (v t)^2 + k / 2 * (q t)^2) := by\n  sorry\n",
+      "candidate_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v : ℝ → ℝ) (m k γ : ℝ) (hm : 0 < m) (hk : 0 < k) (hγ : 0 ≤ γ)\n    (hq : ∀ t, HasDerivAt q (v t) t)\n    (hv : ∀ t, HasDerivAt v ((-k * q t - γ * v t) / m) t) :\n    Monotone (fun t => m / 2 * (v t)^2 + k / 2 * (q t)^2) := by\n  have hd : ∀ t, HasDerivAt (fun s => m / 2 * (v s)^2 + k / 2 * (q s)^2)\n      (-γ * (v t)^2) t := by\n    intro t\n    have h := (((hv t).pow 2).const_mul (m / 2)).add\n      (((hq t).pow 2).const_mul (k / 2))\n    convert! h using 1 <;> field_simp [ne_of_gt hm] <;> ring\n  apply antitone_of_deriv_nonpos (fun t => (hd t).differentiableAt)\n  intro t\n  rw [(hd t).deriv]\n  exact mul_nonpos_of_nonpos_of_nonneg (neg_nonpos.mpr hγ) (sq_nonneg _)\n",
+      "rationale": "The unchanged unforced dissipative dynamics give nonincreasing energy. Reversing the order predicate does not follow; the candidate still invokes the antitone theorem.",
+      "required_diagnostics": [
+        "Tactic `apply` failed",
+        "antitone_of_deriv_nonpos"
+      ],
+      "semantic_change": "Change nonincreasing mechanical energy into nondecreasing energy."
+    },
+    {
+      "id": "classical.altered.anisotropic_force_zero_torque",
+      "parent_id": "classical.central_force.zero_torque",
+      "category": "centrality_loss",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (x y u v : ℝ → ℝ) (m c d t : ℝ) (hm : 0 < m)\n    (hx : HasDerivAt x (u t) t) (hy : HasDerivAt y (v t) t)\n    (hu : HasDerivAt u (c * x t) t) (hv : HasDerivAt v (d * y t) t) :\n    HasDerivAt (fun s => m * (x s * v s - y s * u s)) 0 t := by\n  sorry\n",
+      "candidate_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (x y u v : ℝ → ℝ) (m c d t : ℝ) (hm : 0 < m)\n    (hx : HasDerivAt x (u t) t) (hy : HasDerivAt y (v t) t)\n    (hu : HasDerivAt u (c * x t) t) (hv : HasDerivAt v (d * y t) t) :\n    HasDerivAt (fun s => m * (x s * v s - y s * u s)) 0 t := by\n  have h := ((hx.mul hv).sub (hy.mul hu)).const_mul m\n  convert! h using 1 <;> ring\n",
+      "rationale": "Two independent radial coefficients describe an anisotropic linear force. The angular-momentum derivative contains m(d−c)xy and is not identically zero.",
+      "required_diagnostics": [
+        "unsolved goals"
+      ],
+      "semantic_change": "Replace the common radial coefficient c by independent x and y coefficients while asserting zero torque."
+    },
+    {
+      "id": "classical.altered.reaction_sign_removed",
+      "parent_id": "classical.many_body.finite_internal_force",
+      "category": "action_reaction_sign",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (m : Fin n → ℝ) (F : Fin n → Fin n → ℝ)\n    (v : Fin n → ℝ → ℝ) (t : ℝ) (hm : ∀ i, 0 < m i)\n    (hF : ∀ i j, F i j = F j i)\n    (hv : ∀ i, HasDerivAt (v i) ((∑ j, F i j) / m i) t) :\n    HasDerivAt (fun s => ∑ i, m i * v i s) 0 t := by\n  sorry\n",
+      "candidate_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (m : Fin n → ℝ) (F : Fin n → Fin n → ℝ)\n    (v : Fin n → ℝ → ℝ) (t : ℝ) (hm : ∀ i, 0 < m i)\n    (hF : ∀ i j, F i j = F j i)\n    (hv : ∀ i, HasDerivAt (v i) ((∑ j, F i j) / m i) t) :\n    HasDerivAt (fun s => ∑ i, m i * v i s) 0 t := by\n  have hs : (∑ i, ∑ j, F i j) = -(∑ i, ∑ j, F i j) := by\n    calc\n      (∑ i, ∑ j, F i j) = ∑ i, ∑ j, -F j i := by\n        apply Finset.sum_congr rfl\n        intro i hi\n        apply Finset.sum_congr rfl\n        intro j hj\n        exact hF i j\n      _ = -(∑ i, ∑ j, F j i) := by simp only [Finset.sum_neg_distrib]\n      _ = -(∑ i, ∑ j, F i j) := by rw [Finset.sum_comm]\n  have hz : (∑ i, ∑ j, F i j) = 0 := by linarith\n  rw [← hz]\n  apply HasDerivAt.fun_sum\n  intro i hi\n  convert! (hv i).const_mul (m i) using 1 <;>\n    field_simp [ne_of_gt (hm i)]\n",
+      "rationale": "Equal pair forces need not cancel. The proof attempts to use the altered symmetric-force hypothesis where a negative transpose is required.",
+      "required_diagnostics": [
+        "Type mismatch"
+      ],
+      "semantic_change": "Replace Newton action–reaction antisymmetry by symmetric pair forces."
+    },
+    {
+      "id": "classical.altered.hamilton_momentum_sign",
+      "parent_id": "classical.hamiltonian_flow.finite_energy_rate",
+      "category": "hamiltonian_sign",
+      "expected_outcome": "kernel_nonacceptance",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (H : ((Fin n → ℝ) × (Fin n → ℝ)) → ℝ)\n    (L : ((Fin n → ℝ) × (Fin n → ℝ)) →L[ℝ] ℝ)\n    (q p : ℝ → Fin n → ℝ) (gq gp : Fin n → ℝ) (t : ℝ)\n    (hH : HasFDerivAt H L (q t, p t))\n    (hL : ∀ dq dp, L (dq, dp) = ∑ i, (gq i * dq i + gp i * dp i))\n    (hq : HasDerivAt q gp t) (hp : HasDerivAt p gq t) :\n    HasDerivAt (fun s => H (q s, p s)) 0 t := by\n  sorry\n",
+      "candidate_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (n : ℕ) (H : ((Fin n → ℝ) × (Fin n → ℝ)) → ℝ)\n    (L : ((Fin n → ℝ) × (Fin n → ℝ)) →L[ℝ] ℝ)\n    (q p : ℝ → Fin n → ℝ) (gq gp : Fin n → ℝ) (t : ℝ)\n    (hH : HasFDerivAt H L (q t, p t))\n    (hL : ∀ dq dp, L (dq, dp) = ∑ i, (gq i * dq i + gp i * dp i))\n    (hq : HasDerivAt q gp t) (hp : HasDerivAt p gq t) :\n    HasDerivAt (fun s => H (q s, p s)) 0 t := by\n  have h := hH.comp_hasDerivAt t (hq.prodMk hp)\n  have hz : L (gp, fun i => -gq i) = 0 := by\n    rw [hL]\n    apply Finset.sum_eq_zero\n    intro i hi\n    ring\n  simpa only [Function.comp_def, hz] using! h\n",
+      "rationale": "With ṗ = +∂H/∂q, the chain-rule rate generally equals twice the coordinate/momentum-gradient contraction. The original proof computes zero for the negative vector and cannot apply it to this altered trajectory.",
+      "required_diagnostics": [
+        "Type mismatch"
+      ],
+      "semantic_change": "Reverse the canonical momentum equation sign while asserting unchanged autonomous energy conservation."
+    },
+    {
+      "id": "classical.altered.modified_as_physical_energy",
+      "parent_id": "classical.discrete_oscillator.modified_energy_iterates",
+      "category": "observable_relabeling",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ndef symplecticEuler (h : ℝ) (z : ℝ × ℝ) : ℝ × ℝ :=\n  (z.1 + h * (z.2 - h * z.1), z.2 - h * z.1)\n\ndef physicalEnergy (h : ℝ) (z : ℝ × ℝ) : ℝ :=\n  z.1^2 + z.2^2 - h * z.1 * z.2\n\ntheorem classical_target (h : ℝ) (z : ℝ × ℝ) (n : ℕ) :\n    physicalEnergy h ((symplecticEuler h)^[n] z) = physicalEnergy h z := by\n  sorry\n",
+      "candidate_source": "import Mathlib\n\nopen scoped BigOperators\n\ndef symplecticEuler (h : ℝ) (z : ℝ × ℝ) : ℝ × ℝ :=\n  (z.1 + h * (z.2 - h * z.1), z.2 - h * z.1)\n\ndef physicalEnergy (h : ℝ) (z : ℝ × ℝ) : ℝ :=\n  z.1^2 + z.2^2 - h * z.1 * z.2\n\ntheorem classical_target (h : ℝ) (z : ℝ × ℝ) (n : ℕ) :\n    physicalEnergy h ((symplecticEuler h)^[n] z) = physicalEnergy h z := by\n  have hstep : ∀ w, physicalEnergy h (symplecticEuler h w) = physicalEnergy h w := by\n    intro w\n    dsimp [physicalEnergy, symplecticEuler]\n    ring\n  induction n with\n  | zero => rfl\n  | succ n ih =>\n      rw [Function.iterate_succ_apply', hstep, ih]\n",
+      "rationale": "Renaming q²+p²−hqp to physicalEnergy does not make it physical oscillator energy. The valid theorem preserves a step-dependent modified quantity; at h=1 and (q,p)=(1,1), the update (1,0) changes physical q²+p² from 2 to 1 while the modified quantity stays 1.",
+      "required_diagnostics": [],
+      "semantic_change": "Relabel the step-dependent modified invariant as physical energy without changing its definition."
+    },
+    {
+      "id": "classical.altered.inconsistent_mass_domain",
+      "parent_id": "classical.oscillator_formulations.newton_equivalence",
+      "category": "inconsistent_assumptions",
+      "expected_outcome": "semantic_hold",
+      "target_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (hbad : S.m ≤ 0) : S.m = 0 := by\n  sorry\n",
+      "candidate_source": "import Physlib.ClassicalMechanics.HarmonicOscillator.Basic\n\nopen ClassicalMechanics Time\nopen scoped ContDiff\n\ntheorem classical_target (S : HarmonicOscillator) (hbad : S.m ≤ 0) : S.m = 0 := by\n  exfalso\n  exact (not_le_of_gt S.m_pos) hbad\n",
+      "rationale": "The oscillator structure requires positive mass. Adding nonpositive mass makes the domain empty, so arbitrary conclusions become provable. This is a logically valid implication requiring scientific rejection as a model of a realizable oscillator.",
+      "required_diagnostics": [],
+      "semantic_change": "Introduce an assumption contradicting the model’s positive-mass field, yielding a vacuous theorem."
+    }
+  ]
+}

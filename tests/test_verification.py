@@ -36,6 +36,9 @@ def request(**changes):
 
 def configured(tmp_path):
     v = api()
+    resource_source_sha256 = sha(
+        v.boundary.resource_policy.profile_bytes(v.boundary.resource_policy.DEFAULT_PROFILE)
+    )
     target = b"theorem identity (n : Nat) : n = n := by rfl\n"
     env = json.dumps(
         {
@@ -75,9 +78,13 @@ def configured(tmp_path):
             driver_sha256=v.driver_digest(),
             launcher_sha256=v.launcher_digest(),
             seccomp_sha256=v.seccomp_digest(),
+            resource_profile_sha256=api().boundary.ResourceProfile().sha256,
+            resource_profile_source_sha256=resource_source_sha256,
+            resource_policy_sha256=v.boundary.resource_policy.policy_digest(),
             linux_boundary="docker-landlock-seccomp-v1",
             independent_kernel=True,
         ),
+        resource_profile_source_sha256=resource_source_sha256,
     )
     req = request(challenge_sha256=sha(target), environment_digest=sha(env))
     return v.ComparatorVerifier(config), req
@@ -92,6 +99,8 @@ def fake_result(req, **changes):
         challenge_sha256=req.challenge_sha256,
         environment_digest=req.environment_digest,
         candidate_sha256=req.candidate_sha256,
+        resource_profile_sha256=api().boundary.ResourceProfile().sha256,
+        resource_policy_sha256=api().boundary.resource_policy.policy_digest(),
         independent_kernel=False,
         axioms=["propext", "Quot.sound", "Classical.choice"],
         checker_versions={"lean": "v4.34.0", "comparator": "v4.34.0", "nanoda": "qualified-pin"},
@@ -290,8 +299,12 @@ def test_arbitrary_configurable_launcher_is_forbidden():
                 driver_sha256="d" * 64,
                 launcher_sha256=api().launcher_digest(),
                 seccomp_sha256=api().seccomp_digest(),
+                resource_profile_sha256=api().boundary.ResourceProfile().sha256,
+                resource_profile_source_sha256="e" * 64,
+                resource_policy_sha256="f" * 64,
                 linux_boundary="docker-landlock-seccomp-v1",
             ),
+            resource_profile_source_sha256="e" * 64,
             docker_executable="/tmp/fake-success",
         )
 
@@ -443,6 +456,8 @@ def test_confirmed_absence_is_successful_cleanup(tmp_path, monkeypatch, run_code
             return 1, b"already removed"
         if "ls" in argv:
             return 0, b""
+        if "inspect" in argv:
+            return 1, b"already removed"
         raise AssertionError(argv)
 
     monkeypatch.setattr(boundary.shutil, "which", lambda path: "/usr/bin/docker")
@@ -485,12 +500,19 @@ def run_synthetic_driver(tmp_path, monkeypatch, capsys, *, tamper=None, engineer
         challenge_sha256=sha((trusted / "Challenge.lean").read_bytes()),
         driver_sha256=driver.sha(Path(driver.__file__).read_bytes()),
         seccomp_sha256=sha(b"policy"),
+        resource_profile_sha256=driver.resource_policy.profile_digest(
+            driver.resource_policy.DEFAULT_PROFILE
+        ),
+        resource_policy_sha256=driver.resource_policy.policy_digest(),
     )
     if engineering:
         for field in ("semantic_reviewed", "definition_holes", "target_theorem"):
             meta.pop(field, None)
     (trusted / "request.json").write_text(json.dumps(meta))
     (trusted / "seccomp.json").write_bytes(b"policy")
+    (trusted / "resources.json").write_bytes(
+        driver.resource_policy.profile_bytes(driver.resource_policy.DEFAULT_PROFILE)
+    )
     (candidate / "Solution.lean").write_text(req.candidate_source)
     env = json.loads((trusted / "environment.json").read_bytes())
     for name in env["binaries"]:
@@ -642,6 +664,7 @@ def test_engineering_check_does_not_require_or_manufacture_a_review(tmp_path, mo
             execution=v.ExecutionPins.model_validate(
                 production.config.qualification.model_dump(exclude={"qualification_report_sha256"})
             ),
+            resource_profile_source_sha256=production.config.resource_profile_source_sha256,
         )
     )
     engineering_req = v.EngineeringRequest.model_validate(

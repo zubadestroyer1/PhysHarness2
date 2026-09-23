@@ -1,8 +1,10 @@
 # Implementation evidence ledger
 
-Updated 2026-09-15 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) remains the scope.
+Updated 2026-09-22 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) remains the scope.
 Every wave is **unqualified**. Several components are implemented and tested; none of the live
 scientific/fleet exit criteria has been substituted with a mock or a schema check.
+The [current Wave 0/1 delivery](../work/wave01/DELIVERY-2026-09-22.md) records the
+final 8 GiB control evidence and completed physics reports in both kernel modes.
 
 ## Initial development evidence
 
@@ -78,10 +80,29 @@ canonical team runner. The current delivery evidence is in
   preservation. They do not establish live scientific throughput or a qualified fleet.
 - Optional additional initializer-probe coverage is blocked/incomplete and excluded from pass
   counts. An unrelated syntax error cannot satisfy a negative case's required causal diagnosis.
+- Wave 0 now contains 40 proposed real physics targets and 20 altered cases (11 mechanical
+  nonacceptance controls and nine valid semantic-hold controls), separate from the tiny algebra
+  controls. Their references were historically elaborated, but scientific human review,
+  calibration and contamination decisions remain pending.
+- Wave 1 resource enforcement and qualification parsing have current 8 GiB control evidence:
+  image `sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67`,
+  final scope `e8f8c011e29242aa16f7464522b061545ac189f392c729655c57183a578ddb42`,
+  24/24 core/library expected outcomes across both modes, and 16/16 fixed boundary
+  observations. All 10 automatic qualification checks were mechanically satisfied;
+  production approval and scientific review remain pending. Both 60-case physics
+  modes passed all expected outcomes: per mode, 40 positive references verified,
+  11 mechanical controls blocked, and nine valid semantic controls mechanically
+  verified but expert-held. The independent audit matched the stored full-suite
+  assessment without discrepancies; older 2 GiB reports are historical only.
+  The recorded 8 GiB scope also predates the combined PR #1/#20 and assessor changes;
+  its automatic checks are historical, and current-source qualification needs a
+  new scoped run and review.
+  [CI run 35796735015](https://github.com/zubadestroyer1/PhysHarness2/actions/runs/35796735015)
+  passed all five jobs at `a58b94d`.
 
 | Wave | Implemented engineering | Required before the wave can qualify |
 |---|---|---|
-| 0 | Repository, pinned Python/frontend environments, schemas, two program inventories, 60 provenance-bearing tiny algebra fixtures; exact formal source/toolchain locks and 27-declaration inventory | Review the recorded physics build/declaration evidence; expert review of 40 valid targets and 20 negative cases; benchmark inventory remains pending review/uncompiled |
+| 0 | Repository, pinned environments and schemas, 40 proposed real physics targets and 20 altered cases (11 mechanical nonacceptance, nine valid semantic-hold) with historically elaborated references, separate from tiny algebra controls; exact formal source/toolchain locks and 27-declaration inventory | Human review and calibration of the 40 targets and 20 altered cases, including fidelity, difficulty, contamination and holdouts |
 | 1 | Trusted bundles and registry, isolated Comparator, actual Lean/nanoda engineering runs, source/theorem/review-bound receipts, causal negative-case diagnostics and PostgreSQL review locking | Production containment qualification, expert semantic-review process, and larger proof/dependency replay compatibility |
 | 2 | API/CLI/MCP, typed Responses loop, canonical tool/accounting integration, finite single/team supervisor, optional VM tools, live-run preparation/preflight; standalone Codex adapter and accepted-source retrieval | Live automated accepted proof plus subsequent lemma reuse in each program; approved execution deployment and optional research skills |
 | 3 | Temporal/outbox/leases/reservations, canonical VM broker with shared slots, external checkpoints, S3 adapter, E2B lifecycle and managed deployment configuration | Actual managed deployment, safe lease adoption/reconnect, uncertain-operation reconciliation, live fault injection and qualified recovery |
@@ -123,13 +144,20 @@ The PR #1 correction run did not execute a live provider, a Lean kernel or a man
 The wave observations below apply to their recorded source/image hashes; changed verifier bytes
 require a separate rebuild, rerun and repinning.
 
-A dedicated local Colima VM was used for real Linux builds and proof tests; its lifecycle and
-final image preservation are recorded in the delivery report. Lean candidate execution stays
+A dedicated local Colima VM was used for real Linux builds and proof tests. Both the current
+and historical images were archived with a recorded SHA-256 and passing `zstd -t`; the
+VM was observed stopped on 2026-09-22. A fresh-VM restore remains untested. Details are
+in the [current delivery](../work/wave01/DELIVERY-2026-09-22.md). Lean candidate execution stays
 inside that Linux boundary, not the Mac's default environment. The temporary PostgreSQL container
 and tunnel were removed after the concurrency test. Hosted-model identifiers, credentials,
 qualified E2B templates, reviewed proof bundles, cloud inputs and explicit live experiment
 envelopes remain operator inputs. Expert meaning/novelty decisions cannot be supplied by this
 implementation agent. Use [the first live-run guide](FIRST_LIVE_RUN.md) for the pending inputs.
+
+The historical VM used temporary Colima metadata. Future provisioning must set `COLIMA_HOME` to
+persistent user-owned storage such as `$HOME/.local/share/physharness-colima`. During recovery,
+check the Docker endpoint and host agent directly; `colima status` cannot establish absence after
+temporary metadata is lost.
 
 These are separate from engineering gaps above. Resolving credentials alone will not qualify the
 system; implement and exercise the remaining contracts before promoting a wave.

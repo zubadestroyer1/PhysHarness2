@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -12,10 +13,13 @@ import subprocess
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Annotated, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from . import resource_policy as resource_policy
 
 SHA256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 ImageDigest = Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
@@ -26,6 +30,24 @@ MAX_CANDIDATE_CHARACTERS = 2_000_000
 
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+class ResourceProfile(Contract):
+    protocol: Literal["physharness-verifier-resources-v1"] = "physharness-verifier-resources-v1"
+    memory_bytes: int = 8 * 1024**3
+    cpus: int = 4
+    comparator_timeout_seconds: int = 600
+    comparator_output_limit_bytes: int = 256_000
+    checker_slots: int = 1
+
+    @model_validator(mode="after")
+    def bounded(self):
+        resource_policy.validate_profile(self.model_dump())
+        return self
+
+    @property
+    def sha256(self):
+        return resource_policy.profile_digest(self.model_dump())
 
 
 class EngineeringRequest(Contract):
@@ -88,6 +110,9 @@ class ExecutionPins(Contract):
     driver_sha256: SHA256
     launcher_sha256: SHA256
     seccomp_sha256: SHA256
+    resource_profile_sha256: SHA256
+    resource_profile_source_sha256: SHA256
+    resource_policy_sha256: SHA256
     linux_boundary: Literal["docker-landlock-seccomp-v1"]
     independent_kernel: bool = False
 
@@ -101,8 +126,31 @@ class LinuxQualification(ExecutionPins):
 class RunConfig(Contract):
     bundle_directory: Path
     manifest_sha256: SHA256
-    timeout_seconds: int = Field(default=120, ge=1, le=3600)
-    output_limit_bytes: int = Field(default=256_000, ge=1024, le=2_000_000)
+    resources: ResourceProfile = Field(default_factory=ResourceProfile)
+    resource_profile_source_sha256: SHA256
+    timeout_seconds: int | None = Field(default=None, ge=1, le=3600)
+    output_limit_bytes: int | None = Field(default=None, ge=1024, le=13_000_000)
+
+    @model_validator(mode="after")
+    def no_conflicting_caps(self):
+        profile = self.resources.model_dump()
+        if (
+            self.timeout_seconds is not None
+            and self.timeout_seconds != resource_policy.host_timeout(profile)
+        ):
+            raise ValueError(
+                "Set comparator_timeout_seconds in the resource profile; "
+                "conflicting legacy host deadline"
+            )
+        if (
+            self.output_limit_bytes is not None
+            and self.output_limit_bytes != resource_policy.host_output_limit(profile)
+        ):
+            raise ValueError(
+                "Set comparator_output_limit_bytes in the resource profile; "
+                "conflicting legacy host output limit"
+            )
+        return self
 
 
 class ComparatorConfig(RunConfig):
@@ -137,6 +185,8 @@ class DriverResult(Contract):
     challenge_sha256: SHA256
     environment_digest: SHA256
     candidate_sha256: SHA256
+    resource_profile_sha256: SHA256
+    resource_policy_sha256: SHA256
     independent_kernel: bool
     axioms: list[str]
     checker_versions: dict[str, str]
@@ -263,6 +313,23 @@ class ExecutionFailure(Exception):
         self.code, self.diagnostics = code, diagnostics
 
 
+@contextmanager
+def checker_slot(path: Path | None = None):
+    """One holder for this lock path, visible namespace and compatible service UID."""
+    path = path or Path(tempfile.gettempdir()) / "physharness-verifier-slot.lock"
+    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        if os.fstat(descriptor).st_uid != os.getuid():
+            raise ExecutionFailure("checker_slot_invalid", {"operation": "resource slot ownership"})
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise ExecutionFailure("checker_busy", {"checker_slots": 1}) from error
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def bounded_process(argv: list[str], timeout: int, limit: int) -> tuple[int, bytes]:
     """Bound combined output and wall time; terminate the whole client process group."""
     started = time.monotonic()
@@ -331,6 +398,13 @@ class _PinnedRunner:
 
     def _bundle(self, req):
         config = self.config
+        if (
+            config.resources.sha256 != self._pins.resource_profile_sha256
+            or config.resource_profile_source_sha256 != self._pins.resource_profile_source_sha256
+        ):
+            raise ValueError("Resource profile source differs from qualified execution profile")
+        if resource_policy.policy_digest() != self._pins.resource_policy_sha256:
+            raise ValueError("Resource policy differs from qualified execution policy")
         root = config.bundle_directory
         if root.is_symlink() or not root.is_dir():
             raise ValueError("trusted bundle directory unavailable")
@@ -372,7 +446,14 @@ class _PinnedRunner:
             # Candidate compilation may only create artifacts in the fresh .lake directory.
             if (
                 name in files
-                or name in {"Solution.lean", "request.json", "config.json", "seccomp.json"}
+                or name
+                in {
+                    "Solution.lean",
+                    "request.json",
+                    "config.json",
+                    "seccomp.json",
+                    "resources.json",
+                }
                 or name.startswith(".lake/")
             ):
                 raise ValueError("reserved project file")
@@ -432,6 +513,15 @@ class _PinnedRunner:
             ):
                 if getattr(result, key) != getattr(request, key):
                     raise ValueError(f"driver returned mismatched {key}")
+            if (
+                result.resource_profile_sha256 != self.config.resources.sha256
+                or result.resource_policy_sha256 != resource_policy.policy_digest()
+            ):
+                raise ValueError("Driver resource profile or policy differs from pinned execution")
+            result.diagnostics.update(
+                resource_profile_sha256=result.resource_profile_sha256,
+                resource_policy_sha256=result.resource_policy_sha256,
+            )
             if result.checker_versions != env.checker_versions:
                 raise ValueError("checker version provenance differs from pinned environment")
             if not set(result.axioms) <= ALLOWED_AXIOMS:
@@ -500,7 +590,12 @@ class _PinnedRunner:
             )
 
     def _run_container(self, req, manifest, env, files):
+        with checker_slot():
+            return self._run_container_locked(req, manifest, env, files)
+
+    def _run_container_locked(self, req, manifest, env, files):
         config = self.config
+        resources = config.resources.model_dump()
         # PATH and the Docker daemon are service-owned deployment dependencies.
         resolved = shutil.which("docker")
         if resolved is None or Path(resolved).name != "docker":
@@ -525,6 +620,9 @@ class _PinnedRunner:
             meta = req.model_dump(exclude={"candidate_source"})
             meta["driver_sha256"] = driver_digest()
             meta["seccomp_sha256"] = seccomp_digest()
+            meta["resource_profile_sha256"] = config.resources.sha256
+            meta["resource_policy_sha256"] = resource_policy.policy_digest()
+            (trusted / "resources.json").write_bytes(resource_policy.profile_bytes(resources))
             (trusted / "request.json").write_text(json.dumps(meta))
             seccomp = trusted / "seccomp.json"
             seccomp.write_bytes(seccomp_bytes())
@@ -546,8 +644,8 @@ class _PinnedRunner:
                 f"seccomp={seccomp}",
                 "--user=65532:65532",
                 "--pids-limit=128",
-                "--memory=2g",
-                "--cpus=2",
+                f"--memory={resources['memory_bytes']}",
+                f"--cpus={resources['cpus']}",
                 "--tmpfs=/work:rw,nosuid,nodev,size=1g,mode=1777",
                 "--tmpfs=/tmp:rw,nosuid,nodev,size=256m,mode=1777",
                 "--mount",
@@ -559,10 +657,14 @@ class _PinnedRunner:
                 "/opt/physharness/container_driver.py",
             ]
             prior_failure = None
+            failure = None
             result = None
+            state = None
             try:
                 code, output = bounded_process(
-                    argv, config.timeout_seconds, config.output_limit_bytes
+                    argv,
+                    resource_policy.host_timeout(resources),
+                    resource_policy.host_output_limit(resources),
                 )
                 if code:
                     raise ExecutionFailure(
@@ -576,17 +678,70 @@ class _PinnedRunner:
                 result = json.loads(output)
                 return result
             except (ExecutionFailure, ValueError, OSError) as exc:
-                prior_failure = {
-                    "code": getattr(exc, "code", type(exc).__name__),
-                    "diagnostics": getattr(exc, "diagnostics", {"error": str(exc)}),
-                }
-                raise
+                failure = (
+                    exc
+                    if isinstance(exc, ExecutionFailure)
+                    else ExecutionFailure("invalid_checker_response", {"error": str(exc)})
+                )
+                state = self._container_state(resolved, name)
+                failure.diagnostics.update(
+                    container_state=state,
+                    resource_profile_sha256=config.resources.sha256,
+                    resource_profile=resources,
+                )
+                if state.get("oom_killed") is True:
+                    failure.diagnostics["prior_execution_code"] = failure.code
+                    failure.code = "resource_oom"
+                    failure.args = (failure.code,)
+                prior_failure = {"code": failure.code, "diagnostics": failure.diagnostics}
+                raise failure from exc
             finally:
+                # Inspect before removal on every path. The inner cgroup counters are the
+                # primary checker observation; Docker's typed OOMKilled flag is an
+                # additional operator-owned signal when the transport itself succeeded.
+                state = state or self._container_state(resolved, name)
+                if isinstance(result, dict) and isinstance(result.get("diagnostics"), dict):
+                    result["diagnostics"]["container_state"] = state
+                    if state.get("oom_killed") is True:
+                        result.update(
+                            status="blocked",
+                            code="resource_oom",
+                            axioms=[],
+                            independent_kernel=False,
+                        )
+                if failure is not None and "container_state" not in failure.diagnostics:
+                    failure.diagnostics["container_state"] = state
                 # Do not use --rm: explicit removal or an authoritative empty listing
                 # must confirm absence before acceptance. Preserve cleanup diagnostics.
                 cleanup = self._cleanup_container(resolved, name, prior_failure)
                 if isinstance(result, dict) and isinstance(result.get("diagnostics"), dict):
                     result["diagnostics"]["container_cleanup"] = cleanup
+                if failure is not None:
+                    failure.diagnostics["container_cleanup"] = cleanup
+
+    @staticmethod
+    def _container_state(docker, name):
+        try:
+            code, raw = bounded_process(
+                [docker, "container", "inspect", "--format", "{{json .State}}", name], 10, 16384
+            )
+            if code:
+                return {
+                    "status": "unavailable",
+                    "exit_code": code,
+                    "diagnostic": raw.decode("utf-8", errors="replace")[:2000],
+                }
+            state = json.loads(raw)
+            if type(state.get("OOMKilled")) is not bool or type(state.get("ExitCode")) is not int:
+                raise ValueError("Docker state is missing typed OOM/exit observations")
+            return {
+                "status": "observed",
+                "oom_killed": state["OOMKilled"],
+                "exit_code": state["ExitCode"],
+                "error": str(state.get("Error", ""))[:2000],
+            }
+        except (ExecutionFailure, ValueError, OSError, AttributeError) as error:
+            return {"status": "unavailable", "error": str(error)[:500]}
 
     @staticmethod
     def _cleanup_container(docker, name, prior_failure):

@@ -311,6 +311,7 @@ def write_build_context(root: Path, destination) -> None:
         "formal/DeclarationAudit.lean",
         "tools/formal_environment.py",
         "src/physharness/verification/container_driver.py",
+        "src/physharness/verification/resource_policy.py",
     }
     generated = {
         ".lake",
