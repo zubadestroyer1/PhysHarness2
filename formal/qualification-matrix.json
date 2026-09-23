@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "id": "linux-comparator-wave01-v1",
+  "scope": "One pinned Linux image, runtime observation, input snapshot and fixed engineering suites; no fleet or universal soundness claim.",
+  "suites": [
+    {
+      "id": "core",
+      "fixture": "formal/adversarial/cases.json",
+      "modes": [
+        "kernel",
+        "independent_kernel"
+      ],
+      "required_cases": [
+        "classical-positive",
+        "quantum-positive",
+        "Sorry",
+        "ExtraAxiom",
+        "ForgedReceipt",
+        "TargetOverwrite",
+        "ConfigOverwrite",
+        "ChangedDependency",
+        "NativeDecide"
+      ]
+    },
+    {
+      "id": "library",
+      "fixture": "formal/library-cases.json",
+      "modes": [
+        "kernel",
+        "independent_kernel"
+      ],
+      "required_cases": [
+        "library-classical-positive",
+        "library-quantum-positive",
+        "library-quantum-sorry"
+      ]
+    }
+  ],
+  "regression_groups": [
+    {
+      "id": "transport-and-isolation",
+      "nodeids": [
+        "tests/test_verification.py::test_container_flags_and_cleanup_are_enforced",
+        "tests/test_verification.py::test_generated_source_never_executes_on_host",
+        "tests/test_verification.py::test_bounded_process_times_out_and_limits_output",
+        "tests/test_verification.py::test_seccomp_denies_io_uring_socket_bypass",
+        "tests/test_verification.py::test_io_uring_preflight_checks_all_three_denials",
+        "tests/test_verification.py::test_reviewed_theorem_selector_cannot_be_replaced_by_bundle_operator",
+        "tests/test_verifier_boundary_probe.py::test_probe_has_no_arbitrary_command_input",
+        "tests/test_verifier_boundary_probe.py::test_probe_flags_match_actual_verifier_launcher",
+        "tests/test_verification.py::test_container_driver_rejects_manifest_identity_tamper[protocol]",
+        "tests/test_verification.py::test_container_driver_rejects_manifest_identity_tamper[problem_revision_id]",
+        "tests/test_verification.py::test_container_driver_rejects_manifest_identity_tamper[target_digest]",
+        "tests/test_verification.py::test_container_driver_rejects_manifest_identity_tamper[challenge_sha256]",
+        "tests/test_verification.py::test_container_driver_rejects_manifest_identity_tamper[environment_digest]",
+        "tests/test_verification.py::test_container_driver_rejects_manifest_identity_tamper[theorem_names]",
+        "tests/test_verification.py::test_engineering_request_reaches_synthetic_driver_checker_without_review_selector",
+        "tests/test_verification.py::test_engineering_driver_keeps_common_manifest_checks[protocol]",
+        "tests/test_verification.py::test_engineering_driver_keeps_common_manifest_checks[problem_revision_id]",
+        "tests/test_verification.py::test_engineering_driver_keeps_common_manifest_checks[target_digest]",
+        "tests/test_verification.py::test_engineering_driver_keeps_common_manifest_checks[challenge_sha256]",
+        "tests/test_verification.py::test_engineering_driver_keeps_common_manifest_checks[environment_digest]"
+      ]
+    },
+    {
+      "id": "authority-and-atomicity",
+      "nodeids": [
+        "tests/test_authority.py::test_verification_submission_cannot_self_accept_and_unavailable_checker_is_loud",
+        "tests/test_acceptance_integration.py::test_acceptance_enforces_semantic_review_before_calling_checker",
+        "tests/test_acceptance_integration.py::test_review_replacement_after_submission_requires_fresh_verification",
+        "tests/test_acceptance_integration.py::test_acceptance_commit_failure_rolls_back_claim_and_receipt_together",
+        "tests/test_acceptance_integration.py::test_publication_downgrade_keeps_a_typed_blocked_receipt",
+        "tests/test_research_services.py::test_revoked_review_prevents_knowledge_reuse",
+        "tests/test_acceptance_corrections.py::test_canonical_review_reaches_synthetic_comparator",
+        "tests/test_acceptance_corrections.py::test_exact_candidate_limit_reaches_checker",
+        "tests/test_acceptance_corrections.py::test_oversized_candidate_is_rejected_before_queue",
+        "tests/test_acceptance_corrections.py::test_replacing_approved_review_record_blocks_acceptance",
+        "tests/test_acceptance_corrections.py::test_checker_reserved_code_cannot_disable_final_identity_guard[review_id]",
+        "tests/test_acceptance_corrections.py::test_checker_reserved_code_cannot_disable_final_identity_guard[formal_statement]"
+      ]
+    },
+    {
+      "id": "evidence-reporting",
+      "nodeids": [
+        "tests/test_qualification_diagnostics.py::test_unrelated_syntax_error_cannot_count_as_axiom_rejection",
+        "tests/test_qualification_diagnostics.py::test_causal_mismatch_checkpoints_blocked_report_with_observed_output",
+        "tests/test_acceptance_integration.py::test_checkpoint_failure_cannot_leave_a_passing_current_run"
+      ]
+    },
+    {
+      "id": "resource-controls",
+      "nodeids": [
+        "tests/test_verifier_resources.py::test_profile_hash_binds_all_resource_values",
+        "tests/test_verifier_resources.py::test_profile_cannot_be_changed_without_execution_pin",
+        "tests/test_verifier_resources.py::test_confirmed_oom_requires_an_observed_counter_increase",
+        "tests/test_verifier_resources.py::test_single_checker_slot_rejects_concurrent_use",
+        "tests/test_verifier_resources.py::test_driver_timeout_retains_partial_output_and_uses_profile",
+        "tests/test_verifier_resource_bootstrap.py::test_single_bundle_uses_explicit_pinned_resource_profile",
+        "tests/test_verifier_resource_bootstrap.py::test_single_bundle_requires_explicit_resource_profile",
+        "tests/test_verifier_resource_bootstrap.py::test_whitespace_only_profile_source_change_is_rejected",
+        "tests/test_verifier_resource_bootstrap.py::test_policy_only_change_is_rejected_before_verifier_construction",
+        "tests/test_verifier_resource_bootstrap.py::test_legacy_qualification_missing_resource_pin_fails_closed[resource_profile_source_sha256]",
+        "tests/test_verifier_resource_bootstrap.py::test_legacy_qualification_missing_resource_pin_fails_closed[resource_policy_sha256]",
+        "tests/test_verifier_resources.py::test_policy_only_change_is_rejected_before_container_launch",
+        "tests/test_verifier_resources.py::test_raw_profile_source_pin_is_checked_before_container_launch",
+        "tests/test_verifier_registry.py::test_registry_checks_actual_profile_bytes_in_both_construction_paths",
+        "tests/test_verifier_registry.py::test_registry_rejects_changed_values_even_with_updated_source_hash",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[legacy_path]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[value]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[symlink]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[missing]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[oversized]",
+        "tests/test_verifier_registry.py::test_registry_rejects_invalid_profile_source_before_routes_exist[duplicate]"
+      ]
+    }
+  ],
+  "input_files": [
+    "pyproject.toml",
+    "uv.lock",
+    "tests/conftest.py",
+    "src/physharness/verification/boundary.py",
+    "src/physharness/verification/container_driver.py",
+    "src/physharness/verification/bundles.py",
+    "src/physharness/verification/registry.py",
+    "src/physharness/verification/preparation.py",
+    "src/physharness/verification/qualification.py",
+    "src/physharness/acceptance.py",
+    "src/physharness/service.py",
+    "src/physharness/domain.py",
+    "src/physharness/config.py",
+    "src/physharness/bootstrap.py",
+    "src/physharness/evaluation/evidence.py",
+    "infra/run_qualified_lean.py",
+    "formal/environment.lock.json",
+    "formal/Dockerfile",
+    "formal/prepare_lake.py",
+    "formal/record_build.py",
+    "tests/test_verifier_qualification.py",
+    "infra/probe_verifier_boundary.py",
+    "tests/test_verifier_boundary_probe.py",
+    "src/physharness/verification/resource_policy.py",
+    "formal/verifier-resources.json",
+    "tests/test_verifier_resources.py"
+  ],
+  "review_gates": [
+    {
+      "id": "deployment-authority",
+      "reason": "An authorized human must assess the actual runtime, evidence provenance and deployment controls; this module cannot issue approval."
+    },
+    {
+      "id": "scientific-semantics",
+      "reason": "Scientific target interpretation and assumptions need their own authorized review; kernel and fixture reports supply no such review."
+    },
+    {
+      "id": "consolidated-rebuild",
+      "reason": "Reviewer must verify the consolidated recipe was built and recovered in a fresh environment; old recovery-layer evidence cannot establish this."
+    }
+  ],
+  "coverage_gaps": [
+    {
+      "id": "process-exit",
+      "reason": "Optional process-exit probe was stopped after a security filter; initializer failed syntax before execution. Remains incomplete and must not be retried in this task."
+    },
+    {
+      "id": "host-containment",
+      "reason": "Fixed fixtures and host protocol regressions do not establish complete Landlock/seccomp/kernel isolation or cover every syscall or host resource interaction."
+    },
+    {
+      "id": "runtime-resource-stress",
+      "reason": "Host timeout/output-limit regressions do not establish actual cgroup memory, PID, CPU, filesystem exhaustion or all cancellation behavior inside this deployment."
+    },
+    {
+      "id": "database-review-race",
+      "reason": "Prior real PostgreSQL locking evidence is historical; this scoped host matrix does not rerun a current deployment database concurrency check."
+    },
+    {
+      "id": "resource-capacity",
+      "reason": "Historical 2GiB physics runs had confirmed cgroup OOM kills. New8GiB/4CPU/600s profile requires fresh evidence. One service-UID/shared-tempdir lock is not fleet or VM-wide admission control; root schedules one checker on the12GiB VM."
+    }
+  ],
+  "boundary_probe": {
+    "id": "fixed-boundary",
+    "script": "infra/probe_verifier_boundary.py",
+    "required_checks": [
+      "nonroot",
+      "no_capabilities",
+      "no_new_privileges",
+      "seccomp_filter",
+      "unix_socket_denied",
+      "inet_socket_denied",
+      "trusted_canary_intact",
+      "candidate_canary_intact",
+      "trusted_write_denied",
+      "candidate_write_denied",
+      "root_write_denied",
+      "work_write_control",
+      "tmp_write_control",
+      "no_docker_socket",
+      "container_configuration",
+      "memory_events_readable"
+    ]
+  }
+}

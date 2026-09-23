@@ -1,0 +1,49 @@
+{
+  "protocol": "physharness-boundary-evidence-v1",
+  "purpose": "fixed_boundary_probe",
+  "run_id": "ad0011df-dab7-42e5-beaf-5f6960924d95",
+  "status": "passed",
+  "production_qualified": false,
+  "expert_review": "not_provided",
+  "checks": {
+    "nonroot": true,
+    "no_capabilities": true,
+    "no_new_privileges": true,
+    "seccomp_filter": true,
+    "unix_socket_denied": true,
+    "inet_socket_denied": true,
+    "trusted_canary_intact": true,
+    "trusted_write_denied": true,
+    "candidate_canary_intact": true,
+    "candidate_write_denied": true,
+    "root_write_denied": true,
+    "work_write_control": true,
+    "tmp_write_control": true,
+    "no_docker_socket": true,
+    "container_configuration": true
+  },
+  "image_digest": "sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246",
+  "image_metadata_sha256": "75be3be77a1ca65a153fb594d7e71ec72a5ec27b3aabe1e5e75323c580b9f573",
+  "runtime_identity_sha256": "6d45b4cc785e74c75883e6c2bdb42ef3ba50639b7c89bb0614c990d0142474e5",
+  "probe_sha256": "e77b80d7edc8460fbec3cb0434b1c36eac5c5d9f5410c103082ea05072314aeb",
+  "driver_sha256": "0aa043a827abe8dd79960b59e3fcd3d249f5b0600e5e2c68aeb6dfb69e34445f",
+  "launcher_sha256": "aa6ce2b9e18cb24557b7732ae833d3d2062ea67b07f8df05b6370c41cbcee852",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "probe_process": {
+    "exit_code": 0,
+    "output": "{\"protocol\": \"physharness-fixed-boundary-inner-v1\", \"checks\": {\"nonroot\": true, \"no_capabilities\": true, \"no_new_privileges\": true, \"seccomp_filter\": true, \"unix_socket_denied\": true, \"inet_socket_denied\": true, \"trusted_canary_intact\": true, \"trusted_write_denied\": true, \"candidate_canary_intact\": true, \"candidate_write_denied\": true, \"root_write_denied\": true, \"work_write_control\": true, \"tmp_write_control\": true, \"no_docker_socket\": true}, \"observed\": {\"unix_socket_denied_errno\": 1, \"inet_socket_denied_errno\": 1, \"trusted_write_errno\": 13, \"candidate_write_errno\": 13, \"root_write_errno\": 30}, \"probe_sha256\": \"e77b80d7edc8460fbec3cb0434b1c36eac5c5d9f5410c103082ea05072314aeb\", \"driver_sha256\": \"0aa043a827abe8dd79960b59e3fcd3d249f5b0600e5e2c68aeb6dfb69e34445f\", \"binaries\": {\"lean\": \"79fb1d26fa5a39385d59fdc48a711a14b0710ca6480271acce99b4d177cea085\", \"lake\": \"8229bc302b0b7d0e7679e28cc2b830c5aec995ffe5714833503360252f1490ba\", \"comparator\": \"227f482d9fd760fb7b19646d6f6e1abbed3b1a2b62fc77e4a6bb69d2d7693cab\", \"lean4export\": \"4bac3563125b296123283eecc7a49dc91a1c30bc41c199113c41c9258b42ef28\", \"landrun\": \"ff652d627fc822fd5ece4c939446e789cec4ba30814446dabd93234f9bf1615f\", \"nanoda\": \"9fe6d27927d156dd2f053b644f2665521ef42db71d1db8ddd856d9c238482196\"}}\n"
+  },
+  "observed": {
+    "unix_socket_denied_errno": 1,
+    "inet_socket_denied_errno": 1,
+    "trusted_write_errno": 13,
+    "candidate_write_errno": 13,
+    "root_write_errno": 30
+  },
+  "container_cleanup": {
+    "status": "removed",
+    "container_name": "physharness-check-072ce16a83a14a00a3f68515341c9982",
+    "exit_code": 0,
+    "output": "physharness-check-072ce16a83a14a00a3f68515341c9982\n"
+  }
+}

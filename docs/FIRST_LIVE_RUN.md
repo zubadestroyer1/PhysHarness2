@@ -94,7 +94,8 @@ The command checks the canonical source/environment identities and every trusted
 It returns a manifest hash and creates no review or proof receipt. Configure either the existing
 single-bundle settings or `PHYSHARNESS_VERIFICATION_REGISTRY` pointing to an operator-owned
 registry. The two configurations are mutually exclusive. Registry entries each contain an
-exact `problem_revision_id` and `ComparatorConfig`; see
+exact `problem_revision_id`, an absolute `resource_profile` file path and `ComparatorConfig`;
+startup checks that file's raw and canonical hashes against the configuration and qualification; see
 [registry configuration](VERIFICATION.md#multiple-target-bundles).
 
 The operator supplies `LinuxQualification` from actual reviewed execution evidence: image,
