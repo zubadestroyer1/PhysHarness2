@@ -45,8 +45,8 @@ RUN python3 /opt/verifier/record_build.py
 FROM physics-builder AS physics
 COPY formal/DeclarationAudit.lean /opt/verifier/DeclarationAudit.lean
 RUN lake --offline env lean /opt/verifier/DeclarationAudit.lean > /opt/verifier/metadata/declarations-kernel.txt
-COPY src/physharness/verification/container_driver.py /opt/physharness/container_driver.py
-RUN chmod 0555 /opt/physharness/container_driver.py
+COPY src/physharness/verification/container_driver.py src/physharness/verification/resource_policy.py /opt/physharness/
+RUN chmod 0555 /opt/physharness/container_driver.py /opt/physharness/resource_policy.py
 USER 65532:65532
 WORKDIR /work
 ENTRYPOINT ["/usr/bin/python3", "/opt/physharness/container_driver.py"]
@@ -54,8 +54,8 @@ ENTRYPOINT ["/usr/bin/python3", "/opt/physharness/container_driver.py"]
 # Default image contains real checkers and Lean's standard library. Build the
 # physics target explicitly to include the selected Mathlib/Physlib/QuantumInfo set.
 FROM builder AS verifier
-COPY src/physharness/verification/container_driver.py /opt/physharness/container_driver.py
-RUN chmod 0555 /opt/physharness/container_driver.py
+COPY src/physharness/verification/container_driver.py src/physharness/verification/resource_policy.py /opt/physharness/
+RUN chmod 0555 /opt/physharness/container_driver.py /opt/physharness/resource_policy.py
 USER 65532:65532
 WORKDIR /work
 ENTRYPOINT ["/usr/bin/python3", "/opt/physharness/container_driver.py"]

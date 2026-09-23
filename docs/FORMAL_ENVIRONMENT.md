@@ -5,6 +5,13 @@ from pinned inputs. The first aarch64 core image was built on 2026-09-15. Its me
 binary hashes are in `formal/build-observations.aarch64.json`; this is build evidence,
 not approval to accept a scientific result. Sandbox attack tests and expert review
 remain separate requirements in [VERIFICATION.md](VERIFICATION.md).
+The current consolidated physics image is
+`sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67`.
+Its final 8 GiB scope and control results are in the
+[current Wave 0/1 delivery](../work/wave01/DELIVERY-2026-09-22.md). Both physics
+modes completed with their expected engineering outcomes. The current and historical
+images were archived with an integrity check, and the dedicated VM was observed
+stopped. Fresh-VM restore and human review remain pending.
 
 ## Version matrix
 
@@ -47,17 +54,16 @@ profile separate from personal containers; these commands do not activate its co
 forward an SSH agent, edit SSH configuration, or enable port forwarding.
 
 ```sh
-export COLIMA_HOME=/private/tmp/physharness-colima
+export COLIMA_HOME="$HOME/.local/share/physharness-colima"
 colima start --arch aarch64 --vm-type vz --cpus 6 --memory 12 --disk 160 \
   --mount "$PWD:w" --activate=false --ssh-config=false --ssh-agent=false \
   --port-forwarder=none
-export DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock
+export DOCKER_HOST="unix://$COLIMA_HOME/default/docker.sock"
 export TMPDIR="$PWD/.state/tmp"
 mkdir -p "$TMPDIR"
 ```
 
 ```sh
-export DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock
 .venv/bin/python tools/formal_environment.py validate
 bash formal/build-image.sh verifier physharness-formal:lean433
 bash formal/build-image.sh physics physharness-formal:physics433
@@ -73,6 +79,13 @@ The final image uses UID/GID 65532 and the fixed container driver entrypoint.
 The observed build used an aarch64 VM with 6 CPUs, 12 GiB RAM and a 160 GiB data disk.
 The original 60 GiB disk ran out of space during Docker layer unpacking after compilation;
 expanding that same VM preserved the completed build.
+
+New VMs must keep `COLIMA_HOME` in persistent user-owned storage as above. Historical evidence
+and commands identify the earlier dedicated VM at `/private/tmp/physharness-colima`; do not
+migrate or recreate that VM merely to rewrite its provenance. In the current recovery incident,
+temporary Colima metadata disappeared while the VM or Docker endpoint could still exist, so
+`colima status` alone was misleading. Verify the actual Docker socket/endpoint and the Colima
+host agent before deciding whether the runtime is present or recoverable.
 
 `formal/environment.lock.json` pins 19 source archives by full revision and SHA256, Lean
 4.33.0 Linux amd64/arm64 release archives by SHA256, the official Rust 1.90.0 and Go 1.25.1

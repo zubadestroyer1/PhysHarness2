@@ -1,0 +1,64 @@
+{
+  "schema": "physharness-formal-build-v1",
+  "build_status": "built",
+  "sandbox_qualification": "not_run",
+  "semantic_review": "not_reviewed",
+  "independent_kernel_compatibility": "not_run",
+  "source_lock_sha256": "c5615b4f818bb8dfefc0281f116d2ece500597a488eb4ee244b330d41c9235c5",
+  "binaries": {
+    "lean": "79fb1d26fa5a39385d59fdc48a711a14b0710ca6480271acce99b4d177cea085",
+    "lake": "8229bc302b0b7d0e7679e28cc2b830c5aec995ffe5714833503360252f1490ba",
+    "comparator": "227f482d9fd760fb7b19646d6f6e1abbed3b1a2b62fc77e4a6bb69d2d7693cab",
+    "lean4export": "4bac3563125b296123283eecc7a49dc91a1c30bc41c199113c41c9258b42ef28",
+    "landrun": "ff652d627fc822fd5ece4c939446e789cec4ba30814446dabd93234f9bf1615f",
+    "nanoda": "9fe6d27927d156dd2f053b644f2665521ef42db71d1db8ddd856d9c238482196"
+  },
+  "binary_paths": {
+    "lean": "/opt/lean/bin/lean",
+    "lake": "/opt/lean/bin/lake",
+    "comparator": "/opt/verifier/bin/comparator",
+    "lean4export": "/opt/verifier/bin/lean4export",
+    "landrun": "/opt/verifier/bin/landrun",
+    "nanoda": "/opt/verifier/bin/nanoda_bin"
+  },
+  "checker_versions": {
+    "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+    "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+    "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+    "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+    "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+  },
+  "compiler_versions": {
+    "rust": "rustc 1.90.0 (1159e78c4 2025-09-14)",
+    "cargo": "cargo 1.90.0 (840b83a10 2025-07-30)",
+    "go": "go version go1.25.1 linux/arm64"
+  },
+  "prepared_lake_manifests": {
+    "lean4export/lake-manifest.json": "bf32022be9147bf7f338629e432f41abf91dd1ebadf63032cd887fc50d660a0f",
+    "comparator/lake-manifest.json": "a3669b78f05080aca25e4f3e59655f92fa590701699e27cbc5a6e4bdec6ee3d0",
+    "proofwidgets/lake-manifest.json": "b7084ad838e6b22fad1e9bcbe9e7f78e5b212f6eb7d1cf7103240f5dcaed60da",
+    "MD4Lean/lake-manifest.json": "a1c0e47ea37462d3a8648e712b0eb1d856f464e0908ccc980abb09e01f410565",
+    "aesop/lake-manifest.json": "588723f0ffe6ec584ecb8c314acbb71b1497459938908830131f0860a9e95b72",
+    "doc-gen4/lake-manifest.json": "df0f0024ee6bc16945c34fecd48059d8339a35411075f29f288c15683972ed08",
+    "LeanSearchClient/lake-manifest.json": "f86e66df7aa8d1697c97a458ece14cd9b461ac40b22fad9134313c620f090038",
+    "batteries/lake-manifest.json": "6aaa6c906549fedfa102644ee9634589bae7668a15a479c9d07269a08d994827",
+    "importGraph/lake-manifest.json": "93d2e6f71dd7953711fd4a7ee0ca3be97605074222b90e91a76f898c4c40dd00",
+    "plausible/lake-manifest.json": "d2f9868b1f47ce192e0a434c3af61c0d005868dcccb4b1dca215b051e60ccea3",
+    "mathlib/lake-manifest.json": "a6a997f7bb005229dadbdb9fc96f4ca8e2240aaa71af9b41efbf5db9a5604263",
+    "UnicodeBasic/lake-manifest.json": "1e622205e45d92a2aeeecb76bedbbc0e190d59520b292fc754119981c650d46f",
+    "leansqlite/lake-manifest.json": "80a0ffe754b5b19b47f098c60a080af5c57243366333f551c7a5890dff48c226",
+    "Qq/lake-manifest.json": "abc7b556112f218033b4d7875ba87959163b365e0269f3d892dfae1e5950b309",
+    "physlib/lake-manifest.json": "898622b410c886acc6fe98a2358abf6a329ef62ed4d6498d4e7408e7d68645a5",
+    "Cli/lake-manifest.json": "70eec57a6c500b9d647bb80a137487a1800cb224dc4e1c64c2ff335dd21033a6",
+    "BibtexQuery/lake-manifest.json": "f687f8dde9a78572053398f6f0c2db73fe205f48e21918d27a693106a57b645e"
+  },
+  "lake_config_overlays": {
+    "physlib": {
+      "upstream_sha256": "903e753340d0af869d1527225256464ef208e2c19b42a6171eb3a59ae82acaea",
+      "prepared_sha256": "1aaa5325ab697e777d5a1af163dfd79b2ee1bf8353797751cbfe587474b023da",
+      "change": "enableArtifactCache = false; all other settings preserved"
+    }
+  },
+  "image": "sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246",
+  "driver_sha256": "0aa043a827abe8dd79960b59e3fcd3d249f5b0600e5e2c68aeb6dfb69e34445f"
+}
