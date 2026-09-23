@@ -1,0 +1,69 @@
+{
+  "benchmark_sha256": "480838ad87f2527154018a928857d7156b99034727b3af708af97478637e26df",
+  "counts": {
+    "quantum": {
+      "positive": 20,
+      "negative": 10
+    },
+    "classical": {
+      "positive": 20,
+      "negative": 10
+    }
+  },
+  "family_count": 19,
+  "difficulty_bands": {
+    "foundation": 8,
+    "intermediate": 26,
+    "stretch": 6
+  },
+  "splits": {
+    "development": 23,
+    "holdout": 17
+  },
+  "negative_outcomes": {
+    "kernel_nonacceptance": 11,
+    "semantic_hold": 9
+  },
+  "quality_flags": [],
+  "required_inventory_complete": true,
+  "difficulty_status": "author_estimates_not_calibrated",
+  "scientific_review": "pending",
+  "production_qualified": false,
+  "contamination_status": "not_ruled_out",
+  "mechanical_status": "expected_outcomes_observed_in_both_kernel_modes",
+  "reports": [
+    {
+      "sha256": "421e032e3ff736e7b127d8e80481516cea0cd5a909bd9d3050d3e09211b0f02d",
+      "independent_kernel": false,
+      "cases": 60
+    },
+    {
+      "sha256": "84546f7f9febad31b75139eb89669ba628ce939d08445e1971dcf214521e6908",
+      "independent_kernel": true,
+      "cases": 60
+    }
+  ],
+  "resource_profile": {
+    "protocol": "physharness-verifier-resources-v1",
+    "memory_bytes": 8589934592,
+    "cpus": 4,
+    "comparator_timeout_seconds": 600,
+    "comparator_output_limit_bytes": 256000,
+    "checker_slots": 1
+  },
+  "resource_profile_source_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd",
+  "semantic_hold_ids": [
+    "quantum.geometry.altered_only_equal_kets",
+    "quantum.dynamics.altered_identity_evolution_only",
+    "quantum.effects.altered_circular_support_premise",
+    "quantum.decoherence.altered_arbitrary_matrix_called_state",
+    "quantum.decoherence.altered_identity_named_dephasing",
+    "classical.altered.totalized_cusp_derivative",
+    "classical.altered.unrestricted_damping",
+    "classical.altered.modified_as_physical_energy",
+    "classical.altered.inconsistent_mass_domain"
+  ],
+  "qualification_status": "awaiting_human_scientific_review_and_deployment_qualification"
+}

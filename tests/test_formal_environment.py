@@ -282,6 +282,7 @@ def test_build_context_excludes_caches_and_unrelated_formal_files(tmp_path):
         "formal/DeclarationAudit.lean",
         "tools/formal_environment.py",
         "src/physharness/verification/container_driver.py",
+        "src/physharness/verification/resource_policy.py",
     ]
     included = [
         *required,

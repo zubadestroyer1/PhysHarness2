@@ -2,6 +2,16 @@
 
 The real Linux engineering suite passed on 2026-09-15: two algebraic fixtures passed Lean replay and seven adversarial fixtures were blocked, in both single-kernel and independent nanoda modes. The complete outputs, executable pins, runtime observation and hashes are archived in [acceptance evidence](../work/acceptance-evidence/index.json). No expert scientific review or production sandbox qualification is claimed by these results. The application defaults to `UnavailableVerifier` until an operator supplies an independently approved deployment configuration.
 
+The current 8 GiB scope has fresh core and library controls: 9/9 and 3/3 expected
+outcomes respectively in each kernel mode, plus 16/16 fixed boundary observations.
+The independent [control audit](../work/wave01/current-evidence-audit.md) found all
+10 automatic qualification checks mechanically satisfied. The completed kernel
+physics reports passed 60/60 expected reference/control outcomes in each of kernel and
+independent-kernel modes; human gates remain pending. See the
+[current delivery](../work/wave01/DELIVERY-2026-09-22.md).
+Those mechanical results apply to their captured source hashes; the combined PR #21
+source requires fresh qualification evidence.
+
 ## Scientific acceptance and engineering observations
 
 `ComparatorVerifier.verify(VerificationRequest)` is the scientific acceptance interface. Its service-owned `ComparatorConfig` requires a `LinuxQualification` record. The service constructs requests from stored problem, review and artifact records; public clients cannot supply authoritative checker outcomes or semantic-review flags.
@@ -64,6 +74,16 @@ A v2 manifest has this schema:
 
 Configure `ComparatorConfig(bundle_directory=Path(...), manifest_sha256=..., qualification=...)`. `LinuxQualification` binds image digest, archived qualification-report SHA-256, current `driver_digest()`, `launcher_digest()`, `seccomp_digest()`, `linux_boundary="docker-landlock-seccomp-v1"` and the explicit independent-kernel capability. These are operator-managed evidence references, not certificates minted by this code. Runtime upgrades require operational requalification.
 
+The operator must supply the explicit trusted resource-profile file; the repository profile is
+`formal/verifier-resources.json`: 8 GiB memory,
+4 CPUs, a 600-second Comparator deadline and one local checker slot. Three identities are
+deliberately distinct: `resource_profile_sha256` hashes the canonical parsed profile,
+`resource_profile_source_sha256` hashes the exact profile-file bytes, and
+`resource_policy_sha256` hashes the shared policy source used by host and image. Existing
+qualification pins predate these identities and fail closed. Changing the profile or policy,
+or rebuilding the image that embeds the policy, requires the affected image, engineering,
+boundary and qualification evidence to be rerun and reviewed.
+
 The operator-pinned manifest binds the canonical problem revision, canonical metadata digest,
 source hash and environment. `theorem_names` must be exactly `[problem.target_theorem]`; a
 bundle selecting another or additional theorem fails closed. Both host and trusted driver check
@@ -97,6 +117,16 @@ Candidate and Comparator stdout/stderr are captured as opaque diagnostics. The h
 
 Timeout and output bounds apply at host and driver. The host explicitly removes each uniquely named container in `finally`; success requires confirmed removal or an authoritative empty exact-name listing. Unconfirmed cleanup blocks acceptance and preserves the original failure and container name. The archived final suites confirmed 18 explicit removals. Report checkpoints use atomic replacement, file fsync and directory fsync. A checkpoint failure ends the run as blocked when storage is writable; an unwritable report destination raises rather than announcing success.
 
+Resource exhaustion is also fail closed. Exit 137 or worker text alone does not establish an
+OOM; the runner requires a positive typed Docker `OOMKilled` observation or an increase in the
+captured cgroup OOM counters. Without positive OOM evidence, a negative exit remains blocked
+with an uncertain cause. Missing optional Docker state does not by itself overturn an otherwise
+valid successful kernel result, while missing required cgroup observations cannot satisfy
+engineering qualification. A confirmed OOM is `blocked/resource_oom`, never a false-theorem
+rejection and never a passed adverse case.
+The file lock covers one checker only for the same `serviceUID` and lock path, including its
+cleanup. It is not admission control for a VM, host fleet or distributed deployment.
+
 ## Reproducing engineering evidence
 
 Build the real toolchain using the pinned [formal environment](../formal/README.md), then extract its image metadata. The engineering runner uses that metadata directly, avoiding a circular requirement for a qualification report before generating any evidence:
@@ -112,6 +142,11 @@ mkdir -p "$TMPDIR"
   --engineering-image-metadata .state/formal/image-metadata.json \
   --output .state/formal/engineering-independent-report.json --publication
 ```
+
+The endpoint above identifies the historical dedicated VM used by the archived evidence. For a
+new VM, set `COLIMA_HOME="$HOME/.local/share/physharness-colima"` and derive `DOCKER_HOST` from
+that persistent location as documented in the formal-environment guide. Do not recreate the old
+temporary-metadata VM merely to reuse its path.
 
 Use a service-controlled local Docker endpoint and a shared bind-mount directory appropriate to the runner. The documented endpoint is the dedicated development Colima VM, not a production deployment. The host may be macOS; candidate execution and the boundary probes still run only in Linux. The legacy qualification-environment mode deliberately requires a Linux CI host.
 
@@ -130,15 +165,28 @@ Source protocol and closure checks were inspected directly at the pinned commits
 
 Set `PHYSHARNESS_VERIFICATION_REGISTRY` to an operator-owned JSON file to route several reviewed revisions through one acceptance service. It is mutually exclusive with the existing `PHYSHARNESS_VERIFICATION_BUNDLE`, `PHYSHARNESS_VERIFICATION_MANIFEST_SHA256` and `PHYSHARNESS_VERIFICATION_QUALIFICATION` settings. The existing single-bundle configuration remains supported.
 
-A registry has `protocol="physharness-verifier-registry-v1"` and an `entries` array. Each entry contains a unique `problem_revision_id` and a complete `ComparatorConfig` JSON object with an absolute `bundle_directory`, `manifest_sha256` and `qualification`. For example, build the file from already approved configurations:
+For that single-bundle mode, `PHYSHARNESS_VERIFICATION_RESOURCES` must name the explicit trusted
+profile file and accompany the complete bundle/manifest/qualification configuration. Startup
+hashes its exact source bytes, parses and canonically hashes the profile, and checks both hashes
+plus the shared policy-source hash against `resource_profile_source_sha256`,
+`resource_profile_sha256` and `resource_policy_sha256` in the qualification. Each registry entry
+must name its own absolute `resource_profile` file path. At startup the registry reads that file,
+parses the bounded profile, and compares its raw-byte and canonical hashes against both the entry's
+`ComparatorConfig` and its qualification. The existing policy-source check still applies. A registry
+file has no global resource-profile path or override that silently changes every entry. Retain each
+trusted source file with the qualification evidence and update the entry after any byte change.
+
+A registry has `protocol="physharness-verifier-registry-v1"` and an `entries` array. Each entry contains a unique `problem_revision_id`, an absolute `resource_profile` file path, and a complete `ComparatorConfig` JSON object with an absolute `bundle_directory`, `manifest_sha256`, canonical `resources`, `resource_profile_source_sha256` and `qualification`. Existing registry files need the new path for each entry. For example, build the file from already approved configurations:
 
 ```python
 registry = {
     "protocol": "physharness-verifier-registry-v1",
     "entries": [
         {"problem_revision_id": lemma_problem["id"],
+         "resource_profile": str(lemma_resource_profile.resolve()),
          "config": lemma_config.model_dump(mode="json")},
         {"problem_revision_id": next_problem["id"],
+         "resource_profile": str(next_resource_profile.resolve()),
          "config": next_config.model_dump(mode="json")},
     ],
 }
@@ -180,4 +228,8 @@ Engineering requests remain separate and do not acquire a manufactured semantic 
 
 The combined PR corrections change host/driver bytes. Earlier recorded engineering results remain
 evidence for their recorded image and code hashes; they do not validate this combined source.
-Rebuild and rerun genuine engineering/qualification checks before supplying new deployment pins.
+The Wave 1 reports under `work/wave01/evidence` used the historical 2 GiB profile.
+The later 8 GiB reports under `work/wave01/evidence-8g` recorded successful controls
+and both physics modes for a different frozen source scope. The current combined source
+has changed input hashes, so it requires fresh scoped evidence and review before new
+deployment pins can be supplied.

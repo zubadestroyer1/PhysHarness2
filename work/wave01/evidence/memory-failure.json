@@ -1,0 +1,29 @@
+{
+  "purpose": "historical_execution_failure_observation",
+  "production_qualified": false,
+  "image": "sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246",
+  "resource_limits": {
+    "memory_bytes": 2147483648,
+    "cpus": 2,
+    "pids": 128
+  },
+  "kernel_log_sha256": "0247b92beab895bbdba4a533f857055f5452a154cf838a616713145fc48205e9",
+  "kernel_log_excerpt": [
+    "[Tue Sep 15 14:34:48 2026] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=64ed8272ae552a5b515346e8703b08cc4a70f91e276dfc1cfd47ce0287bc22e5,mems_allowed=0,oom_memcg=/docker/64ed8272ae552a5b515346e8703b08cc4a70f91e276dfc1cfd47ce0287bc22e5,task_memcg=/docker/64ed8272ae552a5b515346e8703b08cc4a70f91e276dfc1cfd47ce0287bc22e5,task=comparator,pid=104694,uid=65532",
+    "[Tue Sep 15 14:34:48 2026] Memory cgroup out of memory: Killed process 104694 (comparator) total-vm:14953196kB, anon-rss:1654132kB, file-rss:53760kB, shmem-rss:0kB, UID:65532 pgtables:3556kB oom_score_adj:0",
+    "[Tue Sep 15 14:35:57 2026] oom-kill:constraint=CONSTRAINT_MEMCG,nodemask=(null),cpuset=7582fc7827c513e186784176ba73a6c6b3ea359ac3b8f86f1a3f9f287f69bb74,mems_allowed=0,oom_memcg=/docker/7582fc7827c513e186784176ba73a6c6b3ea359ac3b8f86f1a3f9f287f69bb74,task_memcg=/docker/7582fc7827c513e186784176ba73a6c6b3ea359ac3b8f86f1a3f9f287f69bb74,task=lean4export,pid=105289,uid=65532",
+    "[Tue Sep 15 14:35:57 2026] Memory cgroup out of memory: Killed process 105289 (lean4export) total-vm:14461388kB, anon-rss:587992kB, file-rss:5640576kB, shmem-rss:0kB, UID:65532 pgtables:181424kB oom_score_adj:0"
+  ],
+  "classification": "confirmed_memory_cgroup_oom",
+  "limits": "Kernel log observation from this VM confirms cgroup OOM, but does not measure peak proof memory, classify every exit137, or qualify general resource exhaustion containment.",
+  "failed_reports": [
+    {
+      "path": "physics-kernel.json",
+      "sha256": "ac71cac5e069726321bda6d558221450bfe6c1a50e194ec06b73e6454e79248e"
+    },
+    {
+      "path": "physics-independent.json",
+      "sha256": "aa4d9a19f504214ed58547ecfbb5bb16873adf09e3c078d2f032dc77d3463951"
+    }
+  ]
+}
