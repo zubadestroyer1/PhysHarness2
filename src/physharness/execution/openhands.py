@@ -1,4 +1,4 @@
-"""Official OpenHands SDK 1.47.0, exclusively over qualified remote VM endpoints.
+"""Official OpenHands SDK 1.49.2, exclusively over qualified remote VM endpoints.
 
 The operator supplies an external qualification verifier; this module does not
 invent a VM attestation or provide a local execution fallback. Native token and
@@ -36,7 +36,7 @@ from .types import (
     digest,
 )
 
-SUPPORTED_SDK_VERSION = "1.47.0"
+SUPPORTED_SDK_VERSION = "1.49.2"
 NATIVE_TOOLS = frozenset({"TerminalTool", "FileEditorTool"})
 TELEMETRY_ENV = (
     "LMNR_PROJECT_API_KEY",
