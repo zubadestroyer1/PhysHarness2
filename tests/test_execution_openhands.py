@@ -1,4 +1,4 @@
-"""Official OpenHands 1.47.0 client/parser with controlled HTTP and WS transport."""
+"""Official OpenHands 1.49.2 client/parser with controlled HTTP and WS transport."""
 
 import json
 import time
@@ -13,7 +13,7 @@ from physharness.execution.types import ExecutionError, ModelConfig, RuntimeLimi
 
 MODEL = "openai/exact-test-model"
 HOST = "https://qualified-vm.example"
-SERVER_INFO = {"test_only_protocol_fixture": True, "sdk_version": "1.47.0"}
+SERVER_INFO = {"test_only_protocol_fixture": True, "sdk_version": "1.49.2"}
 
 
 @pytest.fixture
