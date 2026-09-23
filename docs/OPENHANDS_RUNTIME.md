@@ -1,6 +1,6 @@
 # OpenHands remote runtime
 
-`physharness.execution.openhands.OpenHandsRuntime` implements the existing `RuntimeAdapter` lifecycle using the official **openhands-sdk 1.47.0** package. The pinned release requires Python 3.12 or later. Its `RemoteWorkspace` and `RemoteConversation` interfaces were inspected in the installed distribution and exercised in transport tests. [Official release](https://pypi.org/project/openhands-sdk/1.47.0/), [conversation API](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.conversation).
+`physharness.execution.openhands.OpenHandsRuntime` implements the existing `RuntimeAdapter` lifecycle using the official **openhands-sdk 1.49.2** package. The locked release requires Python 3.12 or later. Its `RemoteWorkspace` and `RemoteConversation` interfaces were inspected in the installed distribution and exercised in transport tests. [Official release](https://pypi.org/project/openhands-sdk/1.49.2/), [conversation API](https://docs.openhands.dev/sdk/api-reference/openhands.sdk.conversation).
 
 The adapter never selects `LocalConversation`, starts an agent server on the host, or creates a local Docker workspace as a fallback. It connects only to an explicitly qualified remote VM. The SDK itself serializes a `LocalWorkspace` description **for the server**; this does not execute a local workspace operation in the client. [Official remote conversation implementation](https://github.com/OpenHands/software-agent-sdk/blob/main/openhands-sdk/openhands/sdk/conversation/impl/remote_conversation.py).
 
@@ -14,7 +14,7 @@ Default construction is unavailable. A caller must supply all of:
 - `allow_unbounded_provider_tokens=True`, acknowledging the native token/process-tree limitations described below.
 - A dedicated SDK client process with `LOG_AUTO_CONFIG=false` set before its first SDK import and `LITELLM_LOCAL_MODEL_COST_MAP=True`, which avoids LiteLLM's import-time remote pricing fetch. Ambient SDK tracing/automation callbacks and pre-registered tool/agent definitions are refused.
 
-A VM authority must verify the actual execution isolation, image, endpoint, lifetime and resource/network policy. It must also qualify a clean server configuration without unexpected hooks, skills, saved auxiliary model profiles, plugins or delegated agents. SDK 1.47.0 can automatically attach a vision-profile helper based on server-side profile configuration; the client constructor alone cannot prove such configuration is absent. A callback that simply returns `True` is a test fixture, not a production qualification authority. An HTTPS URL or a Docker container alone does not establish a qualified VM.
+A VM authority must verify the actual execution isolation, image, endpoint, lifetime and resource/network policy. It must also qualify a clean server configuration without unexpected hooks, skills, saved auxiliary model profiles, plugins or delegated agents. SDK 1.49.2 can automatically attach a vision-profile helper based on server-side profile configuration; the client constructor alone cannot prove such configuration is absent. A callback that simply returns `True` is a test fixture, not a production qualification authority. An HTTPS URL or a Docker container alone does not establish a qualified VM.
 
 No live VM qualification authority or provider allocation was exercised during this implementation. Registry availability should therefore continue to distinguish adapter implementation from a qualified deployment.
 
@@ -45,7 +45,7 @@ continued = await runtime.continue_session(result.session.id, follow_up)
 
 The example's authority and secret-store objects are application responsibilities, not included dummy implementations. Keep each native session under an exclusive controller lease; the `RuntimeStore` protocol has no cross-process compare-and-swap operation. The adapter additionally rejects concurrent runs within one instance.
 
-Supported model parameters are `temperature`, `top_p`, `seed`, and `reasoning_effort`. The exact requested model string is passed to the SDK and recorded, and remote agent configuration is checked before and after a run. SDK fallback strategies are left unset and SDK retries are disabled. Native provider parameter adaptation is still controlled by LiteLLM; the deprecated `modify_params` field is not an enforceable per-model control in SDK 1.47.0. SDK-internal reconstruction currently emits deprecation/unsupported warnings about that field even when the adapter does not set it.
+Supported model parameters are `temperature`, `top_p`, `seed`, and `reasoning_effort`. The exact requested model string is passed to the SDK and recorded, and remote agent configuration is checked before and after a run. SDK fallback strategies are left unset and SDK retries are disabled. Native provider parameter adaptation remains a process-wide LiteLLM setting; SDK 1.49.2 no longer has the former `LLM.modify_params` field, so it cannot serve as a per-model control.
 
 Native tools default to an empty requested tool list plus the SDK's `FinishTool`. Optional `TerminalTool` and `FileEditorTool` specifications may be sent to an externally qualified server where those classes are already installed/registered. They are not imported or registered as host executors. Model-controlled parameters cannot install plugins, MCP servers, client-side tools, hooks, or arbitrary tools. This adapter does not bridge the canonical research `ToolDispatcher` into native OpenHands tools.
 
@@ -79,14 +79,14 @@ The configured native history bound limits captured history, but the SDK itself 
 
 The adapter lives in `execution/openhands.py`. Registry/public exports and the optional dependency lock are integrated separately. Temporal compatibility uses the shared runner in `orchestration/sandbox.py`, wired into the production and integration-test workers.
 
-The official package was installed first into `/private/tmp/physharness-openhands-1.47.0`, leaving project dependencies untouched during investigation. The parent subsequently pinned the optional `openhands-sdk==1.47.0` extra. The isolated contract test command was:
+The current lock installs `openhands-sdk==1.49.2`. The contract test command is:
 
 ```
-PYTHONPATH=src LOG_AUTO_CONFIG=false OPENHANDS_SUPPRESS_BANNER=1 LITELLM_LOCAL_MODEL_COST_MAP=True \
-/private/tmp/physharness-openhands-1.47.0/bin/python -m pytest -q tests/test_execution_openhands.py
+uv sync --locked --all-extras
+uv run --locked pytest -q tests/test_execution_openhands.py
 ```
 
-Initial result: **22 passed**. The project environment now passes **26 OpenHands tests**, including the additional mixed-SDK compatibility and logging regressions below. Ruff passed. Tests use the real installed SDK models, remote conversation implementation, HTTP protocol and event parser with `httpx.MockTransport`; only WebSocket readiness/delivery is replaced. Regressions cover exact model/IDs, cumulative usage, actual finish actions, fresh-journal import, missing/deleted-on-attach native conversations, timeout recovery refusal, missing usage, failed history pagination, configuration mismatch, qualification revocation/pin mismatch, opaque-budget opt-in, cleanup failures, unsuccessful-run usage preservation, iteration envelopes, rejected local origins, and absence of host workspace execution.
+Result with the locked 1.49.2 SDK: **26 passed**. Tests use the real installed SDK models, remote conversation implementation, HTTP protocol and event parser with `httpx.MockTransport`; only WebSocket readiness/delivery is replaced. Regressions cover exact model/IDs, cumulative usage, actual finish actions, fresh-journal import, missing/deleted-on-attach native conversations, timeout recovery refusal, missing usage, failed history pagination, configuration mismatch, qualification revocation/pin mismatch, opaque-budget opt-in, cleanup failures, unsuccessful-run usage preservation, iteration envelopes, rejected local origins, and absence of host workspace execution.
 
 These are **SDK protocol tests**, not live LLM calls, provider billing evidence, VM containment qualification, terminal-tool execution evidence, or completed cloud experiments. Those deployment qualifications remain outstanding.
 
