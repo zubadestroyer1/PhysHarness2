@@ -47,44 +47,65 @@ independently rechecked. Deployment and human gates remain open. See the
 These observations apply to the recorded source scope; PR integration changed pinned
 input hashes, so current-source qualification requires a fresh scoped run and review.
 
-## Dependency order
+## Approved execution order (2026-09-22)
+
+The [implementation plan](IMPLEMENTATION_PLAN.md#approved-execution-order-2026-09-22)
+sets the task order below. The diagram is a capability and task milestone sequence, not an
+exhaustive full-wave qualification dependency graph. It does not change the twelve wave
+scopes, the qualification gates in the table above, or the recorded full-qualification
+prerequisites. Quantum and classical
+programs advance together. A small, reviewed development subset and qualified scoped
+deployment can support a bounded live single-agent accepted-proof and lemma-reuse pilot
+before all 40 targets are reviewed or a production fleet exists. Every selected target
+still needs its required review, and proof acceptance remains independent.
 
 ```mermaid
 flowchart LR
-    W0[0: foundation] --> W1[1: acceptance]
-    W1 --> W2[2: single agent]
-    W2 --> W3[3: durability]
-    W3 --> W4[4: collaboration]
-    W4 --> W5[5: knowledge]
-    W4 --> W6[6: portfolios]
-    W1 --> W7[7: certified computation]
-    W5 --> W8[8: production at 128]
-    W6 --> W8
-    W7 --> W8
-    W8 --> W9[9: fleet expansion]
-    W5 --> W10[10: learning]
-    W6 --> W10
-    W8 --> W11[11: sustained campaigns]
-    W9 --> W11
-    W10 --> W11
+    A[Reviewed small development subset<br/>and scoped deployment] --> B[Bounded live single-agent<br/>accepted proof and lemma reuse]
+    A --> C[Wave 3 recovery and reconciliation<br/>parallel with the live loop]
+    B --> D[Selected Wave 4/5 work<br/>2–8 agents and accepted-lemma retrieval]
+    C --> D
+    D --> E[Selected Wave 6 comparison<br/>one agent vs independent vs collaborating]
+    E --> F[Measured capacity<br/>8 → 32 → 128]
+    C --> F
+    F --> G[Wave 8 capacity evidence<br/>72 hours at 128 active workers]
+    G --> H[Conditional Wave 9 providers and self-hosting<br/>meaningful 1,000-worker qualification]
+    D --> I[Wave 11 open-problem pilots<br/>expert-selected precise targets]
+    I --> J[Full sustained campaigns<br/>durability and scientific criteria]
+    G --> J
+    K[Wave 7 checked computation<br/>when a concrete bottleneck warrants it] -.-> J
+    L[Wave 10 verified-data learning<br/>only on held-out benefit] -.-> J
 ```
 
-Quantum and classical programs progress together. Open-problem pilots can start earlier;
-they do not establish the full sustained-campaign capability or bypass acceptance requirements.
+The dotted paths are optional aids to sustained campaigns, not hard prerequisites for an
+early open-problem pilot. The full Wave 7 and 10 scopes remain; policy promotion needs
+verified data and matched or held-out evidence. Early capacity experiments do not waive
+Wave 8's full scope or its complete qualification gates, including Wave 7's recorded
+full-qualification prerequisite and the 72-hour run.
+Full Wave 11 operational qualification still requires Wave 8; pilots may start sooner.
+The full Wave 9 target also remains, but large fleets alone do not establish scientific progress. Wave 9
+benchmarks one alternative provider and evaluates existing lifecycle controllers and VM
+isolation before choosing any custom Firecracker host pool. Self-hosted capability remains
+in scope; Kubernetes and Ray adoption follows measured need.
 
 ## Next deliverable
 
 The pinned Linux build and both-mode engineering reference/control runs are recorded.
-Next, conduct expert review of the exact targets and altered cases under the
+Next, select and review a small development subset of exact targets under the
 [benchmark procedure](PHYSICS_BENCHMARK_REVIEW.md), review the
 [scoped qualification packet](../work/wave01/evidence-8g/QUALIFICATION_REVIEW.md)
 and coverage gaps with deployment authority, and test the preserved images in a fresh
-VM before claiming recovery. Later model calibration and a reviewed live trial are
-needed to substantiate the single-agent exit criterion.
+VM before claiming recovery. Then run a bounded live model-to-accepted-proof trial with
+accepted-lemma reuse. In parallel, reconcile uncertain model/VM operations, lease
+adoption, orphan cleanup and financial settlement. The next reviewable deliverable is a
+reproducible one-agent versus small-team comparison on meaningful physics solves, with
+recovery observations and cost/time accounting. Completing this pilot does not qualify
+Waves 0–6 or replace review of the full 40-target inventory.
 
 In parallel, address actual CI failures and recruit an independent reviewer for acceptance,
-credentials and result promotion. Later-wave scaffolding is available for development but should
-not pull priority away from an executable, trusted end-to-end result.
+credentials and result promotion. Selected Wave 4/5 small-team work and early Wave 6
+matched-budget measurement follow the bounded live loop; scale only after those
+measurements identify useful work and operational bottlenecks.
 
 ## Evidence and releases
 

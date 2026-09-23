@@ -54,6 +54,19 @@ An issue belongs to the earliest wave it must satisfy; later-wave dependencies c
 without duplicating the task. Wave tracking issues link their prerequisites, child issues, and
 qualification evidence.
 
+The manifest's milestone dependencies identify prerequisites for **full wave qualification**;
+they do not require every earlier wave to finish before implementation or a bounded pilot can
+begin. The [approved plan](IMPLEMENTATION_PLAN.md) and [roadmap](ROADMAP.md) put a reviewed,
+safe live Wave 0–2 proof-and-reuse pilot first, with Wave 3 recovery and reconciliation work in
+parallel. Selected Wave 4–5 checkpoints and accepted-lemma retrieval then support 2–8-agent
+comparisons, while selected Wave 6 matched-cost and matched-time measurements can start early.
+Scale through 8, 32, and 128 active workers as evidence supports it; Wave 8 retains its full
+72-hour, 128-worker gate. Kubernetes, self-hosting, and 1,000-worker work in Wave 9 depend on
+measured need, with existing lifecycle controllers evaluated before custom Firecracker work;
+Wave 7 and 10 work is likewise demand-driven. A Wave 11 open-problem pilot can begin with
+expert-reviewed targets, safe independent acceptance, and reliable small teams. Full sustained
+Wave 11 qualification still depends on Wave 8 durability and its scientific gate.
+
 A milestone's GitHub completion percentage measures closed issues. It does **not** measure
 scientific success or automatically satisfy a wave gate. Close a wave milestone only when its
 exit criteria have been reviewed against reproducible evidence and the implementation ledger
