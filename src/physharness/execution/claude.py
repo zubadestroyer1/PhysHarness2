@@ -1,4 +1,4 @@
-"""Official Claude Agent SDK adapter, contract-tested against 0.2.152.
+"""Official Claude Agent SDK adapter, contract-tested against 0.2.157.
 
 The SDK launches a local CLI and inherits the worker environment. It provides no hard
 per-query token cap. Both facts require explicit operator opt-in on a dedicated trusted
@@ -35,7 +35,7 @@ from .types import (
     RuntimeStore,
 )
 
-SUPPORTED_SDK_VERSION = "0.2.152"
+SUPPORTED_SDK_VERSION = "0.2.157"
 READ_TOOLS = frozenset({"Read", "Glob", "Grep"})
 DENIED_TOOLS = ["Agent", "Task", "Bash", "Write", "Edit", "NotebookEdit", "Skill", "ToolSearch"]
 
