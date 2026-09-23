@@ -9,6 +9,8 @@ The independent [control audit](../work/wave01/current-evidence-audit.md) found 
 physics reports passed 60/60 expected reference/control outcomes in each of kernel and
 independent-kernel modes; human gates remain pending. See the
 [current delivery](../work/wave01/DELIVERY-2026-09-22.md).
+Those mechanical results apply to their captured source hashes; the combined PR #21
+source requires fresh qualification evidence.
 
 ## Scientific acceptance and engineering observations
 
@@ -226,7 +228,8 @@ Engineering requests remain separate and do not acquire a manufactured semantic 
 
 The combined PR corrections change host/driver bytes. Earlier recorded engineering results remain
 evidence for their recorded image and code hashes; they do not validate this combined source.
-The Wave 1 reports under `work/wave01/evidence` used the historical 2 GiB profile. No
-`work/wave01/evidence-8g` result exists yet; the current image rebuild and subsequent real runs
-remain pending. Rebuild and rerun genuine engineering/qualification checks before supplying new
-deployment pins.
+The Wave 1 reports under `work/wave01/evidence` used the historical 2 GiB profile.
+The later 8 GiB reports under `work/wave01/evidence-8g` recorded successful controls
+and both physics modes for a different frozen source scope. The current combined source
+has changed input hashes, so it requires fresh scoped evidence and review before new
+deployment pins can be supplied.

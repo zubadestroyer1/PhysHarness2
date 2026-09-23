@@ -44,6 +44,8 @@ all 10 automatic qualification checks are mechanically satisfied. Both physics m
 have 60/60 expected reference/control outcomes, with the combined assessment
 independently rechecked. Deployment and human gates remain open. See the
 [current delivery](../work/wave01/DELIVERY-2026-09-22.md).
+These observations apply to the recorded source scope; PR integration changed pinned
+input hashes, so current-source qualification requires a fresh scoped run and review.
 
 ## Dependency order
 

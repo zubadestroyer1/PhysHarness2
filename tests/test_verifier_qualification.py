@@ -211,7 +211,11 @@ def boundary_evidence(root, scope):
         "output": json.dumps(
             {
                 "protocol": "physharness-fixed-boundary-inner-v1",
-                "checks": report["checks"],
+                "checks": {
+                    name: value
+                    for name, value in report["checks"].items()
+                    if name != "container_configuration"
+                },
                 "observed": report["observed"],
                 "probe_sha256": report["probe_sha256"],
                 "resource_profile_sha256": report["resource_profile_sha256"],

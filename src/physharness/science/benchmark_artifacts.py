@@ -19,7 +19,7 @@ from physharness.verification.boundary import (
     seccomp_digest,
 )
 from physharness.verification.bundles import canonical_json, project_path
-from physharness.verification.resource_policy import parse_profile, policy_digest
+from physharness.verification.resource_policy import confirmed_oom, parse_profile, policy_digest
 
 from .physics_benchmarks import PhysicsBenchmark
 
@@ -267,6 +267,7 @@ def assess_benchmark_reports(
         environment_hash = digest(canonical_json(environment.model_dump()))
         cases = {case["id"]: case for case in fixture["cases"]}
         report_pins = []
+        seen_containers = set()
         for path, independent in [(kernel_report, False), (independent_report, True)]:
             raw = safe_read(path.parent, path.name)
             report = json.loads(raw)
@@ -314,6 +315,23 @@ def assess_benchmark_reports(
                 diagnostics = result.diagnostics
                 if any(diagnostics.get(key) != value for key, value in resource_pins.items()):
                     raise ValueError("Outcome resource profile or policy differs from intended run")
+                if diagnostics.get("oom_confirmed") is not False:
+                    raise ValueError("OOM or missing resource observations cannot satisfy a case")
+                counters = []
+                for key in ("memory_events_before", "memory_events_after"):
+                    record = diagnostics.get(key)
+                    events = record.get("events") if isinstance(record, dict) else None
+                    if (
+                        not isinstance(record, dict)
+                        or record.get("status") != "observed"
+                        or not isinstance(events, dict)
+                        or type(events.get("oom_kill")) is not int
+                        or events["oom_kill"] < 0
+                    ):
+                        raise ValueError("Observed cgroup memory events are required")
+                    counters.append(events)
+                if confirmed_oom(*counters) or counters[1]["oom_kill"] < counters[0]["oom_kill"]:
+                    raise ValueError("OOM counters contradict the expected case evidence")
                 logs = diagnostics.get("comparator_output")
                 cleanup = diagnostics.get("container_cleanup")
                 if not isinstance(logs, str) or not isinstance(cleanup, dict):
@@ -367,6 +385,9 @@ def assess_benchmark_reports(
                     valid = False
                 if not valid:
                     raise ValueError("Container cleanup was not confirmed")
+                if name in seen_containers:
+                    raise ValueError("Container cleanup evidence was reused across cases")
+                seen_containers.add(name)
             report_pins.append(
                 {"sha256": digest(raw), "independent_kernel": independent, "cases": len(rows)}
             )

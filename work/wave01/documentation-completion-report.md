@@ -1,5 +1,9 @@
 # Operator documentation completion report
 
+This report records the earlier documentation pass before the 8 GiB evidence run.
+The later [delivery](DELIVERY-2026-09-22.md) supersedes its pending-run status;
+that evidence remains scoped to its captured source hashes.
+
 Date: 2026-09-22
 
 ## Outcome

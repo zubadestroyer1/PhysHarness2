@@ -277,6 +277,9 @@ def synthetic_reports(tmp_path):
                     **resource_pins,
                     "comparator_exit_code": 0 if ok else 1,
                     "comparator_output": logs,
+                    "oom_confirmed": False,
+                    "memory_events_before": {"status": "observed", "events": {"oom_kill": 0}},
+                    "memory_events_after": {"status": "observed", "events": {"oom_kill": 0}},
                     "container_cleanup": {
                         "status": "removed",
                         "container_name": container,
@@ -408,6 +411,47 @@ def test_positive_benchmark_requires_kernel_and_causal_cleanup_evidence(tmp_path
             "container_name": cleanup["container_name"],
             "absence_check": {"exit_code": 1, "output": ""},
         }
+    independent.write_text(json.dumps(report))
+    with pytest.raises(HarnessError, match="Benchmark evidence"):
+        assess_benchmark_reports(
+            release,
+            bundle,
+            image_metadata=meta,
+            kernel_report=kernel,
+            independent_report=independent,
+        )
+
+
+def test_benchmark_cannot_reuse_container_evidence_for_two_cases(tmp_path):
+    release, bundle, meta, kernel, independent = synthetic_reports(tmp_path)
+    report = json.loads(independent.read_bytes())
+    first = report["results"][0]["outcome"]["diagnostics"]["container_cleanup"]
+    second = report["results"][1]["outcome"]["diagnostics"]["container_cleanup"]
+    second["container_name"] = first["container_name"]
+    second["output"] = first["output"]
+    independent.write_text(json.dumps(report))
+    with pytest.raises(HarnessError, match="Benchmark evidence"):
+        assess_benchmark_reports(
+            release,
+            bundle,
+            image_metadata=meta,
+            kernel_report=kernel,
+            independent_report=independent,
+        )
+
+
+@pytest.mark.parametrize("fault", ["oom_flag", "oom_counter", "missing_counter"])
+def test_memory_exhaustion_cannot_count_as_mathematical_nonacceptance(tmp_path, fault):
+    release, bundle, meta, kernel, independent = synthetic_reports(tmp_path)
+    report = json.loads(independent.read_bytes())
+    negative = next(row for row in report["results"] if row["outcome"]["status"] == "blocked")
+    diagnostics = negative["outcome"]["diagnostics"]
+    if fault == "oom_flag":
+        diagnostics["oom_confirmed"] = True
+    elif fault == "oom_counter":
+        diagnostics["memory_events_after"]["events"]["oom_kill"] = 1
+    else:
+        diagnostics["memory_events_before"]["events"].pop("oom_kill")
     independent.write_text(json.dumps(report))
     with pytest.raises(HarnessError, match="Benchmark evidence"):
         assess_benchmark_reports(
