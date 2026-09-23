@@ -94,6 +94,9 @@ canonical team runner. The current delivery evidence is in
   11 mechanical controls blocked, and nine valid semantic controls mechanically
   verified but expert-held. The independent audit matched the stored full-suite
   assessment without discrepancies; older 2 GiB reports are historical only.
+  The recorded 8 GiB scope also predates the combined PR #1/#20 and assessor changes;
+  its automatic checks are historical, and current-source qualification needs a
+  new scoped run and review.
   [CI run 35796735015](https://github.com/zubadestroyer1/PhysHarness2/actions/runs/35796735015)
   passed all five jobs at `a58b94d`.
 

@@ -5,6 +5,9 @@ This directory retains observations for the consolidated image
 The final source scope is [scope-final.json](scope-final.json), canonical SHA-256
 `e8f8c011e29242aa16f7464522b061545ac189f392c729655c57183a578ddb42`.
 These reports must not be attributed to the historical 2 GiB image or scope.
+They also do not qualify the later combined PR #21 source tree: its pinned input
+hashes changed after the reports were captured. Fresh scoped evidence is required
+before claiming current-source qualification.
 
 The current **final control set** comprises [regressions-final.json](regressions-final.json)
 and [regressions-final.xml](regressions-final.xml), the four `core-*-final.json` and

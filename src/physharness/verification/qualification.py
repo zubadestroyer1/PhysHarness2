@@ -581,7 +581,11 @@ def _boundary_report(scope, matrix, report, runs, containers):
             "resource_profile_sha256": pins["resource_profile_sha256"],
             "resource_policy_sha256": pins["resource_policy_sha256"],
             "binaries": scope.binaries,
-            "checks": report.get("checks"),
+            "checks": {
+                key: value
+                for key, value in report.get("checks", {}).items()
+                if key != "container_configuration"
+            },
             "observed": report.get("observed"),
         }.items()
     ):
