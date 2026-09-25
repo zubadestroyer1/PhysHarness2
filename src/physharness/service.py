@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from .acceptance import AcceptanceMixin
 from .artifacts import ArtifactStore
 from .collaboration import CollaborationMixin
-from .commons import COMMONS_RELATIONS, EDGE_PREFIX, CommonsMixin
+from .commons import CommonsMixin
 from .commons_discourse import CommonsDiscourseMixin
 from .commons_review import CommonsReviewMixin
 from .continuation import ContinuationMixin
@@ -1525,27 +1525,6 @@ class HarnessService(
                 for r in rows
             ]
 
-    @staticmethod
-    def _export_edges(session, records, actor):
-        """Commons edges between exported nodes, as source, target and relation."""
-        nodes = {node["id"] for node in records["commons_node"]}
-        if not nodes:
-            return []
-        rows = session.execute(
-            select(EdgeRow.source_id, EdgeRow.target_id, EdgeRow.relation)
-            .where(
-                EdgeRow.project_id == actor.project_id,
-                EdgeRow.relation.in_(COMMONS_RELATIONS),
-                EdgeRow.source_id.in_(sorted(nodes)),
-            )
-            .order_by(EdgeRow.source_id, EdgeRow.relation, EdgeRow.target_id)
-        )
-        return [
-            {"source": source, "target": target, "relation": relation.removeprefix(EDGE_PREFIX)}
-            for source, target, relation in rows
-            if target in nodes
-        ]
-
     def export_experiment(self, experiment_id: str, actor: Principal) -> dict:
         # Snapshot all metadata in one transaction. Artifact bytes are immutable and checked
         # afterward, so object-store latency does not extend the metadata lock.
@@ -1608,12 +1587,18 @@ class HarnessService(
                 records["review"].append(
                     copy.deepcopy(self._get(session, "review", problem["review_id"], actor).payload)
                 )
+            commons_edges = {}
+            if society:
+                visible = {node["id"] for node in records["commons_node"]}
+                commons_edges["edges"] = self._commons_edges(
+                    session, actor.project_id, experiment_id, visible
+                )
             manifest = {
                 "format": "physharness.reproduction.v1",
                 "experiment": experiment,
                 "problem": problem,
                 "records": records,
-                **({"edges": self._export_edges(session, records, actor)} if society else {}),
+                **commons_edges,
                 "ledger": self._ledger(session, experiment_id, actor),
                 "snapshot": {
                     "isolation": isolation,

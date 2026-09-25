@@ -239,6 +239,12 @@ def test_society_export_adds_commons_records_edges_and_fetches(lab):
         alpha,
         "fetch",
     )
+    # The operator's masked reference for this experiment (private to operators).
+    service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="masked_reference", content="Reference."),
+        author,
+        "masked-reference",
+    )
     manifest = service.export_experiment(exp["id"], author)
     records = manifest["records"]
     assert list(records) == LEGACY_RECORD_KINDS + SOCIETY_RECORD_KINDS
@@ -256,11 +262,43 @@ def test_society_export_adds_commons_records_edges_and_fetches(lab):
     ]
     assert list(manifest).index("edges") == list(manifest).index("records") + 1
     assert all(branch.get("lab") for branch in records["branch"] if branch.get("hat") is None)
-    # An agent's export shows the commons of its ideas-sharing experiment, and only edges
-    # between nodes it can see.
-    agent_view = service.export_experiment(exp["id"], alpha)
-    assert {node["id"] for node in agent_view["records"]["commons_node"]} == {
-        goal["id"],
-        lemma["id"],
+    private = {"literature_screen", "masked_reference"}
+    kinds = {artifact["artifact_kind"] for artifact in records["artifact"]}
+    assert private <= kinds  # the operator's export holds the screen and the reference
+    # An agent's export shows the commons of its ideas-sharing experiment and only edges
+    # between nodes it can see. Screens and references never appear, and a literature
+    # fetch is visible to the fetching branch only.
+    views = {
+        name: service.export_experiment(exp["id"], agent)
+        for name, agent in (("alpha", alpha), ("beta", beta))
     }
-    assert len(agent_view["edges"]) == 2
+    for view in views.values():
+        assert {node["id"] for node in view["records"]["commons_node"]} == {
+            goal["id"],
+            lemma["id"],
+        }
+        assert len(view["edges"]) == 2
+        assert not private & {a["artifact_kind"] for a in view["records"]["artifact"]}
+    assert [f["id"] for f in views["alpha"]["records"]["literature_fetch"]] == [fetch["id"]]
+    assert views["beta"]["records"]["literature_fetch"] == []
+
+
+def test_society_export_bounds_its_commons_edges(lab, monkeypatch):
+    """Edges are read with the graph walk's subquery and bound, never an unbounded id list."""
+    from commons_helpers import society_lab
+
+    from physharness import commons
+    from physharness.commons_models import NodeCreate
+
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    for title in ("First", "Second"):
+        node = service.create_node(
+            exp["id"], NodeCreate(node_type="lemma", title=title, statement="S."), alpha, title
+        )
+        service.link_nodes(exp["id"], goal["id"], "depends_on", node["id"], alpha, f"l-{title}")
+    assert len(service.export_experiment(exp["id"], author)["edges"]) == 2
+    monkeypatch.setattr(commons, "MAX_GRAPH_EDGES", 1)
+    with pytest.raises(HarnessError) as caught:
+        service.export_experiment(exp["id"], author)
+    assert caught.value.code == "COMMONS_GRAPH_TOO_LARGE"

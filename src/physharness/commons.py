@@ -530,6 +530,36 @@ class CommonsMixin:
         return edges
 
     @staticmethod
+    def _commons_edges(session, project_id, experiment_id, visible):
+        """Commons edges between ``visible`` node ids, for exports.
+
+        Selected through the same node subquery and edge bound as the dependency walk, so a
+        large graph raises ``COMMONS_GRAPH_TOO_LARGE`` instead of binding every node id.
+        """
+        nodes = select(RecordRow.id).where(
+            RecordRow.project_id == project_id,
+            RecordRow.kind == "commons_node",
+            record_json_text("experiment_id") == experiment_id,
+        )
+        rows = session.execute(
+            select(EdgeRow.source_id, EdgeRow.target_id, EdgeRow.relation)
+            .where(
+                EdgeRow.project_id == project_id,
+                EdgeRow.relation.in_(COMMONS_RELATIONS),
+                EdgeRow.source_id.in_(nodes),
+            )
+            .order_by(EdgeRow.source_id, EdgeRow.relation, EdgeRow.target_id)
+            .limit(MAX_GRAPH_EDGES + 1)
+        ).all()
+        if len(rows) > MAX_GRAPH_EDGES:
+            raise _graph_too_large()
+        return [
+            {"source": source, "target": target, "relation": relation.removeprefix(EDGE_PREFIX)}
+            for source, target, relation in rows
+            if source in visible and target in visible
+        ]
+
+    @staticmethod
     def _node_item(node):
         item = {
             key: node[key]
