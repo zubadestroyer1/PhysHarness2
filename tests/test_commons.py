@@ -102,7 +102,7 @@ def test_create_node_attribution_and_event(lab):
     assert node["experiment_id"] == exp["id"]
     assert node["target_digest"] == exp["target_digest"]
     # Every node opens its discussion thread in the same transaction (Task 2).
-    assert node["topic_id"] and node["lab"] is None
+    assert node["topic_id"] and node["lab"] == branches[0]["lab"]
     assert node["citation_count"] == 0 and node["status_evidence"] == {}
     assert len(node["lean_statement_sha256"]) == 64
     created = events(service, beta, "commons.node_created")
@@ -111,6 +111,21 @@ def test_create_node_attribution_and_event(lab):
     ]
     plain = service.create_node(exp["id"], lemma(title="Plain"), alpha, "plain")
     assert plain["lean_statement_sha256"] is None
+
+
+def test_node_carries_its_author_branch_lab(lab):
+    """Regression (Task 10 simulation): node lab was always None although authors have labs."""
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    assert branches[0]["lab"] and branches[0]["lab"] != branches[1]["lab"]
+    alpha_node = service.create_node(exp["id"], lemma(), alpha, "alpha-node")
+    beta_node = service.create_node(exp["id"], lemma(title="Beta"), beta, "beta-node")
+    unattributed = service.create_node(exp["id"], lemma(title="Operator"), author, "operator")
+    assert alpha_node["lab"] == branches[0]["lab"] and beta_node["lab"] == branches[1]["lab"]
+    assert unattributed["branch_id"] is None and unattributed["lab"] is None
+    frontier = service.query_nodes(exp["id"], beta, frontier=True)["items"]
+    labs = {item["id"]: item["lab"] for item in frontier}
+    assert labs[alpha_node["id"]] == branches[0]["lab"]
+    assert service.read_node(beta_node["id"], alpha)["node"]["lab"] == branches[1]["lab"]
 
 
 def test_agent_without_branch_cannot_author_nodes(lab):

@@ -82,6 +82,10 @@ def require_role(actor: Principal, *roles: str) -> None:
         )
 
 
+# Record kinds a society experiment's export adds; the commons edges are exported beside them.
+SOCIETY_EXPORT_KINDS = ("commons_node", "commons_claim", "commons_review", "literature_fetch")
+
+
 class HarnessService(
     AcceptanceMixin,
     CollaborationMixin,
@@ -1563,6 +1567,11 @@ class HarnessService(
                     "workforce_capacity_request",
                 )
             }
+            society = experiment.get("society") is not None
+            if society:
+                # Only society exports carry commons and literature records; legacy exports
+                # keep their exact keys.
+                records.update({kind: [] for kind in SOCIETY_EXPORT_KINDS})
             rows = session.scalars(
                 select(RecordRow)
                 .where(
@@ -1578,11 +1587,18 @@ class HarnessService(
                 records["review"].append(
                     copy.deepcopy(self._get(session, "review", problem["review_id"], actor).payload)
                 )
+            commons_edges = {}
+            if society:
+                visible = {node["id"] for node in records["commons_node"]}
+                commons_edges["edges"] = self._commons_edges(
+                    session, actor.project_id, experiment_id, visible
+                )
             manifest = {
                 "format": "physharness.reproduction.v1",
                 "experiment": experiment,
                 "problem": problem,
                 "records": records,
+                **commons_edges,
                 "ledger": self._ledger(session, experiment_id, actor),
                 "snapshot": {
                     "isolation": isolation,

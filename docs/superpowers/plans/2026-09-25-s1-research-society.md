@@ -14,6 +14,26 @@
 
 **Spec:** `PLAN.md` §2–§5 and §7 (S1 row). Decisions from 2026-09-24 are recorded there and in `docs/IMPLEMENTATION_PLAN.md`.
 
+## Progress (2026-09-25)
+
+**Tasks 1–10 are implemented, pending the final review.** No live run has taken place:
+the S1 live comparison needs the approvals listed in
+[`work/society-s1/RUN_PLAN.md`](../../../work/society-s1/RUN_PLAN.md) §8. The full suite
+passes 1,521 tests with 1 opt-in skip; ruff is clean.
+
+| Task | Status | Commits |
+|---|---|---|
+| 1. Society policy and commons core | Implemented; reviewed after 1 fix round | `3b3bf29..439f667` |
+| 2. Claims, threads, subscriptions, urgent digests | Implemented; reviewed after 1 fix round | `2b63d12..848acff` |
+| 3. Referee and fidelity reviews, Lean statement and compile evidence | Implemented; reviewed after 2 fix rounds (runner integration via Task 9, rulings R20 and R21) | `ceb040a..d7cab88` |
+| 4. Labs and lab-aware messaging | Implemented; reviewed | `2b63d12..76a49d0` |
+| 5. Lean session | Implemented; reviewed after 2 fix rounds | `3b3bf29..9504d29` |
+| 6. `run_computation` and the workbench v2 definition (not built) | Implemented; reviewed | `3b3bf29..22f4a98` |
+| 7. Brokered literature with contamination policy | Implemented; reviewed after 1 fix round | `3b3bf29..7efee65` |
+| 8. Skills, constitution, check-ins, nudges | Implemented; reviewed | `3b3bf29..3af61c9` |
+| 9. Society tool profile and worker wiring | Implemented; R23 fix round awaiting re-review | `d81a4aa..b539741` |
+| 10. Simulation, metrics, run plan, docs | Implemented; awaiting review | branch `kieranpi/s1-t10-simulation` |
+
 ## Global Constraints
 
 - **Don't break anything.** Experiments without `society` must produce byte-identical payloads, tool definitions (63 tools, same `tool_definition_digest`), prompts and delivery shapes. The full suite must stay green: `PYTHONPATH=$PWD/src /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/pr27-qualification/.venv/bin/python -m pytest -m "not integration and not lean" -q`. The baseline is 1258 passed, 1 skipped.
@@ -216,7 +236,7 @@ class CommonsMixin:
 - **`_in_scope`** (service.py): add a branch before the generic fallthrough. For `row.kind in {"commons_node", "commons_claim", "commons_review"}`, an agent sees the row iff `row.payload["experiment_id"] == actor.experiment_id` and that experiment's `sharing == "ideas"`. The experiment-id check that already runs first stays.
 - **`create_experiment`:** `data = request.model_dump(mode="json")`; `if data.get("society") is None: data.pop("society", None)`. Legacy payloads and command fingerprints stay unchanged.
 
-- [ ] **Step 1: Write failing tests** in `tests/test_commons.py`:
+- [x] **Step 1: Write failing tests** in `tests/test_commons.py`:
   - `test_society_requires_ideas_sharing`: `ExperimentCreate(... sharing="verified", society=SocietyPolicy())` raises a ValidationError.
   - `test_benchmark_literature_requires_masked_reference`.
   - `test_legacy_experiment_payload_has_no_society_key`.
@@ -237,10 +257,10 @@ class CommonsMixin:
 
   Build society experiments with a helper `society_lab(lab, **policy)` that mirrors `approaches(lab, "ideas")` but passes `society=SocietyPolicy(**policy)`. Put it in `tests/commons_helpers.py` so Tasks 2–4 and 9 reuse it. It returns `(service, author, experiment, branches, agents)`.
 
-- [ ] **Step 2:** Run `pytest tests/test_commons.py -q`. Expect failures (import errors or missing attributes).
-- [ ] **Step 3:** Implement `domain.py` policies, `commons_models.py`, `commons.py`, and the `service.py` changes.
-- [ ] **Step 4:** Run `pytest tests/test_commons.py -q`, then the full suite and ruff. Expect everything green, with the full suite at ≥1258 passed.
-- [ ] **Step 5: Commit** `feat(commons): society policy and blueprint nodes with platform-only status ladder`.
+- [x] **Step 2:** Run `pytest tests/test_commons.py -q`. Expect failures (import errors or missing attributes).
+- [x] **Step 3:** Implement `domain.py` policies, `commons_models.py`, `commons.py`, and the `service.py` changes.
+- [x] **Step 4:** Run `pytest tests/test_commons.py -q`, then the full suite and ruff. Expect everything green, with the full suite at ≥1258 passed.
+- [x] **Step 5: Commit** `feat(commons): society policy and blueprint nodes with platform-only status ladder`.
 
 ---
 
@@ -312,7 +332,7 @@ def _insert_post(self, session, op, topic_row, data: dict, actor) -> dict
   - The excerpt for node posts is `abstract` (≤600) instead of the content prefix.
   - Legacy topics (no `node_id`) produce exactly today's item shape.
 
-- [ ] **Step 1: Write failing tests** in `tests/test_commons_discourse.py`:
+- [x] **Step 1: Write failing tests** in `tests/test_commons_discourse.py`:
   - `test_node_has_thread_and_author_subscribed`
   - `test_claim_expires_lazily` (monkeypatch `commons._now`)
   - `test_renew_requires_live_claim`
@@ -327,10 +347,10 @@ def _insert_post(self, session, op, topic_row, data: dict, actor) -> dict
   - `test_accepted_dependency_is_urgent`
   - `test_node_post_excerpt_uses_abstract`
   - `test_legacy_discussion_delivery_shape_unchanged`: compare the item keys to the pre-change set: `{"type", "retrieval_id", ...}`; record them from the current code before editing.
-- [ ] **Step 2:** Run the new tests; expect failures. Run the discussion suites; expect them to pass (baseline).
-- [ ] **Step 3:** Refactor `discussion.py` helpers and rerun the discussion suites; they must stay green. Then implement claims, posts, hooks and urgency.
-- [ ] **Step 4:** Run the new tests, the full suite and ruff. Expect all green.
-- [ ] **Step 5: Commit** `feat(commons): expiring work claims, node threads, subscriptions and urgent digests`.
+- [x] **Step 2:** Run the new tests; expect failures. Run the discussion suites; expect them to pass (baseline).
+- [x] **Step 3:** Refactor `discussion.py` helpers and rerun the discussion suites; they must stay green. Then implement claims, posts, hooks and urgency.
+- [x] **Step 4:** Run the new tests, the full suite and ruff. Expect all green.
+- [x] **Step 5: Commit** `feat(commons): expiring work claims, node threads, subscriptions and urgent digests`.
 
 ---
 
@@ -392,7 +412,7 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
 - **Goal-accepted hook:** in `AcceptanceMixin.process_verification`'s commit, after a verified `independent_kernel` receipt for the experiment target is stored, and only when the experiment has a society policy, call `self._commons_goal_accepted(session, experiment_row, receipt_id, op)`. It ensures the goal node in-session and runs `_set_node_status(goal, "accepted", reason="independent kernel receipt", evidence={"receipt_id"})`. Its status post reaches every subscriber. A legacy experiment is a no-op; test that the legacy commit path is unchanged.
 - **`record_local_compile`:** if the node is `formally_stated`, and `compile_result["complete"]` and `compile_result["statement_found"]` are both true, move to `compiles_locally` with evidence `{source_sha256, backend, axioms}`. Otherwise it records nothing and returns `{"recorded": False, "reason": ...}`.
 
-- [ ] **Step 1: Write failing tests** in `tests/test_commons_review.py`:
+- [x] **Step 1: Write failing tests** in `tests/test_commons_review.py`:
   - `test_request_informal_review_creates_detached_referee_task_cross_model` (experiment with 2 models)
   - `test_single_model_review_not_cross_model`
   - `test_request_review_deduplicates_open_request`
@@ -410,10 +430,10 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
   - `test_new_branch_task_without_extra_unchanged`: the task payload keys equal the pre-change set.
   - `test_goal_accepted_hook_on_verified_target_receipt`: use a stub verifier returning a verified independent-kernel outcome, following the existing acceptance tests' pattern.
   - `test_legacy_verification_commit_unchanged`
-- [ ] **Step 2:** Run; expect failures.
-- [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
-- [ ] **Step 5: Commit** `feat(commons): platform-assigned referee and fidelity reviews with evidence-bound ladder transitions`.
+- [x] **Step 2:** Run; expect failures.
+- [x] **Step 3:** Implement.
+- [x] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
+- [x] **Step 5: Commit** `feat(commons): platform-assigned referee and fidelity reviews with evidence-bound ladder transitions`.
 
 ---
 
@@ -446,7 +466,7 @@ def send_lab_message(self, branch_id, content, artifact_ids, actor, key) -> dict
   - Each goes through the same internal insert as `send_message`, with key `f"{key}:{recipient}"`, in one `_execute`.
   - It is rejected when the lab has no other members (`LAB_EMPTY`).
 
-- [ ] **Step 1: Write failing tests** in `tests/test_labs.py`:
+- [x] **Step 1: Write failing tests** in `tests/test_labs.py`:
   - `test_root_branch_gets_lab_only_in_society`
   - `test_recruit_inherits_parent_lab`
   - `test_recruit_new_lab`
@@ -457,10 +477,10 @@ def send_lab_message(self, branch_id, content, artifact_ids, actor, key) -> dict
   - `test_cross_lab_allowed_when_policy_enables`
   - `test_lab_broadcast_fans_out_and_is_idempotent`
   - `test_legacy_recruit_fingerprint_and_branch_payload_unchanged`
-- [ ] **Step 2:** Run; expect failures.
-- [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
-- [ ] **Step 5: Commit** `feat(society): labs with capped membership and lab-scoped direct messaging`.
+- [x] **Step 2:** Run; expect failures.
+- [x] **Step 3:** Implement.
+- [x] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
+- [x] **Step 5: Commit** `feat(society): labs with capped membership and lab-scoped direct messaging`.
 
 ---
 
@@ -539,7 +559,7 @@ def signature_from_extracted(text: str) -> tuple[str, str] | None   # "theorem e
   - Daemon tests run the real daemon locally in `tmp_path` with `--repl python3 tests/fixtures/fake_lean_repl.py`.
   - Host tests use a `FakeWorkspaceTools` whose `run` executes argv locally in `tmp_path` (substituting `/tmp/physharness-lean.sock` with a tmp socket path) and whose `write` writes files there.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `test_parse_lean_output_multiline_and_severity`
   - `test_split_header`
   - `test_signature_from_extracted`
@@ -553,10 +573,10 @@ def signature_from_extracted(text: str) -> tuple[str, str] | None   # "theorem e
   - `test_axioms_printed_for_top_level_names_only`
   - `test_outputs_bounded`
   - one `@pytest.mark.lean` test against a real REPL (skipped by default)
-- [ ] **Step 2:** Run; expect failures.
-- [ ] **Step 3:** Implement the daemon, then the host session, then the `WorkspaceTools` methods.
-- [ ] **Step 4:** Run the new tests, the full suite (the 63-tool legacy probe must still pass) and ruff.
-- [ ] **Step 5: Commit** `feat(toolkit): persistent Lean REPL session with automation-on-holes and sketch goal extraction`.
+- [x] **Step 2:** Run; expect failures.
+- [x] **Step 3:** Implement the daemon, then the host session, then the `WorkspaceTools` methods.
+- [x] **Step 4:** Run the new tests, the full suite (the 63-tool legacy probe must still pass) and ruff.
+- [x] **Step 5: Commit** `feat(toolkit): persistent Lean REPL session with automation-on-holes and sketch goal extraction`.
 
 ---
 
@@ -594,17 +614,17 @@ class ComputationRunner:
   - Mark in `docs/FORMAL_ENVIRONMENT.md` that the rebuild and qualification are pending user approval (Colima/Linux builder).
   - If an exact hash or version cannot be determined offline, write `TODO(pin-at-rebuild)` in the lock file **and** say so in the doc. This is the only allowed placeholder, because the rebuild itself is gated.
 
-- [ ] **Step 1: Write failing tests** with a `FakeWorkspaceTools` (`run` returns scripted `CommandResult` dicts; `policy` has `timeout_seconds=600`, `template_id`, `environment_digest`) and the `lab` service:
+- [x] **Step 1: Write failing tests** with a `FakeWorkspaceTools` (`run` returns scripted `CommandResult` dicts; `policy` has `timeout_seconds=600`, `template_id`, `environment_digest`) and the `lab` service:
   - `test_run_records_reproducibility_artifact`
   - `test_seed_env_and_omission`
   - `test_timeout_capped`
   - `test_missing_script_error`
   - `test_outputs_bounded_and_hashed`
   - `test_record_is_evidence_not_proof`
-- [ ] **Step 2:** Run; expect failures.
-- [ ] **Step 3:** Implement. Then make the Dockerfile, lock and doc changes.
-- [ ] **Step 4:** Run the new tests, the full suite and ruff. Also run `infra/validate_metadata.py` and `tools/formal_environment.py validate` if they cover these files.
-- [ ] **Step 5: Commit** `feat(toolkit): reproducible bounded computations; define numerics and Lean REPL workbench (rebuild pending)`.
+- [x] **Step 2:** Run; expect failures.
+- [x] **Step 3:** Implement. Then make the Dockerfile, lock and doc changes.
+- [x] **Step 4:** Run the new tests, the full suite and ruff. Also run `infra/validate_metadata.py` and `tools/formal_environment.py validate` if they cover these files.
+- [x] **Step 5: Commit** `feat(toolkit): reproducible bounded computations; define numerics and Lean REPL workbench (rebuild pending)`.
 
 ---
 
@@ -657,7 +677,7 @@ def record_literature_fetch(self, experiment_id, result: dict, actor, key) -> di
   - Check `ingest_source`'s accepted `format` values and use one that exists.
 - The production transport uses `httpx.Client(follow_redirects=True, timeout=20)`, created lazily. Unit tests always inject a fake transport.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `test_off_mode_refuses`
   - `test_arxiv_atom_and_openalex_parse_and_dedupe`
   - `test_benchmark_blocklist_filters_search`
@@ -669,10 +689,10 @@ def record_literature_fetch(self, experiment_id, result: dict, actor, key) -> di
   - `test_record_fetch_ingests_source_and_logs`
   - `test_flag_record_private_from_agents`
   - `test_masked_reference_artifact_invisible_to_agents`
-- [ ] **Step 2:** Run; expect failures.
-- [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
-- [ ] **Step 5: Commit** `feat(toolkit): brokered literature search and fetch with benchmark contamination screening`.
+- [x] **Step 2:** Run; expect failures.
+- [x] **Step 3:** Implement.
+- [x] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
+- [x] **Step 5: Commit** `feat(toolkit): brokered literature search and fetch with benchmark contamination screening`.
 
 ---
 
@@ -716,7 +736,7 @@ def stagnation_suggestions(*, literature_enabled: bool) -> list[str]
 - **Check-in cadence** (Task 9 supplies the closure): a note when `turns_completed > 0` and `turns_completed % every == 0`.
 - **Nudges:** `signal_message(signal, suggestions)` returns today's exact text when `suggestions` is None. Otherwise it appends `" Options: " + "; ".join(suggestions)`. `ResponsesRuntime` gains `stagnation_suggestions: list[str] | None = None`, used in place of the fixed message for `stagnation_warning` only.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `test_skills_listed_and_loadable_and_bounded`
   - `test_unknown_skill`
   - `test_constitution_respects_policy_flags_and_length`
@@ -724,10 +744,10 @@ def stagnation_suggestions(*, literature_enabled: bool) -> list[str]
   - `test_runtime_turn_note_injected_and_persisted`: use the fake Responses client pattern from `tests/test_network_runtime.py`.
   - `test_runtime_without_turn_note_state_identical`: run the same scripted session with and without an explicit `turn_note=None`; the saved states are equal.
   - `test_stagnation_suggestions_in_warning_output`
-- [ ] **Step 2:** Run; expect failures.
-- [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
-- [ ] **Step 5: Commit** `feat(scaffolding): technique skills, society constitution, optional check-ins and stagnation nudges`.
+- [x] **Step 2:** Run; expect failures.
+- [x] **Step 3:** Implement.
+- [x] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
+- [x] **Step 5: Commit** `feat(scaffolding): technique skills, society constitution, optional check-ins and stagnation nudges`.
 
 ---
 
@@ -799,7 +819,7 @@ SOCIETY_TOOL_NAMES = (...)  # the widest catalog, for tests
   - `stagnation_suggestions` applies when `scaffolding.stagnation_nudges`.
   - A `LiteratureBroker` is built when the mode is not off. In benchmark mode, the reference text comes from the masked reference artifact, read through the operator principal.
 
-- [ ] **Step 1: Write failing tests:**
+- [x] **Step 1: Write failing tests:**
   - `test_legacy_catalog_unchanged`: 63 tools and the same definitions digest as before the change; record the digest from the current code first.
   - `test_society_catalog_widest`: the tool count equals `len(SOCIETY_TOOL_NAMES)`, which is ≤25, and the names match.
   - `test_society_catalog_without_literature_or_review`: no `search_literature`, `fetch_source` or `submit_review`.
@@ -812,10 +832,10 @@ SOCIETY_TOOL_NAMES = (...)  # the widest catalog, for tests
   - `test_recruit_claims_focus_node`
   - `test_worker_society_prompt_contains_constitution_and_frontier`: the worker-level scripted runtime pattern from `tests/test_network_runtime.py` / `tests/test_joined_delegation.py`.
   - `test_worker_legacy_prompt_unchanged`
-- [ ] **Step 2:** Run; expect failures.
-- [ ] **Step 3:** Implement. Extract `tool_registrar` first and run the full suite to prove no change.
-- [ ] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
-- [ ] **Step 5: Commit** `feat(society): consolidated ~22-tool society profile with legacy tools as adapters`.
+- [x] **Step 2:** Run; expect failures.
+- [x] **Step 3:** Implement. Extract `tool_registrar` first and run the full suite to prove no change.
+- [x] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
+- [x] **Step 5: Commit** `feat(society): consolidated ~22-tool society profile with legacy tools as adapters`.
 
 ---
 
@@ -855,11 +875,11 @@ SOCIETY_TOOL_NAMES = (...)  # the widest catalog, for tests
   - An explicit "needs user approval: budget, target, image rebuild" section.
 - **Docs:** status (what exists, what's deferred), without claiming any live evidence.
 
-- [ ] **Step 1:** Write the simulation test and the metrics tool test (`tests/test_society_metrics.py` on a synthetic export).
-- [ ] **Step 2:** Run; fix integration bugs (fixes land in the owning module with a regression test).
-- [ ] **Step 3:** Write `RUN_PLAN.md` and the docs.
-- [ ] **Step 4:** Run the full suite and ruff. Expect green.
-- [ ] **Step 5: Commit** `test(society): end-to-end commons simulation, metrics tool and S1 live-run plan`.
+- [x] **Step 1:** Write the simulation test and the metrics tool test (`tests/test_society_metrics.py` on a synthetic export).
+- [x] **Step 2:** Run; fix integration bugs (fixes land in the owning module with a regression test).
+- [x] **Step 3:** Write `RUN_PLAN.md` and the docs.
+- [x] **Step 4:** Run the full suite and ruff. Expect green.
+- [x] **Step 5: Commit** `test(society): end-to-end commons simulation, metrics tool and S1 live-run plan`.
 
 ---
 

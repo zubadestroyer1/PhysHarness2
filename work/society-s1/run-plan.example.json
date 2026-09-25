@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "run_id": "society-s1-society-arm",
+  "project_id": "local-lab",
+  "campaign": {
+    "title": "S1 research society: matched-budget comparison",
+    "objective": "Compare a single agent, independent attempts and an 8-16 agent society on one hard known result with a masked reference, at matched budget.",
+    "programs": ["quantum", "classical"]
+  },
+  "target": {
+    "title": "USER DECISION REQUIRED: short neutral title of the chosen target (never the source paper's title)",
+    "program": "USER DECISION REQUIRED: quantum or classical",
+    "informal_statement": "USER DECISION REQUIRED: exact intended claim, with no hint of the reference proof",
+    "formal_source_file": "USER DECISION REQUIRED: Challenge.lean path of the frozen target, relative to this plan",
+    "environment_file": "USER DECISION REQUIRED: environment.json path of the pinned environment, relative to this plan",
+    "target_theorem": "USER DECISION REQUIRED: qualified theorem name in the challenge",
+    "assumptions": [],
+    "definitions": {},
+    "source": "Known result. Its provenance is withheld from agents in benchmark mode and kept in the operator's private notes.",
+    "definition_holes": false
+  },
+  "models": [
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family A",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family A",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family A",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family A",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family B",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family B",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family B",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family B",
+      "parameters": {"reasoning": {"effort": "high"}}
+    }
+  ],
+  "budget": {
+    "max_cost_usd": "USER DECISION REQUIRED: per-arm ceiling in USD (RUN_PLAN.md budget table)",
+    "max_concurrency": 12,
+    "max_runtime_seconds": "USER DECISION REQUIRED: per-arm wall-clock ceiling in seconds",
+    "max_tokens": "USER DECISION REQUIRED: per-arm token ceiling, or null for none"
+  },
+  "policy": "independent",
+  "sharing": "ideas",
+  "runtime_limits": {
+    "max_context_tokens": 256000,
+    "max_output_tokens": 64000,
+    "max_total_tokens": null,
+    "max_turns": 1000,
+    "timeout_seconds": 7200
+  },
+  "execution_profile": "formal-research",
+  "context_profile": "research",
+  "society": {
+    "tool_profile": "society",
+    "claim_ttl_seconds": 900,
+    "lab_size_max": 6,
+    "cross_lab_direct_messages": false,
+    "referee_quorum": 1,
+    "literature": {
+      "mode": "benchmark",
+      "blocked_sources": [
+        "USER DECISION REQUIRED: arXiv id, DOI, domain or title fragment of each known-solution source for the chosen target"
+      ],
+      "masked_reference_artifact_id": "USER DECISION REQUIRED: ref id",
+      "overlap_threshold": 0.02
+    },
+    "scaffolding": {
+      "playbook": true,
+      "skills": true,
+      "checkin_every_turns": 12,
+      "stagnation_nudges": true
+    }
+  }
+}
