@@ -1144,6 +1144,8 @@ class WorkforceMixin:
                 },
                 detached=True,
                 public_summary="Synthesis of sampled public research discussions",
+                # Synthesizers review across labs; they neither join nor fill the source lab.
+                lab=None,
             )
             self._replace(
                 session,

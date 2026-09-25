@@ -8,10 +8,12 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from test_sharing import approaches, artifact
 
+from physharness.discussion_models import DiscussionCreate, DiscussionPostCreate
 from physharness.domain import BranchCreate, Principal, digest_json
 from physharness.errors import HarnessError
 from physharness.storage import CommandRow, RecordRow, record_json_text
 from physharness.workforce_models import (
+    ConfigureWorkforceRequest,
     PortfolioRoot,
     RecruitResearcherRequest,
     SeedPortfolioRequest,
@@ -189,6 +191,47 @@ def test_unlabelled_branch_neither_joins_nor_counts(lab):
     assert sibling.code == "CROSS_LAB_MESSAGE"
     broadcast = rejected(lambda: service.send_lab_message(referee["id"], "hi", [], reviewer, "b"))
     assert broadcast.code == "LAB_NOT_FOUND"
+
+
+def test_synthesis_branch_takes_no_lab_even_when_source_lab_is_full(lab):
+    service, author, experiment, branches, agents = society_lab(lab, lab_size_max=1)
+    operator = Principal(id="operator", project_id=author.project_id, role="operator")
+    service.configure_workforce(
+        experiment["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=10, max_pending_tasks=10, synthesis_interval_posts=4
+        ),
+        operator,
+        "configure",
+    )
+    topics = [
+        service.create_discussion(
+            experiment["id"],
+            DiscussionCreate(title=f"Topic {index}", summary="Public research question"),
+            agent,
+            f"topic-{index}",
+        )
+        for index, agent in enumerate(agents)
+    ]
+    for index in range(4):
+        service.post_discussion(
+            topics[index % 2]["id"],
+            DiscussionPostCreate(kind="finding", content=f"Post {index}"),
+            agents[index % 2],
+            f"post-{index}",
+        )
+    # Every source lab is at its cap, so joining one would be LAB_FULL.
+    for branch in branches:
+        full = rejected(lambda branch=branch: recruit(service, author, experiment, branch, "x"))
+        assert full.code == "LAB_FULL"
+    result = service.schedule_research_synthesis(experiment["id"], operator, "synthesize")
+    assert result["scheduled"] is True
+    synthesizer = result["branch"]
+    assert synthesizer["parent_id"] in {branch["id"] for branch in branches}
+    assert synthesizer["lab"] is None
+    for branch in branches:
+        roster = service.lab_members(experiment["id"], branch["lab"], author)
+        assert [m["branch_id"] for m in roster["members"]] == [branch["id"]]
 
 
 def test_cross_lab_direct_message_rejected_by_default(lab):
