@@ -1,0 +1,35 @@
+# PhysHarness workbench v2: wheels the Debian 20260901T000000Z bookworm snapshot does
+# not package. formal/workbench.Dockerfile installs this file with
+#   python3 -m pip install --no-deps --require-hashes --only-binary=:all: --target ...
+# and then runs `python3 -m pip check`.
+#
+# STATUS: UNRESOLVED. Exact versions and wheel hashes could not be determined offline
+# on 2026-09-25. Every TODO(pin-at-rebuild) must be replaced with an exact value before
+# the image can build; the Dockerfile's pin gate fails while any remains. Rebuild and
+# qualification are pending user approval (docs/FORMAL_ENVIRONMENT.md).
+#
+# Target interpreter: Debian bookworm CPython 3.11 (3.11.2 in the 2026-09-23 build), with
+# Debian numpy 1.24.2 and scipy 1.10.1 already installed. Pip never replaces them.
+#
+# Resolution rule at rebuild:
+# - For each package, choose the newest release that ships cp311 manylinux wheels for
+#   both aarch64 and x86_64. Its Requires-Dist must be satisfied by the Debian packages
+#   in the image (numpy 1.24.2, scipy 1.10.1, ...).
+# - Pin `name==version` and add one --hash per architecture wheel.
+# - Each Requires-Dist entry must be a Debian package in the image or its own pinned line
+#   here. Prefer an apt package (for example python3-jinja2, python3-joblib, python3-cffi
+#   or python3-setuptools) when the snapshot has a satisfying version.
+# - Dependency edges to confirm (recalled offline, not verified): cvxpy needs osqp,
+#   clarabel and scs. osqp 0.6.x needs qdldl, which is a binary wheel with its own pin.
+#   osqp 1.x instead needs jinja2, joblib and setuptools.
+
+python-flint==TODO(pin-at-rebuild) \
+    --hash=sha256:TODO(pin-at-rebuild)
+cvxpy==TODO(pin-at-rebuild) \
+    --hash=sha256:TODO(pin-at-rebuild)
+clarabel==TODO(pin-at-rebuild) \
+    --hash=sha256:TODO(pin-at-rebuild)
+scs==TODO(pin-at-rebuild) \
+    --hash=sha256:TODO(pin-at-rebuild)
+osqp==TODO(pin-at-rebuild) \
+    --hash=sha256:TODO(pin-at-rebuild)
