@@ -36,6 +36,10 @@ AUTOMATION = (
     "exact?",
 )
 DAEMON_PATH = ".physharness/lean_session.py"  # workspace-relative upload target
+# With background processes (E2B), the daemon runs from /tmp so it stays out of the small
+# workspace checkpoint archive; a VM restore drops /tmp, which triggers a re-upload.
+DAEMON_RUNTIME_DIR = "/tmp/physharness"
+DAEMON_RUNTIME_PATH = DAEMON_RUNTIME_DIR + "/lean_session.py"
 REPL_CANDIDATES = ("/opt/lean-repl/.lake/build/bin/repl",)
 SOCKET_PATH = "/tmp/physharness-lean.sock"
 LAKE_PROJECT = "/opt/sources/physlib"
@@ -289,14 +293,19 @@ class LeanSession:
         path = f".physharness/req-{digest}.json"
         daemon_timeout, run_timeout = self._timeouts(timeout)
         if self._backend == "repl":
-            mode = ["request", "--socket", SOCKET_PATH]
+            daemon, mode = DAEMON_RUNTIME_PATH, ["request", "--socket", SOCKET_PATH]
+            place = (
+                f"if test -f {DAEMON_PATH}; then mkdir -p {DAEMON_RUNTIME_DIR} && "
+                f"mv -f {DAEMON_PATH} {DAEMON_RUNTIME_PATH}; fi; "
+            )
         else:
-            mode = ["inline"]
-        argv = ["python3", DAEMON_PATH, *mode, "--timeout", f"{daemon_timeout:g}"]
+            daemon, mode, place = DAEMON_PATH, ["inline"], ""
+        argv = ["python3", daemon, *mode, "--timeout", f"{daemon_timeout:g}"]
         argv += ["--cwd", LAKE_PROJECT, "--repl", "lake", "env", self._repl]
+        tidy = f"rm -f {path}; rmdir .physharness 2>/dev/null"
         script = (
-            f"if ! test -f {DAEMON_PATH}; then rm -f {path}; exit {_DAEMON_MISSING}; fi; "
-            f"{shlex.join(argv)} < {path}; status=$?; rm -f {path}; exit $status"
+            f"{place}if ! test -f {daemon}; then {tidy}; exit {_DAEMON_MISSING}; fi; "
+            f"{shlex.join(argv)} < {path}; status=$?; {tidy}; exit $status"
         )
         for attempt in range(2):
             await self._tools.write({"path": path, "content": body}, f"{operation_id}:{attempt}")
@@ -306,7 +315,9 @@ class LeanSession:
             )
             if result["exit_code"] != _DAEMON_MISSING or attempt:
                 break
-            await self._upload_daemon(f"{operation_id}:daemon")  # removed from the workspace
+            await self._upload_daemon(f"{operation_id}:daemon")  # removed or VM restored
+        if result["exit_code"] == _DAEMON_MISSING:
+            return {"error": "server_start_failed", "detail": "the daemon could not be placed"}
         try:
             response = json.loads(result["stdout"])
         except (TypeError, ValueError):
