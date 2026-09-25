@@ -6,18 +6,24 @@ from physharness.domain import BranchCreate, ExperimentCreate, Principal, Societ
 from physharness.storage import RecordRow
 
 
-def society_lab(lab, *, models=1, prefix="society", **policy):
+def society_lab(lab, *, models=1, configurations=None, prefix="society", **policy):
     """Mirror ``approaches(lab, "ideas")`` with a society policy.
 
     ``models`` > 1 records distinct model configurations and spreads the branches over them.
+    ``configurations`` records exactly these model configurations instead (same spreading).
     ``prefix`` keeps command keys and agent ids distinct when a test needs two experiments.
     """
     service, author, _ = lab
     original, _ = setup_experiment(lab)
-    configurations = [
-        {**original["models"][0], "model": original["models"][0]["model"] + (f"-{i}" if i else "")}
-        for i in range(models)
-    ]
+    if configurations is None:
+        configurations = [
+            {
+                **original["models"][0],
+                "model": original["models"][0]["model"] + (f"-{i}" if i else ""),
+            }
+            for i in range(models)
+        ]
+    models = len(configurations)
     request = ExperimentCreate.model_validate(
         {
             **{k: original[k] for k in ("campaign_id", "problem_id", "budget")},
