@@ -100,3 +100,28 @@ class NodeCreate(StrictModel):
                 "TANGENT_MOTIVATION_REQUIRED: a tangent needs a motivated_by edge to its origin"
             )
         return self
+
+
+class NodePostCreate(StrictModel):
+    kind: Literal["question", "finding", "objection", "attempt_failed", "synthesis", "update"]
+    # Structured header (claim / evidence status / ask) delivered in digests.
+    abstract: str = Field(min_length=1, max_length=600)
+    # Retrieved on demand with the exact post.
+    body: str = Field(default="", max_length=12000)
+    cites: list[Annotated[str, Field(min_length=1, max_length=36)]] = Field(
+        default_factory=list, max_length=20
+    )
+    artifact_ids: list[Annotated[str, Field(min_length=1, max_length=36)]] = Field(
+        default_factory=list, max_length=12
+    )
+    reply_to_post_id: str | None = None
+
+    @model_validator(mode="after")
+    def coherent_post(self):
+        if not self.abstract.strip():
+            raise ValueError("A post needs a substantive abstract")
+        if len(set(self.cites)) != len(self.cites):
+            raise ValueError("Cited nodes must be unique")
+        if len(set(self.artifact_ids)) != len(self.artifact_ids):
+            raise ValueError("Artifact references must be unique")
+        return self
