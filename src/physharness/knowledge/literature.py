@@ -11,7 +11,7 @@ import re
 import time
 from html.parser import HTMLParser
 from itertools import zip_longest
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 from xml.etree import ElementTree
 
 from physharness.errors import HarnessError
@@ -50,6 +50,20 @@ OVERLAP_FLOOR = 20
 MODES = frozenset({"off", "open", "benchmark"})
 # Search APIs return other works' metadata; benchmark agents reach them only via search().
 PROVIDER_API_HOSTS = frozenset({"export.arxiv.org", "api.openalex.org", "api.semanticscholar.org"})
+# Search and listing pages on allowlisted hosts list other works outside search()'s per-item
+# screen; benchmark fetches refuse these path prefixes (compared lowercased and decoded).
+SEARCH_PATHS = {
+    "arxiv.org": ("/search", "/list", "/a"),
+    "en.wikipedia.org": (
+        "/w/api.php",
+        "/w/rest.php",
+        "/wiki/special:search",
+        "/w/index.php/special:search",
+    ),
+    "mathoverflow.net": ("/search",),
+    "math.stackexchange.com": ("/search",),
+    "ncatlab.org": ("/nlab/search",),
+}
 
 _ATOM = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 _ARXIV_ID = r"(?:\d{4}\.\d{4,5}|[a-z][a-z.\-]*/\d{7})(?:v\d+)?"
@@ -187,6 +201,18 @@ def check_url(url) -> str:
     if port not in (None, default_port):
         raise _blocked("LITERATURE_DOMAIN_BLOCKED", "Non-default ports are not allowed.", host=host)
     return host
+
+
+def _search_endpoint(url: str, host: str) -> bool:
+    """Whether an allowlisted URL is a search or listing page (see ``SEARCH_PATHS``)."""
+    parts = urlsplit(url)
+    path = re.sub(r"/{2,}", "/", unquote(parts.path)).lower()
+    if any(
+        path == prefix or path.startswith(prefix + "/") for prefix in SEARCH_PATHS.get(host, ())
+    ):
+        return True
+    # MediaWiki runs a search for any request that carries a search parameter.
+    return host == "en.wikipedia.org" and "search" in parse_qs(parts.query, keep_blank_values=True)
 
 
 def _header(headers, name: str) -> str:
@@ -608,6 +634,12 @@ class LiteratureBroker:
             raise _blocked(
                 "LITERATURE_SOURCE_BLOCKED",
                 "Benchmark runs reach scholarly search APIs only through search: "
+                "use search_literature.",
+            )
+        if self._benchmark and _search_endpoint(url, host):
+            raise _blocked(
+                "LITERATURE_SOURCE_BLOCKED",
+                "Benchmark runs reach search and listing pages only through search: "
                 "use search_literature.",
             )
         if self._benchmark and self._url_blocked(url):

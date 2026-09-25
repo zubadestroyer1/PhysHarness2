@@ -185,26 +185,11 @@ class WorkspaceTools:
         """The local Docker workbench requires a quiescent guest after every command."""
         return self.broker.provider_spec["provider"] != "local_docker"
 
-    def _lean(self) -> LeanSession:
+    def lean_session(self) -> LeanSession:
+        """This workspace's one Lean session, shared by the society profile's Lean tools."""
         if self._lean_session is None:
             self._lean_session = LeanSession(self)
         return self._lean_session
-
-    def lean_session(self) -> LeanSession:
-        """This workspace's one Lean session, shared by the society profile's Lean tools."""
-        return self._lean()
-
-    async def lean_check(self, arguments, operation_id):
-        """REPL-backed check with automation on holes (registered by the society profile)."""
-        return await self._lean().check(
-            arguments["source"],
-            automate=arguments.get("automate", True),
-            operation_id=operation_id,
-        )
-
-    async def lean_sketch_goals(self, arguments, operation_id):
-        """Goals of the holes in a proof sketch as standalone Lean statements."""
-        return await self._lean().sketch_goals(arguments["source"], operation_id=operation_id)
 
     async def check_lean_type(self, arguments, operation_id):
         expression = arguments["expression"]

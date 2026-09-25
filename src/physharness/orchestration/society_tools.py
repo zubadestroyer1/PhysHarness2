@@ -40,10 +40,16 @@ from ..skills import list_skills, load_skill
 from ..worker_authority import current_worker_effects
 from ..workforce_models import RecruitResearcherRequest
 from .computation import MAX_ARG_CHARS, MAX_ARGS, MAX_TIMEOUT_SECONDS, ComputationRunner
-from .lean_session import lean_code, split_header, top_level_declarations
+from .lean_session import (
+    INFRASTRUCTURE_REASONS,
+    lean_code,
+    split_header,
+    top_level_declarations,
+)
 from .research_worker import FATAL_TOOL_CODES, tool_registrar, worker_check
 
-# The widest catalog: a joined child task with a review assignment, a workspace and literature.
+# Every society tool. A worker's widest catalog (a joined child task with a workspace and
+# literature) has all but submit_review; a referee task gets REFEREE_TOOL_NAMES at most.
 SOCIETY_TOOL_NAMES = (
     "shell",
     "read_file",
@@ -369,6 +375,34 @@ def _write_limit_bytes(workspace_tools):
     return E2B_FILE_BYTES if provider == "e2b" else None
 
 
+def _infrastructure_failure(result):
+    """Whether a failed elaboration is the infrastructure's failure, not Lean's judgement.
+
+    A timeout, a crashed, lost or unstartable session, or a failure with no error that Lean
+    placed in the source (a one-shot exit status, say) says nothing about the statement.
+    """
+    if result["ok"]:
+        return False
+    if result.get("reason_code") in INFRASTRUCTURE_REASONS:
+        return True
+    return not any(
+        message.get("severity") == "error" and message.get("line") is not None
+        for message in result.get("messages", [])
+    )
+
+
+def _infrastructure_error(result):
+    return HarnessError(
+        "LEAN_INFRASTRUCTURE_FAILURE",
+        "Lean could not judge the statement ("
+        + (result.get("reason_code") or "no located diagnostic")
+        + "); nothing was recorded.",
+        status=503,
+        retryable=True,
+        remediation="Call set_lean_statement again; the node keeps its current Lean record.",
+    )
+
+
 def _elaboration(result):
     """The platform elaboration record ``set_lean_statement`` accepts."""
     return {
@@ -632,7 +666,7 @@ def society_tools(
                 )
             sketch = await lean().sketch_goals(a["source"], operation_id=k)
             header = sketch["header"]
-            holes, failed, hole_nodes = [], [], {}
+            holes, failed, hole_nodes, created = [], [], {}, []
             for hole in sketch["holes"]:
                 if hole.get("extract_failed"):
                     failed.append(
@@ -646,13 +680,17 @@ def society_tools(
                     "universes": hole.get("universes", []),
                 }
                 if a["create_nodes"]:
-                    outcome = await hole_node(parent, header, hole, k)
+                    outcome = hole_node(parent, header, hole, k)
                     if "error" in outcome:
                         failed.append({"index": hole["index"], **outcome})
                         continue
+                    node_header = outcome.pop("node_header")
                     entry.update(outcome)
                     hole_nodes[str(hole["index"])] = outcome["node_id"]
+                    created.append((entry, node_header))
                 holes.append(entry)
+            if created:
+                await elaborate_holes(header, created, k)
             return {
                 "backend": sketch["backend"],
                 "ok": sketch["ok"],
@@ -664,8 +702,8 @@ def society_tools(
                 "closed": sketch["closed"],
             }
 
-        async def hole_node(parent, header, hole, key):
-            """Create, link and elaborate one hole's lemma node; failures are reported."""
+        def hole_node(parent, header, hole, key):
+            """Create and link one hole's lemma node; failures are reported."""
             index, statement = hole["index"], hole["lean_statement"]
             key = f"{key}:hole-{index}"
             node_header = header
@@ -697,33 +735,56 @@ def society_tools(
                 if error.code in FATAL_TOOL_CODES:
                     raise
                 return {"error": error.code, "message": error.message}
-            outcome = {"node_id": created["id"], "lean_name": name, "lean_elaborated": False}
+            return {
+                "node_id": created["id"],
+                "lean_name": name,
+                "lean_elaborated": False,
+                "node_header": node_header,
+            }
+
+        async def elaborate_holes(header, created, key):
+            """Elaborate every new hole node's statement in one Lean run; record each result.
+
+            One run imports the header once, instead of once per hole on repl_inline and
+            one_shot. An infrastructure failure is reported and records nothing.
+            """
             try:
-                result = await lean().elaborate_statement(
-                    node_header or "", name, statement, operation_id=f"{key}:elaborate"
+                results = await lean().elaborate_statements(
+                    header or "",
+                    [
+                        (entry["lean_name"], entry["lean_statement"], tuple(entry["universes"]))
+                        for entry, _ in created
+                    ],
+                    operation_id=f"{key}:elaborate-holes",
                 )
             except HarnessError as error:
                 if error.code in FATAL_TOOL_CODES:
                     raise
-                return {**outcome, "elaboration": error.envelope()["error"]}
-            record = _soft(
-                lambda: service.set_lean_statement(
-                    created["id"],
-                    node_header,
-                    name,
-                    statement,
-                    _elaboration(result),
-                    agent,
-                    f"{key}:lean",
+                for entry, _ in created:
+                    entry["elaboration"] = error.envelope()["error"]
+                return
+            for (entry, node_header), result in zip(created, results, strict=True):
+                if _infrastructure_failure(result):
+                    entry["elaboration"] = _elaboration_view(result)
+                    continue
+                record = _soft(
+                    lambda entry=entry, node_header=node_header, result=result: (
+                        service.set_lean_statement(
+                            entry["node_id"],
+                            node_header,
+                            entry["lean_name"],
+                            entry["lean_statement"],
+                            _elaboration(result),
+                            agent,
+                            f"{key}:hole-{entry['index']}:lean",
+                        )
+                    )
                 )
-            )
-            if "error" in record:
-                return {**outcome, "elaboration": record["error"]}
-            return {
-                **outcome,
-                "lean_elaborated": record["lean_elaborated"],
-                "elaboration": _elaboration_view(result),
-            }
+                if "error" in record:
+                    entry["elaboration"] = record["error"]
+                    continue
+                entry["lean_elaborated"] = record["lean_elaborated"]
+                entry["elaboration"] = _elaboration_view(result)
 
         add(
             "lean_sketch",
@@ -735,8 +796,9 @@ def society_tools(
             lean_sketch,
             "Compile a proof skeleton with sorry holes. Automation tries each hole; each open "
             "hole's goal becomes a standalone Lean statement and, with create_nodes, a lemma "
-            "node that the parent depends_on. Hole statements are elaborated against the file "
-            "header (imports and opens) only: a hole that mentions a definition made in the "
+            "node that the parent depends_on. Hole statements are elaborated together, in one "
+            "Lean run, against the file header (imports and opens) only: a hole that "
+            "mentions a definition made in the "
             "skeleton's body fails elaboration, and its node is still created with "
             "lean_elaborated false and the diagnostics. Holes whose goal could not be "
             "extracted are reported but get no node.",
@@ -782,15 +844,13 @@ def society_tools(
                     "source_id": record["source_id"],
                     "artifact_id": record["artifact_id"],
                 }
-            # Screen measurements stay in the private screen record.
-            reason = (result.get("flag") or {}).get("reason")
+            # One reason code: which screen fired (overlap or a blocked-source key) and its
+            # measurements stay in the private screen record.
             return {
                 "status": result["status"],
                 "url": result["url"],
                 "sha256": result["sha256"],
-                "reason": reason
-                if reason in ("blocked_source_key", "reference_overlap")
-                else "contamination_risk",
+                "reason": "withheld_contamination_risk",
             }
 
         add(
@@ -888,6 +948,9 @@ def society_tools(
             a["lean_statement"],
             operation_id=f"{k}:elaborate",
         )
+        if _infrastructure_failure(result):
+            # Not evidence: recording it would demote a formal node for a lost session.
+            raise _infrastructure_error(result)
         record = service.set_lean_statement(
             a["node_id"],
             a["lean_header"],

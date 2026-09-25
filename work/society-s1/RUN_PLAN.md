@@ -154,8 +154,18 @@ pinned libraries or given a reference proof.
     read it. In the example it is the short placeholder
     `USER DECISION REQUIRED: ref id`, because the field holds at most 36 characters.
   - The broker screens search results and fetched text for overlap with the reference
-    (`overlap_threshold` 0.02) and withholds flagged text. Agents see only a reason code.
-    The measurements stay in a private `literature_screen` artifact.
+    (`overlap_threshold` 0.02) and withholds flagged text. Agents see one reason code,
+    `withheld_contamination_risk`, whether the text overlapped the reference or cited a
+    blocked source. The measurements stay in a private `literature_screen` artifact.
+  - The withholding is an inherent 1-bit oracle: an agent learns that a source it chose
+    was close to the reference or named a blocked source, and repeated fetches can probe
+    that. It never sees the text, the measurements or which screen fired. The post-run
+    audit below covers what an agent could infer.
+  - Fetches of search and listing pages on allowlisted hosts are refused
+    (`LITERATURE_SOURCE_BLOCKED`): arXiv `/search`, `/list` and `/a/`, Wikipedia
+    `api.php`, `rest.php`, `Special:Search` and any `search=` query, and the
+    MathOverflow, Math StackExchange and nLab search pages. Those pages list other works
+    outside `search_literature`'s per-item screen.
   - A flag means text was withheld, not leaked. An arm is **contaminated** only if a
     post-run audit finds reference text in released sources, posts or the accepted
     proof. A contaminated arm is reported but excluded from the benchmark comparison.
