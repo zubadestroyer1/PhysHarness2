@@ -858,6 +858,7 @@ class CollaborationMixin:
             raise HarnessError(
                 "MAILBOX_SCOPE", "Branches must share an experiment to exchange messages."
             )
+        self._guard_referee_recipient(sender, recipient)
         self._lab_route(experiment, sender, recipient)
         self._recipient_visible_artifacts(
             session, artifact_ids, experiment_id, recipient_id, actor, strict=True
