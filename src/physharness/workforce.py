@@ -24,6 +24,15 @@ DEFAULT_MAX_PENDING_TASKS = 10_000
 LAB_NAME = re.compile(LAB_PATTERN)
 
 
+def _extended(payload, extra):
+    """Append platform-assigned fields (``None`` leaves the payload as it is)."""
+    if extra is None:
+        return payload
+    if payload.keys() & extra.keys():
+        raise ValueError("Extra fields cannot replace canonical fields")
+    return {**payload, **copy.deepcopy(extra)}
+
+
 def _lab_not_found():
     return HarnessError(
         "LAB_NOT_FOUND",
@@ -380,6 +389,7 @@ class WorkforceMixin:
         public_summary=None,
         lab="inherit",
         task_extra=None,
+        branch_extra=None,
     ):
         models = experiment.payload["models"]
         if model_index is not None and model_index >= len(models):
@@ -393,6 +403,7 @@ class WorkforceMixin:
                 )
             if actor.role == "agent" and parent_id != actor.branch_id:
                 raise HarnessError("BRANCH_AUTHORITY", "Recruit from your own branch.", status=403)
+            self._guard_referee_branch(parent, actor)
         binding = current_worker_effects.get() if actor.role == "agent" else None
         if actor.role == "agent" and parent_id and not detached and binding is None:
             raise HarnessError(
@@ -411,21 +422,24 @@ class WorkforceMixin:
             session,
             "branch",
             actor,
-            {
-                "title": title,
-                "objective": objective,
-                "relation": relation,
-                "parent_id": parent_id,
-                "reply_to_parent": parent_id,
-                "checkpoint_id": None,
-                "model_index": model_index,
-                "experiment_id": experiment.id,
-                "target_digest": experiment.payload["target_digest"],
-                "status": "open",
-                "execution_identity": new_id(),
-                "model_configuration": selected_model,
-                **self._branch_lab(session, experiment, parent, branch_id, lab),
-            },
+            _extended(
+                {
+                    "title": title,
+                    "objective": objective,
+                    "relation": relation,
+                    "parent_id": parent_id,
+                    "reply_to_parent": parent_id,
+                    "checkpoint_id": None,
+                    "model_index": model_index,
+                    "experiment_id": experiment.id,
+                    "target_digest": experiment.payload["target_digest"],
+                    "status": "open",
+                    "execution_identity": new_id(),
+                    "model_configuration": selected_model,
+                    **self._branch_lab(session, experiment, parent, branch_id, lab),
+                },
+                branch_extra,
+            ),
             record_id=branch_id,
         )
         if parent_id:
@@ -452,12 +466,8 @@ class WorkforceMixin:
             "synthesis": synthesis,
             "synthesis_scope": synthesis_scope,
         }
-        if task_extra is not None:
-            # Platform-assigned fields (e.g. a referee's review assignment) only add keys.
-            if task_payload.keys() & task_extra.keys():
-                raise ValueError("task_extra cannot replace canonical task fields")
-            task_payload.update(copy.deepcopy(task_extra))
-        task = self._insert(session, "task", actor, task_payload)
+        # Platform-assigned fields (e.g. a referee's review assignment) only add keys.
+        task = self._insert(session, "task", actor, _extended(task_payload, task_extra))
         if public_summary:
             # The recruiter can opt to publish only this bounded summary for the
             # new child. The child branch's private objective stays scoped.
