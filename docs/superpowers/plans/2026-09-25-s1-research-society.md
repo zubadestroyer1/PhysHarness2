@@ -548,7 +548,7 @@ def signature_from_extracted(text: str) -> tuple[str, str] | None   # "theorem e
     - Map REPL messages to the schema.
     - Holes come from `sorries` (`goal`, `proofState`, `pos`).
     - When `automate`, run `tactics` over `AUTOMATION` per hole with `stop_on_success`. Record `closed_by`, and a `suggestion` from any "Try this:" info message.
-  - **Axioms:** when `ok` and there are no holes, run a second check of `source + "\n" + "\n".join(f"#print axioms {n}" for n in top_level_names)`. `top_level_names` holds `theorem|lemma NAME` declarations found outside any `namespace` block (skip the rest). Parse the `depends on axioms: [...]` messages.
+  - **Axioms:** when `ok` and there are no holes, run a second check of `source + "\n" + "\n".join(f"#print axioms {n}" for n in top_level_names)`. `top_level_names` holds `theorem|lemma NAME` declarations found outside any `namespace` block (skip the rest). Parse the `depends on axioms: [...]` messages. One-shot runs this check as `lean --json -Dlinter.all=false` and reads only `information` messages at the appended lines, since plain `lean` prints them without a position.
   - **`sketch_goals`:** `check(automate=True)`; for each hole not closed, run `tactics(["extract_goal"])` and `signature_from_extracted` on the info message. The name suggestion is `f"hole_{index}"`; Task 9 renames it.
   - **`elaborate_statement`:** check `f"{header}\n\ntheorem {name} {signature} := by\n  sorry\n"`. `ok` means no error messages.
 - **Tests:**

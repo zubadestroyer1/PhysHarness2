@@ -4,7 +4,7 @@ Backends, chosen once per workspace:
 - ``repl``: a detached daemon keeps one REPL alive with imports cached per header;
 - ``repl_inline``: providers that require a quiescent guest after every command (the local
   Docker workbench) run the same request against a private REPL that dies with the command;
-- ``one_shot``: without a REPL binary, ``lake env lean`` on a scratch file, parsed from text.
+- ``one_shot``: without a REPL binary, ``lake env lean`` on a scratch file; axioms via ``--json``.
 
 Every result is evidence only: ``proof_status`` stays ``not_accepted``.
 """
@@ -57,6 +57,9 @@ MAX_AXIOM_NAMES = 32
 MAX_NAME = 200
 # The daemon answers this long before the provider's own timeout, which quarantines the VM.
 RUN_MARGIN_SECONDS = 30
+# Plain ``lean`` prints info messages (``#print axioms``) without a position, so the one-shot
+# axiom pass reads JSON; with linters off, fewer warnings precede the reports in the 64 KiB head.
+_AXIOM_PASS_ARGS = ("--json", "-Dlinter.all=false")
 _DAEMON_MISSING = 97
 _START_FAILURES = ("server_start_failed", "repl_start_failed")
 _SEVERITIES = ("error", "warning", "info")
@@ -424,28 +427,52 @@ def _normalise_check(response):
 def _appended_axioms(report, source, names):
     """``#print axioms`` results read only from the lines appended after ``source``.
 
-    Each report must be Lean's message at its own appended line of the scratch file, and
-    must open with the name printed there; output that agent code printed (``#eval``,
-    either stream) carries other positions or paths and is ignored, and so is any text
-    after the report in the same message.
+    ``report`` is a ``lean --json`` run: one message object per stdout line (stderr is never
+    read). Each report must be an ``information`` message of the scratch file at its own
+    appended line, and must open with the report for the name printed there; output that
+    agent code printed (``#eval``, either stream) carries other positions or paths and is
+    ignored, and so is any text after the report in the same message. Other messages at
+    that line (``'Bar.foo'`` for an ambiguous ``foo``, say) are ignored, and a line with
+    more than one report for its name reports nothing.
     """
     output, path = report["diagnostics"], "/work/" + report["source_path"]
     first = source.count("\n") + 2  # printed = source + "\n" + one line per name
+    claims = {}
+    for raw in (output.get("stdout") or "").split("\n"):
+        try:
+            message = json.loads(raw)
+        except Exception:  # Includes RecursionError from deeply nested agent-controlled JSON.
+            continue
+        if not isinstance(message, dict):
+            continue
+        position = message.get("pos")
+        line = position.get("line") if isinstance(position, dict) else None
+        if (
+            message.get("fileName") != path
+            or message.get("severity") != "information"
+            or not isinstance(line, int)
+            or isinstance(line, bool)
+            or not 0 <= line - first < len(names)
+        ):
+            continue
+        name, text = names[line - first], message.get("data")
+        if isinstance(text, str) and text.startswith(
+            (f"'{name}' does not depend on any axioms", f"'{name}' depends on axioms: [")
+        ):
+            claims.setdefault(name, []).append(text)
     axioms = {}
-    for stream in ("stdout", "stderr"):
-        for message in parse_lean_output(output.get(stream) or "", path):
-            index = (message["line"] or 0) - first
-            if message["severity"] != "info" or not 0 <= index < len(names):
-                continue
-            name, text = names[index], message["text"]
-            if text.startswith(f"'{name}' does not depend on any axioms"):
-                entry = []
-            elif text.startswith(f"'{name}' depends on axioms: [") and "]" in text:
-                entry = parse_axioms(text[: text.index("]") + 1]).get(name)
-            else:
-                entry = None
-            if entry is not None and name not in axioms:
-                axioms[name] = entry
+    for name, texts in claims.items():
+        text = texts[0]
+        if len(texts) > 1:
+            continue
+        if text.startswith(f"'{name}' does not depend on any axioms"):
+            entry = []
+        elif "]" in text:
+            entry = parse_axioms(text[: text.index("]") + 1]).get(name)
+        else:
+            entry = None
+        if entry is not None:
+            axioms[name] = entry
     return axioms
 
 
@@ -835,10 +862,14 @@ class LeanSession:
             axioms_ok = len(printed.encode("utf-8")) <= MAX_UPLOAD_BYTES
             if axioms_ok:
                 report = await self._tools.lean_scratch(
-                    {"source": printed}, operation_id + ":lean-one-axioms"
+                    {"source": printed},
+                    operation_id + ":lean-one-axioms",
+                    lean_args=_AXIOM_PASS_ARGS,
                 )
                 axioms = _appended_axioms(report, source, names)
-                # No report from the appended lines (an #exit, say) is no axiom report.
+                # A report proves the appended lines ran; none (an #exit, say) is incomplete. A
+                # name Lean prints differently (private, _root_) has no report of its own, as
+                # on the REPL backend; the society gate requires the node's own report.
                 axioms_ok = report["diagnostics"].get("exit_code") == 0 and bool(axioms)
         return {
             "backend": "one_shot",
