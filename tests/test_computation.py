@@ -82,6 +82,9 @@ async def test_run_records_reproducibility_artifact(lab):
     assert probe_args["timeout_seconds"] <= 600
     assert run_args == {
         "argv": [
+            "timeout",
+            "--kill-after=5s",
+            "30s",
             "env",
             "PYTHONHASHSEED=0",
             "PHYSHARNESS_SEED=7",
@@ -93,7 +96,7 @@ async def test_run_records_reproducibility_artifact(lab):
             "10",
         ],
         "cwd": ".",
-        "timeout_seconds": 30,
+        "timeout_seconds": 60,
     }
     assert probe_op != run_op and all(op.startswith("call-1") for op in (probe_op, run_op))
 
@@ -105,8 +108,9 @@ async def test_run_records_reproducibility_artifact(lab):
         "truncated",
         "packages",
         "evidence_status",
+        "timed_out",
     }
-    assert result["exit_code"] == 0
+    assert result["exit_code"] == 0 and result["timed_out"] is False
     assert result["stdout"] == "energy=1.5\n" and result["stderr"] == "note\n"
     assert result["truncated"] is False
     assert set(result["packages"]) == set(PACKAGES)
@@ -125,7 +129,7 @@ async def test_run_records_reproducibility_artifact(lab):
     assert record["args"] == ["--steps", "10"]
     assert record["seed"] == 7
     assert record["timeout_seconds"] == 30
-    assert record["exit_code"] == 0
+    assert record["exit_code"] == 0 and record["timed_out"] is False
     assert isinstance(record["duration_seconds"], (int, float))
     assert record["duration_seconds"] >= 0
     assert record["stdout"] == "energy=1.5\n" and record["stderr"] == "note\n"
@@ -148,7 +152,17 @@ async def test_seed_env_and_omission(lab):
     await computation.run({"path": "sim/run.py", "timeout_seconds": 30}, "defaults")
 
     no_seed_argv = tools.calls[1][0]["argv"]
-    assert no_seed_argv == ["env", "PYTHONHASHSEED=0", "python3", "-X", "utf8", "sim/run.py"]
+    assert no_seed_argv == [
+        "timeout",
+        "--kill-after=5s",
+        "30s",
+        "env",
+        "PYTHONHASHSEED=0",
+        "python3",
+        "-X",
+        "utf8",
+        "sim/run.py",
+    ]
     assert not any(part.startswith("PHYSHARNESS_SEED") for part in no_seed_argv)
     assert "PHYSHARNESS_SEED=0" in tools.calls[3][0]["argv"]
     assert tools.calls[5][0]["argv"] == no_seed_argv
@@ -167,16 +181,29 @@ async def test_timeout_capped(lab):
     computation, tools = runner(service, agent, probe_result(), {}, probe_result(), {})
     within = await computation.run(arguments(timeout_seconds=12.5), "within")
     capped = await computation.run(arguments(timeout_seconds=5000), "capped")
-    assert tools.calls[1][0]["timeout_seconds"] == 12.5
+    assert tools.calls[1][0]["argv"][:3] == ["timeout", "--kill-after=5s", "12.5s"]
+    assert tools.calls[1][0]["timeout_seconds"] == 42.5
+    assert tools.calls[3][0]["argv"][:3] == ["timeout", "--kill-after=5s", "570s"]
     assert tools.calls[3][0]["timeout_seconds"] == 600
     assert stored_record(service, agent, within["artifact_id"])["timeout_seconds"] == 12.5
-    assert stored_record(service, agent, capped["artifact_id"])["timeout_seconds"] == 600
+    assert stored_record(service, agent, capped["artifact_id"])["timeout_seconds"] == 570
     assert all(call[0]["timeout_seconds"] <= 600 for call in tools.calls)
 
     long_policy, long_tools = runner(service, agent, probe_result(), {}, timeout_seconds=86400)
     result = await long_policy.run(arguments(timeout_seconds=86400), "absolute-cap")
-    assert long_tools.calls[1][0]["timeout_seconds"] == 1800
+    assert long_tools.calls[1][0]["argv"][2] == "1800s"
+    assert long_tools.calls[1][0]["timeout_seconds"] == 1830
     assert stored_record(service, agent, result["artifact_id"])["timeout_seconds"] == 1800
+
+    edge, edge_tools = runner(service, agent, probe_result(), {}, timeout_seconds=31)
+    await edge.run(arguments(timeout_seconds=10), "one-second-budget")
+    assert edge_tools.calls[1][0]["argv"][2] == "1s"
+    assert edge_tools.calls[1][0]["timeout_seconds"] == 31
+    short, short_tools = runner(service, agent, timeout_seconds=30)
+    with pytest.raises(HarnessError) as error:
+        await short.run(arguments(timeout_seconds=10), "no-budget")
+    assert error.value.code == "INVALID_COMPUTATION"
+    assert short_tools.calls == []
 
     for timeout in (0, -3, float("nan"), float("inf"), True, "30", None):
         with pytest.raises(HarnessError) as error:
@@ -281,6 +308,46 @@ async def test_record_is_evidence_not_proof(lab):
     assert artifact["trusted_input"] is False
 
 
+async def test_overrun_reports_timed_out(lab):
+    service, agent, _ = society(lab)
+    outcomes = {0: False, 1: False, 124: True, 137: True}
+    results = []
+    for code in outcomes:
+        results += [probe_result(), {"exit_code": code, "stdout": f"exit {code}"}]
+    computation, _ = runner(service, agent, *results)
+    for code, expected in outcomes.items():
+        result = await computation.run(arguments(), f"exit-{code}")
+        assert result["exit_code"] == code and result["timed_out"] is expected
+        assert stored_record(service, agent, result["artifact_id"])["timed_out"] is expected
+
+
+async def test_replay_keys_record_on_content(lab, monkeypatch):
+    from physharness.orchestration import computation as module
+
+    ticks = iter([100.0, 101.25] * 3)
+    monkeypatch.setattr(module, "monotonic", lambda: next(ticks))
+    service, agent, _ = society(lab)
+    computation, _ = runner(
+        service,
+        agent,
+        probe_result(),
+        {"stdout": "energy=1.5"},
+        probe_result(),
+        {"stdout": "energy=1.5"},
+        probe_result(),
+        {"stdout": "energy=1.7"},
+    )
+    first = await computation.run(arguments(), "replayed-call")
+    identical = await computation.run(arguments(), "replayed-call")
+    different = await computation.run(arguments(), "replayed-call")
+
+    assert identical["artifact_id"] == first["artifact_id"]
+    assert different["artifact_id"] != first["artifact_id"]
+    assert stored_record(service, agent, first["artifact_id"])["stdout"] == "energy=1.5"
+    assert stored_record(service, agent, different["artifact_id"])["stdout"] == "energy=1.7"
+    assert stored_record(service, agent, first["artifact_id"])["duration_seconds"] == 1.25
+
+
 def test_probe_reports_script_digest_and_package_versions(tmp_path):
     """Execute the real probe source with the host interpreter (no VM needed)."""
     script = tmp_path / "sim" / "run.py"
@@ -321,7 +388,7 @@ PLACEHOLDER = "TODO(pin-at-rebuild)"
 
 def test_workbench_definition_gates_unpinned_builds(tmp_path):
     """The image definition cannot build while any pin is a placeholder (no Docker used)."""
-    dockerfile = (ROOT / "formal/workbench.Dockerfile").read_text()
+    dockerfile = (ROOT / "formal/workbench-v2.Dockerfile").read_text()
     lock = (ROOT / "formal/workbench-requirements.lock").read_text()
     start = dockerfile.index("RUN if grep -v '^[[:space:]]*#' /opt/workbench/requirements.lock")
     gate = dockerfile[start + len("RUN ") : dockerfile.index("\n# ", start)]

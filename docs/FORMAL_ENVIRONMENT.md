@@ -139,12 +139,15 @@ in [physics evidence](../formal/evidence/physics/index.json).
 
 ## Workbench v2 (pending rebuild)
 
-`formal/workbench.Dockerfile` now defines the next research workbench. It adds numerics
-packages for `run_computation` and a persistent Lean REPL for `lean_check`. **It has not
-been built or qualified.** Rebuilding it on the dedicated Colima/Linux builder and
-requalifying the workbench both need user approval. Until then, the workbench built
-from the previous definition stays in use. On that image, `run_computation` reports
-the new packages as `null`, and `lean_check` uses its one-shot fallback.
+`formal/workbench-v2.Dockerfile` defines the next research workbench. It is v1 plus
+numerics packages for `run_computation` and a persistent Lean REPL for `lean_check`.
+**It has not been built or qualified.** Rebuilding it on the dedicated Colima/Linux
+builder and requalifying the workbench both need user approval.
+
+`formal/workbench.Dockerfile` (v1) is unchanged. It remains the qualified workbench
+definition until v2 is rebuilt and qualified, and pilot freeze manifests reference it.
+On the v1 image, `run_computation` reports the new packages as `null`, and `lean_check`
+uses its one-shot fallback.
 
 | Component | Route | Pin status |
 | --- | --- | --- |
@@ -165,7 +168,7 @@ delete its lock line.
 Every remaining placeholder is `TODO(pin-at-rebuild)`. These values could not be
 determined offline:
 
-- `LEAN_REPL_REVISION` and `LEAN_REPL_SHA256` (Dockerfile `ARG` defaults). The only
+- `LEAN_REPL_REVISION` and `LEAN_REPL_SHA256` (`ARG` defaults in the v2 Dockerfile). The only
   local REPL checkout reaches tag `v4.33.0-rc1` (`1d238373119fa7cdb72ed7c24f6723d135b5b5fc`).
   That commit declares `leanprover/lean4:v4.33.0-rc1`, so it would fail the build's
   exact-toolchain check. Use the upstream `v4.33.0` tag commit instead.
@@ -173,7 +176,7 @@ determined offline:
   wheel SHA256 values for python-flint, cvxpy, clarabel, scs and osqp. Add a pinned line
   for any dependency that Debian does not provide.
 
-The Dockerfile has a pin gate that runs before anything is installed. It fails the build
+The v2 Dockerfile has a pin gate that runs before anything is installed. It fails the build
 while the lock contains `TODO(pin-at-rebuild)`, or while either REPL pin is not an exact
 hex commit or hex SHA256. An unpinned image therefore cannot be built by accident.
 
@@ -194,8 +197,8 @@ After approval, rebuild as follows:
 3. Build from exactly two files, with the isolated builder selected as in [Rebuild](#rebuild):
 
    ```sh
-   tar -C formal -cf - workbench.Dockerfile workbench-requirements.lock | \
-     docker build --file workbench.Dockerfile --tag physharness-workbench:v2 -
+   tar -C formal -cf - workbench-v2.Dockerfile workbench-requirements.lock | \
+     docker build --file workbench-v2.Dockerfile --tag physharness-workbench:v2 -
    ```
 
 4. Record the measured image digest. Requalify the workbench, including the pinned

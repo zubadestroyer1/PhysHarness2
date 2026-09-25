@@ -1,5 +1,5 @@
 # PhysHarness workbench v2: wheels the Debian 20260901T000000Z bookworm snapshot does
-# not package. formal/workbench.Dockerfile installs this file with
+# not package. formal/workbench-v2.Dockerfile installs this file with
 #   python3 -m pip install --no-deps --require-hashes --only-binary=:all: --target ...
 # and then runs `python3 -m pip check`.
 #
