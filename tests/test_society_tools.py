@@ -632,6 +632,19 @@ def test_society_reads_count_toward_stagnation():
     assert signals[-1] == "stagnation_warning"
 
 
+async def test_repeated_unknown_tool_calls_trip_the_stagnation_detector():
+    dispatcher, state, signals = referee_catalog(), {}, []
+    for _ in range(8):
+        rejected = await call(dispatcher, "wait", {"for": "tasks"})
+        signals.append(observe(state, "wait", {"for": "tasks"}, rejected))
+    assert signals == [None] * 3 + ["stagnation_warning"] + [None] * 3 + ["recovery_requested"]
+    # Other rejections still neither count as repeated reads nor as progress.
+    state = {}
+    invalid = {"error": {"code": "INVALID_ARGUMENTS", "message": "bad"}}
+    assert [observe(state, "commons_read", {}, invalid) for _ in range(8)] == [None] * 8
+    assert state == {}
+
+
 async def test_referee_task_gets_submit_review(lab):
     service, author, exp, branches, (alpha, beta) = society_lab(lab)
     node = service.create_node(

@@ -165,6 +165,11 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _terminal_read(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> bool:
+    error = result.get("error")
+    if isinstance(error, dict) and error.get("code") == "TOOL_UNAVAILABLE":
+        # A call outside the profile (a recoverable rejection in the society profile)
+        # repeats unchanged without new work, like a repeated read.
+        return True
     if name in {"discussion_updates", "inbox"}:
         return bool(result.get("items")) and "error" not in result
     if name in {"inspect_verification", "wait_for_verification", "verification_status"}:
