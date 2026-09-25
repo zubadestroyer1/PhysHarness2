@@ -183,6 +183,7 @@ class CommonsMixin:
             )
         problem = target.payload
         platform = _platform(experiment.project_id)
+        op = op or new_id()
         record = self._insert(
             session,
             "commons_node",
@@ -206,12 +207,13 @@ class CommonsMixin:
         self._event(
             session,
             platform,
-            op or new_id(),
+            op,
             "commons.node_created",
             record["id"],
             {"experiment_id": experiment.id, "node_id": record["id"], "node_type": "goal"},
         )
-        return record
+        # The goal has no author branch, so nobody is subscribed to its thread.
+        return self._open_node_thread(session, op, experiment, record, platform)
 
     def ensure_goal_node(self, experiment_id, actor):
         """Idempotent platform creation of the goal; never changes an existing status."""
@@ -302,6 +304,10 @@ class CommonsMixin:
                     "node_type": request.node_type,
                 },
             )
+            record = self._open_node_thread(session, op, experiment, record, actor)
+            subscribed = self._auto_subscribe(
+                session, op, record["topic_id"], actor.branch_id, actor
+            )
             for edge in request.edges:
                 self._add_edge(
                     session,
@@ -313,7 +319,8 @@ class CommonsMixin:
                     actor,
                     new_source=True,
                 )
-            return record
+            # Not stored: whether the author's inbox follows the new thread (reader cap).
+            return {**record, "auto_subscribed": subscribed}
 
         return self._execute(
             actor, key, "commons.node_create", {"experiment_id": experiment_id, **data}, action
@@ -325,7 +332,7 @@ class CommonsMixin:
         """Insert one validated edge; ``relation`` is already one of ``EDGE_RELATIONS``."""
         if target_id == source_id:
             raise HarnessError("SELF_EDGE", "A node cannot relate to itself.", status=422)
-        self._commons_node(session, target_id, actor, experiment.id)
+        target = self._commons_node(session, target_id, actor, experiment.id)
         stored = EDGE_PREFIX + relation
         if session.get(EdgeRow, (source_id, target_id, stored)) is not None:
             return False
@@ -363,6 +370,12 @@ class CommonsMixin:
                 "target_id": target_id,
             },
         )
+        if relation == "depends_on":
+            # The dependent's author follows the dependency's thread (best-effort).
+            source = session.get(RecordRow, source_id)
+            self._auto_subscribe(
+                session, op, target.payload.get("topic_id"), source.payload.get("branch_id"), actor
+            )
         return True
 
     def link_nodes(self, experiment_id, source_id, relation, target_id, actor, key):
@@ -445,6 +458,7 @@ class CommonsMixin:
                 actor,
                 {identifier for _, identifier in edges_out + edges_in} | set(rests_on),
             )
+            claimants = self._active_claims(session, row.id)[:MAX_PAGE]
         receipt = self._goal_receipt(experiment_id, actor, [node, *summaries.values()])
         views = {i: self._goal_view(summary, receipt) for i, summary in summaries.items()}
 
@@ -470,7 +484,7 @@ class CommonsMixin:
                 "conditional": truncated or any(status != "accepted" for status in statuses),
                 "truncated": truncated,
             },
-            "claimants": [],
+            "claimants": claimants,
         }
 
     def _experiment_nodes(self, session, experiment, actor):
@@ -524,8 +538,9 @@ class CommonsMixin:
         return item
 
     @staticmethod
-    def _frontier(nodes, selected, dependencies, limit):
-        """Transparent ranking of open work: root path, waiting dependents, neglect."""
+    def _frontier(nodes, selected, dependencies, limit, claims=None):
+        """Transparent ranking of open work: root path, waiting dependents, neglect, claims."""
+        claims = claims or {}
         visible = {node["id"] for node in nodes}
         open_ids = {node["id"] for node in nodes if node["status"] not in CLOSED_STATUSES}
         waiting = Counter(
@@ -546,7 +561,7 @@ class CommonsMixin:
                 "on_root_path": ROOT_PATH_SCORE if node["id"] in root_path else 0.0,
                 "waiting_dependents": float(min(waiting[node["id"]], MAX_WAITING_DEPENDENTS)),
                 "neglect": round(min(max(idle, 0) / 60 / NEGLECT_MINUTES, MAX_NEGLECT), 4),
-                "claimants": 0.0,  # -1.0 per live work claim once claims exist
+                "claimants": float(-claims.get(node["id"], 0)),  # -1.0 per live work claim
             }
             items.append(
                 {
@@ -594,6 +609,7 @@ class CommonsMixin:
             # Read-only references; returned items are rebuilt from immutable fields.
             nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
             dependencies = self._experiment_dependencies(session, experiment) if frontier else []
+            claims = self._live_claim_counts(session, experiment) if frontier else None
         receipt = self._goal_receipt(experiment_id, actor, nodes)
         nodes = [self._goal_view(node, receipt) for node in nodes]
         wanted = tokens(text) if text is not None else None
@@ -611,7 +627,7 @@ class CommonsMixin:
         selected = [node for node in nodes if matches(node)]
         if frontier:
             return {
-                "items": self._frontier(nodes, selected, dependencies, limit),
+                "items": self._frontier(nodes, selected, dependencies, limit, claims),
                 "next_cursor": None,
             }
         # Order and cursor in one comparison domain, independent of database collation.
@@ -705,4 +721,5 @@ class CommonsMixin:
         return record
 
     def _node_hooks_after_status(self, session, row, old, new, op):
-        """Extension point for thread notifications (no-op until node threads exist)."""
+        """Announce the move on the node's thread (``CommonsDiscourseMixin``)."""
+        self._post_status_update(session, row, old, new, op)

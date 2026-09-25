@@ -101,7 +101,8 @@ def test_create_node_attribution_and_event(lab):
     assert node["origin_actor_id"] == alpha.id
     assert node["experiment_id"] == exp["id"]
     assert node["target_digest"] == exp["target_digest"]
-    assert node["topic_id"] is None and node["lab"] is None
+    # Every node opens its discussion thread in the same transaction (Task 2).
+    assert node["topic_id"] and node["lab"] is None
     assert node["citation_count"] == 0 and node["status_evidence"] == {}
     assert len(node["lean_statement_sha256"]) == 64
     created = events(service, beta, "commons.node_created")
