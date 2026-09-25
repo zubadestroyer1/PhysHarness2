@@ -447,7 +447,7 @@ def society_tools(
         def local_compile(node, source, result, key):
             name, statement = node.get("lean_name"), node.get("lean_statement")
             if not name or not statement:
-                return {"recorded": False, "reason": "The node has no Lean statement to compile."}
+                return {"recorded": False, "reason": "no_lean_statement"}
             if not statement_found(source, name, statement):
                 return {
                     "recorded": False,
