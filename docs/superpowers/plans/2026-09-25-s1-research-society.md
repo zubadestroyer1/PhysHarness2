@@ -43,7 +43,7 @@ passes 1,577 tests with 2 opt-in PostgreSQL skips; ruff is clean.
 
 ## Global Constraints
 
-- **Don't break anything.** Experiments without `society` must produce byte-identical payloads, tool definitions (63 tools, same `tool_definition_digest`), prompts and delivery shapes. The full suite must stay green: `PYTHONPATH=$PWD/src /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/pr27-qualification/.venv/bin/python -m pytest -m "not integration and not lean" -q`. The baseline is 1258 passed, 1 skipped.
+- **Don't break anything.** Experiments without `society` must produce byte-identical payloads, tool definitions (63 tools, same `tool_definition_digest`), prompts and delivery shapes. The full suite must stay green: `uv run pytest -m "not integration and not lean" -q`. The baseline is 1258 passed, 1 skipped.
 - **Lint:** use the same venv's `ruff check src tests tools infra migrations` and `ruff format --check src tests tools infra migrations` (line length 100).
 - **Three hard boundaries** (PLAN §1):
   - Independent proof acceptance is the only path to `accepted`.
