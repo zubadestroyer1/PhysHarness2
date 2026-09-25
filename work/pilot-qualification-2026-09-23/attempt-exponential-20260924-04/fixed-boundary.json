@@ -1,0 +1,72 @@
+{
+  "protocol": "physharness-boundary-evidence-v1",
+  "purpose": "fixed_boundary_probe",
+  "run_id": "0aacafe9-6ace-4361-abc2-a880b410f909",
+  "status": "passed",
+  "production_qualified": false,
+  "expert_review": "not_provided",
+  "checks": {
+    "memory_events_readable": true,
+    "nonroot": true,
+    "no_capabilities": true,
+    "no_new_privileges": true,
+    "seccomp_filter": true,
+    "unix_socket_denied": true,
+    "inet_socket_denied": true,
+    "trusted_canary_intact": true,
+    "trusted_write_denied": true,
+    "candidate_canary_intact": true,
+    "candidate_write_denied": true,
+    "root_write_denied": true,
+    "work_write_control": true,
+    "tmp_write_control": true,
+    "no_docker_socket": true,
+    "container_configuration": true
+  },
+  "image_digest": "sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67",
+  "resource_profile": {
+    "checker_slots": 1,
+    "comparator_output_limit_bytes": 256000,
+    "comparator_timeout_seconds": 600,
+    "cpus": 4,
+    "memory_bytes": 8589934592,
+    "protocol": "physharness-verifier-resources-v1"
+  },
+  "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_profile_source_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd",
+  "image_metadata_sha256": "fe7095a9c8a4fdd864925654af0edd03dac7106314bc2bf80c81e26b2a3c9442",
+  "runtime_identity_sha256": "a969f5950058b528a7c9e00ed8216f18b5dd2639fbf7cee0aef84a1b72dc54f2",
+  "probe_sha256": "a75e17d30276f818ae724a191cee80c522b0e3125f73c5bc2bfaa75e6e4e723a",
+  "driver_sha256": "cb1b6852f4fbd89f528fed384afcc275c27fbe7f7584c3e74927e151bff8b58f",
+  "launcher_sha256": "16f2800d8ea861adb169dbd9cdc6cf207024d231f1f64d762bef7a2837cb1572",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "probe_process": {
+    "exit_code": 0,
+    "output": "{\"protocol\": \"physharness-fixed-boundary-inner-v1\", \"checks\": {\"memory_events_readable\": true, \"nonroot\": true, \"no_capabilities\": true, \"no_new_privileges\": true, \"seccomp_filter\": true, \"unix_socket_denied\": true, \"inet_socket_denied\": true, \"trusted_canary_intact\": true, \"trusted_write_denied\": true, \"candidate_canary_intact\": true, \"candidate_write_denied\": true, \"root_write_denied\": true, \"work_write_control\": true, \"tmp_write_control\": true, \"no_docker_socket\": true}, \"observed\": {\"memory_events\": {\"status\": \"observed\", \"events\": {\"low\": 0, \"high\": 0, \"max\": 0, \"oom\": 0, \"oom_kill\": 0, \"oom_group_kill\": 0}}, \"unix_socket_denied_errno\": 1, \"inet_socket_denied_errno\": 1, \"trusted_write_errno\": 13, \"candidate_write_errno\": 13, \"root_write_errno\": 30}, \"probe_sha256\": \"a75e17d30276f818ae724a191cee80c522b0e3125f73c5bc2bfaa75e6e4e723a\", \"resource_profile_sha256\": \"c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4\", \"resource_policy_sha256\": \"10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd\", \"driver_sha256\": \"cb1b6852f4fbd89f528fed384afcc275c27fbe7f7584c3e74927e151bff8b58f\", \"binaries\": {\"lean\": \"79fb1d26fa5a39385d59fdc48a711a14b0710ca6480271acce99b4d177cea085\", \"lake\": \"8229bc302b0b7d0e7679e28cc2b830c5aec995ffe5714833503360252f1490ba\", \"comparator\": \"227f482d9fd760fb7b19646d6f6e1abbed3b1a2b62fc77e4a6bb69d2d7693cab\", \"lean4export\": \"4bac3563125b296123283eecc7a49dc91a1c30bc41c199113c41c9258b42ef28\", \"landrun\": \"ff652d627fc822fd5ece4c939446e789cec4ba30814446dabd93234f9bf1615f\", \"nanoda\": \"9fe6d27927d156dd2f053b644f2665521ef42db71d1db8ddd856d9c238482196\"}}\n"
+  },
+  "observed": {
+    "memory_events": {
+      "status": "observed",
+      "events": {
+        "low": 0,
+        "high": 0,
+        "max": 0,
+        "oom": 0,
+        "oom_kill": 0,
+        "oom_group_kill": 0
+      }
+    },
+    "unix_socket_denied_errno": 1,
+    "inet_socket_denied_errno": 1,
+    "trusted_write_errno": 13,
+    "candidate_write_errno": 13,
+    "root_write_errno": 30
+  },
+  "container_cleanup": {
+    "status": "removed",
+    "container_name": "physharness-check-eacbed55774246c8862933629f412e40",
+    "exit_code": 0,
+    "output": "physharness-check-eacbed55774246c8862933629f412e40\n"
+  }
+}

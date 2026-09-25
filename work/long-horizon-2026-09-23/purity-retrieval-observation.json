@@ -1,0 +1,6 @@
+{
+  "target": "purity",
+  "knowledge_queries": 3,
+  "queries_returning_first_run_accepted_reference": 0,
+  "interpretation": "A returned reference measures exposure, not formal proof dependency reuse."
+}

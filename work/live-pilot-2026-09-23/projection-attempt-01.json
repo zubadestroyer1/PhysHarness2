@@ -1,0 +1,1 @@
+{"attempt": "attempt-01", "campaign_id": "3755c39b-b608-4223-a7fc-a047e14661ad", "experiment_id": "ff884e1f-6600-40c2-a704-4072c2c163f4", "idempotency_key": "live-pilot-2026-09-23:projection:attempt-01:experiment", "max_cost_usd": "25", "problem_id": "b3817784-8d0e-4961-9903-c3c0feef1b58", "status": "created", "target": "projection"}

@@ -1,0 +1,189 @@
+{
+  "new_conservative_spend_usd": "40.104875",
+  "historical_conservative_spend_usd": "3.658018",
+  "aggregate_conservative_spend_usd": "43.762893",
+  "aggregate_ceiling_usd": "100",
+  "new_ceiling_usd": "92",
+  "attempts": [
+    {
+      "label": "exponential-calibration-1",
+      "status": "paused",
+      "ledger": {
+        "max_cost_usd": "12",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "1.623799",
+        "active_workers": 0,
+        "max_concurrency": 1,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 604106
+      },
+      "verified_receipts": 1,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-calibration-2",
+      "status": "paused",
+      "ledger": {
+        "max_cost_usd": "12",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "1.671563",
+        "active_workers": 0,
+        "max_concurrency": 1,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 619917
+      },
+      "verified_receipts": 1,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-calibration-3-retry-1",
+      "status": "paused",
+      "ledger": {
+        "max_cost_usd": "12",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "1.736618",
+        "active_workers": 0,
+        "max_concurrency": 1,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 652660
+      },
+      "verified_receipts": 1,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-comparison-4-retry-1",
+      "status": "paused",
+      "ledger": {
+        "max_cost_usd": "14",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "4.575989",
+        "active_workers": 0,
+        "max_concurrency": 2,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 1729667
+      },
+      "verified_receipts": 2,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-comparison-5-retry-1",
+      "status": "paused",
+      "ledger": {
+        "max_cost_usd": "14",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "4.675525",
+        "active_workers": 0,
+        "max_concurrency": 2,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 1775311
+      },
+      "verified_receipts": 2,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-comparison-6",
+      "status": "paused",
+      "ledger": {
+        "max_cost_usd": "14",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "7.196461",
+        "active_workers": 0,
+        "max_concurrency": 2,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 2739716
+      },
+      "verified_receipts": 2,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-comparison-7",
+      "status": "paused",
+      "ledger": {
+        "max_cost_usd": "14",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "7.35298",
+        "active_workers": 0,
+        "max_concurrency": 2,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 2804141
+      },
+      "verified_receipts": 2,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-calibration-3",
+      "status": "cancelled",
+      "ledger": {
+        "max_cost_usd": "12",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "0.86024",
+        "active_workers": 0,
+        "max_concurrency": 1,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 326704
+      },
+      "verified_receipts": 0,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-comparison-4",
+      "status": "cancelled",
+      "ledger": {
+        "max_cost_usd": "14",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "5.279923",
+        "active_workers": 0,
+        "max_concurrency": 2,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 2018269
+      },
+      "verified_receipts": 2,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    },
+    {
+      "label": "exponential-comparison-5",
+      "status": "cancelled",
+      "ledger": {
+        "max_cost_usd": "14",
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "5.131777",
+        "active_workers": 0,
+        "max_concurrency": 2,
+        "uncertain_operations": 0,
+        "max_tokens": null,
+        "tokens_reserved": 0,
+        "tokens_spent": 1945898
+      },
+      "verified_receipts": 2,
+      "workspace_drained": true,
+      "session_lineage_drained": true
+    }
+  ]
+}

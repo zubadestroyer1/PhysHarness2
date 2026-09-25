@@ -1,0 +1,22 @@
+{
+  "id": "d3c9db0a-a9f5-42ea-9c10-61661a0f31b3",
+  "artifact_id": "dc9e7152-f052-490c-9af1-1408dbdb7b0f",
+  "candidate_sha256": "0fc36413e53a2ea0f599819310b15d6cd57d290710b3395f9b75ceaedbb2c762",
+  "submitted_by": "local-operator",
+  "status": "verified",
+  "publication": true,
+  "assurance": "independent_kernel",
+  "code": "kernel_checked",
+  "axioms": [
+    "propext",
+    "Quot.sound",
+    "Classical.choice"
+  ],
+  "checker_versions": {
+    "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+    "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+    "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+    "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+    "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+  }
+}

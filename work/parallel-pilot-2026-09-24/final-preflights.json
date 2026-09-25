@@ -1,0 +1,283 @@
+{
+  "status": "ready",
+  "reports": [
+    {
+      "arm": "quantum-independent",
+      "status": "ready_for_live_attempt",
+      "experiment_id": "0f3b53ad-49fd-46be-874c-be8b6866de3f",
+      "problem_id": "8b2102bf-19d9-425b-adb5-35305d1ef270",
+      "target_digest": "a5817d524f49abbea4f0fccf1abb9e1c70b0bb1fa5f8aacbfd024e5f370e51fd",
+      "review_id": "3c7735d6-0ffc-4395-80d2-a756c603092d",
+      "blockers": [],
+      "observations": [
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_DAEMON_NOT_DEDICATED",
+          "status": "ready",
+          "running_containers": 0,
+          "active_workbenches": 0,
+          "remediation": "Remove unrelated containers from the dedicated Docker daemon."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKSPACE_CAPACITY_POLICY_MISMATCH",
+          "status": "ready",
+          "configured_capacity": 2,
+          "active_workspaces": 0,
+          "remediation": "Use the active workbenches' capacity policy or clear them before changing capacity."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKSPACE_CAPACITY",
+          "status": "ready",
+          "requested_workspaces": 2,
+          "max_active_workspaces": 2,
+          "active_workspaces": 0,
+          "available_slots": 2,
+          "remediation": "Reduce team concurrency or free dedicated workbench slots."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_MEMORY_INSUFFICIENT",
+          "status": "ready",
+          "requested_workers": 2,
+          "worker_memory_bytes": 2147483648,
+          "verifier_memory_bytes": 8589934592,
+          "headroom_bytes": 2147483648,
+          "daemon_memory_bytes": 16732614656,
+          "estimated_unallocated_memory_bytes": 16732614656,
+          "required_memory_bytes": 15032385536,
+          "remediation": "Increase Docker daemon memory or reduce requested concurrency."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_CPU_OVERSUBSCRIBED",
+          "status": "ready",
+          "requested_worker_cpus": 4,
+          "active_worker_cpus": 0,
+          "verifier_cpus": 4,
+          "daemon_cpus": 8,
+          "remediation": "Consider more daemon CPUs or lower concurrency for throughput."
+        },
+        {
+          "component": "verifier",
+          "code": "configured_unprobed",
+          "executed": false
+        }
+      ],
+      "model_calls": 0,
+      "assurance": "none",
+      "qualification": "preflight_only"
+    },
+    {
+      "arm": "classical-collaborating",
+      "status": "ready_for_live_attempt",
+      "experiment_id": "d764f700-c3e3-4057-8135-7cfe8ff40bae",
+      "problem_id": "5a166332-b96f-4f61-a424-3f131ac8d16f",
+      "target_digest": "4baacb7e1d42cb82dec9d2ea789132f6cec2b9d62cf3b2aa110246fcb9f6e387",
+      "review_id": "5b4d9ea2-0207-43ef-a9d2-04d7bcbb5553",
+      "blockers": [],
+      "observations": [
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_DAEMON_NOT_DEDICATED",
+          "status": "ready",
+          "running_containers": 0,
+          "active_workbenches": 0,
+          "remediation": "Remove unrelated containers from the dedicated Docker daemon."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKSPACE_CAPACITY_POLICY_MISMATCH",
+          "status": "ready",
+          "configured_capacity": 2,
+          "active_workspaces": 0,
+          "remediation": "Use the active workbenches' capacity policy or clear them before changing capacity."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKSPACE_CAPACITY",
+          "status": "ready",
+          "requested_workspaces": 2,
+          "max_active_workspaces": 2,
+          "active_workspaces": 0,
+          "available_slots": 2,
+          "remediation": "Reduce team concurrency or free dedicated workbench slots."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_MEMORY_INSUFFICIENT",
+          "status": "ready",
+          "requested_workers": 2,
+          "worker_memory_bytes": 2147483648,
+          "verifier_memory_bytes": 8589934592,
+          "headroom_bytes": 2147483648,
+          "daemon_memory_bytes": 16732614656,
+          "estimated_unallocated_memory_bytes": 16732614656,
+          "required_memory_bytes": 15032385536,
+          "remediation": "Increase Docker daemon memory or reduce requested concurrency."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_CPU_OVERSUBSCRIBED",
+          "status": "ready",
+          "requested_worker_cpus": 4,
+          "active_worker_cpus": 0,
+          "verifier_cpus": 4,
+          "daemon_cpus": 8,
+          "remediation": "Consider more daemon CPUs or lower concurrency for throughput."
+        },
+        {
+          "component": "verifier",
+          "code": "configured_unprobed",
+          "executed": false
+        }
+      ],
+      "model_calls": 0,
+      "assurance": "none",
+      "qualification": "preflight_only"
+    },
+    {
+      "arm": "quantum-collaborating",
+      "status": "ready_for_live_attempt",
+      "experiment_id": "c81ffb5a-b944-4ec3-ba57-2639ada54c44",
+      "problem_id": "8b2102bf-19d9-425b-adb5-35305d1ef270",
+      "target_digest": "a5817d524f49abbea4f0fccf1abb9e1c70b0bb1fa5f8aacbfd024e5f370e51fd",
+      "review_id": "3c7735d6-0ffc-4395-80d2-a756c603092d",
+      "blockers": [],
+      "observations": [
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_DAEMON_NOT_DEDICATED",
+          "status": "ready",
+          "running_containers": 0,
+          "active_workbenches": 0,
+          "remediation": "Remove unrelated containers from the dedicated Docker daemon."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKSPACE_CAPACITY_POLICY_MISMATCH",
+          "status": "ready",
+          "configured_capacity": 2,
+          "active_workspaces": 0,
+          "remediation": "Use the active workbenches' capacity policy or clear them before changing capacity."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKSPACE_CAPACITY",
+          "status": "ready",
+          "requested_workspaces": 2,
+          "max_active_workspaces": 2,
+          "active_workspaces": 0,
+          "available_slots": 2,
+          "remediation": "Reduce team concurrency or free dedicated workbench slots."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_MEMORY_INSUFFICIENT",
+          "status": "ready",
+          "requested_workers": 2,
+          "worker_memory_bytes": 2147483648,
+          "verifier_memory_bytes": 8589934592,
+          "headroom_bytes": 2147483648,
+          "daemon_memory_bytes": 16732614656,
+          "estimated_unallocated_memory_bytes": 16732614656,
+          "required_memory_bytes": 15032385536,
+          "remediation": "Increase Docker daemon memory or reduce requested concurrency."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_CPU_OVERSUBSCRIBED",
+          "status": "ready",
+          "requested_worker_cpus": 4,
+          "active_worker_cpus": 0,
+          "verifier_cpus": 4,
+          "daemon_cpus": 8,
+          "remediation": "Consider more daemon CPUs or lower concurrency for throughput."
+        },
+        {
+          "component": "verifier",
+          "code": "configured_unprobed",
+          "executed": false
+        }
+      ],
+      "model_calls": 0,
+      "assurance": "none",
+      "qualification": "preflight_only"
+    },
+    {
+      "arm": "classical-independent",
+      "status": "ready_for_live_attempt",
+      "experiment_id": "5060c870-f081-4ab5-849b-8b273cfb8dac",
+      "problem_id": "5a166332-b96f-4f61-a424-3f131ac8d16f",
+      "target_digest": "4baacb7e1d42cb82dec9d2ea789132f6cec2b9d62cf3b2aa110246fcb9f6e387",
+      "review_id": "5b4d9ea2-0207-43ef-a9d2-04d7bcbb5553",
+      "blockers": [],
+      "observations": [
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_DAEMON_NOT_DEDICATED",
+          "status": "ready",
+          "running_containers": 0,
+          "active_workbenches": 0,
+          "remediation": "Remove unrelated containers from the dedicated Docker daemon."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKSPACE_CAPACITY_POLICY_MISMATCH",
+          "status": "ready",
+          "configured_capacity": 2,
+          "active_workspaces": 0,
+          "remediation": "Use the active workbenches' capacity policy or clear them before changing capacity."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKSPACE_CAPACITY",
+          "status": "ready",
+          "requested_workspaces": 2,
+          "max_active_workspaces": 2,
+          "active_workspaces": 0,
+          "available_slots": 2,
+          "remediation": "Reduce team concurrency or free dedicated workbench slots."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_MEMORY_INSUFFICIENT",
+          "status": "ready",
+          "requested_workers": 2,
+          "worker_memory_bytes": 2147483648,
+          "verifier_memory_bytes": 8589934592,
+          "headroom_bytes": 2147483648,
+          "daemon_memory_bytes": 16732614656,
+          "estimated_unallocated_memory_bytes": 16732614656,
+          "required_memory_bytes": 15032385536,
+          "remediation": "Increase Docker daemon memory or reduce requested concurrency."
+        },
+        {
+          "component": "workbench",
+          "code": "WORKBENCH_CPU_OVERSUBSCRIBED",
+          "status": "ready",
+          "requested_worker_cpus": 4,
+          "active_worker_cpus": 0,
+          "verifier_cpus": 4,
+          "daemon_cpus": 8,
+          "remediation": "Consider more daemon CPUs or lower concurrency for throughput."
+        },
+        {
+          "component": "verifier",
+          "code": "configured_unprobed",
+          "executed": false
+        }
+      ],
+      "model_calls": 0,
+      "assurance": "none",
+      "qualification": "preflight_only"
+    }
+  ],
+  "memory_observation": {
+    "MemTotal": "16340444 kB",
+    "MemAvailable": "15744296 kB",
+    "SwapTotal": "0 kB",
+    "SwapFree": "0 kB"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "all_operations_completed": true,
+  "exit_codes": {
+    "0": 109,
+    "1": 72,
+    "127": 4
+  },
+  "max_observed_worker_peak_bytes": 1044377600,
+  "oom_delta_total": 0,
+  "worker_memory_limit_bytes": 2147483648,
+  "workspace_runs": 185
+}

@@ -1,0 +1,69 @@
+{
+  "target": "purity",
+  "known_result": true,
+  "experiment_id": "041d11ee-e488-45f5-863f-41cc58c5a67d",
+  "experiment_status": "queued",
+  "task_id": "73202483-f396-4d2b-9727-c69f081f13f8",
+  "task_status": "completed",
+  "receipt_statuses": [
+    {
+      "id": "200dbce8-0fdb-4ff2-99a6-c55a6459bc5d",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "26521c45-555e-480e-bf92-e5ee23704375",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "44ec6d5b-787f-42aa-9a55-998eaa20a0b5",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "6994be17-9f4c-4508-b53f-9acd9311af87",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "8b6768cb-dfad-42a2-a53a-3721e56d984a",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "cc952353-7c62-4e19-a9da-ef0f13b1005c",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "ec32afdc-8169-499c-a4f5-0c76cf169792",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "fa82a2ba-0259-4187-b6ac-50bde83fd842",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "fc8e63d7-08a0-4c24-bd12-bb42667bf76c",
+      "status": "blocked",
+      "assurance": "none"
+    }
+  ],
+  "compaction_count": 77,
+  "handoff_count": 0,
+  "delegated_task_count": 2,
+  "ledger": {
+    "max_cost_usd": "25",
+    "reserved_cost_usd": "0",
+    "spent_cost_usd": "7.878868",
+    "active_workers": 0,
+    "max_concurrency": 2,
+    "uncertain_operations": 0,
+    "max_tokens": 4000000,
+    "tokens_reserved": 0,
+    "tokens_spent": 3876074
+  }
+}

@@ -1,0 +1,81 @@
+{
+  "status": "matched_prior_budget",
+  "read_only": true,
+  "prior_conservative_spent_usd": "43.762893",
+  "attempts": [
+    {
+      "label": "exponential-calibration-1",
+      "spent_micro_usd": 1623799,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-calibration-2",
+      "spent_micro_usd": 1671563,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-calibration-3-retry-1",
+      "spent_micro_usd": 1736618,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-comparison-4-retry-1",
+      "spent_micro_usd": 4575989,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-comparison-5-retry-1",
+      "spent_micro_usd": 4675525,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-comparison-6",
+      "spent_micro_usd": 7196461,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-comparison-7",
+      "spent_micro_usd": 7352980,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-calibration-3",
+      "spent_micro_usd": 860240,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-comparison-4",
+      "spent_micro_usd": 5279923,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    },
+    {
+      "label": "exponential-comparison-5",
+      "spent_micro_usd": 5131777,
+      "reserved_micro_usd": 0,
+      "active_workers": 0,
+      "tokens_reserved": 0
+    }
+  ],
+  "new_allowance_usd": "52",
+  "maximum_combined_usd": "95.762893",
+  "all_reservations_settled": true,
+  "all_experiments_stopped_without_budget_uncertainty": true
+}

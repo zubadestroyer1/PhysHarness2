@@ -1,0 +1,9 @@
+{
+  "decision": "activate_for_authorized_private_pilot_only",
+  "reviewer": "root assistant acting on explicit user launch authorization",
+  "scope_sha256": "85ba0ced17225bf841808c47f21ba5c703c2c4b61baeff9f27b997eec396b373",
+  "registry_sha256": "ea545894eec8948dc6e8cbca0bb618a23114664fd2976a0c6ce0e2879510ef8c",
+  "mechanical_status": "satisfied",
+  "production_qualified": false,
+  "limits": "Audited local VM pilot after predispatch and operator recovery repairs. No fleet or expert publication approval."
+}

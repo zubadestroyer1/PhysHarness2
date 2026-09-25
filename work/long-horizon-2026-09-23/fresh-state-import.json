@@ -1,0 +1,19 @@
+{
+  "import_counts": {
+    "campaign": 2,
+    "problem": 2,
+    "review": 2
+  },
+  "targets": [
+    {
+      "id": "215b5024-4285-4aa4-baed-05cf37363291",
+      "target_digest": "29911b3b68ad42081eb7bb8ba3f6290f4be2efa4d7243b3cc71a4199f543e54d"
+    },
+    {
+      "id": "b3817784-8d0e-4961-9903-c3c0feef1b58",
+      "target_digest": "789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4"
+    }
+  ],
+  "prior_proofs_copied": false,
+  "live_calls_started": false
+}

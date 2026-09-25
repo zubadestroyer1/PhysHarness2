@@ -1,0 +1,205 @@
+DEPRECATED: The legacy builder is deprecated and will be removed in a future release.
+            Install the buildx component to build images with BuildKit:
+            https://docs.docker.com/go/buildx/
+
+Sending build context to Docker daemon  2.812MB
+Step 1/18 : ARG PYTHON_IMAGE
+Step 2/18 : ARG UV_IMAGE
+Step 3/18 : FROM ${UV_IMAGE} AS uv
+0.11.14: Pulling from astral-sh/uv
+cffe3885cc20: Pulling fs layer
+6fdd258c8e52: Pulling fs layer
+42103ca7ecf1: Download complete
+adb89ed8955d: Download complete
+cffe3885cc20: Download complete
+6fdd258c8e52: Download complete
+6fdd258c8e52: Pull complete
+cffe3885cc20: Pull complete
+Digest: sha256:1025398289b62de8269e70c45b91ffa37c373f38118d7da036fb8bb8efc85d97
+Status: Downloaded newer image for ghcr.io/astral-sh/uv:0.11.14@sha256:1025398289b62de8269e70c45b91ffa37c373f38118d7da036fb8bb8efc85d97
+ ---> 1025398289b6
+Step 4/18 : FROM ${PYTHON_IMAGE} AS application
+3.12.13-slim-bookworm: Pulling from library/python
+ae5ebbeec710: Pulling fs layer
+0f5d7465a5bb: Pulling fs layer
+36f9fc6fa467: Pulling fs layer
+bbe9f07ace1b: Pulling fs layer
+36f9fc6fa467: Download complete
+ae5ebbeec710: Download complete
+bbe9f07ace1b: Download complete
+0344062c3e6d: Download complete
+4c77f8524de3: Download complete
+0f5d7465a5bb: Download complete
+0f5d7465a5bb: Pull complete
+ae5ebbeec710: Pull complete
+36f9fc6fa467: Pull complete
+bbe9f07ace1b: Pull complete
+Digest: sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+Status: Downloaded newer image for python:3.12.13-slim-bookworm@sha256:4766d8b510c428e595d74b9cc5bbb2fae8e26316fffb4adc89908d79aacd58a2
+ ---> 4766d8b510c4
+Step 5/18 : COPY --from=uv /uv /usr/local/bin/uv
+ ---> d3909e6d6999
+Step 6/18 : ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1 PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+ ---> Running in d70487dc868b
+ ---> Removed intermediate container d70487dc868b
+ ---> 2d9fb8d070a9
+Step 7/18 : WORKDIR /app
+ ---> Running in af390e6c5f0e
+ ---> Removed intermediate container af390e6c5f0e
+ ---> f4063315f453
+Step 8/18 : COPY pyproject.toml uv.lock README.md LICENSE ./
+ ---> d42c0f8f21b2
+Step 9/18 : COPY src ./src
+ ---> c0869f19a782
+Step 10/18 : RUN uv sync --frozen --no-dev --no-editable --extra e2b --extra science     && useradd --uid 10001 --create-home --shell /usr/sbin/nologin harness     && mkdir -p /app/.state     && chown -R 10001:10001 /app/.state
+ ---> Running in 7b06fda3f1a6
+[91mUsing CPython 3.12.13 interpreter at: /usr/local/bin/python3
+Creating virtual environment at: .venv
+[0m[91m   Building physharness @ file:///app
+[0m[91mDownloading sympy (6.0MiB)
+Downloading pydantic-core (1.9MiB)
+[0m[91mDownloading pygments (1.2MiB)
+[0m[91mDownloading cryptography (4.5MiB)
+[0m[91mDownloading openai (1.6MiB)
+[0m[91mDownloading numpy (15.0MiB)
+[0m[91mDownloading botocore (15.1MiB)
+[0m[91mDownloading scipy (32.4MiB)
+[0m[91mDownloading sqlalchemy (3.3MiB)
+[0m[91mDownloading psycopg-binary (6.5MiB)
+[0m[91mDownloading temporalio (13.2MiB)
+[0m[91mDownloading pyqwest (5.4MiB)
+[0m[91m Downloaded pygments
+[0m[91m Downloaded openai
+[0m[91m Downloaded pydantic-core
+[0m[91m      Built physharness @ file:///app
+[0m[91m Downloaded sqlalchemy
+[0m[91m Downloaded cryptography
+[0m[91m Downloaded pyqwest
+[0m[91m Downloaded sympy
+[0m[91m Downloaded psycopg-binary
+[0m[91m Downloaded temporalio
+[0m[91m Downloaded numpy
+[0m[91m Downloaded botocore
+[0m[91m Downloaded scipy
+[0m[91mPrepared 88 packages in 4.05s
+[0m[91mInstalled 88 packages in 187ms
+[0m[91mBytecode compiled 7886 files in 1.34s
+ + alembic==1.20.0
+ + annotated-doc==0.0.5
+ + annotated-types==0.8.0
+ [0m[91m+ anyio==4.15.1
+ + attrs==26.1.0
+ + boto3==1.43.94
+ + botocore[0m[91m==1.[0m[91m43.94
+[0m[91m [0m[91m+ [0m[91mbracex[0m[91m==3.[0m[91m0.1
+ + certifi==2026.7.22
+[0m[91m + cffi[0m[91m==2.1.1
+[0m[91m + [0m[91mcharset-normalizer==[0m[91m3.5.1[0m[91m
+ +[0m[91m click==[0m[91m8.5.[0m[91m0
+ [0m[91m+ [0m[91mconnectrpc==[0m[91m0.11.[0m[91m1
+ [0m[91m+ cryptography[0m[91m==50.[0m[91m0.1[0m[91m
+ +[0m[91m distro[0m[91m==1.[0m[91m9.0[0m[91m
+ +[0m[91m dockerfile-parse[0m[91m==2.0[0m[91m.1
+ [0m[91m+ [0m[91me2b==[0m[91m2.51[0m[91m.0
+ [0m[91m+ [0m[91me2b-code-interpreter==[0m[91m2.10.[0m[91m0
+ [0m[91m+ [0m[91mfastapi==0[0m[91m.141.1[0m[91m
+ +[0m[91m googleapis-common-protos[0m[91m==1.[0m[91m75.3[0m[91m
+ +[0m[91m greenlet[0m[91m==3.[0m[91m5.6[0m[91m
+ [0m[91m+ [0m[91mh11==0[0m[91m.16.0[0m[91m
+ [0m[91m+ [0m[91mh2==[0m[91m4.4.1[0m[91m
+ +[0m[91m hpack[0m[91m==4[0m[91m.2.0[0m[91m
+ +[0m[91m httpcore[0m[91m==1.[0m[91m0.9[0m[91m
+ [0m[91m+ [0m[91mhttpx==[0m[91m0.28.[0m[91m1
+ [0m[91m+ httpx-sse==0.4.3
+ + hyperframe==[0m[91m6.1.0
+ + idna==3.19
+ +[0m[91m jiter==[0m[91m0.17.[0m[91m0
+ +[0m[91m jmespath[0m[91m==1.1.[0m[91m0
+ +[0m[91m jsonschema==4.26.0
+[0m[91m [0m[91m+ [0m[91mjsonschema-specifications[0m[91m==[0m[91m2025.[0m[91m9.[0m[91m1[0m[91m
+ [0m[91m+ mako==1.4.1
+ + markdown-it-py==4.2.0[0m[91m
+ [0m[91m+ markupsafe[0m[91m==3.0.3
+ + mcp==1.30.0
+ + mdurl==0.1.2
+ [0m[91m+ mpmath[0m[91m==1.3.0
+ + [0m[91mnexus-rpc==1.4.0
+ +[0m[91m numpy==2.5.3
+ +[0m[91m openai==2.54.0
+ [0m[91m+ opentelemetry-api[0m[91m==1.[0m[91m44.0
+ + opentelemetry-exporter-otlp-proto-common==1.44.0
+ + opentelemetry-exporter-otlp-proto-http==1.44.0
+ + opentelemetry-proto==1.44.0
+[0m[91m + opentelemetry-sdk==1.44.0
+ [0m[91m+ opentelemetry-semantic-conventions==0.65b0[0m[91m
+ + [0m[91mpackaging==26[0m[91m.3[0m[91m
+ + pgvector[0m[91m==0.5[0m[91m.0
+ +[0m[91m physharness[0m[91m==0.1.0 (from file:///app)
+ + protobuf==7.36.1[0m[91m
+ + protobuf-py==0.1.1
+ + protobuf-py-ext==0.1.1
+ + psycopg==3.3.5
+ [0m[91m+ psycopg-binary==3.3.5
+ + pycparser==3.0
+ + pydantic==2.13.5
+ + pydantic-core==2.46.5
+ +[0m[91m pydantic-settings==2.15.0
+ + pygments==2.21.[0m[91m0
+ + pyjwt==2.14.0[0m[91m
+ + pyqwest==[0m[91m0.10.0
+[0m[91m + python-dateutil[0m[91m==2.9.0[0m[91m.post0
+ + python-dotenv==1[0m[91m.2[0m[91m.3
+ + python-multipart==0.0.32
+ + referencing==0.37.0
+ + requests==2.34.2
+ + rich==15.0.0
+ + rpds-py==2026.6.3
+ + s3transfer==0.19.2
+ + scipy==1.18.1
+ + shellingham==1.5.4
+ + six==1.17.0
+ + sniffio==1.3.1
+ + sqlalchemy==2.0.53
+ + sse-starlette==3.4.11
+ + starlette==1.6.0
+ [0m[91m+ sympy==1.14[0m[91m.0
+[0m[91m +[0m[91m temporalio[0m[91m==1.[0m[91m32.0[0m[91m
+ + [0m[91mtqdm==4.70.1
+ + [0m[91mtyper==0.27.2
+ + types-protobuf==7.35.1.20260906
+ + typing-extensions==4.16.0
+ + typing-inspection==0.4.4
+ + urllib3==2.7.0
+ + uvicorn==0.53.0
+ + wcmatch==11.0.1
+[0m ---> Removed intermediate container 7b06fda3f1a6
+ ---> 6e74648e205f
+Step 11/18 : COPY alembic.ini ./
+ ---> 3ef63b156932
+Step 12/18 : COPY migrations ./migrations
+ ---> e56390695c5c
+Step 13/18 : COPY infra/certs/rds-global-bundle.pem /app/rds-ca.pem
+ ---> a792a2178737
+Step 14/18 : ENV PATH="/app/.venv/bin:$PATH" TMPDIR=/app/.state
+ ---> Running in 7fb1752e570b
+ ---> Removed intermediate container 7fb1752e570b
+ ---> 49f1d8188c6c
+Step 15/18 : VOLUME ["/app/.state"]
+ ---> Running in 3dec96f0b918
+ ---> Removed intermediate container 3dec96f0b918
+ ---> 6c3bda5af9f7
+Step 16/18 : USER 10001:10001
+ ---> Running in 5a39c2c001db
+ ---> Removed intermediate container 5a39c2c001db
+ ---> 56d3aadd6a22
+Step 17/18 : EXPOSE 8000
+ ---> Running in d1e3ba7816a9
+ ---> Removed intermediate container d1e3ba7816a9
+ ---> 654346e85816
+Step 18/18 : CMD ["python", "-m", "uvicorn", "physharness.api:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+ ---> Running in 78648c71da15
+ ---> Removed intermediate container 78648c71da15
+ ---> da7eee783751
+Successfully built da7eee783751
+Successfully tagged physharness-control:long-horizon-audit
+Application imports passed

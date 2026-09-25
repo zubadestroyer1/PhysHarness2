@@ -1,0 +1,18 @@
+{
+  "evidence": "Pure replay of same-root queued helpers, using actual immutable task metadata and current scheduler; no VM/model calls.",
+  "actual_db_order": [
+    {
+      "task": "30fccdf6-c0ac-4ffe-8f0d-a7a90f925c97",
+      "created_at": "2026-09-24T23:51:35.586522+00:00"
+    },
+    {
+      "task": "5a94d5ae-dc19-42e6-85a5-64e8906f987e",
+      "created_at": "2026-09-24T23:51:28.558607+00:00"
+    }
+  ],
+  "creation_order": [
+    "5a94d5ae-dc19-42e6-85a5-64e8906f987e",
+    "30fccdf6-c0ac-4ffe-8f0d-a7a90f925c97"
+  ],
+  "result": "Newer queued helper is chosen first because canonical pagination is UUID ordered and scheduler preserves that per-root order. This is not priority- or arrival-based selection; it does not explain the full wait time by itself."
+}

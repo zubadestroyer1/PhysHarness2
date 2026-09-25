@@ -1,0 +1,302 @@
+{
+  "experiments": {
+    "projection": {
+      "experiment_id": "fcacc4fd-148c-4d8f-b614-0ca5ca9b76e8",
+      "problem_id": "b3817784-8d0e-4961-9903-c3c0feef1b58",
+      "status": "paused",
+      "counts": {
+        "artifact": 675,
+        "branch": 2,
+        "claim": 2,
+        "session": 2,
+        "task": 2,
+        "verification": 5
+      },
+      "statuses": {
+        "claim": {
+          "verified": 2
+        },
+        "session": {
+          "completed": 2
+        },
+        "task": {
+          "completed": 2
+        },
+        "verification": {
+          "blocked": 3,
+          "verified": 2
+        }
+      },
+      "receipts": [
+        {
+          "id": "bcb8b3d7-4f45-4780-8591-7814398f4d70",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "2e1a21cc-bbda-4d7e-9e06-1a702d0e029e",
+          "claim_id": null
+        },
+        {
+          "id": "70332af0-6139-471f-a9fd-c035530dc8be",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "eeb85482-bc0f-461e-8405-bac4d4cfcbea",
+          "claim_id": null
+        },
+        {
+          "id": "0476f605-312d-4ed8-871c-9ae23912bac2",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "0af80f1f-b5a9-4fbb-b188-216fd6fcc11a",
+          "claim_id": null
+        },
+        {
+          "id": "1121be5f-e38d-4de5-9f83-58bf15e93f81",
+          "status": "verified",
+          "code": "kernel_checked",
+          "assurance": "independent_kernel",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "834c19ff-c161-4e9b-afa2-53be781eb1e0",
+          "claim_id": "11e2ccdf-4c22-45e8-a2f9-5861fbb0be09"
+        },
+        {
+          "id": "82b3d67a-7806-420c-8eb9-eaadd2cb8116",
+          "status": "verified",
+          "code": "kernel_checked",
+          "assurance": "independent_kernel",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "ab8983e1-14a9-45e9-b544-46e66de63f1a",
+          "claim_id": "550910da-b41c-46f7-a0b1-c895d2cb7287"
+        }
+      ],
+      "artifact_refs": [
+        {
+          "id": "cd8fb113-6966-4b6e-b6ac-0dd40aa70de6",
+          "kind": "research_output"
+        },
+        {
+          "id": "5f88d5b7-b537-441c-9844-b3ecf21a9d2c",
+          "kind": "research_output"
+        },
+        {
+          "id": "f7f85d9e-5b67-467e-9924-4d48c1c943f3",
+          "kind": "team_run_report"
+        }
+      ],
+      "session_tokens": {
+        "input": 1665806,
+        "output": 8765
+      },
+      "ledger": {
+        "max_cost_usd": "25.000000",
+        "reserved_cost_usd": "0.000000",
+        "spent_cost_usd": "3.419262",
+        "active_workers": 0,
+        "max_concurrency": 2,
+        "max_tokens": 4000000,
+        "tokens_reserved": 0,
+        "tokens_spent": 1674571,
+        "uncertain_operations": 0
+      }
+    },
+    "purity": {
+      "experiment_id": "041d11ee-e488-45f5-863f-41cc58c5a67d",
+      "problem_id": "215b5024-4285-4aa4-baed-05cf37363291",
+      "status": "paused",
+      "counts": {
+        "artifact": 1167,
+        "branch": 3,
+        "session": 3,
+        "task": 3,
+        "verification": 9
+      },
+      "statuses": {
+        "session": {
+          "completed": 2,
+          "failed": 1
+        },
+        "task": {
+          "completed": 2,
+          "blocked": 1
+        },
+        "verification": {
+          "blocked": 9
+        }
+      },
+      "receipts": [
+        {
+          "id": "200dbce8-0fdb-4ff2-99a6-c55a6459bc5d",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "b8b8e8eb-8396-4bf3-8b8a-db411a741b8f",
+          "claim_id": null
+        },
+        {
+          "id": "6994be17-9f4c-4508-b53f-9acd9311af87",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "2fc78d04-aad7-4926-976f-9246c52cce5e",
+          "claim_id": null
+        },
+        {
+          "id": "ec32afdc-8169-499c-a4f5-0c76cf169792",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "ee2df95b-a4e7-44b8-9ad2-383f8c8ece3c",
+          "claim_id": null
+        },
+        {
+          "id": "44ec6d5b-787f-42aa-9a55-998eaa20a0b5",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "615e78f5-7b31-467e-b191-11347d4febcc",
+          "claim_id": null
+        },
+        {
+          "id": "26521c45-555e-480e-bf92-e5ee23704375",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "ce6a8bc3-c741-4ac3-930a-49285acb4b6f",
+          "claim_id": null
+        },
+        {
+          "id": "8b6768cb-dfad-42a2-a53a-3721e56d984a",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "3e46a050-7d0b-4d53-9c84-629fbd3c12df",
+          "claim_id": null
+        },
+        {
+          "id": "fa82a2ba-0259-4187-b6ac-50bde83fd842",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "6052f15b-461a-42a6-b9ae-cdf26a071545",
+          "claim_id": null
+        },
+        {
+          "id": "fc8e63d7-08a0-4c24-bd12-bb42667bf76c",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "32f471cd-537f-4308-be07-014a850b228f",
+          "claim_id": null
+        },
+        {
+          "id": "cc952353-7c62-4e19-a9da-ef0f13b1005c",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none",
+          "checker_versions": {
+            "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+            "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+            "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+          },
+          "artifact_id": "03c99219-4034-425a-9c3e-912b98309e0f",
+          "claim_id": null
+        }
+      ],
+      "artifact_refs": [
+        {
+          "id": "a2cf1239-38c8-4385-98e6-8096d2286cda",
+          "kind": "research_output"
+        },
+        {
+          "id": "6022ef8a-f27d-48bb-b19d-fe0c3b9aed7d",
+          "kind": "research_output"
+        },
+        {
+          "id": "0f2a82c4-4292-46a6-b205-dd4b6cc68878",
+          "kind": "team_run_report"
+        }
+      ],
+      "session_tokens": {
+        "input": 3860234,
+        "output": 15840
+      },
+      "ledger": {
+        "max_cost_usd": "25.000000",
+        "reserved_cost_usd": "0.000000",
+        "spent_cost_usd": "7.878868",
+        "active_workers": 0,
+        "max_concurrency": 2,
+        "max_tokens": 4000000,
+        "tokens_reserved": 0,
+        "tokens_spent": 3876074,
+        "uncertain_operations": 0
+      }
+    }
+  },
+  "captured_at": "2026-09-23T10:06:30.632750Z"
+}

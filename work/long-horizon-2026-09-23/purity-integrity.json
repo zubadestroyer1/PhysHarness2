@@ -1,0 +1,20 @@
+{
+  "experiment_id": "041d11ee-e488-45f5-863f-41cc58c5a67d",
+  "hash_verified_artifact_records": 1167,
+  "unique_content_objects": 1167,
+  "unique_content_bytes": 51604645,
+  "artifact_kinds": {
+    "native_checkpoint": 693,
+    "runtime_event": 383,
+    "lean_source": 9,
+    "native_archive": 77,
+    "team_run_report": 1,
+    "team_run_manifest": 1,
+    "research_output": 2,
+    "execution_failure": 1
+  },
+  "confirmed_oom_receipts": 0,
+  "verifier_cleanup_statuses": {
+    "removed": 9
+  }
+}

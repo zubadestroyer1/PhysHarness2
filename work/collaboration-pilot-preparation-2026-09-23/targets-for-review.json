@@ -1,0 +1,96 @@
+{
+  "human_review": "pending",
+  "targets": [
+    {
+      "id": "quantum.bell.entangled_with_mixed_marginal",
+      "family": "bell",
+      "split": "holdout",
+      "title": "The Bell state is entangled while its local density is maximally mixed",
+      "difficulty_band": "stretch",
+      "difficulty_rationale": "Combines a general entanglement theorem with an explicit finite partial trace calculation involving square roots and complex conjugation. Author estimate only; neither domain difficulty nor Lean/API effort has been calibrated on models.",
+      "capabilities": [
+        "Distinguish joint entanglement from locally mixed statistics",
+        "Compute a partial trace with explicit normalization",
+        "Control basis ordering in a tensor product"
+      ],
+      "statement": "The canonical two-qubit Bell ket is entangled and its left marginal is I/2.",
+      "assumptions": [
+        "Ket.MES Qubit is the normalized all-positive maximally entangled ket."
+      ],
+      "physical_scope": "The Bell state (|00>+|11>)/sqrt(2); partial trace removes the right factor and yields the left qubit state.",
+      "provenance": [
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Pure/Braket.lean",
+          "locator": "Ket.MES; Ket.MES_isEntangled",
+          "note": "The chosen MES has positive equal diagonal amplitudes."
+        },
+        {
+          "uri": "https://github.com/leanprover-community/physlib/blob/405848179db6375f814021e804a37dc0dda66d91/QuantumInfo/States/Mixed/MState.lean",
+          "locator": "pure; traceRight",
+          "note": "Partial trace sums the right-factor diagonal blocks."
+        },
+        {
+          "uri": "https://cs.uwaterloo.ca/~watrous/TQI/TQI.pdf",
+          "locator": "Section 2.1.3, Reductions and purifications",
+          "note": "Author-hosted mathematical background; exact formal claim follows the pinned source and the displayed assumptions."
+        }
+      ],
+      "target_theorem": "physics_target",
+      "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target  : (Ket.MES Qubit).IsEntangled ∧\n    (MState.pure (Ket.MES Qubit)).traceRight.m =\n      (1 / 2 : ℂ) • (1 : Matrix Qubit Qubit ℂ) := by\n  sorry\n",
+      "reference_outline": "Distinguish joint entanglement from locally mixed statistics; Compute a partial trace with explicit normalization; Control basis ordering in a tensor product.",
+      "known_shortcuts": [
+        {
+          "declaration": "Ket.MES_isEntangled",
+          "note": "Directly proves entanglement; the maximally mixed marginal still requires a matrix calculation."
+        },
+        {
+          "declaration": "matrix_expand",
+          "note": "The specialized tactic can automate much of the finite partial trace calculation."
+        }
+      ],
+      "limitations": [
+        "All Hilbert spaces are finite dimensional over complex numbers with a fixed orthonormal basis; no continuum, unbounded operators, or approximation errors are modeled.",
+        "Scientific interpretation and all author-added definitions await human review."
+      ]
+    },
+    {
+      "id": "classical.work_energy.damped_energy_antitone",
+      "family": "work_energy",
+      "split": "development",
+      "title": "Damped oscillator energy never increases",
+      "difficulty_band": "stretch",
+      "difficulty_rationale": "Provisional author estimate; no live calibration. Physical reasoning combines dissipation with a global argument; Lean work includes rational normalization and the mean-value API.",
+      "capabilities": [
+        "derive the dissipative energy rate from the ODE",
+        "lift a derivative sign to a global order property"
+      ],
+      "statement": "Every global differentiable solution of q̇ = v and m v̇ = −kq − γv has antitone mechanical energy.",
+      "assumptions": [
+        "m > 0, k > 0, γ ≥ 0.",
+        "The two HasDerivAt equations hold at every real time."
+      ],
+      "physical_scope": "Unforced scalar viscously damped harmonic oscillator on all ℝ. The theorem is conditional on a global solution.",
+      "provenance": [
+        {
+          "uri": "https://www.damtp.cam.ac.uk/user/tong/dynamics/one.pdf",
+          "locator": "§1.2.4 example 2",
+          "note": "Exact monotonicity is a formal refinement of the stated loss of oscillator energy."
+        }
+      ],
+      "target_theorem": "classical_target",
+      "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v : ℝ → ℝ) (m k γ : ℝ) (hm : 0 < m) (hk : 0 < k) (hγ : 0 ≤ γ)\n    (hq : ∀ t, HasDerivAt q (v t) t)\n    (hv : ∀ t, HasDerivAt v ((-k * q t - γ * v t) / m) t) :\n    Antitone (fun t => m / 2 * (v t)^2 + k / 2 * (q t)^2) := by\n  sorry\n",
+      "reference_outline": "derive the dissipative energy rate from the ODE; lift a derivative sign to a global order property",
+      "known_shortcuts": [
+        {
+          "declaration": "antitone_of_deriv_nonpos",
+          "note": "Mean-value theorem supplies global monotonicity after the energy rate is proved."
+        }
+      ],
+      "limitations": [
+        "Scientific interpretation and new definitions await human review.",
+        "Published target material is not guaranteed unseen by models.",
+        "Nonincrease is proved, not convergence to equilibrium or strict decay for all distinct times."
+      ]
+    }
+  ]
+}

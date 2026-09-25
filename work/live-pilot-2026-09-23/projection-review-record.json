@@ -1,0 +1,14 @@
+{
+  "problem_id": "b3817784-8d0e-4961-9903-c3c0feef1b58",
+  "scope": "target",
+  "target_digest": "789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4",
+  "decision": "approved",
+  "rationale": "Project-owner launch approval recorded from the explicit instruction to run the previously presented pilot on 2026-09-23. Exact target digest 789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4. The target is the finite-dimensional qubit dephasing statement in work/first-pilot-review.md; MState supplies density-matrix assumptions, dephase is the fully specified equal mixture of identity and Pauli-Z conjugation, and purity is trace of the matrix square with an explicit complex coercion of the real norm-square. Known-result engineering reproduction; no novelty or independent expert review is claimed. No definition holes are approved. See AUTHORIZATION.md for deployment scope and per-attempt budget.\n",
+  "reviewed_by": "local-reviewer",
+  "origin_actor_id": "local-reviewer",
+  "id": "260afe3a-b90b-4d9c-b6a8-6276028c6977",
+  "kind": "review",
+  "project_id": "first-pilot",
+  "revision": 1,
+  "created_at": "2026-09-23T08:16:26.897685+00:00"
+}

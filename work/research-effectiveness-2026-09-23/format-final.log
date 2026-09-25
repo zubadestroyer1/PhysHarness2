@@ -1,0 +1,37 @@
+unformatted: File would be reformatted
+  --> src/physharness/execution/context_policy.py:40:21
+   |
+39 |         assert window is not None
+   -         threshold = (
+   -             min((3 * window) // 4, maximum)
+   -             if profile == "research"
+   -             else STRESS_THRESHOLD
+   -         )
+   -         params["context_management"] = [
+   -             {"type": "compaction", "compact_threshold": threshold}
+   -         ]
+40 +         threshold = min((3 * window) // 4, maximum) if profile == "research" else STRESS_THRESHOLD
+41 +         params["context_management"] = [{"type": "compaction", "compact_threshold": threshold}]
+42 |     else:
+   |
+
+unformatted: File would be reformatted
+  --> tests/test_temporal_integration.py:36:1
+   |
+35 |
+36 +
+37 | pytestmark = [
+   |
+
+unformatted: File would be reformatted
+  --> tests/test_workspace_policy_restore.py:45:1
+   |
+44 |     )
+45 +
+46 |     def runtime_factory(**kwargs):
+47 |         return ResponsesRuntime(client=client, **kwargs)
+48 +
+49 |     first = ResearchTaskExecutor(service, prices=PRICES, runtime_factory=runtime_factory)
+   |
+
+3 files would be reformatted, 146 files already formatted

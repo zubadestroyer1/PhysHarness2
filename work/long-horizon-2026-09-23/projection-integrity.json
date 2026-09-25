@@ -1,0 +1,41 @@
+{
+  "experiment_id": "fcacc4fd-148c-4d8f-b614-0ca5ca9b76e8",
+  "hash_verified_artifact_records": 675,
+  "unique_content_objects": 675,
+  "unique_content_bytes": 28520046,
+  "artifact_kinds": {
+    "team_run_manifest": 1,
+    "native_checkpoint": 402,
+    "runtime_event": 222,
+    "lean_source": 5,
+    "native_archive": 42,
+    "research_output": 2,
+    "team_run_report": 1
+  },
+  "verified_receipts": [
+    {
+      "id": "1121be5f-e38d-4de5-9f83-58bf15e93f81",
+      "candidate_sha256": "bc3686370abb743fe28316f4a94eceff5b66e8b3a18e5e81de096d6d60914613",
+      "target_digest": "789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4",
+      "target_theorem": "physics_target",
+      "axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice"
+      ],
+      "assurance": "independent_kernel"
+    },
+    {
+      "id": "82b3d67a-7806-420c-8eb9-eaadd2cb8116",
+      "candidate_sha256": "ab9ec4c34db89e6b64aa51942b04e5a4d959e42d789854879f12acbae44dcab0",
+      "target_digest": "789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4",
+      "target_theorem": "physics_target",
+      "axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice"
+      ],
+      "assurance": "independent_kernel"
+    }
+  ]
+}
