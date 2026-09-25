@@ -1,0 +1,8 @@
+{
+  "profile": "physharness-pilot",
+  "state": "Stopped",
+  "confirmation": "colima list --json",
+  "containers_before_stop": 0,
+  "stop_exit_code": 0,
+  "paid_model_calls": 0
+}

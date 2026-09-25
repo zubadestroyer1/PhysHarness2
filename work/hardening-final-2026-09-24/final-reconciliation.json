@@ -1,0 +1,87 @@
+{
+  "attempts": [
+    {
+      "all_workspaces_destroyed": true,
+      "experiment_id": "aa0bd292-db10-4dfd-abde-b2269f9b87a8",
+      "export_manifest_sha256": "3de28025ea59d4f6c73ef4855181b1f75619502f8192110de80907e3374b11ae",
+      "historical_uncertain_sessions": 0,
+      "label": "hardening-calibration-1",
+      "ledger": {
+        "active_workers": 0,
+        "max_concurrency": 1,
+        "max_cost_usd": "14",
+        "max_tokens": null,
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "1.47013",
+        "tokens_reserved": 0,
+        "tokens_spent": 549785,
+        "uncertain_operations": 0
+      },
+      "native_usage_reconciled": true,
+      "status": "paused",
+      "unique_artifacts_checked": 224,
+      "workspace_count": 1
+    },
+    {
+      "all_workspaces_destroyed": true,
+      "experiment_id": "01ddab58-2cc3-4862-86aa-50a6fc0425e1",
+      "export_manifest_sha256": "0143c9c5ce54b89b078858641300d2d2278add0e019f7e1bc3d7385185cd1a57",
+      "historical_uncertain_sessions": 1,
+      "label": "hardening-cooperative-1",
+      "ledger": {
+        "active_workers": 0,
+        "max_concurrency": 4,
+        "max_cost_usd": "50.52987",
+        "max_tokens": null,
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "41.733125",
+        "tokens_reserved": 0,
+        "tokens_spent": 16276996,
+        "uncertain_operations": 0
+      },
+      "native_usage_reconciled": true,
+      "status": "cancelled",
+      "unique_artifacts_checked": 2676,
+      "workspace_count": 6
+    },
+    {
+      "all_workspaces_destroyed": true,
+      "experiment_id": "7cb2963a-2219-4016-928a-6a27ed562339",
+      "export_manifest_sha256": "81d1b15080d4fd7db1f13a266c8b5d4c2b4e9131bee942bbbe70aaffe9236221",
+      "historical_uncertain_sessions": 0,
+      "label": "hardening-cooperative-retry-1",
+      "ledger": {
+        "active_workers": 0,
+        "max_concurrency": 4,
+        "max_cost_usd": "100",
+        "max_tokens": null,
+        "reserved_cost_usd": "0",
+        "spent_cost_usd": "49.102475",
+        "tokens_reserved": 0,
+        "tokens_spent": 19175210,
+        "uncertain_operations": 0
+      },
+      "native_usage_reconciled": true,
+      "status": "paused",
+      "unique_artifacts_checked": 3246,
+      "workspace_count": 6
+    }
+  ],
+  "combined_conservative_spent_usd": "136.068623",
+  "earlier_historical_conservative_spent_usd": "43.762893",
+  "limitations": [
+    "One original native session remains historical uncertain but explicitly abandoned by exact pre-dispatch review; not resumed or relabeled successful.",
+    "Conservative ledger and cached-token price estimates are not provider invoices.",
+    "Qualification applies to the measured local four-worker setup."
+  ],
+  "monitor_status": "PAUSED",
+  "observed_at": "2026-09-25T00:12:28.964801+00:00",
+  "protocol": "hardening-final-reconciliation-v1",
+  "publication_approved": false,
+  "retry_user_amended_ceiling_usd": "100",
+  "runtime_budget_amendment_record_sha256": "0d6b34ab7bae9ebeb478327d89f4f18e25cb73ed8790ac1c9fd49f07c006644d",
+  "source_freeze_sha256": "9a6acce681742462d4a50bbcc5cf08054df3ae714a8f8c5ff9aec4bba7b8a666",
+  "source_freeze_still_matches": true,
+  "these_three_attempts_conservative_spent_usd": "92.305730",
+  "vm_shutdown_observation": "Root observed empty Docker ps --all, colima stop exited0, colima list reported physharness-pilot Stopped (12CPUs/20GiB configuration retained)."
+}

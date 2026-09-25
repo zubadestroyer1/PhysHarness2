@@ -1,0 +1,73 @@
+--- before/workspace_tools.py
++++ after/workspace_tools.py
+@@ -219,10 +219,12 @@
+             if not name.endswith('.lean'):
+                 continue
+             path = os.path.join(folder, name)
++            canonical_path = os.path.join(os.path.basename(root), os.path.relpath(path, root))
+             with open(path, encoding='utf-8', errors='replace') as stream:
+                 for number, line in enumerate(stream, 1):
+                     if query in line.casefold():
+-                        hits.append({'path': path, 'line': number, 'snippet': line[:300]})
++                        hits.append({'path': canonical_path, 'guest_path': path,
++                                     'line': number, 'snippet': line[:300]})
+                         if len(hits) >= 40:
+                             break
+             if len(hits) >= 40:
+@@ -265,12 +267,17 @@
+         path = arguments["path"]
+         if (
+             not isinstance(path, str)
++            or "\x00" in path
+             or not path.endswith(".lean")
+             or not any(path.startswith(prefix) for prefix in ("mathlib/", "physlib/"))
+             or any(part in {"", ".", ".."} for part in path.split("/"))
+         ):
+             raise HarnessError(
+-                "UNSAFE_PATH", "Library path must name a Mathlib or Physlib Lean source."
++                "UNSAFE_PATH",
++                "Library path must name a Mathlib or Physlib Lean source.",
++                remediation="Use an unchanged search_library_source hits[].path, such as "
++                "mathlib/Mathlib/Analysis/Example.lean; absolute and bare module paths "
++                "are invalid.",
+             )
+         guest = "/opt/sources/" + path
+         code = """
+@@ -297,10 +304,16 @@
+             ),
+         )
+         if result["exit_code"]:
+-            return {"reason_code": "source_unavailable", "path": guest, "diagnostics": result}
++            return {
++                "reason_code": "source_unavailable",
++                "path": path,
++                "guest_path": guest,
++                "diagnostics": result,
++            }
+         return {
+             **json.loads(result["stdout"]),
+-            "path": guest,
++            "path": path,
++            "guest_path": guest,
+             "environment_digest": self.policy.environment_digest,
+             "reason_code": None,
+         }
+@@ -512,13 +525,16 @@
+             {"query": {"type": "string"}},
+             self.search_library,
+             "Lexically scan pinned Mathlib and Physlib Lean source; "
+-            "results include source paths and lines.",
++            "each hits[].path is a canonical path accepted unchanged by "
++            "lookup_library_source; guest_path gives the absolute VM provenance.",
+         )
+         register(
+             "lookup_library_source",
+             {"path": {"type": "string"}},
+             self.lookup_library_source,
+-            "Read a pinned library source by path with hash, provenance and bounded text.",
++            "Read a pinned library source by an unchanged search_library_source "
++            "hits[].path (mathlib/... or physlib/...) with hash, provenance and bounded text. "
++            "Absolute guest_path and bare module paths are invalid.",
+         )
+         register(
+             "check_polynomial_identity",

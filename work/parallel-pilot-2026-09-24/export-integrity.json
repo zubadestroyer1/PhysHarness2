@@ -1,0 +1,114 @@
+[
+  {
+    "label": "quantum-independent",
+    "experiment_id": "0f3b53ad-49fd-46be-874c-be8b6866de3f",
+    "experiment_status": "paused",
+    "ledger": {
+      "max_cost_usd": "24.95",
+      "reserved_cost_usd": "0",
+      "spent_cost_usd": "1.710032",
+      "active_workers": 0,
+      "max_concurrency": 2,
+      "uncertain_operations": 0,
+      "max_tokens": null,
+      "tokens_reserved": 0,
+      "tokens_spent": 642068
+    },
+    "verified_receipts": 3,
+    "export": {
+      "status": "artifact_integrity_checked",
+      "manifest_sha256": "c522edb474f4f691ffda041512cf0cec9055269184230bd0e8777576a024b715",
+      "unique_artifacts_checked": 459,
+      "kernel_replay": "not_performed",
+      "publication_approved": false,
+      "limitations": [
+        "Hashes establish content integrity, not the authenticity of supplied receipts.",
+        "Independent kernel replay, complete trusted dependencies and expert publication review remain required."
+      ]
+    }
+  },
+  {
+    "label": "classical-collaborating",
+    "experiment_id": "d764f700-c3e3-4057-8135-7cfe8ff40bae",
+    "experiment_status": "paused",
+    "ledger": {
+      "max_cost_usd": "24.95",
+      "reserved_cost_usd": "0",
+      "spent_cost_usd": "0.451788",
+      "active_workers": 0,
+      "max_concurrency": 2,
+      "uncertain_operations": 0,
+      "max_tokens": null,
+      "tokens_reserved": 0,
+      "tokens_spent": 161813
+    },
+    "verified_receipts": 2,
+    "export": {
+      "status": "artifact_integrity_checked",
+      "manifest_sha256": "e4bf83971b21fb2e8ef2f7d091c68c5bf274bcfd7059aa657be4cb1331043d98",
+      "unique_artifacts_checked": 179,
+      "kernel_replay": "not_performed",
+      "publication_approved": false,
+      "limitations": [
+        "Hashes establish content integrity, not the authenticity of supplied receipts.",
+        "Independent kernel replay, complete trusted dependencies and expert publication review remain required."
+      ]
+    }
+  },
+  {
+    "label": "quantum-collaborating",
+    "experiment_id": "c81ffb5a-b944-4ec3-ba57-2639ada54c44",
+    "experiment_status": "paused",
+    "ledger": {
+      "max_cost_usd": "24.95",
+      "reserved_cost_usd": "0",
+      "spent_cost_usd": "0.940908",
+      "active_workers": 0,
+      "max_concurrency": 2,
+      "uncertain_operations": 0,
+      "max_tokens": null,
+      "tokens_reserved": 0,
+      "tokens_spent": 355144
+    },
+    "verified_receipts": 2,
+    "export": {
+      "status": "artifact_integrity_checked",
+      "manifest_sha256": "7750fb4c6026864c4ee265765fa0ce98f64a1a4e37cb460f8703775333aaec24",
+      "unique_artifacts_checked": 283,
+      "kernel_replay": "not_performed",
+      "publication_approved": false,
+      "limitations": [
+        "Hashes establish content integrity, not the authenticity of supplied receipts.",
+        "Independent kernel replay, complete trusted dependencies and expert publication review remain required."
+      ]
+    }
+  },
+  {
+    "label": "classical-independent",
+    "experiment_id": "5060c870-f081-4ab5-849b-8b273cfb8dac",
+    "experiment_status": "paused",
+    "ledger": {
+      "max_cost_usd": "24.95",
+      "reserved_cost_usd": "0",
+      "spent_cost_usd": "0.5492",
+      "active_workers": 0,
+      "max_concurrency": 2,
+      "uncertain_operations": 0,
+      "max_tokens": null,
+      "tokens_reserved": 0,
+      "tokens_spent": 195804
+    },
+    "verified_receipts": 2,
+    "export": {
+      "status": "artifact_integrity_checked",
+      "manifest_sha256": "c9e7130b81ac29232b4acafeb412828149b993b7881852cc2db4f0e9dce70bb2",
+      "unique_artifacts_checked": 199,
+      "kernel_replay": "not_performed",
+      "publication_approved": false,
+      "limitations": [
+        "Hashes establish content integrity, not the authenticity of supplied receipts.",
+        "Independent kernel replay, complete trusted dependencies and expert publication review remain required."
+      ]
+    }
+  }
+]

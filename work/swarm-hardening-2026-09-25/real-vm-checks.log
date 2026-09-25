@@ -1,0 +1,583 @@
+.F.                                                                      [100%]
+=================================== FAILURES ===================================
+___________ test_real_broker_rejects_bad_paths_then_runs_valid_lean ____________
+
+self = <physharness.execution.local_docker.LocalDockerWorkspaceProvider object at 0x10addc140>
+request = CommandRequest(operation_id='valid-lean', argv=['lake', '--offline', 'env', 'lean', '/work/scratch/Check.lean'], cwd='/opt/sources/physlib', timeout_seconds=90.0, max_output_bytes=65536, env={})
+
+    async def _run_once(self, request: CommandRequest) -> CommandResult:
+        if self._quarantined:
+            raise ExecutionError("OPERATION_UNCERTAIN", "Docker workbench needs reconciliation")
+        cwd = self.validate_command(request)
+        argv = ["exec", "--workdir", cwd, self.execution_id, *request.argv]
+        before = await self._resource_observation()
+        self.last_command_diagnostics = {
+            "phase": "dispatch",
+            "memory_before": before,
+            "memory_after": None,
+            "oom_delta": None,
+        }
+        try:
+            async with asyncio.timeout(request.timeout_seconds):
+>               code, out, err = await self._runner(
+                    ["docker", "--host", self.docker_host, *argv],
+                    timeout=request.timeout_seconds,
+                    max_output=request.max_output_bytes,
+                )
+
+src/physharness/execution/local_docker.py:560: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/physharness/execution/local_docker.py:268: in _docker
+    _, out, err = await asyncio.gather(feed(), bounded(proc.stdout), bounded(proc.stderr))
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/physharness/execution/local_docker.py:253: in bounded
+    while part := await stream.read(min(65536, max_output - size + 1)):
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/streams.py:713: in read
+    await self._wait_for_data('read')
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <StreamReader eof transport=<_UnixReadPipeTransport closed fd=18 closed>>
+func_name = 'read'
+
+    async def _wait_for_data(self, func_name):
+        """Wait until feed_data() or feed_eof() is called.
+    
+        If stream was paused, automatically resume it.
+        """
+        # StreamReader uses a future to link the protocol feed_data() method
+        # to a read coroutine. Running two read coroutines at the same time
+        # would have an unexpected behaviour. It would not possible to know
+        # which coroutine would get the next data.
+        if self._waiter is not None:
+            raise RuntimeError(
+                f'{func_name}() called while another coroutine is '
+                f'already waiting for incoming data')
+    
+        assert not self._eof, '_wait_for_data after EOF'
+    
+        # Waiting for data while paused will make deadlock, so prevent it.
+        # This is essential for readexactly(n) for case when n > self._limit.
+        if self._paused:
+            self._paused = False
+            self._transport.resume_reading()
+    
+        self._waiter = self._loop.create_future()
+        try:
+>           await self._waiter
+E           asyncio.exceptions.CancelledError
+
+../../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/streams.py:545: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+self = <physharness.orchestration.workspaces.WorkspaceBroker object at 0x10adde450>
+workspace_id = '558926f3-64c9-4ead-a905-bbd795fee6a3'
+execution_id = 'b0e8078062da42789b4fb3f0a3feb2d53919f9c515afe4cd7a78f5398b316ff2'
+operation_id = 'valid-lean', command = 'run'
+inputs = {'operation_id': 'valid-lean', 'argv': ['lake', '--offline', 'env', 'lean', '/work/scratch/Check.lean'], 'cwd': '/opt/sources/physlib', 'timeout_seconds': 90.0, ...}
+call = <function WorkspaceBroker.run.<locals>.call at 0x10af13c40>
+archive = False, cleanup = False, actual = None
+predispatch_validate = <function WorkspaceBroker.run.<locals>.predispatch_validate at 0x1034b2660>
+promoted_target_digest = None
+
+    async def _perform(
+        self,
+        workspace_id,
+        execution_id,
+        operation_id,
+        command,
+        inputs,
+        call,
+        *,
+        archive=False,
+        cleanup=False,
+        actual=None,
+        predispatch_validate=None,
+        promoted_target_digest=None,
+    ):
+        identity, prior = self._start(
+            workspace_id,
+            execution_id,
+            operation_id,
+            command,
+            inputs,
+            cleanup=cleanup,
+            predispatch_validate=predispatch_validate,
+        )
+        if prior is not None:
+            return prior
+        confirmed = False
+        try:
+>           value = await call(self._providers[workspace_id])
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+src/physharness/orchestration/workspaces.py:762: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/physharness/orchestration/workspaces.py:1049: in call
+    result = await provider.run(request)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/physharness/execution/local_docker.py:525: in run
+    return await self._run_once(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/physharness/execution/local_docker.py:559: in _run_once
+    async with asyncio.timeout(request.timeout_seconds):
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x10af99a80>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+../../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+
+The above exception was the direct cause of the following exception:
+
+lab = (<physharness.service.HarnessService object at 0x10aa67230>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+
+    @pytest.mark.integration
+    async def test_real_broker_rejects_bad_paths_then_runs_valid_lean(lab):
+        host = os.environ.get("PHYSHARNESS_WORKBENCH_DOCKER_HOST")
+        image = os.environ.get("PHYSHARNESS_WORKBENCH_IMAGE_DIGEST")
+        if not host or not image:
+            pytest.skip("Dedicated workbench endpoint and image digest are required")
+    
+        fixture_broker, service, experiment, _, _, args = setup(lab, concurrency=1)
+        providers = []
+    
+        def provider_factory(*, journal, timeout_seconds):
+            provider = LocalDockerWorkspaceProvider(
+                docker_host=host,
+                image_digest=image,
+                timeout_seconds=timeout_seconds,
+                journal=journal,
+            )
+            providers.append(provider)
+            return provider
+    
+        broker = WorkspaceBroker(
+            service,
+            actor=fixture_broker.actor,
+            task_id=fixture_broker.task_id,
+            holder=fixture_broker.holder,
+            fence=fixture_broker.fence,
+            provider_factory=provider_factory,
+            provider_spec={"provider": "local_docker", "template_id": image, "timeout_seconds": 180},
+        )
+        workspace = None
+        try:
+            workspace = await broker.provision(cost_bound_usd="0", operation_id="real-provision")
+            execution_id = workspace["execution_id"]
+            before = len(service.list_records("workspace_operation", broker.actor, experiment["id"]))
+    
+            async def rejected(call, code="UNSAFE_PATH"):
+                with pytest.raises(HarnessError) as error:
+                    await call()
+                assert error.value.code == code
+                current = broker.inspect(workspace["id"])
+                assert current["status"] == "ready"
+                assert current["active_operation_id"] is None
+                operations = service.list_records("workspace_operation", broker.actor, experiment["id"])
+                assert len(operations) == before
+                assert service.ledger(experiment["id"], broker.actor)["uncertain_operations"] == 0
+                assert providers[0]._container_id == execution_id
+    
+            await rejected(
+                lambda: broker.run(
+                    workspace["id"],
+                    expected_execution_id=execution_id,
+                    request=CommandRequest(
+                        operation_id="bad-cwd",
+                        argv=["python3", "-c", "print('not dispatched')"],
+                        cwd="/work",
+                    ),
+                )
+            )
+            for index, path in enumerate(("/work/Bad.lean", "../Bad.lean")):
+                await rejected(
+                    lambda path=path, index=index: broker.upload_file(
+                        workspace["id"],
+                        expected_execution_id=execution_id,
+                        path=path,
+                        data=b"not dispatched",
+                        operation_id=f"bad-upload-{index}",
+                    )
+                )
+                await rejected(
+                    lambda path=path, index=index: broker.read_workspace_range(
+                        workspace["id"],
+                        expected_execution_id=execution_id,
+                        path=path,
+                        offset=0,
+                        length=20,
+                        operation_id=f"bad-read-{index}",
+                    )
+                )
+    
+            source = b"import Mathlib\n#check Nat.add_comm\n"
+            await broker.upload_file(
+                workspace["id"],
+                expected_execution_id=execution_id,
+                path="scratch/Check.lean",
+                data=source,
+                operation_id="valid-upload",
+            )
+            read = await broker.read_workspace_range(
+                workspace["id"],
+                expected_execution_id=execution_id,
+                path="scratch/Check.lean",
+                offset=0,
+                length=len(source),
+                operation_id="valid-read",
+            )
+            assert base64.b64decode(read["data"]) == source
+>           lean = await broker.run(
+                workspace["id"],
+                expected_execution_id=execution_id,
+                request=CommandRequest(
+                    operation_id="valid-lean",
+                    argv=["lake", "--offline", "env", "lean", "/work/scratch/Check.lean"],
+                    cwd="/opt/sources/physlib",
+                    timeout_seconds=90,
+                ),
+            )
+
+tests/test_real_broker_predispatch_qualification.py:114: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/physharness/orchestration/workspaces.py:1064: in run
+    return await self._perform(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <physharness.orchestration.workspaces.WorkspaceBroker object at 0x10adde450>
+workspace_id = '558926f3-64c9-4ead-a905-bbd795fee6a3'
+execution_id = 'b0e8078062da42789b4fb3f0a3feb2d53919f9c515afe4cd7a78f5398b316ff2'
+operation_id = 'valid-lean', command = 'run'
+inputs = {'operation_id': 'valid-lean', 'argv': ['lake', '--offline', 'env', 'lean', '/work/scratch/Check.lean'], 'cwd': '/opt/sources/physlib', 'timeout_seconds': 90.0, ...}
+call = <function WorkspaceBroker.run.<locals>.call at 0x10af13c40>
+archive = False, cleanup = False, actual = None
+predispatch_validate = <function WorkspaceBroker.run.<locals>.predispatch_validate at 0x1034b2660>
+promoted_target_digest = None
+
+    async def _perform(
+        self,
+        workspace_id,
+        execution_id,
+        operation_id,
+        command,
+        inputs,
+        call,
+        *,
+        archive=False,
+        cleanup=False,
+        actual=None,
+        predispatch_validate=None,
+        promoted_target_digest=None,
+    ):
+        identity, prior = self._start(
+            workspace_id,
+            execution_id,
+            operation_id,
+            command,
+            inputs,
+            cleanup=cleanup,
+            predispatch_validate=predispatch_validate,
+        )
+        if prior is not None:
+            return prior
+        confirmed = False
+        try:
+            value = await call(self._providers[workspace_id])
+            confirmed = cleanup
+            with self.service.db.transaction() as session:
+                self._lock(session)
+                row = self._workspace(session, workspace_id)
+                self._guard(session, row, execution_id, cleanup=cleanup)
+                if row.payload["active_operation_id"] != identity:
+                    raise _reconcile("Workspace operation ownership changed during provider call.")
+                values = {"active_operation_id": None}
+                result = value
+                if promoted_target_digest is not None:
+                    experiment = self.service._get(
+                        session, "experiment", row.payload["experiment_id"], self.actor
+                    )
+                    problem = self.service._get(
+                        session, "problem", experiment.payload["problem_id"], self.actor
+                    )
+                    if (
+                        experiment.payload["target_digest"] != promoted_target_digest
+                        or problem.payload["target_digest"] != promoted_target_digest
+                    ):
+                        raise ExecutionError(
+                            "WORKSPACE_TRANSFER_REJECTED", "Current target changed during capture"
+                        )
+                    artifact = self._artifact(
+                        session, row.payload, value, "lean_source", identity
+                    )
+                    result = {
+                        "artifact_id": artifact["id"],
+                        "sha256": artifact["sha256"],
+                        "size_bytes": artifact["size_bytes"],
+                        "branch_id": artifact["branch_id"],
+                        "task_id": self.task_id,
+                        "target_digest": promoted_target_digest,
+                        "proof_status": "not_accepted",
+                    }
+                if archive:
+                    if isinstance(value, StreamedWorkspaceArchive):
+                        verified = StreamedWorkspaceArchive.from_bytes(
+                            value.data, sha256=value.sha256
+                        )
+                    else:
+                        verified = WorkspaceArchive.from_bytes(
+                            value.to_bytes(), sha256=value.sha256
+                        )
+                    artifact = self._artifact(
+                        session,
+                        row.payload,
+                        verified.data
+                        if isinstance(verified, StreamedWorkspaceArchive)
+                        else verified.to_bytes(),
+                        "checkpoint",
+                        identity,
+                        dependencies=(
+                            verified.chunk_artifact_ids
+                            if isinstance(verified, StreamedWorkspaceArchive)
+                            else None
+                        ),
+                    )
+                    values["checkpoint_artifact_id"] = artifact["id"]
+                    result = {
+                        "artifact": artifact,
+                        "archive_sha256": verified.sha256,
+                        "workspace_id": workspace_id,
+                        "execution_id": execution_id,
+                    }
+                if command == "restore":
+                    values.update(
+                        restored_from_artifact_id=result["artifact_id"],
+                        restored_from_sha256=result["archive_sha256"],
+                        restored_from_execution_id=result["source_execution_id"],
+                    )
+                if cleanup:
+                    reservation = session.scalar(
+                        select(ReservationRow)
+                        .where(ReservationRow.id == row.payload["reservation_id"])
+                        .with_for_update()
+                    )
+                    if reservation.state == "settled":
+                        raise _reconcile(
+                            "Reservation unexpectedly settled before confirmed destruction."
+                        )
+                    budget = session.scalar(
+                        select(BudgetRow)
+                        .where(BudgetRow.experiment_id == reservation.experiment_id)
+                        .with_for_update()
+                    )
+                    released_workers = reservation.workers
+                    budget.active_workers -= reservation.workers
+                    if actual is None:
+                        reservation.workers = 0
+                        reservation.state = "uncertain"
+                    else:
+                        budget.reserved -= reservation.reserved
+                        budget.spent += actual
+                        reservation.actual, reservation.tokens_actual = actual, 0
+                        reservation.state = "settled"
+                    values.update(
+                        status="destroyed",
+                        destruction_confirmed=True,
+                        actual_cost_usd=money_string(actual) if actual is not None else None,
+                        billing_status="unreconciled" if actual is None else "reconciled",
+                    )
+                    result = self.service._replace(session, row, values)
+                    self.service._event(
+                        session,
+                        self.actor,
+                        identity,
+                        "resources.capacity_released" if actual is None else "resources.settled",
+                        reservation.experiment_id,
+                        {
+                            "reservation_id": reservation.id,
+                            "workspace_id": workspace_id,
+                            "actual_cost_usd": money_string(actual) if actual is not None else None,
+                            "released_workers": released_workers,
+                            "billing_status": values["billing_status"],
+                        },
+                    )
+                else:
+                    self.service._replace(session, row, values)
+                op = self.service._get(session, "workspace_operation", identity, self.actor)
+                self.service._replace(session, op, {"status": "completed", "result": result})
+                self.service._event(
+                    session,
+                    self.actor,
+                    identity,
+                    "workspace.operation.completed",
+                    workspace_id,
+                    {"command": command},
+                )
+            return result
+        except asyncio.CancelledError as exc:
+            self._observe_cancellation(
+                workspace_id,
+                identity,
+                exc,
+                provider=self._providers.get(workspace_id),
+                execution_id=execution_id,
+            )
+            raise
+        except BaseException as exc:
+            confirmed_capture_refusal = command == "promote_file"
+            confirmed_e2b_helper_refusal = (
+                self.provider_spec["provider"] == "e2b"
+                and command in {"upload", "download", "export", "restore"}
+            )
+            if (
+                isinstance(exc, ExecutionError)
+                and exc.code == "WORKSPACE_TRANSFER_REJECTED"
+                and (confirmed_capture_refusal or confirmed_e2b_helper_refusal)
+            ):
+                try:
+                    with self.service.db.transaction() as session:
+                        self._lock(session)
+                        row = self._workspace(session, workspace_id)
+                        self._guard(session, row, execution_id)
+                        if row.payload.get("active_operation_id") != identity:
+                            raise _reconcile("Workspace ownership changed after helper refusal.")
+                        op = self.service._get(session, "workspace_operation", identity, self.actor)
+                        failure = {
+                            "code": exc.code,
+                            "message": "Workspace helper refused the operation; VM is available.",
+                        }
+                        self.service._replace(
+                            session, op, {"status": "rejected", "result": failure}
+                        )
+                        self.service._replace(session, row, {"active_operation_id": None})
+                        self.service._event(
+                            session,
+                            self.actor,
+                            identity,
+                            "workspace.operation.rejected",
+                            workspace_id,
+                            {"code": exc.code, "command": command},
+                        )
+                except Exception:
+                    self._uncertain(workspace_id, identity, observed_execution_id=execution_id)
+                    raise _reconcile() from exc
+                raise HarnessError(
+                    failure["code"], failure["message"], operation_id=identity
+                ) from exc
+            observation = getattr(
+                self._providers.get(workspace_id), "last_execution_observation", None
+            )
+            confirmed = confirmed or bool(
+                isinstance(observation, dict)
+                and observation.get("execution_id") == execution_id
+                and observation.get("destruction_confirmed") is True
+            )
+            if confirmed:
+                try:
+                    with self.service.db.transaction() as session:
+                        self._lock(session)
+                        row = self._workspace(session, workspace_id)
+                        self._guard(session, row, execution_id, cleanup=True)
+                        reservation = session.scalar(
+                            select(ReservationRow)
+                            .where(ReservationRow.id == row.payload["reservation_id"])
+                            .with_for_update()
+                        )
+                        budget = session.scalar(
+                            select(BudgetRow)
+                            .where(BudgetRow.experiment_id == reservation.experiment_id)
+                            .with_for_update()
+                        )
+                        released_workers = reservation.workers
+                        if reservation.state != "settled":
+                            budget.active_workers -= reservation.workers
+                            reservation.workers = 0
+                            if self.provider_spec["provider"] == "local_docker":
+                                budget.reserved -= reservation.reserved
+                                reservation.actual = 0
+                                reservation.state = "settled"
+                            else:
+                                reservation.state = "uncertain"
+                        local = self.provider_spec["provider"] == "local_docker"
+                        self.service._replace(
+                            session,
+                            row,
+                            {
+                                "status": "destroyed",
+                                "destruction_confirmed": True,
+                                "billing_status": "reconciled" if local else "unreconciled",
+                                "active_operation_id": None,
+                            },
+                        )
+                        op = self.service._get(session, "workspace_operation", identity, self.actor)
+                        self.service._replace(
+                            session,
+                            op,
+                            {
+                                "status": "failed",
+                                "result": {
+                                    "code": "WORKSPACE_COMMAND_FAILED",
+                                    "message": ("Command failed; VM destruction confirmed."),
+                                    "diagnostics": getattr(
+                                        self._providers.get(workspace_id),
+                                        "last_command_diagnostics",
+                                        None,
+                                    ),
+                                },
+                            },
+                        )
+                        self.service._event(
+                            session,
+                            self.actor,
+                            identity,
+                            "workspace.destroyed_after_failure",
+                            workspace_id,
+                            {
+                                "execution_id": execution_id,
+                                "released_workers": released_workers,
+                                "billing_status": "reconciled" if local else "unreconciled",
+                            },
+                        )
+                except Exception:
+                    self._uncertain(
+                        workspace_id,
+                        identity,
+                        observed_execution_id=execution_id,
+                        destruction_confirmed=True,
+                    )
+                    raise _reconcile() from exc
+>               raise HarnessError(
+                    "WORKSPACE_COMMAND_FAILED",
+                    "Command failed; VM destruction confirmed. Inspect operation diagnostics.",
+                    operation_id=identity,
+                ) from exc
+E               physharness.errors.HarnessError: Command failed; VM destruction confirmed. Inspect operation diagnostics.
+
+src/physharness/orchestration/workspaces.py:1025: HarnessError
+=========================== short test summary info ============================
+FAILED tests/test_real_broker_predispatch_qualification.py::test_real_broker_rejects_bad_paths_then_runs_valid_lean
+1 failed, 2 passed in 180.29s (0:03:00)

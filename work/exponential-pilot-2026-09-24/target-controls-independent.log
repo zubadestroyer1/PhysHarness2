@@ -1,0 +1,15 @@
+Traceback (most recent call last):
+  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/infra/run_qualified_lean.py", line 405, in <module>
+    run_engineering(
+  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/infra/run_qualified_lean.py", line 381, in run_engineering
+    _record_run(
+  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/infra/run_qualified_lean.py", line 357, in _record_run
+    action(output, report)
+  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/infra/run_qualified_lean.py", line 383, in <lambda>
+    lambda path, report: _run_engineering(
+                         ^^^^^^^^^^^^^^^^^
+  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/infra/run_qualified_lean.py", line 245, in _run_engineering
+    check_cases(cases)
+  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/infra/run_qualified_lean.py", line 119, in check_cases
+    raise ValueError("Suite requires kernel success and comparator nonacceptance cases")
+ValueError: Suite requires kernel success and comparator nonacceptance cases

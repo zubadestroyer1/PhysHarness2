@@ -1,0 +1,29 @@
+{
+  "purpose": "pilot_vm_restart_and_shutdown_observation",
+  "profile": "physharness-pilot",
+  "scientific_approval": false,
+  "production_qualified": false,
+  "started_at": "2026-09-23T03:17:19.304711+00:00",
+  "containers_absent_before_restart": true,
+  "first_stop_succeeded": true,
+  "image_id": "sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67",
+  "runtime_configuration_matches": {
+    "KernelVersion": true,
+    "OperatingSystem": true,
+    "OSType": true,
+    "Architecture": true,
+    "ServerVersion": true,
+    "CgroupVersion": true,
+    "DefaultRuntime": true,
+    "RuncCommit": true,
+    "ContainerdCommit": true,
+    "SecurityOptions": true
+  },
+  "containers_absent_after_restart": true,
+  "restart_status": "passed",
+  "final_stop_command_succeeded": true,
+  "status_command_reports_stopped": true,
+  "docker_endpoint_unavailable": true,
+  "dedicated_hostagent_absent": true,
+  "finished_at": "2026-09-23T03:17:42.921383+00:00"
+}

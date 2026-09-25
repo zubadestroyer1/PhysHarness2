@@ -1,0 +1,25 @@
+{
+  "status": "blocked",
+  "stop_reason": null,
+  "attempted_tasks": 3,
+  "remaining_task_ids": [],
+  "pending_verification_ids": [],
+  "verification_worker_continues": false,
+  "outcomes": [
+    {
+      "task_id": "73202483-f396-4d2b-9727-c69f081f13f8",
+      "status": "completed",
+      "code": null
+    },
+    {
+      "task_id": "383f7d1a-98b3-41a9-b282-ee0553c09831",
+      "status": "completed",
+      "code": null
+    },
+    {
+      "task_id": "3cec33d1-f1cd-4259-b7e6-cacaceef794a",
+      "status": "blocked",
+      "code": "PROVIDER_FAILED"
+    }
+  ]
+}

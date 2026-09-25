@@ -1,0 +1,310 @@
+...........................................s............................ [  6%]
+.....F.................................................................. [ 12%]
+........................................................................ [ 18%]
+........................................................................ [ 24%]
+........................................................................ [ 30%]
+........................................................................ [ 36%]
+.....................s.................................................. [ 42%]
+.s................................................ss.................... [ 48%]
+........................................................................ [ 54%]
+..........................s............................................. [ 60%]
+........................................................................ [ 66%]
+........................................................................ [ 72%]
+...................sssss................................................ [ 78%]
+........................................................................ [ 84%]
+........................................................................ [ 90%]
+...............................s.......................................s [ 96%]
+.............................................                            [100%]
+=================================== FAILURES ===================================
+___________ test_three_handoffs_record_exact_per_ordinal_successors ____________
+tests/test_controller_continuation.py:268: in test_three_handoffs_record_exact_per_ordinal_successors
+    with pytest.raises(LineageError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE LineageError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-24T23:29:16.687898+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "20550bea-a949-4d0c-98a3-d7a74c712660", "operation": "campaign.create"}
+{"timestamp": "2026-09-24T23:29:16.688856+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "26b5dcd5-b723-4500-a487-ee779fce1cca", "operation": "problem.create"}
+{"timestamp": "2026-09-24T23:29:16.689863+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "780bb36a-18e3-46bc-abf9-9e4bd3f793a7", "operation": "problem.review"}
+{"timestamp": "2026-09-24T23:29:16.690979+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bcefb9a5-5d9a-4c66-a06f-9564479ef834", "operation": "experiment.create"}
+{"timestamp": "2026-09-24T23:29:16.692107+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "00836374-2a99-4cf8-a88d-35943d61dbfa", "operation": "experiment.transition"}
+{"timestamp": "2026-09-24T23:29:16.692945+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f772d5bd-e353-49ee-97cc-a9051243b6f7", "operation": "branch.create"}
+{"timestamp": "2026-09-24T23:29:16.694962+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "89919f11-93d6-4ff7-9253-4838b95ce60f", "operation": "task.create"}
+{"timestamp": "2026-09-24T23:29:16.696958+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "543564ea-2213-48dc-8ddc-0ab9cdcd1c05", "operation": "resources.reserve"}
+{"timestamp": "2026-09-24T23:29:16.698163+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "dc12c1d5-0713-437e-88d3-a8d126fc7d70", "operation": "task.acquire"}
+{"timestamp": "2026-09-24T23:29:16.698999+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0869ed06-be59-4fc3-8fe6-f436567c8c20", "operation": "task.bind-slot"}
+{"timestamp": "2026-09-24T23:29:16.725601+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0a1048d1-880d-428c-b407-322886a69344", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.726960+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5289079d-4464-41f4-97be-4541d115176b", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.728695+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a7c9a504-c2cc-493c-b83b-5b5d2fc4ccd1", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.729940+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "150e5af2-6631-41d8-880f-e940a3a49580", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.737659+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f27f960c-5832-406d-8076-803afb5f8421", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.738933+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3d2484e4-f472-40aa-a6d9-1155c98b5936", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.740264+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e64b0e87-252e-4a60-a437-f8600021c1d4", "operation": "resources.reserve"}
+{"timestamp": "2026-09-24T23:29:16.741614+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4d7bc9eb-f7b9-4e39-8c3f-5d3a71b5abdb", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.747562+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "33517cd4-ccab-4b75-beee-2af5f56a7307", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.748871+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d0a14c4b-4f36-4369-8066-9ec859cad1b4", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.750280+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "6ec0734b-c067-4ac4-95cb-cd466387be60", "operation": "resources.settle"}
+{"timestamp": "2026-09-24T23:29:16.751151+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "790df6d2-ffde-4f22-96a3-4ae74d42b526", "operation": "task.track-model-reservation"}
+{"timestamp": "2026-09-24T23:29:16.752473+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "6b18af81-0044-4be8-ae45-bae94438e4a0", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.754193+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "90bbac09-b3a8-41b0-880b-ecd637fc82bc", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.755504+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ce045aba-62a2-4c60-a2f2-74369634834b", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.757238+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b44cef34-491a-4883-9e08-f6f2d98582ff", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.758418+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "78789aaa-90a2-46e1-bf8e-144e0d18862b", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.760467+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "64ea1254-b51b-4a88-9055-002acdcc4603", "operation": "task.handoff-request"}
+{"timestamp": "2026-09-24T23:29:16.762336+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "97bc0b98-ca97-43d2-ab8e-17fabeb4f899", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.763617+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2be19ef8-b62e-4e77-be2a-b88843587b49", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.764978+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "db2ad2e1-aeb5-4906-86ef-16054d504eb4", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.767119+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "6c3080ea-c33e-467b-9c93-b3b8a6c4c6b5", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.768533+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2034aea5-8639-49c8-a312-5aa03533a2cd", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.770788+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "53b04173-815d-459d-b962-04649e78a899", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.772051+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "969e70a4-12ac-43d6-929d-69b7d6f2de72", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.776165+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b4bb0222-f21d-4b60-be16-4fc2d519fe8e", "operation": "task.handoff-issue"}
+{"timestamp": "2026-09-24T23:29:16.777399+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "685a6538-87e6-45b8-87c8-d25b06f20382", "operation": "resources.settle"}
+{"timestamp": "2026-09-24T23:29:16.778612+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "01956bc5-b039-409f-8ca8-3e512903fe20", "operation": "task.reconcile-model-reservations"}
+{"timestamp": "2026-09-24T23:29:16.779704+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bafa17d1-cbc5-48c1-8d1d-b0ebb11076ca", "operation": "resources.reserve"}
+{"timestamp": "2026-09-24T23:29:16.780928+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "400c2ad2-de85-455c-b627-7f01bbafa676", "operation": "task.acquire"}
+{"timestamp": "2026-09-24T23:29:16.781759+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5413f3a6-d9b3-4ab8-92d5-b3adc668f40b", "operation": "task.bind-slot"}
+{"timestamp": "2026-09-24T23:29:16.797037+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "35bab487-6659-4aca-8489-92130c26d13c", "operation": "task.handoff-consume"}
+{"timestamp": "2026-09-24T23:29:16.806171+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c2f026ab-cf39-49fe-9614-826f45148cd7", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.807951+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5f175cc5-f516-4239-8927-2e111aa44963", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.809734+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c403f9c9-73d3-41d3-9e87-339ab7f5f2a5", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.811066+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0f537883-a5fe-4d8e-98a5-5064f5d5435e", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.817872+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "692f6dd3-05ac-4042-b71e-d82535b7df32", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.819207+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5658a87d-5900-4cfd-a061-9d0372f2afae", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.820478+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "edf1b460-c0a0-4c97-b9f6-088618276fa1", "operation": "resources.reserve"}
+{"timestamp": "2026-09-24T23:29:16.821800+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "90766330-7af4-409a-904e-2b0935c78894", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.827591+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "009b9036-c89b-4f63-9f2b-a941bef1c455", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.828914+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e88154c9-db9b-490b-b46a-d5af60e722d6", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.830001+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5f4d189d-a2b6-4bf4-bb03-2cbb70392861", "operation": "resources.settle"}
+{"timestamp": "2026-09-24T23:29:16.830961+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8fb53650-c9a3-488e-9c86-ec950defd54d", "operation": "task.track-model-reservation"}
+{"timestamp": "2026-09-24T23:29:16.832343+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f7cc9460-6501-49f8-a750-c35cdc92eb42", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.834137+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "074ac464-1a77-4269-8526-75b382b57213", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.835545+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8b25ccf1-94d2-4fd5-902c-e616701ac6bf", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.837462+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7493dc5a-3877-4d6a-abb1-85025b763d58", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.838798+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3425c335-765f-4548-863b-6354f223d153", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.840924+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b4eefa04-802c-4bc3-bb24-8a53350992e8", "operation": "task.handoff-request"}
+{"timestamp": "2026-09-24T23:29:16.842779+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0e62f2a8-e72e-4ec7-9ac1-3dd44d2b89be", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.844078+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c74a08fc-2d2b-45aa-b3fb-d3bd9690a665", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.845408+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5718fcfa-370e-4d4e-b2d8-e28ac09915e0", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.847203+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "11d73b6e-3d2c-4218-a5b5-b33630fe2192", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.848541+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "12b1e2b3-e19a-46d6-b973-31e8d9a98705", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.850611+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "fbca5bb5-1aca-42fd-aad2-4554c843ec77", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.851941+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3f4d6282-4619-4293-b988-42809871a8bb", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.855059+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ab8c5159-a46b-45e4-b2e8-62d91d04fbbd", "operation": "task.handoff-issue"}
+{"timestamp": "2026-09-24T23:29:16.856209+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d8978576-a399-4e55-b36f-0445c5291e41", "operation": "resources.settle"}
+{"timestamp": "2026-09-24T23:29:16.857329+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f1bd3606-45a4-4804-a9e7-6f358dd087c5", "operation": "task.reconcile-model-reservations"}
+{"timestamp": "2026-09-24T23:29:16.858416+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "81aadc05-501e-41b4-be8b-4584de36fe84", "operation": "resources.reserve"}
+{"timestamp": "2026-09-24T23:29:16.859605+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8832098d-21ae-4fbf-af19-f1d87ef0eb02", "operation": "task.acquire"}
+{"timestamp": "2026-09-24T23:29:16.860413+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "01d11b5b-c197-4720-8696-cd0f015e3257", "operation": "task.bind-slot"}
+{"timestamp": "2026-09-24T23:29:16.875258+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2af06e6d-1f5b-44f9-89be-8d8f25c9eef8", "operation": "task.handoff-consume"}
+{"timestamp": "2026-09-24T23:29:16.884369+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "fe84ff75-7e8d-4e78-8969-63e63aa8a2c4", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.886061+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ada04c82-ddcc-41ff-b1f6-5f1548564bff", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.887895+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d4948d0b-1972-4017-ac2b-7928b9d7e4c8", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.889268+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "84b3b0f4-fbe7-4df4-833d-1e22976a230c", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.896030+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f618aa0e-4206-4106-b16b-d3ded803b5ea", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.897354+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "db14e6c1-c569-463d-8505-e74b7577c905", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.898661+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b37944df-cb6b-41c3-8730-944fa3ec1927", "operation": "resources.reserve"}
+{"timestamp": "2026-09-24T23:29:16.899986+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "86399102-aaaf-40f9-82ba-1592a5ed2388", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.905718+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "641bfced-71ec-417d-afd1-bdb6c25cf376", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.907036+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c8502ff7-3e1c-414d-97b1-840989dd4fec", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.908080+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c9dec43f-bfab-43e6-b7c4-7cb2684cbf84", "operation": "resources.settle"}
+{"timestamp": "2026-09-24T23:29:16.908989+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "28cc01d1-2a6b-4301-8439-db71d43cfc9b", "operation": "task.track-model-reservation"}
+{"timestamp": "2026-09-24T23:29:16.910358+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "44760e71-a459-4a94-be09-613aeee49c8f", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.912293+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "dee16fc5-33b1-4163-b494-ca31784ae5e2", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.913618+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "52d1a623-8045-461e-85ba-d740104785fd", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.915519+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4095a906-08c1-4dc9-9bcd-1bfc6d5423d9", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.916887+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "77ab2a1d-5432-4eed-a920-69426212ad3a", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.918942+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e2e34042-9f9e-46ab-81fa-deae03486e12", "operation": "task.handoff-request"}
+{"timestamp": "2026-09-24T23:29:16.920888+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "434f707d-26a5-4864-a6eb-c2dda75db140", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.922300+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "65932256-b0ce-49ad-9c7b-f4704c49f6a6", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.923607+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0565a632-03ce-40a6-9284-dff02c1e5465", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.925497+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "80630547-bb95-4450-83ff-15b227aea88f", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.926812+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "66c3c803-c88a-4aae-b935-3960f1684b58", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.928917+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "520d4242-a027-4e9f-886e-59e71c4aaea5", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.930251+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "cd4730f4-4328-4187-88e0-887aa74ead3b", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.933518+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c65a1a42-dc25-4aa4-9f1e-1ac0e2e9d274", "operation": "task.handoff-issue"}
+{"timestamp": "2026-09-24T23:29:16.934793+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e411ba0f-0189-4016-a54f-6b3f32977d44", "operation": "resources.settle"}
+{"timestamp": "2026-09-24T23:29:16.935926+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d1a7f2cd-8931-4e1d-9b7a-a113a56586bd", "operation": "task.reconcile-model-reservations"}
+{"timestamp": "2026-09-24T23:29:16.937050+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "87902229-0c7b-4948-bd09-e8ef69a777f0", "operation": "resources.reserve"}
+{"timestamp": "2026-09-24T23:29:16.938278+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "959aac78-57cc-4d3c-b96e-b73ffbd8890a", "operation": "task.acquire"}
+{"timestamp": "2026-09-24T23:29:16.939114+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "74f6eaea-f4d3-4b82-a2fc-a675c4c9fe57", "operation": "task.bind-slot"}
+{"timestamp": "2026-09-24T23:29:16.953791+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7afc71a3-b25e-4a39-b931-503544209101", "operation": "task.handoff-consume"}
+{"timestamp": "2026-09-24T23:29:16.963003+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "308ff63e-e511-40b8-945d-7adecef2d0e1", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.964805+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3e0c4419-e3f0-480f-ac0a-2285bf1cc4ad", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.966773+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "14ee7e03-3771-4c6f-bf49-2872a3f3898f", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.968147+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f630239e-a570-4faf-9fac-1e67675e7e30", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.974923+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b424fb85-fc30-4e13-baa8-be9f98081b8d", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.976328+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7e05ed68-50ae-4f12-9a18-0072dde939da", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.977660+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f029a937-56ed-4a6b-9838-a0c44e6b70ca", "operation": "resources.reserve"}
+{"timestamp": "2026-09-24T23:29:16.979192+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e274bea4-fae4-4079-9d72-d765911d94f9", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.985101+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1afa57b7-ff45-465d-a45e-733801f49b60", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.986619+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8df8c9fd-937b-40eb-aa18-c712b4079f13", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.987942+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "65d7520f-4134-46a1-bdbd-8fe721216ac4", "operation": "resources.settle"}
+{"timestamp": "2026-09-24T23:29:16.989030+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "43ca2a6b-5437-408f-b4ee-ab418ccb2a89", "operation": "task.track-model-reservation"}
+{"timestamp": "2026-09-24T23:29:16.990700+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "62b4ce79-2a61-4c7d-ad30-6c999650a7e2", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.993287+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1f6fbd86-54ef-4bb8-9a09-0318439f199a", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.995242+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1b27cad6-0142-46c8-a2ad-20fbbb2e9998", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:16.997787+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "834e1eb0-3252-44dc-aa96-225e9ba1013b", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:16.999671+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8a44782b-9e19-495e-a7f6-b848d621d697", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:17.003367+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "23e650d2-eb01-435c-bcf3-026ba79cc958", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:17.005352+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7c3f2ff5-20a1-4c9a-bb70-8e6a5a7a7c40", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:17.008418+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "85c159d5-0df4-4217-9488-f2345c2ab0aa", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:17.010003+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "93883198-5628-4587-b809-fc66c29494cc", "operation": "runtime.save"}
+{"timestamp": "2026-09-24T23:29:17.011687+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "41d36ceb-71ac-465b-9648-dc9f015e9307", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:17.013355+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f1fd87f4-9873-4f76-84d2-e6fd89f8c820", "operation": "artifact.create"}
+{"timestamp": "2026-09-24T23:29:17.015790+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1d08e5e7-1413-4e86-bda9-77a46cc22257", "operation": "task.finish"}
+{"timestamp": "2026-09-24T23:29:17.017841+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "282c54ef-143f-4fb2-8330-301b170f5f35", "operation": "resources.settle"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+INFO     physharness.service:service.py:660 command_completed
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/test_execution_openhands.py: 16 warnings
+  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+    val = getattr(obj, name)
+
+tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
+tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
+tests/test_execution_openhands.py::test_native_checkpoint_can_import_into_new_journal_for_same_vm
+  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+    llm = handler(data)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_controller_continuation.py::test_three_handoffs_record_exact_per_ordinal_successors
+1 failed, 1183 passed, 13 skipped, 21 warnings in 43.34s

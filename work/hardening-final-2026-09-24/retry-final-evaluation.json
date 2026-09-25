@@ -1,0 +1,167 @@
+{
+  "challenge_sha256": "9b356ee2f2ea86fa860a332bb7d93bafd2d8ed49ced2941732147cb5c6304dc8",
+  "delegated_task_count": 4,
+  "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+  "experiment_id": "7cb2963a-2219-4016-928a-6a27ed562339",
+  "experiment_status": "paused",
+  "finalization": {
+    "active_workers": 0,
+    "nonterminal_tasks": 0,
+    "open_model_reservations": 0,
+    "reserved_cost_usd": "0",
+    "reserved_tokens": 0,
+    "unsettled_native_responses": 0
+  },
+  "first_verified": {
+    "receipt_id": "9c834332-48e9-4e75-947e-9aaa3e5b13b4",
+    "seconds_since_experiment_start": 1022.62309,
+    "settled_ceiling_cost_at_receipt_usd": "42.817692"
+  },
+  "label": "hardening-cooperative-retry-1",
+  "ledger": {
+    "active_workers": 0,
+    "max_cost_usd": "100",
+    "reserved_cost_usd": "0",
+    "spent_ceiling_usd": "49.102475",
+    "tokens_reserved": 0,
+    "tokens_spent": 19175210
+  },
+  "message_count": 60,
+  "protocol": "exponential-pilot-attempt-evaluation-v1",
+  "receipts": [
+    {
+      "assurance": "independent_kernel",
+      "axioms": [
+        "propext",
+        "Quot.sound",
+        "Classical.choice"
+      ],
+      "binding_valid": true,
+      "bindings": {
+        "same_candidate_sha256": true,
+        "same_challenge_sha256": true,
+        "same_environment_digest": true,
+        "same_experiment": true,
+        "same_problem_revision": true,
+        "same_review_id": true,
+        "same_target_digest": true,
+        "same_target_theorem": true
+      },
+      "candidate_artifact_id": "a61e050f-70b2-4166-a454-4b1740d5255a",
+      "candidate_bytes_sha256": "d54ff7f271170c2ec50440105e8828a4b3b45fa47b4b267139703c1293b272cf",
+      "candidate_sha256": "d54ff7f271170c2ec50440105e8828a4b3b45fa47b4b267139703c1293b272cf",
+      "checker_versions": {
+        "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+        "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+        "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+        "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+        "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+      },
+      "claim_id": "063a09bc-e155-4b27-9bac-205451205318",
+      "code": "kernel_checked",
+      "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+      "id": "9c834332-48e9-4e75-947e-9aaa3e5b13b4",
+      "problem_revision_id": "7881534e-d302-4fca-b155-04dbde443e8a",
+      "publication": true,
+      "status": "verified",
+      "target_digest": "c48d55b82a9fd454b3b8df3c5d76b45fb2869295b8ea1c4986309e36b4ef49e2"
+    }
+  ],
+  "root_task_count": 2,
+  "runtime": {
+    "active_context_compactions": 0,
+    "model_execution_error_codes": {},
+    "native_response_count": 338,
+    "other_incomplete_responses": 0,
+    "provider_compaction_items": 0,
+    "response_cap_hits": 0,
+    "retrieval_tool_calls_completed": 42,
+    "tool_calls_by_name": {
+      "check_lean_type": 5,
+      "checkpoint_context": 2,
+      "checkpoint_research_notes": 3,
+      "checkpoint_workspace": 2,
+      "child_task_status": 2,
+      "delegate_detached": 4,
+      "discussion_updates": 3,
+      "fork_branch": 4,
+      "inspect_verification": 2,
+      "lookup_library_source": 1,
+      "mailbox_page": 9,
+      "read_artifact": 18,
+      "read_dependency_bundle": 1,
+      "read_research_message": 1,
+      "read_workspace_file": 5,
+      "research_graph_page": 1,
+      "run_command": 72,
+      "run_lean_scratch": 97,
+      "search_knowledge": 1,
+      "search_library_source": 10,
+      "send_message": 63,
+      "store_artifact": 19,
+      "submit_candidate": 1,
+      "verify_candidate": 1,
+      "wait_for_verification": 2,
+      "write_workspace_file": 3
+    },
+    "tool_calls_completed": 332,
+    "tool_rejection_codes": {
+      "CANDIDATE_FORMAT": 1,
+      "INVALID_CURSOR": 1,
+      "MESSAGE_ATTACHMENT_INACCESSIBLE": 2,
+      "NOT_FOUND": 3,
+      "SCIENTIFIC_CORE_TOO_LARGE": 1
+    },
+    "tool_rejections": [
+      {
+        "code": "NOT_FOUND",
+        "operation_id": "00ea3537-ed8f-4a39-b01f-90cc58ce5aac:call_CQjuTKA1CsSfPie2fONH2gtq",
+        "tool_name": "inspect_verification"
+      },
+      {
+        "code": "INVALID_CURSOR",
+        "operation_id": "00ea3537-ed8f-4a39-b01f-90cc58ce5aac:call_pJuukZe4WZq8KtaX6kOx55wS",
+        "tool_name": "discussion_updates"
+      },
+      {
+        "code": "NOT_FOUND",
+        "operation_id": "0eb74763-308f-4dca-9e99-e59e6a61082f:call_hCnMmS6OW50IMSX2xPnvIMO3",
+        "tool_name": "inspect_verification"
+      },
+      {
+        "code": "NOT_FOUND",
+        "operation_id": "0eb74763-308f-4dca-9e99-e59e6a61082f:call_qxiTyeqNXYKO4yUhzVGvsUXS",
+        "tool_name": "send_message"
+      },
+      {
+        "code": "MESSAGE_ATTACHMENT_INACCESSIBLE",
+        "operation_id": "86a09603-16af-461f-ad09-2f4455261929:call_niWOjDScAL2OS5blA3WbY1PM",
+        "tool_name": "send_message"
+      },
+      {
+        "code": "CANDIDATE_FORMAT",
+        "operation_id": "e21cff30-2b5c-4f4f-821a-8166af21d1ae:call_ASPPjyBbthgXS8wF5XHpb0EN",
+        "tool_name": "verify_candidate"
+      },
+      {
+        "code": "MESSAGE_ATTACHMENT_INACCESSIBLE",
+        "operation_id": "e21cff30-2b5c-4f4f-821a-8166af21d1ae:call_WkFMCelkPPU2JQFVEsMAz7VD",
+        "tool_name": "send_message"
+      },
+      {
+        "code": "SCIENTIFIC_CORE_TOO_LARGE",
+        "operation_id": "e21cff30-2b5c-4f4f-821a-8166af21d1ae:call_idkU3azxM7ydyoPU0LvjkoSo",
+        "tool_name": "checkpoint_context"
+      }
+    ],
+    "unsettled_native_response_count": 0
+  },
+  "sharing": "ideas",
+  "target_digest": "c48d55b82a9fd454b3b8df3c5d76b45fb2869295b8ea1c4986309e36b4ef49e2",
+  "whole_attempt": {
+    "calculated_bill_estimate_usd": "6.997658",
+    "seconds_to_last_completed_task": 1103.856683,
+    "settled_native_responses": 338,
+    "spent_ceiling_usd": "49.102475"
+  }
+}

@@ -1,0 +1,727 @@
+{
+  "status": "passed",
+  "run_id": "4235147f-99e2-4e37-a0b1-ba66f0e12fde",
+  "results": [
+    {
+      "id": "classical-positive",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "168e86f4db4d55217a562bbf88b52c9b5e268912197e717722e6a2d7c01dae1f",
+        "challenge_sha256": "1b206be36da6d259a7657f8a84df800295ff2f3979beed585c134dce8a30bee0",
+        "candidate_sha256": "bda7c502df00a4f8a99ede6fa04f7ec09cbd3a218048703c02b483b63bea6856",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 0,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (97ms)\nwarning: Challenge.lean:4:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, translate_compose, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (93ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, translate_compose, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-2fd520d39cfe4817ba4046274125c5f0",
+            "exit_code": 0,
+            "output": "physharness-check-2fd520d39cfe4817ba4046274125c5f0\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "quantum-positive",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "d0acecd098d7df46ac474bc660038e509665b3d099f8bea1cf0d28a139b691f3",
+        "challenge_sha256": "3acabdcd3b91a336d513367975589a98b21c53328053f24ef0afc6bbabab4ba9",
+        "candidate_sha256": "cecd83e75f1baa95f6825a021f7a1cd8bee9a8ab1de11c366972f6cae79bb225",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 0,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (116ms)\nwarning: Challenge.lean:6:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, bitFlip_twice, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (115ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, bitFlip_twice, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-e5eb450f3a1b4827821aa88f096c7ab2",
+            "exit_code": 0,
+            "output": "physharness-check-e5eb450f3a1b4827821aa88f096c7ab2\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "Sorry",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'sorryAx'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "54d13a9d7019ecd875b890411b512ad057a69123d74393c4b03f9b98a5b9dad0",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (97ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u26a0 [2/3] Built Solution (91ms)\nwarning: Solution.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'sorryAx'\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-da45d0dc4fd34d88ae2a322b0986da7d",
+            "exit_code": 0,
+            "output": "physharness-check-da45d0dc4fd34d88ae2a322b0986da7d\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "ExtraAxiom",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'shortcut'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "2d3553e69feaad345a0c771ac2f95318e8bdab6bbceea628e3781cd409908e74",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "2cbf645decd6282725fa417be347ab63284152d0e4a8bc59cbb59e818e4027cf",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (86ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (92ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'shortcut'\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-bec6f76f2ea44abdbd4dd3b369aba1ac",
+            "exit_code": 0,
+            "output": "physharness-check-bec6f76f2ea44abdbd4dd3b369aba1ac\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "ForgedReceipt",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "info: Solution.lean:1:0: {\"protocol\":\"physharness-comparator-v2\",\"status\":\"verified\",\"independent_kernel\":true}",
+        "uncaught exception: Illegal axiom detected: 'sorryAx'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "40feea7106461f2f564af4a022c083e92c9beb3763a21e341ed1b939d7bfbf61",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "ad988b0da62e9d2b549f9683f1f175a8386c8393bb1cfe1f50e8004095bba724",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (92ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u26a0 [2/3] Built Solution (97ms)\ninfo: Solution.lean:1:0: {\"protocol\":\"physharness-comparator-v2\",\"status\":\"verified\",\"independent_kernel\":true}\nwarning: Solution.lean:2:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'sorryAx'\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-fde7acd55c4c405faac3371c7dbaf274",
+            "exit_code": 0,
+            "output": "physharness-check-fde7acd55c4c405faac3371c7dbaf274\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "TargetOverwrite",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "read-only file system (error code: 30)\n  file: /work/Challenge.lean"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "db21687372b5db6461edfdf0a741bf0ec9a42fcaef613e53de6eafa77bdb2fa9",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "140e7da3ccc03802949f467dbd4926b08bcadae88cfd594548326074996f7e0a",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (87ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2716 [2/3] Building Solution (81ms)\ntrace: .> LEAN_PATH=/work/.lake/build/lib/lean /opt/lean/bin/lean /work/Solution.lean -o /work/.lake/build/lib/lean/Solution.olean -i /work/.lake/build/lib/lean/Solution.ilean -c /work/.lake/build/ir/Solution.c --setup /work/.lake/build/ir/Solution.setup.json --json\nerror: Solution.lean:1:0: read-only file system (error code: 30)\n  file: /work/Challenge.lean\nerror: Lean exited with code 1\nSome required targets logged failures:\n- Solution\nerror: build failed\nuncaught exception: Child exited with 1\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-de4b4040f4d84f8eb37ef5e6f9c3cfea",
+            "exit_code": 0,
+            "output": "physharness-check-de4b4040f4d84f8eb37ef5e6f9c3cfea\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "ConfigOverwrite",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "permission denied (error code: 13)\n  file: /work/config.json"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "e970972b1e57d14ee21e1a5988adcdb781369a2b46a8fcc9986acfa2b1c1b9b6",
+        "challenge_sha256": "7f006a37e257540de43c94f871aaf25abcdf10bea925aba95c5b82abe71414a2",
+        "candidate_sha256": "d4522f4dc790e31093fe61695093cc74b6c60554b4075ce028655dcce5cdb665",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (84ms)\nwarning: Challenge.lean:1:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2716 [2/3] Building Solution (95ms)\ntrace: .> LEAN_PATH=/work/.lake/build/lib/lean /opt/lean/bin/lean /work/Solution.lean -o /work/.lake/build/lib/lean/Solution.olean -i /work/.lake/build/lib/lean/Solution.ilean -c /work/.lake/build/ir/Solution.c --setup /work/.lake/build/ir/Solution.setup.json --json\nerror: Solution.lean:1:0: permission denied (error code: 13)\n  file: /work/config.json\nerror: Lean exited with code 1\nSome required targets logged failures:\n- Solution\nerror: build failed\nuncaught exception: Child exited with 1\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-1b4d292348c74d369b5bdaebaa1fb1fb",
+            "exit_code": 0,
+            "output": "physharness-check-1b4d292348c74d369b5bdaebaa1fb1fb\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "ChangedDependency",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Const does not match between challenge and target 'neutral'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "e1c49b1b911e6f7e97ecd34dbe5e9ded5657ea8c30d1b794e1fbed0ea6f8634f",
+        "challenge_sha256": "b89f123dd16c1ff8093bb9d37109d1e54cfbd079af93ab4d8e9593215aeec747",
+        "candidate_sha256": "9666a74d27bc06fb9991626b9595908cfe5da46b5d9588004440291bb88c8f90",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (96ms)\nwarning: Challenge.lean:2:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (88ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Const does not match between challenge and target 'neutral'\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-b98124c1b7d64be687856a5f96c783c8",
+            "exit_code": 0,
+            "output": "physharness-check-b98124c1b7d64be687856a5f96c783c8\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "NativeDecide",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "uncaught exception: Illegal axiom detected: 'target._native.native_decide.ax_1_1'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "b17db29d197730716df410ddb4a9929d485f807b583f940bda1c96096a8647a0",
+        "challenge_sha256": "6b53e795ec932817d7c00ea6f9272c3c7d0cfd9cbdfcad66938b033fef9c5d2a",
+        "candidate_sha256": "c43697602bba926564b7495daff5952498f045ae8d3c851cd0199e078db65ccc",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "info: physharness_engineering: no previous manifest, creating one from scratch\ninfo: toolchain not updated; already up-to-date\nBuilding Challenge\n\u26a0 [2/3] Built Challenge (524ms)\nwarning: Challenge.lean:2:8: declaration uses `sorry`\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2714 [2/3] Built Solution (321ms)\nBuild completed successfully (3 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Illegal axiom detected: 'target._native.native_decide.ax_1_1'\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-8d377f2bc7a54a16ac97be7bb0fe7436",
+            "exit_code": 0,
+            "output": "physharness-check-8d377f2bc7a54a16ac97be7bb0fe7436\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    }
+  ],
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "image_digest": "sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67",
+  "image_metadata_sha256": "fe7095a9c8a4fdd864925654af0edd03dac7106314bc2bf80c81e26b2a3c9442",
+  "fixtures_sha256": "d317cbbc7cf16d57c50c63a839b0b50c60ec8a74a7458cf333605f5ebf71754a",
+  "independent_kernel_requested": true,
+  "launcher_sha256": "16f2800d8ea861adb169dbd9cdc6cf207024d231f1f64d762bef7a2837cb1572",
+  "driver_sha256": "cb1b6852f4fbd89f528fed384afcc275c27fbe7f7584c3e74927e151bff8b58f",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "runner_sha256": "bbb512fe4a6f61ee6ed2148c1700a7276ae3101a78ba8095c171813fc909ec22",
+  "runtime_identity_sha256": "b1e9d8738476f1a869c8ef67faa86da5d036438797b07ee898d4752114edbbf3",
+  "resource_profile": {
+    "protocol": "physharness-verifier-resources-v1",
+    "memory_bytes": 8589934592,
+    "cpus": 4,
+    "comparator_timeout_seconds": 600,
+    "comparator_output_limit_bytes": 256000,
+    "checker_slots": 1
+  },
+  "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_profile_source_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+}

@@ -1,0 +1,55 @@
+time="2026-09-23T22:21:07-07:00" level=info msg="starting colima [profile=physharness-pilot]"
+time="2026-09-23T22:21:07-07:00" level=info msg="runtime: docker"
+time="2026-09-23T22:21:07-07:00" level=info msg="starting ..." context=vm
+time="2026-09-23T22:21:07-07:00" level=info msg="Using the existing instance `colima-physharness-pilot`"
+time="2026-09-23T22:21:07-07:00" level=info msg="Starting the instance `colima-physharness-pilot` with internal VM driver `vz`"
+time="2026-09-23T22:21:08-07:00" level=info msg="[hostagent] hostagent socket created at /Users/kieranpi/.colima/_lima/colima-physharness-pilot/ha.sock"
+time="2026-09-23T22:21:08-07:00" level=info msg="[hostagent] Starting VZ (hint: to watch the boot progress, see `/Users/kieranpi/.colima/_lima/colima-physharness-pilot/serial*.log`)"
+time="2026-09-23T22:21:08-07:00" level=info msg="[hostagent] Mounting disk `colima-physharness-pilot` on `/mnt/lima-colima-physharness-pilot`"
+time="2026-09-23T22:21:08-07:00" level=info msg="[hostagent] Converting `/Users/kieranpi/.colima/_lima/_disks/colima-physharness-pilot/datadisk` (raw) to a raw disk `/Users/kieranpi/.colima/_lima/_disks/colima-physharness-pilot/datadisk`"
+time="2026-09-23T22:21:08-07:00" level=info msg="[hostagent] [VZ] - vm state change: running"
+time="2026-09-23T22:21:11-07:00" level=info msg="[hostagent] SSH server does not seem to be running on vsock port, using usernet forwarder"
+time="2026-09-23T22:21:12-07:00" level=info msg="SSH Local Port: 58883"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Waiting for the essential requirement 1 of 3: `ssh`"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] The essential requirement 1 of 3 is satisfied"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Waiting for the essential requirement 2 of 3: `user session is ready for ssh`"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] The essential requirement 2 of 3 is satisfied"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Waiting for the essential requirement 3 of 3: `Explicitly start ssh ControlMaster`"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] The essential requirement 3 of 3 is satisfied"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Waiting for the guest agent to be running"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Forwarding `/var/run/docker.sock` (guest) to `/Users/kieranpi/.colima/physharness-pilot/docker.sock` (host)"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Forwarding `/var/run/containerd/containerd.sock` (guest) to `/Users/kieranpi/.colima/physharness-pilot/containerd.sock` (host)"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Guest agent is running"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Time sync: guest agent is alive, starting time synchronization"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Waiting for the final requirement 1 of 1: `boot scripts must have finished`"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Forwarding TCP from 127.0.0.1:53 to 127.0.0.1:53"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Forwarding `127.0.0.1:53` (guest) to `/tmp/lima-psl-127.0.0.1-53-4144424282/sock` (host)"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Not forwarding TCP 192.168.5.1:53"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Not forwarding TCP 0.0.0.0:22"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Forwarding TCP from [::1]:53 to 127.0.0.1:53"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Forwarding `[::1]:53` (guest) to `/tmp/lima-psl-127.0.0.1-53-993640601/sock` (host)"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Stopping forwarding `[::1]:53` (guest) to `/tmp/lima-psl-127.0.0.1-53-993640601/sock` (host)"
+time="2026-09-23T22:21:12-07:00" level=warning msg="[hostagent] failed to set up forwarding tcp port 53 (negligible if already forwarded)" error="listen tcp 0.0.0.0:53: bind: address already in use"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Not forwarding TCP [::]:22"
+time="2026-09-23T22:21:12-07:00" level=info msg="[hostagent] Not forwarding TCP [fe80::5055:55ff:fec7:96dc]:53"
+time="2026-09-23T22:21:15-07:00" level=info msg="[hostagent] The final requirement 1 of 1 is satisfied"
+time="2026-09-23T22:21:15-07:00" level=info msg="READY. Run `limactl shell colima-physharness-pilot` to open the shell."
+installing: 386 OK
+installing: amd64 OK
+{
+  "supported": [
+    "linux/arm64",
+    "linux/amd64",
+    "linux/386"
+  ],
+  "emulators": [
+    "python3.12",
+    "qemu-i386",
+    "qemu-x86_64"
+  ]
+}
+time="2026-09-23T22:21:16-07:00" level=info msg="provisioning ..." context=docker
+colima-physharness-pilot
+Successfully created context "colima-physharness-pilot"
+time="2026-09-23T22:21:17-07:00" level=info msg="starting ..." context=docker
+time="2026-09-23T22:21:17-07:00" level=info msg=done

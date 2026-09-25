@@ -1,0 +1,75 @@
+{
+  "status": "blocked",
+  "run_id": "ca8d8a0f-b5fb-4d82-afe3-c9840a1e0ab4",
+  "results": [
+    {
+      "id": "classical-positive",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "container_failed",
+        "message": "Verification execution did not complete.",
+        "remediation": "Inspect execution diagnostics and repair or qualify the Linux verifier.",
+        "target_digest": "168e86f4db4d55217a562bbf88b52c9b5e268912197e717722e6a2d7c01dae1f",
+        "challenge_sha256": "1b206be36da6d259a7657f8a84df800295ff2f3979beed585c134dce8a30bee0",
+        "candidate_sha256": "bda7c502df00a4f8a99ede6fa04f7ec09cbd3a218048703c02b483b63bea6856",
+        "environment_digest": "81cbbca0f56fac31d4482727f97b199cfcceee37b993425223f65d7fbf5b3a3c",
+        "axioms": [],
+        "checker_versions": {},
+        "diagnostics": {
+          "operation": "docker run",
+          "exit_code": 125,
+          "output": "docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: /var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/physharness-verifier-peo6xiz9/trusted\n\nRun 'docker run --help' for more information\n",
+          "container_state": {
+            "status": "unavailable",
+            "exit_code": 1,
+            "diagnostic": "\nError response from daemon: No such container: physharness-check-b1e422c9ddf54d3a989f8194124fac9c\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_profile": {
+            "protocol": "physharness-verifier-resources-v1",
+            "memory_bytes": 8589934592,
+            "cpus": 4,
+            "comparator_timeout_seconds": 600,
+            "comparator_output_limit_bytes": 256000,
+            "checker_slots": 1
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-b1e422c9ddf54d3a989f8194124fac9c",
+            "exit_code": 0,
+            "output": ""
+          }
+        }
+      }
+    }
+  ],
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "image_digest": "sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67",
+  "image_metadata_sha256": "fe7095a9c8a4fdd864925654af0edd03dac7106314bc2bf80c81e26b2a3c9442",
+  "fixtures_sha256": "d317cbbc7cf16d57c50c63a839b0b50c60ec8a74a7458cf333605f5ebf71754a",
+  "independent_kernel_requested": false,
+  "launcher_sha256": "16f2800d8ea861adb169dbd9cdc6cf207024d231f1f64d762bef7a2837cb1572",
+  "driver_sha256": "cb1b6852f4fbd89f528fed384afcc275c27fbe7f7584c3e74927e151bff8b58f",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "runner_sha256": "bbb512fe4a6f61ee6ed2148c1700a7276ae3101a78ba8095c171813fc909ec22",
+  "runtime_identity_sha256": "8c9cbd9137f6b917d129f832b6776fa68c60957e0b1eb4785e780888cfc0c920",
+  "resource_profile": {
+    "protocol": "physharness-verifier-resources-v1",
+    "memory_bytes": 8589934592,
+    "cpus": 4,
+    "comparator_timeout_seconds": 600,
+    "comparator_output_limit_bytes": 256000,
+    "checker_slots": 1
+  },
+  "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_profile_source_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd",
+  "error_type": "RuntimeError",
+  "reason": "Verification case classical-positive did not match its exact expected outcome"
+}

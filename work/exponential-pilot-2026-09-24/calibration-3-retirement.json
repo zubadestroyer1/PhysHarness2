@@ -1,0 +1,50 @@
+{
+  "workspace_id": "967b23ad-e0da-4645-9051-3fc0e980d056",
+  "task_id": "43a4261b-4349-4e13-b49a-9ae8cb8c4c51",
+  "operation_id": "3ff374d4-f227-5221-945d-6871363de431",
+  "evidence_artifact_id": "64474b6b-4fbc-47fb-bd18-540abf60382d",
+  "settled_reservation_ids": [
+    "941f027d-d03f-4ddf-90b0-58ccd21d5a5b",
+    "8c354908-5660-41b3-b8e3-f1d8fce0edb3"
+  ],
+  "failed_session_ids": [
+    "13f92cb6-31e2-4608-9ca8-630d806931ef"
+  ],
+  "ledger": {
+    "max_cost_usd": "12",
+    "reserved_cost_usd": "0",
+    "spent_cost_usd": "0.86024",
+    "active_workers": 0,
+    "max_concurrency": 1,
+    "uncertain_operations": 0,
+    "max_tokens": null,
+    "tokens_reserved": 0,
+    "tokens_spent": 326704
+  },
+  "state": {
+    "utc": "2026-09-24T09:36:44.837903+00:00",
+    "stage": "retired_after_operator_audit",
+    "label": "exponential-calibration-3",
+    "experiment_id": "9d0c372d-7eb3-4def-8822-1408a71088d2",
+    "experiment_status": "cancelled",
+    "reconciliation_required": false,
+    "task_status_counts": {
+      "failed": 1
+    },
+    "session_status_counts": {
+      "failed": 1
+    },
+    "receipts": [],
+    "ledger": {
+      "max_cost_usd": "12",
+      "reserved_cost_usd": "0",
+      "spent_cost_usd": "0.86024",
+      "active_workers": 0,
+      "max_concurrency": 1,
+      "uncertain_operations": 0,
+      "max_tokens": null,
+      "tokens_reserved": 0,
+      "tokens_spent": 326704
+    }
+  }
+}

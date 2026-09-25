@@ -1,0 +1,32 @@
+{
+  "phase": "completed",
+  "updated_at": "2026-09-24T00:30:22.947538+00:00",
+  "paid_attempts_started": 3,
+  "authorized_aggregate_usd": "50",
+  "per_target_ceiling_usd": "25",
+  "vm_profile": "physharness-pilot",
+  "vm_needed": false,
+  "current_work": [],
+  "engineering_checks": {
+    "python": "987 passed, 10 opt-in skipped",
+    "real_workbench": "3 passed",
+    "postgresql": "3 passed",
+    "temporal": "5 passed",
+    "verifier": "10 mechanical checks satisfied; current scope; not production qualification"
+  },
+  "status_helper": "PYTHONPATH=src .venv/bin/python work/research-effectiveness-2026-09-23/pilot_ops.py status TARGET --project-id first-pilot",
+  "active_target": null,
+  "preflight_and_audits": "passed; independent live-result audit confirms both exact-target receipts and export bindings",
+  "blocking_failure": null,
+  "spent_usd": "0.756902",
+  "active_attempt": null,
+  "previous_pre_generation_failures": 1,
+  "projection_result": "verified_exact_target",
+  "projection_spent_usd": "0.3418",
+  "vm_status": "Stopped",
+  "monitor_status": "PAUSED",
+  "purity_result": "verified_exact_target",
+  "purity_spent_usd": "0.415102",
+  "accepted_targets": 2,
+  "outstanding_billing_uncertainty": 0
+}

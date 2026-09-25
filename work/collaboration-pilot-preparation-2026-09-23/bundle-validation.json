@@ -1,0 +1,25 @@
+{
+  "status": "structurally_valid_inactive_registry",
+  "targets": [
+    {
+      "program": "quantum",
+      "problem_id": "333dc961-edaa-4c39-aed9-36672dd5b4ff",
+      "target_digest": "2351da4df3dc2431e4b8c2d055c0f22e20b546e02503955de371ee557257a756",
+      "manifest_sha256": "61526530e1c3686c52c8b19fd044584129842bc70cc7d4e0f740d3775c42ac89",
+      "review_status": "pending"
+    },
+    {
+      "program": "classical",
+      "problem_id": "1eeb1a8e-3687-4d83-8339-63e924a30669",
+      "target_digest": "302959ccfb930fccab3d7df43e254266b3a2f1d8ef9fd86a7d4c983c7ef68f1d",
+      "manifest_sha256": "baf5b4a84bf61d91e9f90e126dc70342bc377a4c5ac42bd9012177d48f1cbec6",
+      "review_status": "pending"
+    }
+  ],
+  "qualification_scope": "665d5178f9bcc726135a5912c855b3708d2e1cc9136554367b4989cb311da6db",
+  "registry_sha256": "fa1a470120f6b441890552bd14be253825533d3d3f5bf6bf1077b6fe4efac090",
+  "scientific_review": "pending",
+  "deployment_approval": "pending",
+  "candidate_execution": false,
+  "preparation_note": "Initial Python-mode Path-string validation correctly failed. Validated serialized JSON through the public registry contract; no source change or bypass."
+}

@@ -1,0 +1,12 @@
+{
+  "status": "development_initialized",
+  "directory": "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.state/collaboration-pilot-preparation-2026-09-23",
+  "identity_files": [
+    "researcher.token",
+    "reviewer.token",
+    "operator.token",
+    "publisher.token"
+  ],
+  "verification": "unconfigured",
+  "cloud": "unqualified"
+}

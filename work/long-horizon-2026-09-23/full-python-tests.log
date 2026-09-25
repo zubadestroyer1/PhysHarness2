@@ -1,0 +1,1713 @@
+........................................................................ [  8%]
+........................................................................ [ 16%]
+........................................................................ [ 24%]
+........................................................................ [ 32%]
+........................................................................ [ 40%]
+s....................................................................... [ 48%]
+........................................................................ [ 56%]
+........................................................................ [ 64%]
+.....................F...FFFFFF.......FFF...FFFFFFFFF................... [ 72%]
+........................................................................ [ 80%]
+........................................................................ [ 88%]
+........................................................................ [ 96%]
+............................                                             [100%]
+=================================== FAILURES ===================================
+________ test_worker_prompt_tools_sessions_and_outputs_obey_same_branch ________
+
+lab = (<physharness.service.HarnessService object at 0x11b871280>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+
+    @pytest.mark.asyncio
+    async def test_worker_prompt_tools_sessions_and_outputs_obey_same_branch(lab):
+        from physharness.execution import RuntimeCheckpoint, RuntimeResult, RuntimeSession
+        from physharness.orchestration.research_worker import ResearchTaskExecutor
+    
+        service, author, exp, branches, (alpha, beta) = approaches(lab, "none")
+        secret = artifact(service, beta, "worker must never see this")
+        task = service.create_task(
+            TaskCreate(branch_id=alpha.branch_id, objective="derive own lemma"), author, "task"
+        )
+        seen = []
+    
+        class ProtocolRuntime:
+            def __init__(self, store, dispatcher, event_sink):
+                self.store, self.dispatcher = store, dispatcher
+    
+            async def start(self, prompt, model, limits):
+                assert secret["id"] not in prompt
+                assert "worker must never see this" not in prompt
+                result = await self.dispatcher.dispatch(
+                    "read_artifact", {"artifact_id": secret["id"]}, "read-secret"
+                )
+                assert result["error"]["code"] == "NOT_FOUND"
+                state = RuntimeSession(runtime="responses", model=model, limits=limits)
+                await self.store.save(RuntimeCheckpoint.build(state, {"history": "alpha native"}))
+                seen.append(state.id)
+                return RuntimeResult(session=state, output_text="own unresolved result")
+    
+        executor = ResearchTaskExecutor(
+            service,
+            prices={
+                "explicit-test-model": {"input_usd_per_million": "1", "output_usd_per_million": "1"}
+            },
+            runtime_factory=ProtocolRuntime,
+        )
+        result = await executor.execute(task["id"], author.project_id)
+        output = service.get_record("artifact", result["artifact_id"], alpha)
+>       session = service.list_records("session", alpha)[0]
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       IndexError: list index out of range
+
+tests/test_sharing.py:297: IndexError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:49.721219+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "78b6b56f-74ba-49bc-bc70-1d90faa458fe", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:49.722184+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "706b17c1-a183-4457-a5fa-c2af38ea6ea6", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:49.723220+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ee1c02ba-800d-4353-9a6a-9a393702e773", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:49.724310+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "918541e9-95c8-4a3e-8a57-15ca1ccb7170", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:49.725163+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "cd35029e-abf8-4189-9061-d23094f4b655", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:49.726263+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e45d087b-b0c8-428c-8704-d32806e7fb13", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:49.727033+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a76c9a4b-87d9-424a-b02b-3d4876b8f005", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:49.727847+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b9b42d24-f9c8-4a6c-a191-15e01634abc2", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:49.729154+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7e104851-6b42-409b-99e4-5226ad1c245e", "operation": "artifact.create"}
+{"timestamp": "2026-09-23T09:31:49.730253+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "9e66b42f-bad5-4100-a014-fb17ad953498", "operation": "task.create"}
+{"timestamp": "2026-09-23T09:31:49.732425+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e4e54b70-97cd-4ded-bcbe-ccc7c7591da8", "operation": "resources.reserve"}
+{"timestamp": "2026-09-23T09:31:49.733724+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c4dbe0ed-7eb2-4ac0-8a74-4fddf7664c28", "operation": "task.acquire"}
+{"timestamp": "2026-09-23T09:31:49.734636+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "9ffd225d-95d0-4f15-9d64-e2f5e19a6dc6", "operation": "task.bind-slot"}
+{"timestamp": "2026-09-23T09:31:49.749265+00:00", "severity": "WARNING", "logger": "physharness.orchestration.research_worker", "message": "Research tool rejected: NOT_FOUND", "operation_id": "read-secret"}
+{"timestamp": "2026-09-23T09:31:49.751156+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0e0232df-a559-4bba-b899-0aa3368bebc2", "operation": "artifact.create"}
+{"timestamp": "2026-09-23T09:31:49.752723+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "becbae38-87bf-4aa9-9f5a-a562b3c4f486", "operation": "runtime.save"}
+{"timestamp": "2026-09-23T09:31:49.754381+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b0175d9d-30a5-4e8a-bf8b-da5a682ffbf1", "operation": "artifact.create"}
+{"timestamp": "2026-09-23T09:31:49.756229+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "feecb101-77f1-4d1d-8b2a-484d07f2989a", "operation": "task.finish"}
+{"timestamp": "2026-09-23T09:31:49.757842+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "beb35ed1-604e-450f-a1ad-ae0b8689a0b1", "operation": "resources.settle"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+WARNING  physharness.orchestration.research_worker:research_worker.py:245 Research tool rejected: NOT_FOUND
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[none-1000] _
+
+lab = (<physharness.service.HarnessService object at 0x110fe9670>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+inventory = 1000, sharing = 'none'
+
+    @pytest.mark.parametrize("inventory", [1000, 2000])
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
+        lab, inventory, sharing
+    ):
+        from sqlalchemy import event
+    
+        service, _, exp, _, (alpha, beta) = approaches(lab, sharing)
+        visible_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        with service.db.transaction() as session:
+            for number in range(inventory):
+                identifier = f"00000000-0000-0000-0000-{number:012d}"
+                session.add(
+                    RecordRow(
+                        id=identifier,
+                        project_id=alpha.project_id,
+                        kind="artifact",
+                        revision=1,
+                        payload={
+                            "id": identifier,
+                            "kind": "artifact",
+                            "experiment_id": exp["id"],
+                            "branch_id": beta.branch_id,
+                            "artifact_kind": "native_checkpoint",
+                            "origin_actor_id": beta.id,
+                        },
+                    )
+                )
+            session.add(
+                RecordRow(
+                    id=visible_id,
+                    project_id=alpha.project_id,
+                    kind="artifact",
+                    revision=1,
+                    payload={
+                        "id": visible_id,
+                        "kind": "artifact",
+                        "experiment_id": exp["id"],
+                        "branch_id": alpha.branch_id,
+                        "artifact_kind": "native_checkpoint",
+                    },
+                )
+            )
+        queries = []
+    
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            queries.append((statement, parameters))
+    
+        event.listen(service.db.engine, "before_cursor_execute", capture)
+        try:
+            page = service.page_records("artifact", alpha, exp["id"], limit=1)
+        finally:
+            event.remove(service.db.engine, "before_cursor_execute", capture)
+        print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
+        assert len(queries) <= 110
+        assert page["items"] == [] and page["next_cursor"] is not None
+        seen = []
+        while page["next_cursor"] is not None:
+            previous = page["next_cursor"]
+            page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
+            assert page["next_cursor"] is None or page["next_cursor"] > previous
+            seen.extend(item["id"] for item in page["items"])
+>       assert seen == [visible_id]
+E       AssertionError: assert [] == ['ffffffff-ff...ffffffffffff']
+E         
+E         Right contains one more item: 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+E         Use -v to get more diff
+
+tests/test_sharing.py:394: AssertionError
+----------------------------- Captured stdout call -----------------------------
+hidden_inventory=1000 sharing=none sql_statements=6
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:49.961641+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "65b2fee4-ca44-47c7-bba5-484e8c88ac13", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:49.962548+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c2e26c9f-f27f-429a-bf0b-52dcb5cf3fb7", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:49.963504+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1016ea42-9aca-4316-865e-197a534b0aa5", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:49.964488+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a506a63c-ee12-4a0e-b6db-07e90ead62ca", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:49.965396+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "19d53ed4-4c81-41e7-b3d1-1e0cdae497cd", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:49.966504+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "be275ece-8bb5-400d-adf1-dce2025e03d9", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:49.967278+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5b675123-31bc-4640-8976-1bec9ea94db9", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:49.968195+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8df0626a-d43e-41c8-8805-57e6b3fcecad", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[none-2000] _
+
+lab = (<physharness.service.HarnessService object at 0x11eca6ab0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+inventory = 2000, sharing = 'none'
+
+    @pytest.mark.parametrize("inventory", [1000, 2000])
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
+        lab, inventory, sharing
+    ):
+        from sqlalchemy import event
+    
+        service, _, exp, _, (alpha, beta) = approaches(lab, sharing)
+        visible_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        with service.db.transaction() as session:
+            for number in range(inventory):
+                identifier = f"00000000-0000-0000-0000-{number:012d}"
+                session.add(
+                    RecordRow(
+                        id=identifier,
+                        project_id=alpha.project_id,
+                        kind="artifact",
+                        revision=1,
+                        payload={
+                            "id": identifier,
+                            "kind": "artifact",
+                            "experiment_id": exp["id"],
+                            "branch_id": beta.branch_id,
+                            "artifact_kind": "native_checkpoint",
+                            "origin_actor_id": beta.id,
+                        },
+                    )
+                )
+            session.add(
+                RecordRow(
+                    id=visible_id,
+                    project_id=alpha.project_id,
+                    kind="artifact",
+                    revision=1,
+                    payload={
+                        "id": visible_id,
+                        "kind": "artifact",
+                        "experiment_id": exp["id"],
+                        "branch_id": alpha.branch_id,
+                        "artifact_kind": "native_checkpoint",
+                    },
+                )
+            )
+        queries = []
+    
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            queries.append((statement, parameters))
+    
+        event.listen(service.db.engine, "before_cursor_execute", capture)
+        try:
+            page = service.page_records("artifact", alpha, exp["id"], limit=1)
+        finally:
+            event.remove(service.db.engine, "before_cursor_execute", capture)
+        print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
+        assert len(queries) <= 110
+        assert page["items"] == [] and page["next_cursor"] is not None
+        seen = []
+        while page["next_cursor"] is not None:
+            previous = page["next_cursor"]
+            page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
+            assert page["next_cursor"] is None or page["next_cursor"] > previous
+            seen.extend(item["id"] for item in page["items"])
+>       assert seen == [visible_id]
+E       AssertionError: assert [] == ['ffffffff-ff...ffffffffffff']
+E         
+E         Right contains one more item: 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+E         Use -v to get more diff
+
+tests/test_sharing.py:394: AssertionError
+----------------------------- Captured stdout call -----------------------------
+hidden_inventory=2000 sharing=none sql_statements=6
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:50.009249+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f274eb9b-4d6a-4cb3-9c63-d4b6873995d9", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:50.010352+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "47776dc5-f2fb-46a3-8129-cfe702412bd6", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:50.011443+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d173c8ca-4bd4-4417-8214-0878409599c8", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:50.012561+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d332190d-8042-4a2a-a2f0-ee491d3848a3", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.013444+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f168c9b5-3e96-4f3d-a42c-3b595a3972ef", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.014928+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "20759f82-1661-4ada-8679-ab68eca9e6d5", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:50.015821+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "22d02080-bd54-4288-8781-3a70b0df1f97", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:50.016831+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a46e858d-af9c-4cab-b824-f08b8b5a7e5f", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[verified-1000] _
+
+lab = (<physharness.service.HarnessService object at 0x11ee32960>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+inventory = 1000, sharing = 'verified'
+
+    @pytest.mark.parametrize("inventory", [1000, 2000])
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
+        lab, inventory, sharing
+    ):
+        from sqlalchemy import event
+    
+        service, _, exp, _, (alpha, beta) = approaches(lab, sharing)
+        visible_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        with service.db.transaction() as session:
+            for number in range(inventory):
+                identifier = f"00000000-0000-0000-0000-{number:012d}"
+                session.add(
+                    RecordRow(
+                        id=identifier,
+                        project_id=alpha.project_id,
+                        kind="artifact",
+                        revision=1,
+                        payload={
+                            "id": identifier,
+                            "kind": "artifact",
+                            "experiment_id": exp["id"],
+                            "branch_id": beta.branch_id,
+                            "artifact_kind": "native_checkpoint",
+                            "origin_actor_id": beta.id,
+                        },
+                    )
+                )
+            session.add(
+                RecordRow(
+                    id=visible_id,
+                    project_id=alpha.project_id,
+                    kind="artifact",
+                    revision=1,
+                    payload={
+                        "id": visible_id,
+                        "kind": "artifact",
+                        "experiment_id": exp["id"],
+                        "branch_id": alpha.branch_id,
+                        "artifact_kind": "native_checkpoint",
+                    },
+                )
+            )
+        queries = []
+    
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            queries.append((statement, parameters))
+    
+        event.listen(service.db.engine, "before_cursor_execute", capture)
+        try:
+            page = service.page_records("artifact", alpha, exp["id"], limit=1)
+        finally:
+            event.remove(service.db.engine, "before_cursor_execute", capture)
+        print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
+        assert len(queries) <= 110
+        assert page["items"] == [] and page["next_cursor"] is not None
+        seen = []
+        while page["next_cursor"] is not None:
+            previous = page["next_cursor"]
+            page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
+            assert page["next_cursor"] is None or page["next_cursor"] > previous
+            seen.extend(item["id"] for item in page["items"])
+>       assert seen == [visible_id]
+E       AssertionError: assert [] == ['ffffffff-ff...ffffffffffff']
+E         
+E         Right contains one more item: 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+E         Use -v to get more diff
+
+tests/test_sharing.py:394: AssertionError
+----------------------------- Captured stdout call -----------------------------
+hidden_inventory=1000 sharing=verified sql_statements=6
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:50.084068+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bed35db2-0b59-4209-9f18-436fba9d700d", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:50.085048+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f0da94eb-d5c7-473b-86f7-26c36a067444", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:50.086093+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0e4c49d4-9988-4a11-a281-ff673eb5e9b4", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:50.087191+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bf658bd7-4821-4caf-8397-25ae6ae8e3be", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.088134+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7cca9538-a63c-4423-b10e-4ba24c66e9b7", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.089277+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bb828add-83f1-4fce-825a-6aa24fb291c2", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:50.090036+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0d00ec1a-1327-4829-b5f6-d5c0ed714eea", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:50.090858+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "fb5609b5-6dd3-4473-be38-21a42db36f46", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[verified-2000] _
+
+lab = (<physharness.service.HarnessService object at 0x11ee6b890>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+inventory = 2000, sharing = 'verified'
+
+    @pytest.mark.parametrize("inventory", [1000, 2000])
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
+        lab, inventory, sharing
+    ):
+        from sqlalchemy import event
+    
+        service, _, exp, _, (alpha, beta) = approaches(lab, sharing)
+        visible_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        with service.db.transaction() as session:
+            for number in range(inventory):
+                identifier = f"00000000-0000-0000-0000-{number:012d}"
+                session.add(
+                    RecordRow(
+                        id=identifier,
+                        project_id=alpha.project_id,
+                        kind="artifact",
+                        revision=1,
+                        payload={
+                            "id": identifier,
+                            "kind": "artifact",
+                            "experiment_id": exp["id"],
+                            "branch_id": beta.branch_id,
+                            "artifact_kind": "native_checkpoint",
+                            "origin_actor_id": beta.id,
+                        },
+                    )
+                )
+            session.add(
+                RecordRow(
+                    id=visible_id,
+                    project_id=alpha.project_id,
+                    kind="artifact",
+                    revision=1,
+                    payload={
+                        "id": visible_id,
+                        "kind": "artifact",
+                        "experiment_id": exp["id"],
+                        "branch_id": alpha.branch_id,
+                        "artifact_kind": "native_checkpoint",
+                    },
+                )
+            )
+        queries = []
+    
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            queries.append((statement, parameters))
+    
+        event.listen(service.db.engine, "before_cursor_execute", capture)
+        try:
+            page = service.page_records("artifact", alpha, exp["id"], limit=1)
+        finally:
+            event.remove(service.db.engine, "before_cursor_execute", capture)
+        print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
+        assert len(queries) <= 110
+        assert page["items"] == [] and page["next_cursor"] is not None
+        seen = []
+        while page["next_cursor"] is not None:
+            previous = page["next_cursor"]
+            page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
+            assert page["next_cursor"] is None or page["next_cursor"] > previous
+            seen.extend(item["id"] for item in page["items"])
+>       assert seen == [visible_id]
+E       AssertionError: assert [] == ['ffffffff-ff...ffffffffffff']
+E         
+E         Right contains one more item: 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+E         Use -v to get more diff
+
+tests/test_sharing.py:394: AssertionError
+----------------------------- Captured stdout call -----------------------------
+hidden_inventory=2000 sharing=verified sql_statements=6
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:50.131590+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7b609527-6d82-427a-9bf9-ddc23e7c6796", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:50.132578+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e5cb94ce-6426-47a1-a691-c21f2a8f1370", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:50.133590+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "74a0d8f3-849a-492a-8f02-0479adb9fe11", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:50.134624+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f01e96b9-52de-4346-a812-817fc08273c6", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.135537+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5c0c2e2e-8592-4ff0-84e2-a9756bd79842", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.136643+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "aab57b94-a1e3-4e62-b048-c94721f5e805", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:50.137406+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "12c0236a-d838-486b-a10a-663105c08254", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:50.138206+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "41e02575-0074-46f3-a90a-2a943a39df98", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[ideas-1000] _
+
+lab = (<physharness.service.HarnessService object at 0x11cc41970>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+inventory = 1000, sharing = 'ideas'
+
+    @pytest.mark.parametrize("inventory", [1000, 2000])
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
+        lab, inventory, sharing
+    ):
+        from sqlalchemy import event
+    
+        service, _, exp, _, (alpha, beta) = approaches(lab, sharing)
+        visible_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        with service.db.transaction() as session:
+            for number in range(inventory):
+                identifier = f"00000000-0000-0000-0000-{number:012d}"
+                session.add(
+                    RecordRow(
+                        id=identifier,
+                        project_id=alpha.project_id,
+                        kind="artifact",
+                        revision=1,
+                        payload={
+                            "id": identifier,
+                            "kind": "artifact",
+                            "experiment_id": exp["id"],
+                            "branch_id": beta.branch_id,
+                            "artifact_kind": "native_checkpoint",
+                            "origin_actor_id": beta.id,
+                        },
+                    )
+                )
+            session.add(
+                RecordRow(
+                    id=visible_id,
+                    project_id=alpha.project_id,
+                    kind="artifact",
+                    revision=1,
+                    payload={
+                        "id": visible_id,
+                        "kind": "artifact",
+                        "experiment_id": exp["id"],
+                        "branch_id": alpha.branch_id,
+                        "artifact_kind": "native_checkpoint",
+                    },
+                )
+            )
+        queries = []
+    
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            queries.append((statement, parameters))
+    
+        event.listen(service.db.engine, "before_cursor_execute", capture)
+        try:
+            page = service.page_records("artifact", alpha, exp["id"], limit=1)
+        finally:
+            event.remove(service.db.engine, "before_cursor_execute", capture)
+        print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
+        assert len(queries) <= 110
+        assert page["items"] == [] and page["next_cursor"] is not None
+        seen = []
+        while page["next_cursor"] is not None:
+            previous = page["next_cursor"]
+            page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
+            assert page["next_cursor"] is None or page["next_cursor"] > previous
+            seen.extend(item["id"] for item in page["items"])
+>       assert seen == [visible_id]
+E       AssertionError: assert [] == ['ffffffff-ff...ffffffffffff']
+E         
+E         Right contains one more item: 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+E         Use -v to get more diff
+
+tests/test_sharing.py:394: AssertionError
+----------------------------- Captured stdout call -----------------------------
+hidden_inventory=1000 sharing=ideas sql_statements=6
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:50.359639+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "65ff5f72-818e-42a0-b39e-3ce2fae229b2", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:50.360777+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "84926a2e-8a1c-40aa-ad51-648956cfc816", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:50.361910+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "68e570fe-3083-4e21-8cee-dc8a608cecdd", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:50.363150+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "baa515b3-d4c8-4cc3-893f-50bf7de5973d", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.364084+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "fe276177-fc46-4cc9-be5c-a2c42ee248fa", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.365295+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7087ed1a-403c-4810-a994-4a6d5184ba40", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:50.366119+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "fc44bf25-71fb-44ad-be72-cf115bf831ee", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:50.367048+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0be02d12-dc0a-46b0-a8e1-2f350548dc82", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[ideas-2000] _
+
+lab = (<physharness.service.HarnessService object at 0x11ec6d280>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+inventory = 2000, sharing = 'ideas'
+
+    @pytest.mark.parametrize("inventory", [1000, 2000])
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
+        lab, inventory, sharing
+    ):
+        from sqlalchemy import event
+    
+        service, _, exp, _, (alpha, beta) = approaches(lab, sharing)
+        visible_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        with service.db.transaction() as session:
+            for number in range(inventory):
+                identifier = f"00000000-0000-0000-0000-{number:012d}"
+                session.add(
+                    RecordRow(
+                        id=identifier,
+                        project_id=alpha.project_id,
+                        kind="artifact",
+                        revision=1,
+                        payload={
+                            "id": identifier,
+                            "kind": "artifact",
+                            "experiment_id": exp["id"],
+                            "branch_id": beta.branch_id,
+                            "artifact_kind": "native_checkpoint",
+                            "origin_actor_id": beta.id,
+                        },
+                    )
+                )
+            session.add(
+                RecordRow(
+                    id=visible_id,
+                    project_id=alpha.project_id,
+                    kind="artifact",
+                    revision=1,
+                    payload={
+                        "id": visible_id,
+                        "kind": "artifact",
+                        "experiment_id": exp["id"],
+                        "branch_id": alpha.branch_id,
+                        "artifact_kind": "native_checkpoint",
+                    },
+                )
+            )
+        queries = []
+    
+        def capture(connection, cursor, statement, parameters, context, executemany):
+            queries.append((statement, parameters))
+    
+        event.listen(service.db.engine, "before_cursor_execute", capture)
+        try:
+            page = service.page_records("artifact", alpha, exp["id"], limit=1)
+        finally:
+            event.remove(service.db.engine, "before_cursor_execute", capture)
+        print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
+        assert len(queries) <= 110
+        assert page["items"] == [] and page["next_cursor"] is not None
+        seen = []
+        while page["next_cursor"] is not None:
+            previous = page["next_cursor"]
+            page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
+            assert page["next_cursor"] is None or page["next_cursor"] > previous
+            seen.extend(item["id"] for item in page["items"])
+>       assert seen == [visible_id]
+E       AssertionError: assert [] == ['ffffffff-ff...ffffffffffff']
+E         
+E         Right contains one more item: 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+E         Use -v to get more diff
+
+tests/test_sharing.py:394: AssertionError
+----------------------------- Captured stdout call -----------------------------
+hidden_inventory=2000 sharing=ideas sql_statements=6
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:50.408669+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "02a79a7c-5b81-4044-bb4a-7f41dd473af3", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:50.409759+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "de8ea538-45be-4a16-bb1c-1ed6cf167834", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:50.410831+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "201125e1-165d-4a3e-bb91-856ec9637b8c", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:50.411934+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "75ff430c-48a9-496b-ae34-b6463de9b8fd", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.412982+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "26e18640-d636-44ae-9050-1f3b758ca737", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:50.414167+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "48ec1803-0ce6-4bb7-b866-cacbba48c841", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:50.414961+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a75128c9-6b2d-4091-a1dc-a4deca635b4f", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:50.415766+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ebaac1d7-226c-4a54-8683-8c3f85666519", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[session-none] _
+
+lab = (<physharness.service.HarnessService object at 0x11e9dc6e0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'none', private_kind = 'session'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:51.918258+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "09ebe56f-a81d-42da-a5fd-3dd039711383", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:51.919437+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1bff7490-50fa-4111-b7bf-3cbb38546e52", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:51.920697+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7888e4fd-ed05-4458-9667-abcbdf3da3cf", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:51.921971+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "286cc2bb-2a41-4624-a6b4-2b8e45a598e0", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:51.922992+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2e6bd1ef-33b8-4bd5-9c27-0e9b400d6558", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:51.924365+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f9091ba9-2382-4bc6-96b7-bbe8947ea97c", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:51.925366+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0e09dad7-ccae-4325-89b5-d5551e586a39", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:51.926273+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ad3371ab-6e85-4e4a-bafd-106e98d5cdd1", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[session-verified] _
+
+lab = (<physharness.service.HarnessService object at 0x11cc5bbc0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'verified', private_kind = 'session'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:51.943415+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8345241e-daeb-454a-96b9-07c59a291d06", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:51.944509+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b055fceb-5169-420d-93b9-ce86906041f0", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:51.945614+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2651df01-07a8-4165-a5a3-9e2fbd4fb436", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:51.946854+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "02ebf344-b2a4-4e2b-8f13-2cb3e39155a5", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:51.947885+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "47ffdf01-0b18-4068-b83c-85d79b319be8", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:51.949260+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d5290585-504a-4665-a05d-ecc76aa324dc", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:51.950128+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "30e10b04-bc6b-4279-a6a4-1699d84df210", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:51.951210+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bc678959-f4bd-454d-a3a6-5e1d99df811d", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[session-ideas] _
+
+lab = (<physharness.service.HarnessService object at 0x11b8ab4a0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'ideas', private_kind = 'session'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:51.967852+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "545bac56-03f5-4450-beb4-dd020a6602e3", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:51.969056+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f9ef2917-c1a3-4bbe-bb5e-b54f48628b10", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:51.970243+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2d68580f-e163-492b-864c-10a90804a0ad", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:51.971386+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e82ae495-872e-44c7-bca0-625d1f23db55", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:51.972412+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "eb9e9bcd-f2c2-4e27-a768-2ce8a73dfa73", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:51.973665+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f8761ac2-e2b5-4d41-9ee9-52e6b3417cb7", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:51.974520+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e7eadbfb-d20c-45c2-9437-96212c9bcff1", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:51.975657+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3a0eddc8-071a-480b-9bd4-1a081fb0c232", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[native_checkpoint-none] _
+
+lab = (<physharness.service.HarnessService object at 0x1112fe540>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'none', private_kind = 'native_checkpoint'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.064679+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "29d22915-6185-492f-99b8-fb8f0f7ef6ac", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.065880+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "cad4cbad-0a69-4950-99be-4b177375fa62", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.067151+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "68d16dfc-fdb3-4393-9e2e-3649173b3c12", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.074651+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "11ef52c6-5e65-4d73-9413-87de74bbe80d", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.075966+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d9bdd05b-fd58-4742-9f13-e4e14a228fef", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.077301+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "cc742793-75d3-4265-b34b-bc66eb679631", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.078275+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5093bb43-0bcf-4dde-a27b-ef7779392a0c", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.079181+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "6f8c82a2-f51e-48bc-b5cd-e00af8f6f333", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[native_checkpoint-verified] _
+
+lab = (<physharness.service.HarnessService object at 0x11137d970>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'verified', private_kind = 'native_checkpoint'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.095510+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b6abecde-9d18-41f1-bad1-af20359f6e98", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.096577+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "cda4aa97-a65b-41a5-84cc-4bdf8d73219e", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.097696+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a6e1c241-b9f2-4574-9ba8-9f4ca4ff61a7", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.098912+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "92dca87c-e3c4-4a2f-87d7-0472fbea3e33", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.099926+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "25462970-f29a-44f0-8a93-9690715d4cbb", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.101266+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "95d3a134-d09d-4e80-a409-e1369aa147b5", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.102196+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "01f13de2-6a2a-4b81-89a3-aff69d685c54", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.103234+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "536e8b83-8dd4-4894-a680-079a5bc43aea", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[native_checkpoint-ideas] _
+
+lab = (<physharness.service.HarnessService object at 0x112a963c0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'ideas', private_kind = 'native_checkpoint'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.119448+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "97ae4f1b-12dd-4352-a8e7-acc1aef2b5ca", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.120495+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7a9a3ada-d1d0-4e73-b145-5bcd0bebb621", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.121635+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d4356dce-f445-45cf-83f8-12c90fe4a56f", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.122820+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "66f497f0-a082-470e-9064-3ba1079488bc", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.123912+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2f0f4214-7965-4e0d-9f25-82226b3908a2", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.125290+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8cbc9d18-4f5c-46ea-adaa-2eaed11ac4f6", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.126302+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c46dcd9f-4514-48ec-9504-b0878e288ecf", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.127373+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "93498ace-d792-425e-9a38-2995163d8a56", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[runtime_event-none] _
+
+lab = (<physharness.service.HarnessService object at 0x11ed564b0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'none', private_kind = 'runtime_event'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.144162+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d89316ba-0e66-46a6-b274-07366bfcff6f", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.145277+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bb1fb447-fb48-470b-953d-e42ebe2e5d89", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.146478+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "483a7aa6-1426-4a04-8d8e-d143a91c9833", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.147741+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "06183058-2011-4018-b16b-2b3091038b1f", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.148985+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5378655f-ed88-4c18-89e2-f055fbb885b7", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.150411+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "310ced48-1e41-4f5c-a189-bd8f5a7ff8c8", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.151373+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f1a3a125-ebc4-47ca-92c8-7db3c42c2406", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.152351+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "dd09ffad-0373-46eb-b788-d3bbd96ac946", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[runtime_event-verified] _
+
+lab = (<physharness.service.HarnessService object at 0x110fea720>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'verified', private_kind = 'runtime_event'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.171037+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "de0686e7-2b6d-476a-948c-084d7d747489", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.172259+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "09e8a218-f035-47e6-8546-0b78140c15ae", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.173543+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bb8b265b-0cad-4e4d-bd6d-099d92610ad7", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.174794+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b76ab928-f85c-4211-989a-f99338161829", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.175893+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "426dc374-4a8a-463c-8193-a221f5014822", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.177178+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "de712b60-d5aa-4eb7-baed-ef8d9c098d56", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.178212+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d7db496a-02f4-4462-9111-9500b5153581", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.179148+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4043451f-1d22-4054-9d42-9f4b7a50e74b", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[runtime_event-ideas] _
+
+lab = (<physharness.service.HarnessService object at 0x11e9dc590>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'ideas', private_kind = 'runtime_event'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.195415+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "94470ecc-aeb7-4b57-893a-66a5861f4cc2", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.196559+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "dac3b8ed-937d-4573-b858-22a1402da237", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.197758+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e02234da-cf1f-4543-95a8-f487b4432800", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.198963+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1a5c20c8-12b2-47d2-9b25-8784db647b1d", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.200124+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b5e29c26-bae0-454b-ac92-f8e6c9a6f9db", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.201484+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2be43efa-53e4-4dba-9ab4-19fd3d4c8f40", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.202354+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "77b5a734-d011-4e6d-b910-1df303dea7a4", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.203285+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "780820b2-9b84-4f79-97cc-2c0821931aa2", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[execution_failure-none] _
+
+lab = (<physharness.service.HarnessService object at 0x11ed54680>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'none', private_kind = 'execution_failure'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.220188+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "79991144-89a5-41ca-b07b-fefbf2a5702f", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.221287+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "69138f77-5f8c-4298-9e1c-872f2c20cc42", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.222463+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c729cec9-e083-40b9-af2a-8511b0fa0d0a", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.223635+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f5a17275-2dac-4080-88fd-54be3647d45d", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.224786+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e9ee7e1e-5ab0-4ed0-ba31-3e9b499b3152", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.226047+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d861814f-924e-455e-af02-c301796aa03a", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.226949+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "867edd6d-d67e-4bde-9ca2-7b89adb27c8c", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.227911+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7576ba5a-c666-4b0f-8661-434d566a8857", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[execution_failure-verified] _
+
+lab = (<physharness.service.HarnessService object at 0x11114bd40>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'verified', private_kind = 'execution_failure'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.245177+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "6641fa83-a82d-4c0c-a96c-f130ce1aac28", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.246350+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d66e4ae1-77e4-4878-a022-7488efc0bc57", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.247656+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f177b290-f426-411f-9a80-d645b7c61eb2", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.249000+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3d63e96d-22b5-4650-bf57-a3fb3bdcb54c", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.250127+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "67e77574-7f6a-4e52-b070-c4aff9429c36", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.251582+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1dad269c-e2fc-497a-afec-e7604eb37f88", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.252626+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "eaa7bda1-6f17-4e80-807d-ca163f3c92fb", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.253686+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2e94411b-6fa0-42c3-8242-984c018f0820", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+_ test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[execution_failure-ideas] _
+
+lab = (<physharness.service.HarnessService object at 0x11f3325a0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+sharing = 'ideas', private_kind = 'execution_failure'
+
+    @pytest.mark.parametrize("sharing", ["none", "verified", "ideas"])
+    @pytest.mark.parametrize(
+        "private_kind",
+        [
+            "session",
+            "checkpoint",
+            "native_checkpoint",
+            "runtime_event",
+            "execution_failure",
+        ],
+    )
+    def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+        lab, sharing, private_kind
+    ):
+        service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
+        kind = "session" if private_kind == "session" else "artifact"
+        legacy = Principal(
+            id="legacy", project_id=author.project_id, role="agent", experiment_id=exp["id"]
+        )
+        controller = legacy.model_copy(update={"id": "controller", "agent_orchestrator": True})
+        with service.db.transaction() as session:
+            for name, owner, origin, trusted in [
+                ("own", alpha.branch_id, alpha.id, False),
+                ("hidden", beta.branch_id, beta.id, False),
+                ("legacy", None, legacy.id, False),
+                ("trusted", beta.branch_id, author.id, True),
+            ]:
+                session.add(
+                    RecordRow(
+                        id=name,
+                        project_id=author.project_id,
+                        kind=kind,
+                        revision=1,
+                        payload={
+                            "id": name,
+                            "kind": kind,
+                            "experiment_id": exp["id"],
+                            "branch_id": owner,
+                            "origin_actor_id": origin,
+                            "artifact_kind": private_kind,
+                            "trusted_input": trusted,
+                        },
+                    )
+                )
+        for actor, expected in [
+            (alpha, {"own", "trusted"}),
+            (legacy, {"legacy", "trusted"}),
+            (controller, {"trusted"}),
+            (author, {"own", "hidden", "legacy", "trusted"}),
+        ]:
+>           assert {
+                row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
+            } == expected
+E           AssertionError: assert set() == {'own', 'trusted'}
+E             
+E             Extra items in the right set:
+E             'trusted'
+E             'own'
+E             Use -v to get more diff
+
+tests/test_sharing.py:651: AssertionError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-23T09:31:52.271577+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e6c90a5a-792f-4bd6-a01a-2f169e7bd3a0", "operation": "campaign.create"}
+{"timestamp": "2026-09-23T09:31:52.272731+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4ce69e0f-1ba8-4d55-8eca-808ba8c8a059", "operation": "problem.create"}
+{"timestamp": "2026-09-23T09:31:52.273894+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "9a6ea15d-b369-48a0-8633-bcebcf6531c1", "operation": "problem.review"}
+{"timestamp": "2026-09-23T09:31:52.275162+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3535b088-248c-42b3-9178-209f63e37056", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.276247+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c9dfc5a1-186c-406f-a6c5-20886b15d97f", "operation": "experiment.create"}
+{"timestamp": "2026-09-23T09:31:52.277567+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "0ec3aa01-738f-4e94-ad6a-13cb48a69f50", "operation": "experiment.transition"}
+{"timestamp": "2026-09-23T09:31:52.278577+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "54ad2c3e-235b-4a69-a322-58c91386df72", "operation": "branch.create"}
+{"timestamp": "2026-09-23T09:31:52.279511+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a15dac76-335c-4e07-91b6-d3384d976711", "operation": "branch.create"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+INFO     physharness.service:service.py:550 command_completed
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/test_execution_openhands.py: 16 warnings
+  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+    val = getattr(obj, name)
+
+tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
+tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
+tests/test_execution_openhands.py::test_native_checkpoint_can_import_into_new_journal_for_same_vm
+  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+    llm = handler(data)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_sharing.py::test_worker_prompt_tools_sessions_and_outputs_obey_same_branch
+FAILED tests/test_sharing.py::test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[none-1000]
+FAILED tests/test_sharing.py::test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[none-2000]
+FAILED tests/test_sharing.py::test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[verified-1000]
+FAILED tests/test_sharing.py::test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[verified-2000]
+FAILED tests/test_sharing.py::test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[ideas-1000]
+FAILED tests/test_sharing.py::test_hidden_record_pages_bound_queries_and_continue_to_authorized_records[ideas-2000]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[session-none]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[session-verified]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[session-ideas]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[native_checkpoint-none]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[native_checkpoint-verified]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[native_checkpoint-ideas]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[runtime_event-none]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[runtime_event-verified]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[runtime_event-ideas]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[execution_failure-none]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[execution_failure-verified]
+FAILED tests/test_sharing.py::test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy[execution_failure-ideas]
+19 failed, 872 passed, 1 skipped, 6 deselected, 21 warnings in 30.80s

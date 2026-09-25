@@ -1,0 +1,40 @@
+[
+  {
+    "program": "quantum",
+    "benchmark_id": "quantum.bell.entangled_with_mixed_marginal",
+    "run_id": "next-quantum-independent",
+    "campaign_id": "4c17cef1-6b41-406a-beb3-ab8cbf9e4d6d",
+    "problem_id": "333dc961-edaa-4c39-aed9-36672dd5b4ff",
+    "experiment_id": "f204eaf4-6949-4c1d-abef-995ae49c6e82",
+    "preparation_artifact_id": "d169e826-c756-4bdf-a1c7-0bf3126f5c90",
+    "target_digest": "2351da4df3dc2431e4b8c2d055c0f22e20b546e02503955de371ee557257a756",
+    "challenge_sha256": "a03e56af6476d3361abef8b6df9663dd418408e9c70f5536b5ca301f72540aac",
+    "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+    "plan_digest": "742ad877c8005f3cb31043c48fab08bd138d1831692c5eba7261ef8dd7530fc0",
+    "review_status": "pending",
+    "model_calls": 0,
+    "collaborating_experiment_id": "f58fb652-8c93-404a-9823-42092e29bacc",
+    "status": "prepared_not_started",
+    "budget_per_arm_usd": "25",
+    "new_spend_authorized": false
+  },
+  {
+    "program": "classical",
+    "benchmark_id": "classical.work_energy.damped_energy_antitone",
+    "run_id": "next-classical-independent",
+    "campaign_id": "0bdf2ade-2e62-4468-b196-5c31036c873a",
+    "problem_id": "1eeb1a8e-3687-4d83-8339-63e924a30669",
+    "experiment_id": "6ca37d0a-66f9-4741-b284-b12f38141ca1",
+    "preparation_artifact_id": "abb0fe57-7bc6-48ed-880f-abfa17f38597",
+    "target_digest": "302959ccfb930fccab3d7df43e254266b3a2f1d8ef9fd86a7d4c983c7ef68f1d",
+    "challenge_sha256": "461e43f341b8010cac3e76aa868b19a105f368d7a372794e4e79b720a6cafcd4",
+    "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+    "plan_digest": "f949be7b639561c1a863fa40f5a99bb46ec6dd4c952f4112a7d61152c4ebf4fc",
+    "review_status": "pending",
+    "model_calls": 0,
+    "collaborating_experiment_id": "0b9e8432-1c36-49d4-bf98-7973baf7a466",
+    "status": "prepared_not_started",
+    "budget_per_arm_usd": "25",
+    "new_spend_authorized": false
+  }
+]

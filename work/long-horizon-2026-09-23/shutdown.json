@@ -1,0 +1,10 @@
+{
+  "vm_profile": "physharness-pilot",
+  "colima_status_exit_code": 1,
+  "colima_reports_not_running": true,
+  "docker_endpoint_available": false,
+  "test_database_tunnel_open": false,
+  "monitor_status": "PAUSED",
+  "live_runner_sessions_exited": true,
+  "disposable_database_container_removed": true
+}

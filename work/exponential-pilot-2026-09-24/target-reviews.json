@@ -1,0 +1,37 @@
+[
+  {
+    "label": "exponential-calibration-1",
+    "review_id": "86b9d784-e1df-4bcf-835f-07ad32b9f5e3",
+    "target_digest": "77a633f092bbd885fbd259f998abed447313408d9a2f64c64970488b6701a30c"
+  },
+  {
+    "label": "exponential-calibration-2",
+    "review_id": "d721470c-905d-4f58-8166-baac972f2f48",
+    "target_digest": "c37300637430345d884547c94774c3b16e6c8848a8a1b0e05f3627a647abc58c"
+  },
+  {
+    "label": "exponential-calibration-3",
+    "review_id": "f4bfaf93-ba4a-467a-a28c-dee0db2e9499",
+    "target_digest": "15e46a4edcf79dbbdb4afb14e350f570ff4da950dffc0827b96781ac5bc12e17"
+  },
+  {
+    "label": "exponential-comparison-4",
+    "review_id": "a2387ff8-d9c4-4bc7-8f45-ef3eb6e4ce2a",
+    "target_digest": "17b88825d7e56c50da32899a0f43df97ef71733b50b83dd60d7f513e22621e89"
+  },
+  {
+    "label": "exponential-comparison-5",
+    "review_id": "ae26bc28-435d-4c3b-b6ee-17250a79a8ce",
+    "target_digest": "02ab23f506b5717a73a3efcc3a7e3f26470828b39c83cb8f07b276e4ca84f882"
+  },
+  {
+    "label": "exponential-comparison-6",
+    "review_id": "f5d0072b-9941-402f-9755-b34a4300a0db",
+    "target_digest": "714d376e9abafe5f319ff01d7d44649d2f1f9213a89fab7c4ecf30cf7c0333d4"
+  },
+  {
+    "label": "exponential-comparison-7",
+    "review_id": "54338f86-111b-4e81-aa4b-e824b3f1ef2f",
+    "target_digest": "9231b27b46df3c92cb5bc3e2b7fc954e897cda3d513f079a5fe91ac2fcce320b"
+  }
+]

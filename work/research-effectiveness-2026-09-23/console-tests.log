@@ -1,0 +1,13 @@
+
+> physharness-console@0.1.0 test
+> vitest run
+
+
+ RUN  v5.0.0 /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/console
+
+
+ Test Files  5 passed (5)
+      Tests  36 passed (36)
+   Start at  14:24:40
+   Duration  1.21s (environment 59%, tests 22%, setup 9%, transform 7%, import 2%, worker 1%)
+

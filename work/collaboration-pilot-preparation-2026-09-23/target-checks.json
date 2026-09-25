@@ -1,0 +1,72 @@
+{
+  "purpose": "reference_solvability_and_hole_rejection_not_agent_success",
+  "human_review": "pending",
+  "reports": [
+    {
+      "mode": "kernel",
+      "status": "passed",
+      "case_count": 4,
+      "report_path": ".state/collaboration-pilot-preparation-2026-09-23/targets-kernel.json",
+      "report_sha256": "fe3026ae4258782decf1aa5ffcd64cf53b7e6c6b867af633d65940d7b5d05f7e",
+      "cases": [
+        {
+          "id": "quantum.bell.entangled_with_mixed_marginal",
+          "status": "verified",
+          "code": "kernel_checked",
+          "assurance": "kernel"
+        },
+        {
+          "id": "classical.work_energy.damped_energy_antitone",
+          "status": "verified",
+          "code": "kernel_checked",
+          "assurance": "kernel"
+        },
+        {
+          "id": "quantum.bell.entangled_with_mixed_marginal.hole_control",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none"
+        },
+        {
+          "id": "classical.work_energy.damped_energy_antitone.hole_control",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none"
+        }
+      ]
+    },
+    {
+      "mode": "independent",
+      "status": "passed",
+      "case_count": 4,
+      "report_path": ".state/collaboration-pilot-preparation-2026-09-23/targets-independent.json",
+      "report_sha256": "82c822c53e85b5b37933ec83893a23307539c386d847029612a93ad5fe801402",
+      "cases": [
+        {
+          "id": "quantum.bell.entangled_with_mixed_marginal",
+          "status": "verified",
+          "code": "kernel_checked",
+          "assurance": "independent_kernel"
+        },
+        {
+          "id": "classical.work_energy.damped_energy_antitone",
+          "status": "verified",
+          "code": "kernel_checked",
+          "assurance": "independent_kernel"
+        },
+        {
+          "id": "quantum.bell.entangled_with_mixed_marginal.hole_control",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none"
+        },
+        {
+          "id": "classical.work_energy.damped_energy_antitone.hole_control",
+          "status": "blocked",
+          "code": "comparator_failed",
+          "assurance": "none"
+        }
+      ]
+    }
+  ]
+}

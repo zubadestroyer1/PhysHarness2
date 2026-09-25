@@ -1,0 +1,30 @@
+{
+  "protocol": "physharness-local-workbench-observation-v1",
+  "observed_at": "2026-09-23T23:56:51.274376+00:00",
+  "image_digest": "sha256:48e4f60a07c289baf846c0ff6fa2624870c59547c2a00971db0510e767161be0",
+  "docker_host": "unix:///Users/kieranpi/.colima/physharness-pilot/docker.sock",
+  "test_result": {
+    "passed": 2,
+    "failed": 0,
+    "log": "work/research-effectiveness-2026-09-23/workbench-qualification-final.log",
+    "log_sha256": "d7b9414d7c14edf94cb9e0b61dd5fe00230bc1492ddb1dd9d29fb0506775dde6"
+  },
+  "source_sha256": {
+    "src/physharness/execution/local_docker.py": "7b6c382bf0f6c356789efdc44f7c53e35822767300c30a1145d2d3aefe8ce2be",
+    "src/physharness/execution/workspace_archive.py": "1b06aedd7d29dddd01091b621f7ea145ec9ab58fdf94fdb9b32e0875ae748e7d",
+    "src/physharness/orchestration/workspaces.py": "5e7f59728146a1e4e24de64dabde7d01b05d9c4aea204b4c5675795cf51afff0",
+    "src/physharness/orchestration/workspace_tools.py": "9ec3a10b6db4a472509cf3114d9c007c6f5989facc51332759f3b96e450d2f6e",
+    "src/physharness/service.py": "bf9be3ba290d015ddfeeb2113bcdbc3f040111e56201c56216116ca38f0b2470",
+    "formal/workbench.Dockerfile": "c2de74e04989d418f9d180f56dcfe15f7ab117f4389808d0db6fc6136541a508",
+    "tests/test_real_workbench_qualification.py": "0c2ba7b18fec2785cf9a51c69a787446d0c27a08bd144f7285a984c43000a02d",
+    "tests/test_workspace_cas.py": "203067b4651f899d20894a3deb24ef0e65224ee67a9ce9a4857aaf6bdd06d1b5"
+  },
+  "max_active_workspaces": 1,
+  "worker_memory_bytes": 2147483648,
+  "workspace_quota_bytes": 268435456,
+  "production_qualified": false,
+  "limitations": [
+    "Local engineering tests only; not cloud, endurance, or fleet qualification.",
+    "Installed-library retrieval is lexical plus exact Lean elaboration, not semantic premise ranking."
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "projection": {
+    "experiment_id": "fcacc4fd-148c-4d8f-b614-0ca5ca9b76e8",
+    "event_counts": {
+      "generation_started": 60,
+      "usage": 60,
+      "tool_completed": 58,
+      "compaction": 42,
+      "completed": 2
+    },
+    "completed_tool_counts": {
+      "fork_branch": 1,
+      "delegate": 1,
+      "search_knowledge": 1,
+      "send_message": 3,
+      "submit_candidate": 5,
+      "wait_for_verification": 5,
+      "inspect_verification": 38,
+      "read_scientific_record": 3,
+      "read_artifact": 1
+    },
+    "times": {
+      "team_run_manifest": "2026-09-23T09:37:44.227038+00:00",
+      "team_run_report": "2026-09-23T09:43:38.422975+00:00"
+    },
+    "runner_wall_seconds": 354.195937
+  },
+  "purity": {
+    "experiment_id": "041d11ee-e488-45f5-863f-41cc58c5a67d",
+    "event_counts": {
+      "generation_started": 102,
+      "usage": 102,
+      "tool_completed": 100,
+      "compaction": 77,
+      "completed": 2
+    },
+    "completed_tool_counts": {
+      "fork_branch": 2,
+      "delegate": 2,
+      "search_knowledge": 3,
+      "send_message": 3,
+      "submit_candidate": 9,
+      "wait_for_verification": 8,
+      "child_task_status": 1,
+      "inspect_verification": 48,
+      "read_artifact": 19,
+      "read_scientific_record": 5
+    },
+    "times": {
+      "team_run_manifest": "2026-09-23T09:44:21.109273+00:00",
+      "team_run_report": "2026-09-23T09:58:54.464822+00:00"
+    },
+    "runner_wall_seconds": 873.355549
+  }
+}

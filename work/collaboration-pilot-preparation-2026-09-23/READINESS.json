@@ -1,0 +1,36 @@
+{
+  "status": "not_ready_for_two_parallel_proof_workers",
+  "prepared": true,
+  "source_unchanged_since_1044_test_run": true,
+  "fresh_pipeline_tests": 46,
+  "selected_target_kernel_outcomes": 8,
+  "human_reviews": "pending",
+  "proposed_registry": "structurally_valid_not_activated",
+  "model_calls": 0,
+  "key_observation": "not loaded in preparation process; saved key not read or invalidated",
+  "fresh_api_availability": "not_tested",
+  "prices": "historical operator rates; revalidate at launch",
+  "blockers": [
+    {
+      "code": "WORKSPACE_CAPACITY",
+      "status": "reproduced_in_real_vm",
+      "message": "Local provider allows one workbench; proposed team requests two."
+    },
+    {
+      "code": "TEAM_CAPACITY_PREFLIGHT_MISSING",
+      "status": "confirmed_by_source_and_separate_physical_probe",
+      "message": "Canonical preflight does not detect team/physical-capacity mismatch."
+    },
+    {
+      "code": "TARGET_REVIEW_REQUIRED",
+      "status": "expected",
+      "message": "Both new exact claims require review before a live run."
+    },
+    {
+      "code": "LAUNCH_AUTHORIZATION",
+      "status": "pending",
+      "message": "Four $25 draft arms propose at most $100; preparation has not started or spent an experiment."
+    }
+  ],
+  "vm": "Stopped"
+}

@@ -1,0 +1,12 @@
+{
+  "prepared_experiments": 4,
+  "all_created_not_started": true,
+  "sessions": 0,
+  "tasks": 0,
+  "verification_receipts": 0,
+  "human_reviews": "pending",
+  "worker_reference_fields_absent": true,
+  "budget_per_arm_usd": "25",
+  "maximum_proposed_total_usd": "100",
+  "paid_model_calls": 0
+}

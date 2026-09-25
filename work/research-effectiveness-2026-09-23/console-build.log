@@ -1,0 +1,18 @@
+
+> physharness-console@0.1.0 build
+> npm run typecheck && vite build
+
+
+> physharness-console@0.1.0 typecheck
+> tsc --noEmit --pretty false -p tsconfig.app.json && tsc --noEmit --pretty false -p tsconfig.node.json
+
+vite v8.3.0 building client environment for production...
+transforming...
+✓ 22 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.46 kB │ gzip:  0.29 kB
+dist/assets/index-D6DBu0lL.css   20.03 kB │ gzip:  5.25 kB
+dist/assets/index-Be7-DFFt.js   265.96 kB │ gzip: 80.30 kB
+
+✓ built in 73ms

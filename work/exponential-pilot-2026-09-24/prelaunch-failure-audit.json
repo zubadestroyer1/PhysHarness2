@@ -1,0 +1,17 @@
+{
+  "experiment": "created",
+  "ledger": {
+    "max_cost_usd": "12",
+    "reserved_cost_usd": "0",
+    "spent_cost_usd": "0",
+    "active_workers": 0,
+    "max_concurrency": 1,
+    "uncertain_operations": 0,
+    "max_tokens": null,
+    "tokens_reserved": 0,
+    "tokens_spent": 0
+  },
+  "tasks": 0,
+  "sessions": 0,
+  "model_reservations": 0
+}

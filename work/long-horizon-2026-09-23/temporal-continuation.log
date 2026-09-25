@@ -1,0 +1,425 @@
+.F.                                                                      [100%]
+=================================== FAILURES ===================================
+_____ test_real_temporal_validates_active_and_completed_duplicate_identity _____
+
+self = <temporalio.service._BridgeServiceClient object at 0x10ffd2210>
+rpc = 'start_workflow_execution'
+req = namespace: "default"
+workflow_id: "task:canonical-task"
+workflow_type {
+  name: "TaskWorkflow"
+}
+task_queue {
+  name: ...     data: "\"canonical-task\""
+    }
+  }
+}
+workflow_id_conflict_policy: WORKFLOW_ID_CONFLICT_POLICY_FAIL
+priority {
+}
+
+resp_type = <class 'temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse'>
+service = 'workflow', retry = True, metadata = {}
+timeout = datetime.timedelta(seconds=20)
+
+    async def _rpc_call(
+        self,
+        rpc: str,
+        req: google.protobuf.message.Message,
+        resp_type: type[ServiceResponse],
+        *,
+        service: str,
+        retry: bool,
+        metadata: Mapping[str, str | bytes],
+        timeout: timedelta | None,
+    ) -> ServiceResponse:
+        global LOG_PROTOS
+        if LOG_PROTOS:
+            logger.debug("Service %s request to %s: %s", service, rpc, req)
+        try:
+            client = await self._connected_client()
+>           resp = await client.call(
+                service=service,
+                rpc=rpc,
+                req=req,
+                resp_type=resp_type,
+                retry=retry,
+                metadata=metadata,
+                timeout=timeout,
+            )
+
+.venv/lib/python3.12/site-packages/temporalio/service.py:475: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <temporalio.bridge.client.Client object at 0x10f6803e0>
+service = 'workflow', rpc = 'start_workflow_execution'
+req = namespace: "default"
+workflow_id: "task:canonical-task"
+workflow_type {
+  name: "TaskWorkflow"
+}
+task_queue {
+  name: ...     data: "\"canonical-task\""
+    }
+  }
+}
+workflow_id_conflict_policy: WORKFLOW_ID_CONFLICT_POLICY_FAIL
+priority {
+}
+
+resp_type = <class 'temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse'>
+retry = True, metadata = {}, timeout = datetime.timedelta(seconds=20)
+
+    async def call(
+        self,
+        *,
+        service: str,
+        rpc: str,
+        req: google.protobuf.message.Message,
+        resp_type: type[ProtoMessage],
+        retry: bool,
+        metadata: Mapping[str, str | bytes],
+        timeout: timedelta | None,
+    ) -> ProtoMessage:
+        """Make RPC call using SDK Core."""
+        # Prepare call
+        timeout_millis = round(timeout.total_seconds() * 1000) if timeout else None
+        call = RpcCall(rpc, req.SerializeToString(), retry, metadata, timeout_millis)
+    
+        # Do call (this throws an RPCError on failure)
+        if service == "workflow":
+            resp_fut = self._ref.call_workflow_service(call)
+        elif service == "operator":
+            resp_fut = self._ref.call_operator_service(call)
+        elif service == "cloud":
+            resp_fut = self._ref.call_cloud_service(call)
+        elif service == "test":
+            resp_fut = self._ref.call_test_service(call)
+        elif service == "health":
+            resp_fut = self._ref.call_health_service(call)
+        else:
+            raise ValueError(f"Unrecognized service {service}")
+    
+        # Convert response
+        resp = resp_type()
+>       resp.ParseFromString(await resp_fut)
+                             ^^^^^^^^^^^^^^
+E       temporal_sdk_bridge.RPCError: (6, 'Workflow execution already finished. WorkflowId: task:canonical-task, RunId: 01a0cd92-88ea-7acd-aa09-150d4544a497. Workflow Id reuse policy: reject duplicate workflow Id.', b'\x08\x06\x12\xaa\x01Workflow execution already finished. WorkflowId: task:canonical-task, RunId: 01a0cd92-88ea-7acd-aa09-150d4544a497. Workflow Id reuse policy: reject duplicate workflow Id.\x1a\xa7\x01\nWtype.googleapis.com/temporal.api.errordetails.v1.WorkflowExecutionAlreadyStartedFailure\x12L\n$8403f0f4-02f6-48fe-9806-5b7a83378b5b\x12$01a0cd92-88ea-7acd-aa09-150d4544a497')
+
+.venv/lib/python3.12/site-packages/temporalio/bridge/client.py:168: RPCError
+
+During handling of the above exception, another exception occurred:
+
+self = <temporalio.client._impl._ClientImpl object at 0x11082e5a0>
+input = StartWorkflowInput(workflow='TaskWorkflow', args=[{'kind': 'task.queued', 'aggregate_id': 'canonical-task', 'project_i...r_start=False, priority=Priority(priority_key=None, fairness_key=None, fairness_weight=None), versioning_override=None)
+
+    async def start_workflow(
+        self, input: StartWorkflowInput
+    ) -> WorkflowHandle[Any, Any]:
+        req: (
+            temporalio.api.workflowservice.v1.StartWorkflowExecutionRequest
+            | temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        )
+        if input.start_signal is not None:
+            req = await self._build_signal_with_start_workflow_execution_request(input)
+        else:
+            req = await self._build_start_workflow_execution_request(input)
+    
+        resp: (
+            temporalio.api.workflowservice.v1.StartWorkflowExecutionResponse
+            | temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+        )
+        first_execution_run_id = None
+        eagerly_started = False
+        try:
+            if isinstance(
+                req,
+                temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,
+            ):
+                resp = await self._client.workflow_service.signal_with_start_workflow_execution(
+                    req,
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
+            else:
+>               resp = await self._client.workflow_service.start_workflow_execution(
+                    req,
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
+
+.venv/lib/python3.12/site-packages/temporalio/client/_impl.py:176: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/temporalio/bridge/services_generated.py:1856: in start_workflow_execution
+    return await self._client._rpc_call(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <temporalio.service._BridgeServiceClient object at 0x10ffd2210>
+rpc = 'start_workflow_execution'
+req = namespace: "default"
+workflow_id: "task:canonical-task"
+workflow_type {
+  name: "TaskWorkflow"
+}
+task_queue {
+  name: ...     data: "\"canonical-task\""
+    }
+  }
+}
+workflow_id_conflict_policy: WORKFLOW_ID_CONFLICT_POLICY_FAIL
+priority {
+}
+
+resp_type = <class 'temporalio.api.workflowservice.v1.request_response_pb2.StartWorkflowExecutionResponse'>
+service = 'workflow', retry = True, metadata = {}
+timeout = datetime.timedelta(seconds=20)
+
+    async def _rpc_call(
+        self,
+        rpc: str,
+        req: google.protobuf.message.Message,
+        resp_type: type[ServiceResponse],
+        *,
+        service: str,
+        retry: bool,
+        metadata: Mapping[str, str | bytes],
+        timeout: timedelta | None,
+    ) -> ServiceResponse:
+        global LOG_PROTOS
+        if LOG_PROTOS:
+            logger.debug("Service %s request to %s: %s", service, rpc, req)
+        try:
+            client = await self._connected_client()
+            resp = await client.call(
+                service=service,
+                rpc=rpc,
+                req=req,
+                resp_type=resp_type,
+                retry=retry,
+                metadata=metadata,
+                timeout=timeout,
+            )
+            if LOG_PROTOS:
+                logger.debug("Service %s response from %s: %s", service, rpc, resp)
+            return resp
+        except BridgeRPCError as err:
+            # Intentionally swallowing the cause instead of using "from"
+            status, message, details = err.args
+>           raise RPCError(message, RPCStatusCode(status), details)
+E           temporalio.service.RPCError: Workflow execution already finished. WorkflowId: task:canonical-task, RunId: 01a0cd92-88ea-7acd-aa09-150d4544a497. Workflow Id reuse policy: reject duplicate workflow Id.
+
+.venv/lib/python3.12/site-packages/temporalio/service.py:490: RPCError
+
+During handling of the above exception, another exception occurred:
+
+self = <physharness.orchestration.temporal_delivery.TemporalDelivery object at 0x11082e660>
+item = {'kind': 'task.queued', 'aggregate_id': 'canonical-task', 'project_id': 'lab', 'payload': 'changed semantics'}
+
+    async def __call__(self, item):
+        options = {
+            "task_queue": self.task_queue,
+            "id_reuse_policy": WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            "id_conflict_policy": WorkflowIDConflictPolicy.FAIL,
+            "rpc_timeout": timedelta(seconds=20),
+        }
+        memo = {"canonical_aggregate": item["aggregate_id"], "project_id": item["project_id"]}
+        if item["kind"].startswith("experiment."):
+            run, workflow_type = ExperimentWorkflow.run, "ExperimentWorkflow"
+            workflow_id = f"experiment:{item['aggregate_id']}"
+            # Signal-with-start does not support FAIL and can deliver a signal
+            # before canonical memo validation. Atomically start with the first
+            # pending command; duplicates take the checked explicit-signal path.
+            argument = {"experiment_id": item["aggregate_id"], "pending_commands": [item]}
+        elif item["kind"] == "task.queued":
+            run, workflow_type = TaskWorkflow.run, "TaskWorkflow"
+            workflow_id, argument = f"task:{item['aggregate_id']}", item
+            memo["command_sha256"] = digest_json({k: v for k, v in item.items() if k != "attempt"})
+        elif item["kind"] == "verification.queued":
+            run, workflow_type = VerificationWorkflow.run, "VerificationWorkflow"
+            workflow_id, argument = f"verify:{item['aggregate_id']}", item
+            memo["command_sha256"] = digest_json({k: v for k, v in item.items() if k != "attempt"})
+        elif item["kind"] in {"task.completed", "task.failed", "task.blocked"}:
+            return
+        else:
+            raise HarnessError(
+                "UNKNOWN_OUTBOX_EVENT", f"No workflow route exists for {item['kind']}."
+            )
+        try:
+>           await self.client.start_workflow(run, argument, id=workflow_id, memo=memo, **options)
+
+src/physharness/orchestration/temporal_delivery.py:48: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+.venv/lib/python3.12/site-packages/temporalio/client/_client.py:625: in start_workflow
+    return await self._impl.start_workflow(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <temporalio.client._impl._ClientImpl object at 0x11082e5a0>
+input = StartWorkflowInput(workflow='TaskWorkflow', args=[{'kind': 'task.queued', 'aggregate_id': 'canonical-task', 'project_i...r_start=False, priority=Priority(priority_key=None, fairness_key=None, fairness_weight=None), versioning_override=None)
+
+    async def start_workflow(
+        self, input: StartWorkflowInput
+    ) -> WorkflowHandle[Any, Any]:
+        req: (
+            temporalio.api.workflowservice.v1.StartWorkflowExecutionRequest
+            | temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest
+        )
+        if input.start_signal is not None:
+            req = await self._build_signal_with_start_workflow_execution_request(input)
+        else:
+            req = await self._build_start_workflow_execution_request(input)
+    
+        resp: (
+            temporalio.api.workflowservice.v1.StartWorkflowExecutionResponse
+            | temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionResponse
+        )
+        first_execution_run_id = None
+        eagerly_started = False
+        try:
+            if isinstance(
+                req,
+                temporalio.api.workflowservice.v1.SignalWithStartWorkflowExecutionRequest,
+            ):
+                resp = await self._client.workflow_service.signal_with_start_workflow_execution(
+                    req,
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
+            else:
+                resp = await self._client.workflow_service.start_workflow_execution(
+                    req,
+                    retry=True,
+                    metadata=input.rpc_metadata,
+                    timeout=input.rpc_timeout,
+                )
+                first_execution_run_id = resp.run_id
+                eagerly_started = resp.HasField("eager_workflow_task")
+        except RPCError as err:
+            # If the status is ALREADY_EXISTS and the details can be extracted
+            # as already started, use a different exception
+            if err.status == RPCStatusCode.ALREADY_EXISTS and err.grpc_status.details:
+                details = temporalio.api.errordetails.v1.WorkflowExecutionAlreadyStartedFailure()
+                if err.grpc_status.details[0].Unpack(details):
+>                   raise temporalio.exceptions.WorkflowAlreadyStartedError(
+                        input.id, input.workflow, run_id=details.run_id
+                    )
+E                   temporalio.exceptions.WorkflowAlreadyStartedError: Workflow execution already started
+
+.venv/lib/python3.12/site-packages/temporalio/client/_impl.py:190: WorkflowAlreadyStartedError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-1928/test_real_temporal_validates_a0')
+
+    @pytest.mark.asyncio
+    async def test_real_temporal_validates_active_and_completed_duplicate_identity(tmp_path):
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = []
+        commands = asyncio.Queue()
+    
+        @activity.defn(name="apply_experiment_command")
+        async def apply_command(item: dict) -> dict:
+            await commands.put(item)
+            return {"status": "replay_fixture"}
+    
+        @activity.defn(name="run_research_task")
+        async def held_task(item: dict) -> dict:
+            calls.append(item)
+            entered.set()
+            await release.wait()
+            return {"status": "completed", "evidence": "replay_fixture"}
+    
+        async with await WorkflowEnvironment.start_local(
+            download_dest_dir=str(tmp_path),
+            dev_server_download_version="v1.8.3",
+            dev_server_database_filename=str(tmp_path / "temporal.db"),
+        ) as environment:
+            async with Worker(
+                environment.client,
+                task_queue="duplicate-integration-fixtures",
+                workflows=[TaskWorkflow, ExperimentWorkflow],
+                workflow_runner=workflow_runner(),
+                activities=[held_task, apply_command],
+            ):
+                deliver = TemporalDelivery(environment.client, "duplicate-integration-fixtures")
+                item = {"kind": "task.queued", "aggregate_id": "canonical-task", "project_id": "lab"}
+                await deliver(item)
+                await asyncio.wait_for(entered.wait(), timeout=15)
+                try:
+                    await deliver({**item, "attempt": 2})
+                    with pytest.raises(HarnessError, match="different canonical"):
+                        await deliver({**item, "project_id": "wrong-project"})
+                    assert len(calls) == 1
+                finally:
+                    release.set()
+                handle = environment.client.get_workflow_handle("task:canonical-task")
+                assert (await handle.result())["status"] == "completed"
+                await deliver(item)
+                assert len(calls) == 1
+                with pytest.raises(HarnessError, match="different canonical"):
+>                   await deliver({**item, "payload": "changed semantics"})
+
+tests/test_temporal_integration.py:123: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <physharness.orchestration.temporal_delivery.TemporalDelivery object at 0x11082e660>
+item = {'kind': 'task.queued', 'aggregate_id': 'canonical-task', 'project_id': 'lab', 'payload': 'changed semantics'}
+
+    async def __call__(self, item):
+        options = {
+            "task_queue": self.task_queue,
+            "id_reuse_policy": WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            "id_conflict_policy": WorkflowIDConflictPolicy.FAIL,
+            "rpc_timeout": timedelta(seconds=20),
+        }
+        memo = {"canonical_aggregate": item["aggregate_id"], "project_id": item["project_id"]}
+        if item["kind"].startswith("experiment."):
+            run, workflow_type = ExperimentWorkflow.run, "ExperimentWorkflow"
+            workflow_id = f"experiment:{item['aggregate_id']}"
+            # Signal-with-start does not support FAIL and can deliver a signal
+            # before canonical memo validation. Atomically start with the first
+            # pending command; duplicates take the checked explicit-signal path.
+            argument = {"experiment_id": item["aggregate_id"], "pending_commands": [item]}
+        elif item["kind"] == "task.queued":
+            run, workflow_type = TaskWorkflow.run, "TaskWorkflow"
+            workflow_id, argument = f"task:{item['aggregate_id']}", item
+            memo["command_sha256"] = digest_json({k: v for k, v in item.items() if k != "attempt"})
+        elif item["kind"] == "verification.queued":
+            run, workflow_type = VerificationWorkflow.run, "VerificationWorkflow"
+            workflow_id, argument = f"verify:{item['aggregate_id']}", item
+            memo["command_sha256"] = digest_json({k: v for k, v in item.items() if k != "attempt"})
+        elif item["kind"] in {"task.completed", "task.failed", "task.blocked"}:
+            return
+        else:
+            raise HarnessError(
+                "UNKNOWN_OUTBOX_EVENT", f"No workflow route exists for {item['kind']}."
+            )
+        try:
+            await self.client.start_workflow(run, argument, id=workflow_id, memo=memo, **options)
+        except WorkflowAlreadyStartedError:
+            # Validate both active and completed identities. USE_EXISTING would
+            # silently acknowledge an active workflow with different command input.
+            execution = await self.client.get_workflow_handle(workflow_id).describe()
+            existing_memo = await execution.memo()
+            continuation_duplicate = (
+                item["kind"] == "task.queued"
+>               and bool(item.get("payload", {}).get("continuation"))
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                and existing_memo.get("canonical_aggregate") == item["aggregate_id"]
+                and existing_memo.get("project_id") == item["project_id"]
+                and execution.status == WorkflowExecutionStatus.RUNNING
+            )
+E           AttributeError: 'str' object has no attribute 'get'
+
+src/physharness/orchestration/temporal_delivery.py:56: AttributeError
+----------------------------- Captured stdout call -----------------------------
+Temporal CLI 1.8.3 (Server 1.31.2, UI 2.50.1)
+
+Temporal Server:      localhost:56110
+Temporal Persistence: /private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-1928/test_real_temporal_validates_a0/temporal.db
+Temporal Metrics:     http://localhost:56119/metrics
+=========================== short test summary info ============================
+FAILED tests/test_temporal_integration.py::test_real_temporal_validates_active_and_completed_duplicate_identity
+1 failed, 2 passed in 13.91s

@@ -1,0 +1,187 @@
+{
+  "schema_version": 1,
+  "docker_host": "unix:///Users/kieranpi/.colima/physharness-pilot/docker.sock",
+  "worker_image": "sha256:48e4f60a07c289baf846c0ff6fa2624870c59547c2a00971db0510e767161be0",
+  "initial_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 0,
+    "available_slots": 2,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "two_active_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 2,
+    "available_slots": 0,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "worker_ids": [
+    "9d558a44a099dd4085527e0e82076782fd03b400724c5e8e1fe5cb2d5233b4dd",
+    "4633870c2f92a97e6b9d80830175de9024cca024efc164e09414e28d2c8a5527"
+  ],
+  "third_result": "WORKSPACE_CAPACITY",
+  "verifier_start_monotonic": 1365176.38617925,
+  "commands": [
+    {
+      "exit_code": 0,
+      "stdout_tail": "0 Nat.add_comm (n m : \u2115) : n + m = m + n\n ependency '\u00abdoc-gen4\u00bb' changed; use `lake update \u00abdoc-gen4\u00bb` to update it\nwarning: manifest out of date: source kind (git/path) of dependency 'mathlib' changed; use `lake update mathlib` to update it\n\n-2\n",
+      "stderr_tail": "",
+      "start_monotonic": 1365176.386222916,
+      "end_monotonic": 1365191.046313041,
+      "diagnostics": {
+        "phase": "completed",
+        "memory_before": {
+          "current_bytes": 8781824,
+          "peak_bytes": 8798208,
+          "events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          }
+        },
+        "memory_after": {
+          "current_bytes": 60665856,
+          "peak_bytes": 862035968,
+          "events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          }
+        },
+        "oom_delta": 0,
+        "limit_reason": null
+      }
+    },
+    {
+      "exit_code": 0,
+      "stdout_tail": "0 Nat.add_comm (n m : \u2115) : n + m = m + n\n ependency '\u00abdoc-gen4\u00bb' changed; use `lake update \u00abdoc-gen4\u00bb` to update it\nwarning: manifest out of date: source kind (git/path) of dependency 'mathlib' changed; use `lake update mathlib` to update it\n\n-2\n",
+      "stderr_tail": "",
+      "start_monotonic": 1365176.387550125,
+      "end_monotonic": 1365190.9975275,
+      "diagnostics": {
+        "phase": "completed",
+        "memory_before": {
+          "current_bytes": 8667136,
+          "peak_bytes": 8790016,
+          "events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          }
+        },
+        "memory_after": {
+          "current_bytes": 60653568,
+          "peak_bytes": 863485952,
+          "events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          }
+        },
+        "oom_delta": 0,
+        "limit_reason": null
+      }
+    }
+  ],
+  "verifier_alive_after_commands": true,
+  "verifier_end_monotonic": 1365259.797381333,
+  "verifier": {
+    "exit_code": 0,
+    "stdout_tail": "",
+    "stderr_tail": "",
+    "output": ".state/parallel-pilot-2026-09-24/concurrent-targets-kernel.json",
+    "report_status": "passed",
+    "cases": [
+      {
+        "id": "quantum.dephasing.offdiagonal_purity_loss",
+        "expected_status": "verified",
+        "outcome_status": "verified",
+        "outcome_code": "kernel_checked"
+      },
+      {
+        "id": "classical.work_energy.damped_uniform_bounds",
+        "expected_status": "verified",
+        "outcome_status": "verified",
+        "outcome_code": "kernel_checked"
+      },
+      {
+        "id": "quantum.dephasing.offdiagonal_purity_loss.hole_control",
+        "expected_status": "blocked",
+        "outcome_status": "blocked",
+        "outcome_code": "comparator_failed"
+      },
+      {
+        "id": "classical.work_energy.damped_uniform_bounds.hole_control",
+        "expected_status": "blocked",
+        "outcome_status": "blocked",
+        "outcome_code": "comparator_failed"
+      }
+    ]
+  },
+  "after_first_close_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 1,
+    "available_slots": 1,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "replacement_id": "5c890d3e8469a500e57e73cb07dc5f89e123df4945e24976ccbf85b55ea7c206",
+  "replacement_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 2,
+    "available_slots": 0,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "cancel_result": "CancelledError",
+  "after_cancel_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 1,
+    "available_slots": 1,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "final_probe_before_cleanup": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 1,
+    "available_slots": 1,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "cleanup_errors": [],
+  "final_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 0,
+    "available_slots": 2,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "passed": true,
+  "crash_orphan": {
+    "journal_workspace_label": "qualification-orphan-23ed0a76d9f54b6ab6d475abfc1c75f1",
+    "execution_id": "29ab6b72f60df596ab259066b6daf1ce93a4e1ed47e53f15628a8c4f7f186ba5",
+    "found_after_creator_exit": true,
+    "status": "explicitly_uncertain_until_reconciled",
+    "removed_exact_container": true
+  }
+}

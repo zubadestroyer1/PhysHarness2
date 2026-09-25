@@ -1,0 +1,9 @@
+# Private reference qualification status
+
+The withheld Lean reference for the forced finite nonlinear coupled Duffing network compiled successfully in the pinned worker image. Its `physics_target` theorem reports only the standard Lean axioms `propext`, `Classical.choice`, and `Quot.sound`; it does not depend on `sorryAx`. The challenge file parses with its intentional theorem hole. This is an assistant-authored development target, not an open result or human-expert/publication approval.
+
+The proof was checked again in a disposable, network-disabled container with the worker's 2 GiB memory and 2 CPU limits, using the worker's 120-second Lean command limit. The full compile exited 0 in 8 seconds, with a cgroup memory peak of 1,029,541,888 bytes and zero OOM events. Both disposable containers were removed afterward. This establishes feasibility for a worker to check a full solution; it does not predict discovery time.
+
+The frozen private files are `Challenge.lean` (SHA-256 `9b356ee2f2ea86fa860a332bb7d93bafd2d8ed49ced2941732147cb5c6304dc8`) and `Solution.lean` (SHA-256 `20dbdc81c6079cde460c269bf40681968f0309576c008c3c2674601d496e6987`). The independent target qualification passed: the positive case was verified by the Comparator and independent kernel, and the intentional-hole case was blocked with `sorryAx`.
+
+The first adversarial-controls run verified its positive anchor and blocked all three altered cases. Its fixture expected a theorem-statement mismatch for the redefined-energy case, while the Comparator instead reported the more direct constant-definition mismatch for `networkEnergy`, so the run exited 1 on diagnostic expectation. The original fixture is retained as evidence. `controls-cases-v2.json` changes only that expected substring and awaits rerun; no target or candidate source was changed.

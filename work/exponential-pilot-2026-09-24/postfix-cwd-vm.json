@@ -1,0 +1,27 @@
+[
+  {
+    "cwd": "/opt/sources/mathlib",
+    "operation_id": "root-vm-check:/opt/sources/mathlib",
+    "execution_id": "1bcec319abfbd9572621d0f97e8b4fe26c772b1540637180325a0013a10b236f",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "error: read-only file system (error code: 30)\n  file: /opt/sources/mathlib/.lake/config\n",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+  },
+  {
+    "cwd": "/not-permitted",
+    "status": "rejected",
+    "code": "UNSAFE_PATH"
+  },
+  {
+    "cwd": "/opt/sources/physlib",
+    "operation_id": "root-vm-check:/opt/sources/physlib",
+    "execution_id": "1bcec319abfbd9572621d0f97e8b4fe26c772b1540637180325a0013a10b236f",
+    "exit_code": 0,
+    "stdout": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)\n",
+    "stderr": "warning: manifest out of date: source kind (git/path) of dependency '\u00abdoc-gen4\u00bb' changed; use `lake update \u00abdoc-gen4\u00bb` to update it\nwarning: manifest out of date: source kind (git/path) of dependency 'mathlib' changed; use `lake update mathlib` to update it\n",
+    "stdout_truncated": false,
+    "stderr_truncated": false
+  }
+]
