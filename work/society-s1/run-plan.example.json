@@ -32,6 +32,26 @@
     },
     {
       "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family A",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family A",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family B",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
+      "model": "USER DECISION REQUIRED: exact model id, family B",
+      "parameters": {"reasoning": {"effort": "high"}}
+    },
+    {
+      "runtime": "responses",
       "model": "USER DECISION REQUIRED: exact model id, family B",
       "parameters": {"reasoning": {"effort": "high"}}
     },
@@ -43,7 +63,7 @@
   ],
   "budget": {
     "max_cost_usd": "USER DECISION REQUIRED: per-arm ceiling in USD (RUN_PLAN.md budget table)",
-    "max_concurrency": 8,
+    "max_concurrency": 12,
     "max_runtime_seconds": "USER DECISION REQUIRED: per-arm wall-clock ceiling in seconds",
     "max_tokens": "USER DECISION REQUIRED: per-arm token ceiling, or null for none"
   },

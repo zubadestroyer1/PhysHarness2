@@ -238,6 +238,8 @@ def prepare_run(service, actor, plan: RunPlan, base_directory: Path) -> dict:
 
 
 def _masked_reference_ready(service, actor, identifier) -> bool:
+    if not isinstance(identifier, str) or not identifier:
+        return False
     try:
         record = service.get_record("artifact", identifier, actor)
     except HarnessError:
