@@ -1342,9 +1342,22 @@ async def test_local_compile_requires_standard_axioms(lab):
         "axioms": ["Lean.ofReduceBool", "sorryAx"],
     }
     assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
-    workspace.lean.axioms = {"trace_add": ["propext", "Classical.choice", "Quot.sound"]}
+    # The report comes from the workspace: without the node's own entry it fails closed,
+    # and other declarations' entries never stand in for it.
+    for report in ({}, {"unrelated": ["propext"]}, {"trace_add": "propext"}):
+        workspace.lean.axioms = report
+        unreported = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+        assert unreported["local_compile"] == {"recorded": False, "reason": "axioms_unreported"}
+    assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
+    workspace.lean.axioms = {
+        "trace_add": ["propext", "Classical.choice", "Quot.sound"],
+        "helper": ["sorryAx"],  # another declaration's report does not count either way
+    }
     standard = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
     assert standard["local_compile"]["recorded"] is True
+    assert standard["local_compile"]["status_evidence"]["axioms"] == {
+        "trace_add": ["propext", "Classical.choice", "Quot.sound"]
+    }
 
 
 async def test_every_society_tool_dispatches_without_tool_failure(lab):
