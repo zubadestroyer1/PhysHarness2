@@ -255,9 +255,9 @@ class CommonsDiscourseMixin:
     def _auto_subscribe(self, session, op, topic_id, branch_id, actor):
         """Best-effort subscription of a branch reader to a node thread.
 
-        Never pushes the reader past its 100-subscription cap. At the cap it first frees the
-        slot of the reader's oldest closed-node thread; failing that it returns False instead
-        of raising, so the reader's inbox keeps working. Another branch's reader is written by
+        Never pushes the reader past its 100-subscription cap. At the cap it frees one slot
+        (see ``_release_evictable_thread``); failing that it returns False instead of
+        raising, so the reader's inbox keeps working. Another branch's reader is written by
         the platform.
         """
         if not topic_id or not branch_id:
@@ -268,7 +268,7 @@ class CommonsDiscourseMixin:
         writer = actor if actor.branch_id == branch_id else _platform(topic.project_id)
         if self._try_subscribe(session, op, topic, branch_id, writer):
             return True
-        return self._release_closed_thread(
+        return self._release_evictable_thread(
             session, op, topic.payload["experiment_id"], branch_id, writer
         ) and self._try_subscribe(session, op, topic, branch_id, writer)
 
@@ -281,11 +281,14 @@ class CommonsDiscourseMixin:
             return False
         return True
 
-    def _release_closed_thread(self, session, op, experiment_id, branch_id, writer):
-        """Unsubscribe a branch reader from its oldest closed-node thread; False if none.
+    def _release_evictable_thread(self, session, op, experiment_id, branch_id, writer):
+        """Unsubscribe a branch reader from one node thread; False if none is evictable.
 
-        Only threads of accepted, refuted or abandoned nodes are eligible. Open-node threads
-        and ordinary topics are never evicted. Oldest means the earliest subscription start.
+        First the oldest thread of a closed (accepted, refuted or abandoned) node; then the
+        oldest thread of an open node the reader neither wrote nor holds a live claim on (a
+        dependency or citation follow). Threads of the reader's own and live-claimed open
+        nodes, and ordinary topics, are never evicted, so the reader keeps hearing about its
+        own work. Oldest means the earliest subscription start.
         """
         project_id = writer.project_id
         subscriptions = list(
@@ -312,8 +315,8 @@ class CommonsDiscourseMixin:
             )
             if row.payload.get("experiment_id") == experiment_id and row.payload.get("node_id")
         }
-        closed = {
-            row.id
+        nodes = {
+            row.id: row.payload
             for row in session.scalars(
                 select(RecordRow).where(
                     RecordRow.id.in_({row.payload["node_id"] for row in topics.values()}),
@@ -321,17 +324,36 @@ class CommonsDiscourseMixin:
                     RecordRow.kind == "commons_node",
                 )
             )
-            if row.payload["status"] in CLOSED_STATUSES
         }
-        candidates = [
-            row
+        claimed = {
+            row.payload["node_id"]
+            for row in self._live_claim_rows(
+                session, project_id, experiment_id, _now(), branch_id=branch_id
+            )
+        }
+
+        def rank(node_id):
+            """0 for a closed node, 1 for another branch's unclaimed open node, else None."""
+            node = nodes.get(node_id)
+            if node is None:
+                return None
+            if node["status"] in CLOSED_STATUSES:
+                return 0
+            if node.get("branch_id") != branch_id and node_id not in claimed:
+                return 1
+            return None
+
+        ranked = [
+            (rank(topics[row.payload["topic_id"]].payload["node_id"]), row)
             for row in subscriptions
             if row.payload["topic_id"] in topics
-            and topics[row.payload["topic_id"]].payload["node_id"] in closed
         ]
+        candidates = [(tier, row) for tier, row in ranked if tier is not None]
         if not candidates:
             return False
-        oldest = min(candidates, key=lambda row: (row.payload["start_sequence"], row.id))
+        _, oldest = min(
+            candidates, key=lambda item: (item[0], item[1].payload["start_sequence"], item[1].id)
+        )
         self._set_subscription(
             session, op, topics[oldest.payload["topic_id"]], branch_id, False, writer
         )
