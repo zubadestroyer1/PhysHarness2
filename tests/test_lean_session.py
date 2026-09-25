@@ -344,6 +344,31 @@ def test_signature_from_extracted():
     assert signature_from_extracted("") is None
 
 
+def test_parse_axioms_primed_names():
+    """Lean 4.32 and 4.33 print a primed name as is inside the quotes: ``'foo'' ...``."""
+    standard = ["propext", "Classical.choice", "Quot.sound"]
+    assert daemon.parse_axioms("'foo'' depends on axioms: [propext]") == {"foo'": ["propext"]}
+    assert daemon.parse_axioms("'foo''' does not depend on any axioms") == {"foo''": []}
+    text = "\n".join(
+        [
+            "'foo' does not depend on any axioms",
+            "'foo'' depends on axioms: [propext, Classical.choice, Quot.sound]",
+            "'foo''' does not depend on any axioms",
+            "'bar''' depends on axioms: [propext,\n Classical.choice,\n Quot.sound]",
+            "'baz' depends on axioms: [propext]",
+            "'baz'' does not depend on any axioms",
+        ]
+    )
+    assert daemon.parse_axioms(text) == {
+        "foo": [],
+        "foo'": standard,
+        "foo''": [],
+        "bar''": standard,
+        "baz": ["propext"],
+        "baz'": [],
+    }
+
+
 def test_daemon_is_packaged_bounded_and_matches_candidates():
     text = resources.files("physharness.formal_tools").joinpath("lean_session_daemon.py")
     data = text.read_bytes()
@@ -715,6 +740,17 @@ async def test_one_shot_axiom_pass_reads_positioned_json_not_bare_text(lean_env)
         assert result["axioms"] == {}
 
 
+async def test_one_shot_axioms_for_primed_names(lean_env):
+    source = "theorem foo' (p : Prop) : p ∨ ¬p := Classical.em p\n\ntheorem foo'' : 2 = 2 := rfl\n"
+    assert top_level_names(source) == ["foo'", "foo''"]
+    reports = _lean_json(5, "'foo'' depends on axioms: [propext, Classical.choice, Quot.sound]")
+    reports += _lean_json(6, "'foo''' does not depend on any axioms")
+    tools = FakeWorkspaceTools(lean_env, repl_present=False, scratch=[("", 0), (reports, 0)])
+    result = await LeanSession(tools).check(source, automate=True, operation_id="op")
+    assert result["complete"] is True
+    assert result["axioms"] == {"foo'": ["propext", "Classical.choice", "Quot.sound"], "foo''": []}
+
+
 async def test_one_shot_axioms_come_only_from_the_appended_lines(lean_env):
     """An agent's #eval output cannot stand in for the platform's #print axioms report."""
     forged = "'top' does not depend on any axioms\n'also_top' does not depend on any axioms"
@@ -968,6 +1004,16 @@ def test_real_repl_inline_check_and_automation(tmp_path):
     )
     assert complete["counts"] == {"errors": 0, "messages": 0, "sorries": 0, "sorry_warnings": 0}
     assert isinstance(complete["axioms"]["u"], list)
+    # Each report maps to its own name, with and without a prime.
+    primed = inline(
+        {
+            "op": "check",
+            "source": "theorem v : 1 = 1 := rfl\n\n"
+            "theorem v' (p : Prop) : p ∨ ¬p := Classical.em p\n",
+            "axiom_names": ["v", "v'"],
+        }
+    )
+    assert primed["axioms"] == {"v": [], "v'": ["propext", "Classical.choice", "Quot.sound"]}
 
 
 class RealLeanScratchTools(FakeWorkspaceTools):
@@ -1021,13 +1067,14 @@ async def test_real_lean_one_shot_completeness_and_axioms(lean_env):
     # A linter warning in plain mode; the axiom pass turns linters off.
     proved = (
         "theorem top : ∀ n : Nat, n + 0 = n := fun n => rfl\n\n"
-        "theorem middle (p : Prop) : p ∨ ¬p := Classical.em p\n"
+        "theorem middle (p : Prop) : p ∨ ¬p := Classical.em p\n\n"
+        "theorem middle' (p : Prop) : ¬p ∨ p := (Classical.em p).symm\n"
     )
     result = await session.check(proved, automate=True, operation_id="proved")
     assert result["backend"] == "one_shot"
     assert result["ok"] is True and result["complete"] is True
     standard = ["propext", "Classical.choice", "Quot.sound"]
-    assert result["axioms"] == {"top": [], "middle": standard}
+    assert result["axioms"] == {"top": [], "middle": standard, "middle'": standard}
     assert [m["severity"] for m in result["messages"]] == ["warning"]
     assert '"severity":"warning"' not in tools.outputs[-1]
     hole = "theorem hole : 1 + 1 = 2 := by\n  sorry\n"
