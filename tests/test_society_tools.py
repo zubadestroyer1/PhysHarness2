@@ -315,8 +315,8 @@ def definition(dispatcher, name):
     return next(item for item in dispatcher.definitions if item["name"] == name)
 
 
-def widest():
-    task = {"reply_to_parent_task_id": "parent", "review_assignment": {"scope": "fidelity"}}
+def catalog(task):
+    """A task's catalog with a workspace and open literature."""
     return society_tools(
         CatalogService(policy_dict(literature=LiteraturePolicy(mode="open")), task),
         SimpleNamespace(experiment_id="e", project_id="lab"),
@@ -325,6 +325,40 @@ def widest():
         workspace_tools=FakeWorkspace(),
         literature=SimpleNamespace(),
     )
+
+
+def widest():
+    """The widest worker catalog: a joined child task with a workspace and literature."""
+    return catalog({"reply_to_parent_task_id": "parent"})
+
+
+def referee_catalog(scope="fidelity"):
+    assignment = {"scope": scope, "node_id": "n", "requested_by": "b0"}
+    return catalog(
+        {"reply_to_parent_task_id": None, "hat": "referee", "review_assignment": assignment}
+    )
+
+
+# A referee reads, checks and submits its one verdict; it neither builds nor recruits.
+REFEREE_TOOLS = (
+    "shell",
+    "read_file",
+    "write_file",
+    "run_computation",
+    "lean_check",
+    "search_library",
+    "read_source",
+    "search_literature",
+    "fetch_source",
+    "commons_query",
+    "commons_read",
+    "commons_post",
+    "inbox",
+    "verification_status",
+    "notebook",
+    "load_skill",
+    "submit_review",
+)
 
 
 def running(service, author, experiment, branch_id, *, task=None):
@@ -370,16 +404,24 @@ def lemma_args(**extra):
 
 
 def test_society_catalog_widest():
-    dispatcher = widest()
-    assert tuple(names(dispatcher)) == SOCIETY_TOOL_NAMES
+    dispatcher, referee = widest(), referee_catalog()
+    assert tuple(names(dispatcher)) == tuple(n for n in SOCIETY_TOOL_NAMES if n != "submit_review")
+    assert tuple(names(referee)) == REFEREE_TOOLS
+    assert set(names(dispatcher)) | set(names(referee)) == set(SOCIETY_TOOL_NAMES)
     assert len(SOCIETY_TOOL_NAMES) <= 25
-    for item in dispatcher.definitions:
+    for item in dispatcher.definitions + referee.definitions:
         schema = item["parameters"]
         assert item["strict"] is True and schema["additionalProperties"] is False
         assert schema["required"] == list(schema["properties"])
     # The referee's verdict enum follows its assigned scope.
-    verdict = definition(dispatcher, "submit_review")["parameters"]["properties"]["verdict"]
+    verdict = definition(referee, "submit_review")["parameters"]["properties"]["verdict"]
     assert verdict["enum"] == ["faithful", "unfaithful"]
+    # A referee checks Lean but records no local compiles, and posts only its findings.
+    check = definition(referee, "lean_check")
+    assert list(check["parameters"]["properties"]) == ["source", "automate"]
+    assert "local compile" not in check["description"]
+    kinds = definition(referee, "commons_post")["parameters"]["properties"]["kind"]
+    assert kinds["enum"] == ["question", "finding", "objection"]
     # Platform evidence is never a model argument.
     assert "compile_result" not in definition(dispatcher, "lean_check")["parameters"]["properties"]
     assert "elaboration" not in definition(dispatcher, "commons_node")["parameters"]["properties"]
@@ -403,7 +445,7 @@ def test_society_schemas_bound_arrays_without_string_length_keywords():
             walk(value, f"{where}.{key}")
 
     dispatcher = widest()
-    for item in dispatcher.definitions:
+    for item in dispatcher.definitions + referee_catalog().definitions:
         walk(item["parameters"], item["name"])
     message_ids = definition(dispatcher, "message")["parameters"]["properties"]["artifact_ids"]
     assert message_ids["maxItems"] == 12
@@ -537,6 +579,16 @@ async def test_referee_task_gets_submit_review(lab):
     task = service.get_record("task", requested["review_task_id"], author)
     referee, context = running(service, author, exp, requested["branch_id"], task=task)
     dispatcher = profile(service, referee, context)
+    assert names(dispatcher) == [
+        "commons_query",
+        "commons_read",
+        "commons_post",
+        "inbox",
+        "verification_status",
+        "notebook",
+        "load_skill",
+        "submit_review",
+    ]
     verdict = definition(dispatcher, "submit_review")["parameters"]["properties"]["verdict"]
     assert verdict["enum"] == ["sound", "gaps", "wrong"]
     review = await call(
@@ -1602,3 +1654,137 @@ async def test_lean_check_requires_every_node_header_line(lab):
     source = PROOF.replace("import Mathlib\n", "import Mathlib\nopen Real\nopen Nat\n")
     recorded = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
     assert recorded["local_compile"]["recorded"] is True
+
+
+# Final review fixes (I2: referee profile, and reviews requested from platform lineages) ----
+
+
+async def test_referee_tools_stay_within_the_assignment(lab):
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    node = service.create_node(
+        exp["id"],
+        NodeCreate(node_type="lemma", title="Trace lemma", statement="The trace is additive."),
+        alpha,
+        "node",
+    )
+    other = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="Other", statement="Other."), alpha, "other"
+    )
+    requested = service.request_review(node["id"], "informal", beta, "review")
+    task = service.get_record("task", requested["review_task_id"], author)
+    referee, context = running(service, author, exp, requested["branch_id"], task=task)
+    workspace = FakeWorkspace()
+    tools = profile(service, referee, context, workspace=workspace)
+    assert tuple(names(tools)) == tuple(
+        name for name in REFEREE_TOOLS if name not in ("search_literature", "fetch_source")
+    )
+    checked = await call(tools, "lean_check", {"source": PROOF})
+    assert checked["complete"] is True and "local_compile" not in checked
+    assert "claim_renewed" not in checked
+    objection = {"kind": "objection", "abstract": "Step 2 is unjustified.", "body": "Why."}
+    posted = await call(tools, "commons_post", {"node_id": node["id"], **objection})
+    assert posted["node_id"] == node["id"] and posted["kind"] == "objection"
+    elsewhere = await call(tools, "commons_post", {"node_id": other["id"], **objection})
+    assert elsewhere["error"]["code"] == "INVALID_ARGUMENTS"
+    assert node["id"] in elsewhere["error"]["message"]
+    assert service.get_record("commons_node", node["id"], alpha)["status"] == "informal"
+
+
+async def test_runner_executes_review_requested_by_parentless_synthesis(lab):
+    """A review requested from a platform-rooted lineage runs in the run that owns it."""
+    service, author, exp, branches, (alpha, _beta) = society_lab(lab)
+    service.configure_workforce(
+        exp["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=100, max_pending_tasks=50, synthesis_interval_posts=4
+        ),
+        OPERATOR,
+        "workforce",
+    )
+    nodes = [
+        service.create_node(
+            exp["id"],
+            NodeCreate(node_type="lemma", title=title, statement=f"{title} holds."),
+            alpha,
+            title,
+        )
+        for title in ("Trace lemma", "Gap lemma")
+    ]
+    # A referee objection and platform status posts: the sampled synthesis has no parent.
+    requested = service.request_review(nodes[0]["id"], "informal", alpha, "review")
+    referee = Principal(
+        id="referee",
+        role="agent",
+        project_id="lab",
+        experiment_id=exp["id"],
+        branch_id=requested["branch_id"],
+    )
+    service.submit_review(
+        requested["review_task_id"], "gaps", "Step 2 is missing.", ["Step 2."], referee, "gaps"
+    )
+    finish_task(service, requested["review_task_id"])
+    set_status(service, nodes[0]["id"], "formally_stated")
+    set_status(service, nodes[1]["id"], "refereed", "formally_stated")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    phases = {"root": 0, "synthesis": 0, "referee": 0}
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payload = json.loads(request.content)
+        prompt = json.loads(payload["input"][0]["content"])
+        if prompt.get("review_assignment"):
+            role = "referee"
+        elif prompt["objective"].startswith("Compare only the sampled"):
+            role = "synthesis"
+        else:
+            role = "root"
+        phase = phases[role]
+        phases[role] += 1
+        outputs = [
+            json.loads(item["output"])
+            for item in payload["input"]
+            if item.get("type") == "function_call_output"
+        ]
+        if role == "referee":
+            items = (
+                [tool_call("submit_review", VERDICT, "verdict-1")]
+                if phase == 0
+                else [message("Reviewed.")]
+            )
+        elif role == "synthesis" and phase == 0:
+            items = [tool_call("commons_node", lemma_args(title="Synthesis lemma"), "create-1")]
+        elif role == "synthesis" and phase == 1:
+            request_review = {
+                "action": "request_review",
+                "node_id": outputs[0]["id"],
+                "scope": "informal",
+            }
+            items = [tool_call("commons_node", request_review, "review-1")]
+        else:
+            items = [message("done")]
+        return httpx.Response(200, json=response(items, response_id=f"{role}-{phase}"))
+
+    runner, client = society_runner(service, route)
+    try:
+        manifest = run_manifest(exp, author, root).model_copy(update={"max_tasks": 8})
+        report = await runner.run(manifest)
+    finally:
+        await client.close()
+    synthesis = [
+        task for task in service.list_records("task", author, exp["id"]) if task.get("synthesis")
+    ]
+    assert synthesis and synthesis[0]["status"] == "completed"
+    assert service.get_record("branch", synthesis[0]["branch_id"], author)["parent_id"] is None
+    reviews = [
+        task
+        for task in service.list_records("task", author, exp["id"])
+        if (task.get("review_assignment") or {}).get("requested_by") == synthesis[0]["branch_id"]
+    ]
+    assert len(reviews) == 1 and reviews[0]["status"] == "completed"
+    assert phases["referee"] == 2
+    node = service.get_record("commons_node", reviews[0]["review_assignment"]["node_id"], author)
+    assert node["status"] == "refereed"
+    assert report["status"] == "completed"
