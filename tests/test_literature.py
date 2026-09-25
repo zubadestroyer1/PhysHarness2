@@ -352,6 +352,42 @@ def test_benchmark_fetch_refuses_provider_search_apis():
     assert LiteratureBroker(policy(), transport=transport).fetch(urls[1])["status"] == "ok"
 
 
+def test_benchmark_fetch_refuses_search_endpoints_on_allowed_hosts():
+    """Search pages list other works outside search()'s per-item screen."""
+    urls = [
+        "https://arxiv.org/search/?query=mass+gap&searchtype=all",
+        "https://arxiv.org/search/advanced",
+        "https://arxiv.org/list/math-ph/new",
+        "https://arxiv.org/a/someone_1",
+        "https://arxiv.org/%73earch/?query=gap",
+        "https://arxiv.org//list/math-ph/new",
+        "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=gap",
+        "https://en.wikipedia.org/w/index.php?search=mass+gap",
+        "https://en.wikipedia.org/w/index.php?title=Special:Search&search=gap",
+    ]
+    transport = FakeTransport({url: ok(b"<html>listing</html>") for url in urls})
+    broker = LiteratureBroker(policy("benchmark"), transport=transport, reference_text=REFERENCE)
+    for url in urls:
+        assert code_of(lambda url=url: broker.fetch(url)) == "LITERATURE_SOURCE_BLOCKED", url
+    assert transport.calls == []
+    # Articles, and index.php without a search, stay fetchable; a redirect is checked too.
+    article = "https://en.wikipedia.org/w/index.php?title=Mass_gap"
+    redirected = "https://en.wikipedia.org/wiki/Gap"
+    routes = {
+        article: ok(b"<html>article</html>"),
+        "https://arxiv.org/abs/2201.00002": ok(b"<html>abstract</html>"),
+        redirected: ok(b"<html>listing</html>", final_url=urls[7]),
+    }
+    broker = LiteratureBroker(
+        policy("benchmark"), transport=FakeTransport(routes), reference_text=REFERENCE
+    )
+    assert broker.fetch(article)["status"] == "ok"
+    assert broker.fetch("https://arxiv.org/abs/2201.00002")["status"] == "ok"
+    assert code_of(lambda: broker.fetch(redirected)) == "LITERATURE_SOURCE_BLOCKED"
+    # Open mode logs everything and blocks nothing.
+    assert LiteratureBroker(policy(), transport=transport).fetch(urls[0])["status"] == "ok"
+
+
 def test_benchmark_fetch_withholds_text_citing_blocked_keys():
     pages = {
         "A": "See arXiv:2101.00001v2 for the proof.",

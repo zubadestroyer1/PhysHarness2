@@ -60,6 +60,20 @@ RUN_MARGIN_SECONDS = 30
 _DAEMON_MISSING = 97
 _START_FAILURES = ("server_start_failed", "repl_start_failed")
 _SEVERITIES = ("error", "warning", "info")
+# Reason codes of Lean results that judged nothing about the source: a timeout, a crashed,
+# lost or unstartable session, or (in a batch) an unlocated or possibly truncated failure.
+INFRASTRUCTURE_REASONS = frozenset(
+    {
+        "lean_timeout",
+        "lean_session_failed",
+        "server_start_failed",
+        "repl_start_failed",
+        "lean_repl_crashed",
+        "lean_repl_error",
+        "lean_unlocated_failure",
+        "lean_messages_truncated",
+    }
+)
 _ERRORS = {
     "timeout": ("lean_timeout", "Lean did not finish before the time limit; the REPL restarted."),
     "budget_exhausted": ("lean_timeout", "Lean ran out of time before the check could start."),
@@ -515,6 +529,85 @@ class LeanSession:
             "source_sha256": result["source_sha256"],
             "reason_code": result["reason_code"],
         }
+
+    async def elaborate_statements(self, header: str, entries, *, operation_id: str) -> list[dict]:
+        """Elaborate several ``(name, signature, universes)`` statements in one Lean run.
+
+        Each statement becomes ``theorem <name> <signature> := by sorry`` in its own
+        section (which scopes its ``universe`` line) after ``header``, so the header is
+        imported once. Errors map to statements by line range; an error outside every range
+        (in the header, say) fails them all. A failure Lean placed on no line (a timeout, a
+        lost session) or a possibly truncated error list judges none of them: each result
+        is then not ok, with an ``INFRASTRUCTURE_REASONS`` reason code.
+        """
+        entries = [(name, signature, tuple(universes)) for name, signature, universes in entries]
+        if not isinstance(header, str) or any(
+            not all(isinstance(value, str) for value in (name, signature, *universes))
+            or not name.strip()
+            or any(character.isspace() for character in name)
+            or not signature.strip()
+            for name, signature, universes in entries
+        ):
+            raise HarnessError("INVALID_ARGUMENTS", "Supply a Lean header, names and signatures.")
+        if not entries:
+            return []
+        lines, spans = [header, ""], []
+        for name, signature, universes in entries:
+            block = ["section"]
+            if universes:
+                block.append("universe " + " ".join(universes))
+            block += f"theorem {name} {signature} := by\n  sorry".split("\n") + ["end", ""]
+            first = sum(line.count("\n") + 1 for line in lines) + 1
+            spans.append((first, first + len(block) - 1))
+            lines += block
+        result = await self.check("\n".join(lines), automate=False, operation_id=operation_id)
+        messages = result["messages"]
+        errors = [message for message in messages if message["severity"] == "error"]
+        unlocated = [message for message in errors if message["line"] is None]
+        reason_code = result["reason_code"]
+        if reason_code not in INFRASTRUCTURE_REASONS:
+            reason_code = (
+                "lean_unlocated_failure"
+                if unlocated
+                else "lean_messages_truncated"
+                if len(errors) >= MAX_MESSAGES
+                else None
+            )
+        stray = [
+            message
+            for message in errors
+            if message["line"] is not None
+            and not any(first <= message["line"] <= last for first, last in spans)
+        ]
+        outcomes = []
+        for first, last in spans:
+            if reason_code is not None:
+                ok, reported = False, unlocated
+            else:
+                own = [m for m in messages if m["line"] is not None and first <= m["line"] <= last]
+                reported = stray + own
+                ok = not any(message["severity"] == "error" for message in reported)
+            evidence = {
+                "source_sha256": result["source_sha256"],
+                "backend": result["backend"],
+                "ok": ok,
+                "lines": [first, last],
+                "messages": reported,
+            }
+            canonical = json.dumps(
+                evidence, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+            )
+            outcomes.append(
+                {
+                    "ok": ok,
+                    "backend": result["backend"],
+                    "diagnostics_sha256": hashlib.sha256(canonical.encode()).hexdigest(),
+                    "messages": reported,
+                    "source_sha256": result["source_sha256"],
+                    "reason_code": reason_code or result["reason_code"],
+                }
+            )
+        return outcomes
 
     async def _check(self, source, automate, extract, operation_id, timeout):
         try:

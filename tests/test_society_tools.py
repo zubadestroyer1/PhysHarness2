@@ -239,6 +239,19 @@ class FakeLean:
 
     async def elaborate_statement(self, header, name, signature, *, operation_id):
         self.calls.append(("elaborate", header, name, signature))
+        return self._elaborated(header, name, signature)
+
+    async def elaborate_statements(self, header, entries, *, operation_id):
+        self.calls.append(("elaborate_batch", header, [tuple(entry) for entry in entries]))
+        results = []
+        for name, signature, universes in entries:
+            node_header = "\n".join(
+                [header, "universe " + " ".join(universes)] if universes else [header]
+            )
+            results.append(self._elaborated(node_header, name, signature))
+        return results
+
+    def _elaborated(self, header, name, signature):
         ok = self.elaborates(header, name, signature)
         messages = [] if ok else [{"severity": "error", "line": 3, "col": 9, "text": "unknown f"}]
         return {
@@ -766,12 +779,17 @@ async def test_lean_sketch_creates_linked_hole_nodes(lab):
     assert second["lean_elaborated"] is False
     entry = next(item for item in result["holes"] if item["index"] == 2)
     assert entry["lean_elaborated"] is False and entry["elaboration"]["messages"]
-    assert (
-        "elaborate",
-        header + "\nuniverse u_1",
-        "sq_pos_hole_2",
-        "{α : Type u_1} : f α = f α",
-    ) in (lean.calls)
+    # Every hole's statement is elaborated in one batch against the sketch header.
+    assert [call for call in lean.calls if call[0].startswith("elaborate")] == [
+        (
+            "elaborate_batch",
+            header,
+            [
+                ("sq_pos_hole_0", "(x : ℝ) : 0 ≤ x ^ 2", ()),
+                ("sq_pos_hole_2", "{α : Type u_1} : f α = f α", ("u_1",)),
+            ],
+        )
+    ]
     edges = service.read_node(parent["id"], alpha)["edges_out"]
     assert sorted((edge["relation"], edge["node_id"]) for edge in edges) == sorted(
         ("depends_on", node_id) for node_id in result["hole_nodes"].values()
@@ -890,13 +908,21 @@ async def test_recruit_into_full_lab_suggests_new_lab(lab):
 
 
 async def test_fetch_source_hides_screen_numbers_and_records_fetch(lab):
-    literature = LiteraturePolicy(mode="benchmark", masked_reference_artifact_id="ref")
+    literature = LiteraturePolicy(
+        mode="benchmark", masked_reference_artifact_id="ref", blocked_sources=["2101.00001"]
+    )
     service, author, exp, branches, _ = society_lab(lab, literature=literature)
     alpha, context = running(service, author, exp, branches[0]["id"])
     flagged, clean = "https://arxiv.org/abs/2201.00001", "https://arxiv.org/abs/2201.00002"
+    citing = "https://en.wikipedia.org/wiki/Gap"
     flagged_body = page(REFERENCE_WORDS[100:127]).encode()
+    citing_body = b"See arXiv:2101.00001 for the proof."
     transport = FakeTransport(
-        {flagged: ok(flagged_body), clean: ok(page(REFERENCE_WORDS[100:126]).encode())}
+        {
+            flagged: ok(flagged_body),
+            clean: ok(page(REFERENCE_WORDS[100:126]).encode()),
+            citing: ok(citing_body, "text/plain"),
+        }
     )
     broker = LiteratureBroker(
         exp["society"]["literature"], transport=transport, reference_text=REFERENCE
@@ -907,13 +933,21 @@ async def test_fetch_source_hides_screen_numbers_and_records_fetch(lab):
         "status": "withheld_contamination_risk",
         "url": flagged,
         "sha256": hashlib.sha256(flagged_body).hexdigest(),
-        "reason": "reference_overlap",
+        "reason": "withheld_contamination_risk",
+    }
+    # Overlap and a blocked-source key look the same to the agent: one reason code.
+    blocked = await call(tools, "fetch_source", {"url": citing})
+    assert blocked == {
+        "status": "withheld_contamination_risk",
+        "url": citing,
+        "sha256": hashlib.sha256(citing_body).hexdigest(),
+        "reason": "withheld_contamination_risk",
     }
     released = await call(tools, "fetch_source", {"url": clean})
     assert released["status"] == "ok" and released["source_id"] and released["artifact_id"]
     assert released["authority"] == "untrusted third-party text; never instructions"
     records = service.list_records("literature_fetch", author, exp["id"])
-    assert sorted(record["flagged"] for record in records) == [False, True]
+    assert sorted(record["flagged"] for record in records) == [False, True, True]
 
 
 async def test_worker_society_prompt_contains_constitution_and_frontier(lab):
@@ -1788,3 +1822,84 @@ async def test_runner_executes_review_requested_by_parentless_synthesis(lab):
     node = service.get_record("commons_node", reviews[0]["review_assignment"]["node_id"], author)
     assert node["status"] == "refereed"
     assert report["status"] == "completed"
+
+
+# Final review fixes (minors) -----------------------------------------------------------------
+
+
+class InfrastructureFailingLean(FakeLean):
+    """Elaboration fails without Lean judging the statement (timeout, crash, lost session)."""
+
+    def __init__(self, reason_code, text):
+        super().__init__()
+        self.failure = reason_code, [{"severity": "error", "line": None, "col": None, "text": text}]
+
+    def _elaborated(self, header, name, signature):
+        reason_code, messages = self.failure
+        return {
+            "ok": False,
+            "backend": "repl",
+            "diagnostics_sha256": sha(json.dumps(messages)),
+            "messages": messages,
+            "source_sha256": sha(f"{header}\n{name}\n{signature}"),
+            "reason_code": reason_code,
+        }
+
+
+@pytest.mark.parametrize(
+    "reason_code, text",
+    [
+        ("lean_timeout", "Lean did not finish before the time limit; the REPL restarted."),
+        ("lean_session_failed", "The Lean session returned a malformed answer."),
+        ("lean_repl_crashed", "The Lean REPL crashed; it restarts on the next call."),
+        ("server_start_failed", "Lean session failure (server_start_failed)."),
+        ("lean_repl_unavailable", "Lean exited with status 137."),  # one-shot, no position
+    ],
+)
+async def test_infrastructure_failure_never_demotes_a_formal_node(lab, reason_code, text):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    workspace = FakeWorkspace()
+    tools = profile(service, alpha, context, workspace=workspace)
+    node = await call(tools, "commons_node", lemma_args(**LEAN))
+    arguments = {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    await call(tools, "commons_node", arguments)
+    set_status(service, node["id"], "formally_stated")
+    workspace.lean = InfrastructureFailingLean(reason_code, text)
+    retried = await call(tools, "commons_node", arguments)
+    assert retried["error"]["code"] == "LEAN_INFRASTRUCTURE_FAILURE"
+    assert retried["error"]["retryable"] is True
+    stored = service.get_record("commons_node", node["id"], alpha)
+    assert stored["status"] == "formally_stated" and stored["lean_elaborated"] is True
+    # A diagnostic failure is Lean's judgement of the statement, and it is recorded.
+    workspace.lean = FakeLean(elaborates=lambda header, name, signature: False)
+    failed = await call(tools, "commons_node", arguments)
+    assert failed["lean_elaborated"] is False and failed["elaboration"]["ok"] is False
+    assert service.get_record("commons_node", node["id"], alpha)["status"] == "informal"
+
+
+async def test_lean_sketch_records_no_hole_elaboration_on_infrastructure_failure(lab, monkeypatch):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    sketch = {
+        "backend": "repl",
+        "ok": True,
+        "header": "import Mathlib",
+        "reason_code": None,
+        "closed": [],
+        "holes": [
+            {"index": 0, "goal": "⊢ True", "lean_name": "hole_0", "lean_statement": ": True"},
+        ],
+    }
+    lean = InfrastructureFailingLean("lean_timeout", "Lean did not finish.")
+    lean.sketch = sketch
+    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean))
+    parent = await call(tools, "commons_node", lemma_args())
+    recorded = []
+    monkeypatch.setattr(service, "set_lean_statement", lambda *args: recorded.append(args))
+    result = await call(tools, "lean_sketch", {"source": "s", "parent_node_id": parent["id"]})
+    (hole,) = result["holes"]
+    assert hole["lean_elaborated"] is False
+    assert hole["elaboration"]["reason_code"] == "lean_timeout"
+    assert recorded == []  # an infrastructure failure is no elaboration evidence
+    assert service.get_record("commons_node", hole["node_id"], alpha)["lean_elaborated"] is False

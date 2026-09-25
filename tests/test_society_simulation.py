@@ -21,6 +21,7 @@ from test_society_tools import FakeWorkspace, call, running
 from physharness.commons import _lean_digest
 from physharness.domain import BranchCreate, LiteraturePolicy
 from physharness.knowledge.literature import LiteratureBroker
+from physharness.orchestration.lean_session import LeanSession
 from physharness.orchestration.society_tools import society_tools
 
 TOOL = Path(__file__).resolve().parents[1] / "tools/society_metrics.py"
@@ -108,6 +109,12 @@ class ScriptedLean:
             "source_sha256": sha(f"{header}\n{name}\n{signature}"),
             "reason_code": None,
         }
+
+    async def elaborate_statements(self, header, entries, *, operation_id):
+        # The real batching, over this stand-in's check: one check for every hole.
+        return await LeanSession.elaborate_statements(
+            self, header, entries, operation_id=operation_id
+        )
 
 
 class Society:
@@ -252,7 +259,7 @@ async def simulate(society, export_directory):
         "status": "withheld_contamination_risk",
         "url": OVERLAPPING,
         "sha256": withheld["sha256"],
-        "reason": "reference_overlap",
+        "reason": "withheld_contamination_risk",
     }
 
     # 3. A posts a finding and requests an informal review; the platform creates a referee
@@ -351,6 +358,9 @@ async def simulate(society, export_directory):
     holes = [society.node(node_id) for node_id in sketch["hole_nodes"].values()]
     assert [hole["lean_statement"] for hole in holes] == [statement for _, statement in HOLES]
     assert all(hole["lean_elaborated"] and hole["node_type"] == "lemma" for hole in holes)
+    lean_calls = society.lean["A"].calls
+    after_sketch = lean_calls[lean_calls.index(("sketch", GOAL_SKETCH)) + 1 :]
+    assert [name for name, *_ in after_sketch] == ["check"]  # one Lean run for both holes
     edges = (await call(B, "commons_read", {"node_id": goal["id"]}))["edges_out"]
     assert {edge["node_id"] for edge in edges if edge["relation"] == "depends_on"} == {
         L,

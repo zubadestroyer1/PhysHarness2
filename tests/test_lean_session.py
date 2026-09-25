@@ -718,33 +718,94 @@ async def test_outputs_bounded(lean_env):
     assert len(tools.runs()[-1][4]["stdout"].encode()) <= daemon.MAX_RESPONSE_BYTES
 
 
-async def test_workspace_tools_delegate_to_lean_session():
+def test_workspace_tools_share_one_lean_session():
     tools = WorkspaceTools.__new__(WorkspaceTools)
     tools.broker = SimpleNamespace(provider_spec={"provider": "local_docker"})
     tools._lean_session = None
     assert tools.allows_background_processes() is False
     tools.broker = SimpleNamespace(provider_spec={"provider": "e2b"})
     assert tools.allows_background_processes() is True
-    calls = []
+    # Callers use the session directly; the workspace keeps one per workspace.
+    session = tools.lean_session()
+    assert isinstance(session, LeanSession) and tools.lean_session() is session
+    assert not hasattr(WorkspaceTools, "lean_check")
+    assert not hasattr(WorkspaceTools, "lean_sketch_goals")
 
-    class StubSession:
-        async def check(self, source, *, automate, operation_id):
-            calls.append(("check", source, automate, operation_id))
-            return {"backend": "repl"}
 
-        async def sketch_goals(self, source, *, operation_id):
-            calls.append(("sketch", source, operation_id))
-            return {"holes": []}
+class ScriptedCheckSession(LeanSession):
+    """A LeanSession whose check is scripted and counted: an error on each line with BAD."""
 
-    tools._lean_session = StubSession()
-    assert await tools.lean_check({"source": "s"}, "op1") == {"backend": "repl"}
-    await tools.lean_check({"source": "s", "automate": False}, "op2")
-    assert await tools.lean_sketch_goals({"source": "t"}, "op3") == {"holes": []}
-    assert calls == [
-        ("check", "s", True, "op1"),
-        ("check", "s", False, "op2"),
-        ("sketch", "t", "op3"),
+    def __init__(self, result=None):
+        super().__init__(None)
+        self.checks, self.result = [], result
+
+    async def check(self, source, *, automate, operation_id, timeout=120):
+        self.checks.append((source, automate))
+        if self.result is not None:
+            return {**self.result, "source_sha256": hashlib.sha256(source.encode()).hexdigest()}
+        lines = list(enumerate(source.split("\n"), 1))
+        messages = [
+            {"severity": "error", "line": number, "col": 0, "text": "unknown identifier 'BAD'"}
+            for number, line in lines
+            if "BAD" in line
+        ] + [
+            {"severity": "warning", "line": number, "col": 8, "text": "declaration uses 'sorry'"}
+            for number, line in lines
+            if line.startswith("theorem")
+        ]
+        return {
+            "backend": "repl",
+            "ok": not any(message["severity"] == "error" for message in messages),
+            "complete": False,
+            "messages": messages,
+            "holes": [],
+            "axioms": {},
+            "source_sha256": hashlib.sha256(source.encode()).hexdigest(),
+            "proof_status": "not_accepted",
+            "automation_available": True,
+            "reason_code": None,
+        }
+
+
+async def test_elaborate_statements_batches_every_hole_into_one_check():
+    session = ScriptedCheckSession()
+    entries = [
+        ("hole_0", "(x : Nat) : x = x", ()),
+        ("hole_1", "(y : Nat) : BAD y", ()),
+        ("hole_2", "{α : Type u_1} (a : α) : a = a", ("u_1",)),
+        ("hole_3", "(z : Nat) : z = z", ()),
     ]
+    results = await session.elaborate_statements("import Mathlib", entries, operation_id="op")
+    assert len(session.checks) == 1  # one Lean run (one Mathlib import) for every hole
+    source, automate = session.checks[0]
+    assert automate is False and source.startswith("import Mathlib\n")
+    for name, signature, _ in entries:
+        assert f"theorem {name} {signature} := by\n  sorry\n" in source
+    # The universe is declared for its own hole only.
+    assert source.count("universe u_1") == 1
+    assert [result["ok"] for result in results] == [True, False, True, True]
+    errors = [
+        [message["text"] for message in result["messages"] if message["severity"] == "error"]
+        for result in results
+    ]
+    assert errors == [[], ["unknown identifier 'BAD'"], [], []]
+    assert len({result["diagnostics_sha256"] for result in results}) == 4
+    # A failure Lean attributes to no line (a timeout, say) leaves every hole unjudged.
+    timeout = {
+        "backend": "repl",
+        "ok": False,
+        "complete": False,
+        "messages": [{"severity": "error", "line": None, "col": None, "text": "timeout"}],
+        "holes": [],
+        "axioms": {},
+        "proof_status": "not_accepted",
+        "automation_available": True,
+        "reason_code": "lean_timeout",
+    }
+    session = ScriptedCheckSession(timeout)
+    results = await session.elaborate_statements("import Mathlib", entries, operation_id="op")
+    assert len(session.checks) == 1
+    assert [(r["ok"], r["reason_code"]) for r in results] == [(False, "lean_timeout")] * 4
 
 
 @pytest.mark.lean
