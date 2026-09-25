@@ -163,8 +163,13 @@ def review_target_command(
 
 
 @app.command("check-run")
-def check_run_command(experiment_id: str, publication: bool = True):
+def check_run_command(
+    experiment_id: str,
+    publication: bool = True,
+    concurrency: Annotated[int, typer.Option(min=1, max=100)] = 1,
+):
     """Report all missing live inputs without allocation, model calls or candidate execution."""
+    from .orchestration.workspace_selection import configured_workspace_factory
     from .run_control import run_preflight
 
     try:
@@ -176,6 +181,8 @@ def check_run_command(experiment_id: str, publication: bool = True):
             prices=settings.model_prices,
             environment=os.environ,
             publication=publication,
+            workbench_factory=configured_workspace_factory(settings),
+            requested_concurrency=concurrency,
         )
     except Exception as error:
         fail(error)
@@ -200,13 +207,21 @@ def run_team_command(
         TeamRunLimits,
         TeamRunManifest,
     )
+    from .orchestration.workspace_selection import configured_workspace_factory
     from .run_control import run_preflight
     from .worker import Activities
 
     try:
         settings, service, actor = local_authority("operator")
+        factory = configured_workspace_factory(settings)
         report = run_preflight(
-            service, actor, experiment_id, prices=settings.model_prices, environment=os.environ
+            service,
+            actor,
+            experiment_id,
+            prices=settings.model_prices,
+            environment=os.environ,
+            workbench_factory=factory,
+            requested_concurrency=concurrency,
         )
         if report["status"] == "blocked":
             output(report)
@@ -223,11 +238,6 @@ def run_team_command(
             max_tasks=max_tasks,
             timeout_seconds=timeout_seconds,
         )
-        factory = None
-        if settings.worker_workspace is not None:
-            from .orchestration.workspace_tools import e2b_workspace_factory
-
-            factory = e2b_workspace_factory(settings.worker_workspace)
         executor = ResearchTaskExecutor(
             service, prices=settings.model_prices, workspace_factory=factory
         )

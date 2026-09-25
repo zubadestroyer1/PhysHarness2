@@ -22,6 +22,7 @@ from .domain import (
 )
 from .errors import HarnessError
 from .execution import ExecutionError, ModelConfig, RuntimeLimits
+from .execution.context_policy import apply_context_profile
 from .execution.parameters import validate_responses_parameters
 from .orchestration.pricing import ModelPrice
 from .service import require_role
@@ -53,6 +54,8 @@ class RunPlan(StrictModel):
     policy: Literal["direct", "independent"] = "independent"
     sharing: Literal["none", "verified", "ideas"] = "verified"
     runtime_limits: dict = Field(default_factory=dict)
+    execution_profile: Literal["general", "formal-research"] = "general"
+    context_profile: Literal["research", "stress8192"] = "research"
 
     @model_validator(mode="after")
     def consistent(self):
@@ -175,6 +178,8 @@ def prepare_run(service, actor, plan: RunPlan, base_directory: Path) -> dict:
             policy=plan.policy,
             sharing=plan.sharing,
             runtime_limits=plan.runtime_limits,
+            execution_profile=plan.execution_profile,
+            context_profile=plan.context_profile,
         ),
         actor,
         prefix + ":experiment",
@@ -212,7 +217,17 @@ def prepare_run(service, actor, plan: RunPlan, base_directory: Path) -> dict:
     }
 
 
-def run_preflight(service, actor, experiment_id, *, prices, environment, publication=True) -> dict:
+def run_preflight(
+    service,
+    actor,
+    experiment_id,
+    *,
+    prices,
+    environment,
+    publication=True,
+    workbench_factory=None,
+    requested_concurrency=1,
+) -> dict:
     require_role(actor, "operator")
     experiment = service.get_record("experiment", experiment_id, actor)
     problem = service.get_record("problem", experiment["problem_id"], actor)
@@ -220,6 +235,16 @@ def run_preflight(service, actor, experiment_id, *, prices, environment, publica
 
     def block(code, remediation):
         blockers.append({"code": code, "remediation": remediation})
+
+    if experiment.get("execution_profile") == "formal-research":
+        if (
+            not isinstance(requested_concurrency, int)
+            or isinstance(requested_concurrency, bool)
+            or not 1 <= requested_concurrency <= 100
+        ):
+            block("TEAM_CONCURRENCY_INVALID", "Request between one and 100 concurrent workers.")
+        elif requested_concurrency > experiment["budget"]["max_concurrency"]:
+            block("TEAM_LIMIT", "Concurrency exceeds the experiment envelope.")
 
     if experiment["status"] not in {"created", "queued", "running", "paused", "blocked"}:
         block("EXPERIMENT_TERMINAL", "Prepare a new experiment; this one has terminated.")
@@ -242,6 +267,58 @@ def run_preflight(service, actor, experiment_id, *, prices, environment, publica
         validate_runtime_inputs(experiment["models"], experiment.get("runtime_limits", {}))
     except (ValueError, TypeError, KeyError):
         block("RUNTIME_CONFIG_INVALID", "Correct model parameters and runtime limits in a new run.")
+    if experiment.get("execution_profile") == "formal-research":
+        required = {
+            "isolated_workspace",
+            "checkpoint_restore",
+            "library_source_lookup",
+            "library_source_search",
+            "library_declaration_lookup",
+            "lean_scratch",
+            "scientific_command",
+            "workspace_files",
+            "exact_polynomial",
+            "exact_matrix",
+        }
+        capabilities = set(getattr(workbench_factory, "capabilities", ()))
+        if not required <= capabilities:
+            block(
+                "WORKBENCH_CAPABILITY_REQUIRED",
+                "Configure a qualified isolated formal research workbench with all required tools.",
+            )
+        elif not callable(getattr(workbench_factory, "preflight", None)):
+            block(
+                "WORKBENCH_PREFLIGHT_REQUIRED",
+                "WorkBench provider must expose a read-only capability preflight.",
+            )
+        else:
+            try:
+                if getattr(workbench_factory, "provider", None) == "local_docker":
+                    workspace_check = workbench_factory.preflight(
+                        requested_concurrency=requested_concurrency
+                    )
+                else:
+                    workspace_check = workbench_factory.preflight()
+                if isinstance(workspace_check, dict):
+                    for check in workspace_check.get("checks", []):
+                        observations.append({"component": "workbench", **check})
+                        if check.get("status") == "blocked":
+                            block(check["code"], check["remediation"])
+            except HarnessError as error:
+                block(error.code, error.remediation)
+                observations.append(
+                    {
+                        "component": "workbench",
+                        "code": error.code,
+                        "status": "blocked",
+                        "details": error.details,
+                    }
+                )
+            except Exception:
+                block(
+                    "WORKBENCH_PREFLIGHT_FAILED",
+                    "Check the pinned workbench image and isolated Docker connection.",
+                )
     for config in experiment["models"]:
         if config["runtime"] != "responses":
             block(
@@ -255,6 +332,18 @@ def run_preflight(service, actor, experiment_id, *, prices, environment, publica
                 "MODEL_PRICE_REQUIRED",
                 f"Configure recorded input/output prices for {config['model']}.",
             )
+        if experiment.get("execution_profile") == "formal-research":
+            try:
+                apply_context_profile(
+                    ModelConfig(
+                        model=config["model"],
+                        parameters=validate_responses_parameters(config["parameters"]),
+                    ),
+                    RuntimeLimits.model_validate(experiment.get("runtime_limits") or {}),
+                    experiment.get("context_profile", "research"),
+                )
+            except (ExecutionError, ValidationError, ValueError):
+                block("CONTEXT_PROFILE_INVALID", "Set a finite safe research context window.")
     verifier = service.verifier
     if verifier is None or not callable(getattr(verifier, "preflight", None)):
         block("VERIFIER_REQUIRED", "Configure the independent verifier and pinned bundle.")

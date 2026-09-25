@@ -2,6 +2,7 @@
 
 import copy
 import hashlib
+import json
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -13,6 +14,8 @@ from sqlalchemy.orm import Session
 from .acceptance import AcceptanceMixin
 from .artifacts import ArtifactStore
 from .collaboration import CollaborationMixin
+from .continuation import ContinuationMixin
+from .discussion import DiscussionMixin
 from .domain import (
     ArtifactCreate,
     BranchCreate,
@@ -39,6 +42,7 @@ from .storage import (
     record_json_text,
 )
 from .worker_authority import current_worker_effects
+from .workforce import WorkforceMixin
 
 log = logging.getLogger(__name__)
 MICRO_USD = Decimal(1_000_000)
@@ -75,8 +79,37 @@ def require_role(actor: Principal, *roles: str) -> None:
         )
 
 
-class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
+class HarnessService(
+    AcceptanceMixin,
+    CollaborationMixin,
+    ContinuationMixin,
+    DiscussionMixin,
+    ResearchMixin,
+    WorkforceMixin,
+):
     _digest = staticmethod(digest_json)
+
+    def submit_candidate_source(self, experiment_id, source, actor, key):
+        """Store exact candidate bytes, then idempotently queue independent checking."""
+        artifact = self.create_artifact(
+            ArtifactCreate(
+                experiment_id=experiment_id,
+                kind="lean_source",
+                content=source,
+                provenance={"branch_id": actor.branch_id} if actor.branch_id else {},
+            ),
+            actor,
+            f"{key}:source",
+        )
+        receipt = self.verify_candidate(
+            experiment_id, artifact["id"], True, actor, f"{key}:verification"
+        )
+        return {
+            "artifact_id": artifact["id"],
+            "candidate_sha256": artifact["sha256"],
+            "receipt_id": receipt["id"],
+            "status": receipt["status"],
+        }
 
     @staticmethod
     def _research_role(actor):
@@ -85,9 +118,13 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
     _private_artifact_kinds = frozenset(
         {
             "checkpoint",
+            "checkpoint_chunk",
             "native_checkpoint",
+            "native_checkpoint_chunk",
+            "native_archive",
             "runtime_event",
             "execution_failure",
+            "workspace_recovery_observation",
         }
     )
 
@@ -173,6 +210,8 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
         return self._accepted_evidence(session, row, experiment, {"independent_kernel"})
 
     def _in_scope(self, session, row, actor):
+        if row.kind == "discussion_withdrawal":
+            return actor.role in {"operator", "admin"} and row.project_id == actor.project_id
         if actor.role != "agent":
             return True
         experiment = session.get(RecordRow, actor.experiment_id)
@@ -202,6 +241,108 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             )
         if row.payload.get("experiment_id") != actor.experiment_id:
             return False
+        if row.kind == "message" and row.payload.get("recipient_branch_id") == actor.branch_id:
+            for identifier in row.payload.get("artifact_ids", []):
+                artifact = session.get(RecordRow, identifier)
+                if (
+                    not artifact
+                    or artifact.kind != "artifact"
+                    or artifact.project_id != actor.project_id
+                    or not self._in_scope(session, artifact, actor)
+                ):
+                    return False
+        # Reader state and capacity policy are never social permissions. Branch
+        # successors share their inbox; another branch cannot inspect it.
+        if row.kind in {"discussion_reader", "discussion_subscription", "discussion_delivery"}:
+            key = f"branch:{actor.branch_id}" if actor.branch_id else None
+            if not key or row.payload.get("reader_key") != key:
+                return False
+            if row.kind == "discussion_delivery":
+                for item in row.payload.get("items", []):
+                    if item.get("source_kind") == "withdrawal":
+                        continue
+                    source = session.get(RecordRow, item.get("id"))
+                    if item.get("source_kind") == "message":
+                        if (
+                            not source
+                            or source.kind != "message"
+                            or source.payload.get("recipient_branch_id") != actor.branch_id
+                            or not self._in_scope(session, source, actor)
+                        ):
+                            return False
+                    elif (
+                        item.get("source_kind") != "discussion_post"
+                        or not source
+                        or source.kind != "discussion_post"
+                        or not self._in_scope(session, source, actor)
+                    ):
+                        return False
+            return True
+        if row.kind in {
+            "workforce_policy",
+            "workforce_profile",
+            "workforce_team",
+            "workforce_capacity_request",
+        }:
+            return row.payload.get("branch_id") == actor.branch_id and bool(actor.branch_id)
+        if row.kind in {"discussion_topic", "discussion_post"}:
+            target = session.get(RecordRow, experiment.payload["problem_id"])
+            if not target or any(
+                (
+                    row.payload.get("problem_revision_id") != target.id,
+                    row.payload.get("target_digest") != experiment.payload.get("target_digest"),
+                    row.payload.get("environment_digest")
+                    != target.payload.get("environment_digest"),
+                )
+            ):
+                return False
+            if row.kind == "discussion_post":
+                topic = session.get(RecordRow, row.payload.get("topic_id"))
+                if (
+                    not topic
+                    or topic.kind != "discussion_topic"
+                    or topic.project_id != actor.project_id
+                    or topic.payload.get("experiment_id") != actor.experiment_id
+                    or topic.payload.get("problem_revision_id") != target.id
+                    or topic.payload.get("target_digest") != experiment.payload.get("target_digest")
+                    or topic.payload.get("environment_digest")
+                    != target.payload.get("environment_digest")
+                ):
+                    return False
+            if (
+                row.payload.get("branch_id") != actor.branch_id
+                and experiment.payload.get("sharing") != "ideas"
+            ):
+                return False
+            if row.kind == "discussion_post":
+                for identifier in row.payload.get("artifact_ids", []):
+                    artifact = session.get(RecordRow, identifier)
+                    if (
+                        not artifact
+                        or artifact.kind != "artifact"
+                        or artifact.project_id != actor.project_id
+                        or not self._in_scope(session, artifact, actor)
+                    ):
+                        return False
+                for identifier in row.payload.get("reference_post_ids", []):
+                    reference = session.get(RecordRow, identifier)
+                    if (
+                        not reference
+                        or reference.kind != "discussion_post"
+                        or reference.project_id != actor.project_id
+                        or reference.payload.get("experiment_id") != actor.experiment_id
+                        or (
+                            reference.payload.get("branch_id") != actor.branch_id
+                            and experiment.payload.get("sharing") != "ideas"
+                        )
+                    ):
+                        return False
+            return True
+        if row.kind in {"session", "model_reservation", "continuation_link"} or (
+            row.kind == "artifact"
+            and row.payload.get("artifact_kind") in self._private_artifact_kinds - {"checkpoint"}
+        ):
+            return False
         owner = row.id if row.kind == "branch" else row.payload.get("branch_id")
         if owner and owner == actor.branch_id:
             return True
@@ -219,10 +360,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             and row.payload.get("parent_id") == actor.branch_id
         ):
             return True
-        if row.kind == "session" or (
-            row.kind == "artifact"
-            and row.payload.get("artifact_kind") in self._private_artifact_kinds
-        ):
+        if row.kind == "artifact" and row.payload.get("artifact_kind") == "checkpoint":
             return False
         sharing = experiment.payload.get("sharing", "none")
         if sharing == "none" or not actor.branch_id:
@@ -715,6 +853,11 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
     def _active(self, session: Session, identifier: str, actor: Principal) -> RecordRow:
         row = self._get(session, "experiment", identifier, actor)
         session.refresh(row, with_for_update=True)
+        if row.payload.get("budget_reconciliation_required"):
+            raise HarnessError(
+                "BUDGET_RECONCILIATION_REQUIRED",
+                "A settled charge exceeded its reservation; reconcile the experiment budget.",
+            )
         if row.payload["status"] not in {"queued", "running"}:
             raise HarnessError("EXPERIMENT_NOT_ACTIVE", "Allocation requires an active experiment.")
         started = datetime.fromisoformat(row.payload["started_at"])
@@ -733,6 +876,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
         key: str,
         *,
         tokens: int = 0,
+        model_task_binding: tuple[str, str, int] | None = None,
     ) -> dict:
         require_role(actor, "researcher", "operator")
         amount = money_units(cost)
@@ -752,6 +896,12 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
 
         def action(session, op):
             self._active(session, experiment_id, actor)
+            if model_task_binding is not None:
+                task_id, holder, fence = model_task_binding
+                task = self._get(session, "task", task_id, actor)
+                self._fenced(session, task_id, holder, fence)
+                if workers != 0 or task.payload.get("experiment_id") != experiment_id:
+                    raise HarnessError("RESERVATION_SCOPE", "Model task binding is out of scope.")
             budget = session.scalar(
                 select(BudgetRow).where(BudgetRow.experiment_id == experiment_id).with_for_update()
             )
@@ -786,6 +936,20 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                 tokens_reserved=tokens,
             )
             session.add(reservation)
+            if model_task_binding is not None:
+                self._insert(
+                    session,
+                    "model_reservation",
+                    actor,
+                    {
+                        "experiment_id": experiment_id,
+                        "task_id": task_id,
+                        "reservation_id": reservation.id,
+                        "holder": holder,
+                        "fence": fence,
+                        "status": "active",
+                    },
+                )
             budget.reserved += amount
             budget.tokens_reserved += tokens
             budget.active_workers += workers
@@ -808,6 +972,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                 "amount": amount,
                 "workers": workers,
                 "tokens": tokens,
+                "model_task_binding": model_task_binding,
             },
             action,
         )
@@ -840,17 +1005,23 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
         actual = money_units(actual_cost) if actual_cost is not None else None
 
         def action(session, op):
-            reservation = session.scalar(
-                select(ReservationRow).where(ReservationRow.id == reservation_id).with_for_update()
-            )
+            # Use the same experiment -> reservation -> budget lock order as VM
+            # cleanup. The first read only discovers scope; refresh after the
+            # experiment lock before trusting mutable reservation state.
+            reservation = session.get(ReservationRow, reservation_id)
             if reservation is None:
                 raise HarnessError("NOT_FOUND", "Reservation not found.", status=404)
-            self._get(session, "experiment", reservation.experiment_id, actor)
+            experiment = self._get(session, "experiment", reservation.experiment_id, actor)
+            session.refresh(experiment, with_for_update=True)
+            session.refresh(reservation, with_for_update=True)
+            if reservation.experiment_id != experiment.id:
+                raise HarnessError("RESERVATION_SCOPE", "Reservation experiment binding changed.")
             budget = session.scalar(
                 select(BudgetRow)
                 .where(BudgetRow.experiment_id == reservation.experiment_id)
                 .with_for_update()
             )
+            overrun = False
             if reservation.state == "settled":
                 if (
                     actual != reservation.actual
@@ -860,9 +1031,24 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                     raise HarnessError(
                         "SETTLEMENT_CONFLICT", "The reservation was already settled differently."
                     )
+                overrun = bool(experiment.payload.get("budget_reconciliation_required"))
             elif uncertain:
                 reservation.state = "uncertain"
             else:
+                overrun = (
+                    actual > reservation.reserved
+                    or actual_tokens > reservation.tokens_reserved
+                    or budget.spent + budget.reserved - reservation.reserved + actual
+                    > budget.max_cost
+                    or (
+                        budget.max_tokens is not None
+                        and budget.tokens_spent
+                        + budget.tokens_reserved
+                        - reservation.tokens_reserved
+                        + actual_tokens
+                        > budget.max_tokens
+                    )
+                )
                 budget.reserved -= reservation.reserved
                 budget.tokens_reserved -= reservation.tokens_reserved
                 budget.tokens_spent += actual_tokens
@@ -871,12 +1057,36 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                 budget.active_workers -= reservation.workers
                 reservation.actual = actual
                 reservation.state = "settled"
+                if overrun and not experiment.payload.get("budget_reconciliation_required"):
+                    self._replace(
+                        session,
+                        experiment,
+                        {"budget_reconciliation_required": True},
+                        experiment.revision,
+                    )
+                if overrun:
+                    self._event(
+                        session,
+                        actor,
+                        op,
+                        "resources.overrun",
+                        reservation.experiment_id,
+                        {
+                            "reservation_id": reservation.id,
+                            "reserved_cost_usd": money_string(reservation.reserved),
+                            "actual_cost_usd": money_string(actual),
+                            "reserved_tokens": reservation.tokens_reserved,
+                            "actual_tokens": actual_tokens,
+                        },
+                    )
             result = {
                 "id": reservation.id,
                 "state": reservation.state,
                 "actual_cost_usd": money_string(reservation.actual)
                 if reservation.actual is not None
                 else None,
+                "reconciliation_required": overrun,
+                "code": "BUDGET_RECONCILIATION_REQUIRED" if overrun else None,
             }
             self._event(session, actor, op, "resources.settled", reservation.experiment_id, result)
             return result
@@ -966,6 +1176,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                 actor,
                 {
                     **data,
+                    "reply_to_parent": request.parent_id,
                     "experiment_id": experiment_id,
                     "target_digest": experiment.payload["target_digest"],
                     "status": "open",
@@ -993,6 +1204,20 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
 
     def create_artifact(self, request: ArtifactCreate, actor: Principal, key: str) -> dict:
         require_role(actor, "researcher", "operator", "verifier", "agent")
+        if request.kind == "workspace_recovery_observation" and (
+            actor.role not in {"operator", "admin"}
+            or actor.experiment_id is not None
+            or actor.branch_id is not None
+            or request.branch_id is not None
+            or request.provenance.get("task_id") is not None
+            or request.trusted_input
+            or current_worker_effects.get() is not None
+        ):
+            raise HarnessError(
+                "RECOVERY_EVIDENCE_AUTHORITY",
+                "Only an unbound operator may record private workspace recovery evidence.",
+                status=403,
+            )
         if actor.role == "agent" and request.experiment_id != actor.experiment_id:
             raise HarnessError(
                 "ARTIFACT_SCOPE", "Agent artifacts require their assigned experiment.", status=403
@@ -1025,6 +1250,89 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
     def artifact_content(self, artifact_id: str, actor: Principal) -> bytes:
         record = self.get_record("artifact", artifact_id, actor)
         return self.artifacts.get(record["sha256"])
+
+    def load_native_checkpoint(self, artifact_id: str, actor: Principal):
+        """Restore a runtime checkpoint from old JSON or a scoped chunk graph."""
+        from .execution.checkpoint_chunks import MAX_BYTES, MAX_NODES, decode, references
+
+        manifest = self.get_record("artifact", artifact_id, actor)
+        if manifest.get("artifact_kind") != "native_checkpoint":
+            raise HarnessError("NATIVE_CHECKPOINT_SCOPE", "Artifact is not a native checkpoint.")
+        provenance = manifest.get("provenance") or {}
+        task_id = provenance.get("task_id")
+        if not task_id or not provenance.get("session_id"):
+            raise HarnessError("NATIVE_CHECKPOINT_SCOPE", "Native checkpoint owner is missing.")
+
+        def in_scope(chunk, ref):
+            return (
+                chunk.get("artifact_kind") == "native_checkpoint_chunk"
+                and chunk.get("experiment_id") == manifest.get("experiment_id")
+                and (chunk.get("provenance") or {}).get("task_id") == task_id
+                and (chunk.get("provenance") or {}).get("session_id") == provenance["session_id"]
+                and chunk.get("sha256") == ref["sha256"]
+            )
+
+        raw = self.artifacts.get(manifest["sha256"])
+        # Prefetch the graph with one record query per depth level. Anything not
+        # cleanly prefetched falls back to the exact per-reference path below,
+        # and decode still checks every edge, digest and bound.
+        loaded: dict[str, bytes] = {}
+        try:
+            frontier = [json.loads(raw).get("root")]
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            frontier = []
+        total = len(raw)
+        while frontier and len(loaded) < MAX_NODES and total <= MAX_BYTES:
+            refs = {
+                ref["artifact_id"]: ref
+                for ref in frontier
+                if isinstance(ref, dict)
+                and isinstance(ref.get("artifact_id"), str)
+                and isinstance(ref.get("sha256"), str)
+                and ref["artifact_id"] not in loaded
+            }
+            frontier = []
+            identifiers = list(refs)[:MAX_NODES]
+            with self.db.sessions() as session:
+                rows = [
+                    row
+                    for start in range(0, len(identifiers), 500)
+                    for row in session.scalars(
+                        select(RecordRow).where(RecordRow.id.in_(identifiers[start : start + 500]))
+                    )
+                ]
+                chunks = [
+                    (row.payload, refs[row.id])
+                    for row in rows
+                    if row.project_id == actor.project_id
+                    and row.kind == "artifact"
+                    and self._in_scope(session, row, actor)
+                    and in_scope(row.payload, refs[row.id])
+                ]
+            for chunk, ref in chunks:
+                try:
+                    content = self.artifacts.get(chunk["sha256"])
+                    node = json.loads(content)
+                except (HarnessError, ValueError, UnicodeDecodeError):
+                    continue
+                loaded[ref["artifact_id"]] = content
+                total += len(content)
+                frontier.extend(references(node))
+
+        def read(ref):
+            if ref["artifact_id"] in loaded:
+                return loaded[ref["artifact_id"]]
+            chunk = self.get_record("artifact", ref["artifact_id"], actor)
+            if not in_scope(chunk, ref):
+                raise HarnessError(
+                    "NATIVE_CHECKPOINT_SCOPE", "Native checkpoint chunk is out of scope."
+                )
+            return self.artifacts.get(chunk["sha256"])
+
+        checkpoint = decode(raw, read)
+        if checkpoint.session.id != provenance["session_id"]:
+            raise HarnessError("NATIVE_CHECKPOINT_SCOPE", "Native checkpoint session changed.")
+        return checkpoint
 
     def create_claim(
         self,
@@ -1116,6 +1424,11 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                 for row in rows:
                     scanned += 1
                     cursor = row.sequence
+                    if row.kind == "discussion.source_withdrawn" and actor.role not in {
+                        "operator",
+                        "admin",
+                    }:
+                        continue
                     aggregate = (
                         session.get(RecordRow, row.aggregate_id) if actor.role == "agent" else None
                     )
@@ -1123,6 +1436,15 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                         aggregate is None or not self._in_scope(session, aggregate, actor)
                     ):
                         continue
+                    if actor.role == "agent" and row.kind == "message.created":
+                        message = session.get(RecordRow, row.payload.get("message_id"))
+                        if (
+                            not message
+                            or message.kind != "message"
+                            or message.payload.get("recipient_branch_id") != actor.branch_id
+                            or not self._in_scope(session, message, actor)
+                        ):
+                            continue
                     items.append(
                         {
                             "sequence": row.sequence,
@@ -1182,6 +1504,7 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                     "claim",
                     "artifact",
                     "session",
+                    "continuation_link",
                     "verification",
                     "program",
                     "message",
@@ -1189,6 +1512,16 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
                     "workspace",
                     "workspace_operation",
                     "review",
+                    "discussion_topic",
+                    "discussion_post",
+                    "discussion_reader",
+                    "discussion_subscription",
+                    "discussion_delivery",
+                    "discussion_withdrawal",
+                    "workforce_policy",
+                    "workforce_profile",
+                    "workforce_team",
+                    "workforce_capacity_request",
                 )
             }
             rows = session.scalars(
@@ -1225,4 +1558,42 @@ class HarnessService(AcceptanceMixin, CollaborationMixin, ResearchMixin):
             }
         for artifact in records["artifact"]:
             self.artifacts.get(artifact["sha256"])
+        # Native runtime manifests name immutable private dependencies. Verify
+        # the complete graph against this same metadata snapshot before export.
+        from .execution.checkpoint_chunks import decode, is_manifest
+
+        exported_artifacts = {row["id"]: row for row in records["artifact"]}
+        for artifact in records["artifact"]:
+            if artifact.get("artifact_kind") != "native_checkpoint":
+                continue  # Workspace pause snapshots share this kind but have another format.
+            raw = self.artifacts.get(artifact["sha256"])
+            try:
+                parsed = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if not is_manifest(parsed):
+                continue
+            owner = (artifact.get("provenance") or {}).get("task_id")
+            if not owner:
+                raise HarnessError("NATIVE_CHECKPOINT_SCOPE", "Checkpoint owner is missing.")
+
+            def read(ref, *, artifact=artifact, owner=owner):
+                chunk = exported_artifacts.get(ref["artifact_id"])
+                if (
+                    chunk is None
+                    or chunk.get("artifact_kind") != "native_checkpoint_chunk"
+                    or chunk.get("experiment_id") != artifact.get("experiment_id")
+                    or (chunk.get("provenance") or {}).get("task_id") != owner
+                    or (chunk.get("provenance") or {}).get("session_id")
+                    != (artifact.get("provenance") or {}).get("session_id")
+                    or chunk.get("sha256") != ref["sha256"]
+                ):
+                    raise HarnessError(
+                        "NATIVE_CHECKPOINT_SCOPE", "Export checkpoint dependency is out of scope."
+                    )
+                return self.artifacts.get(chunk["sha256"])
+
+            restored = decode(raw, read)
+            if restored.session.id != (artifact.get("provenance") or {}).get("session_id"):
+                raise HarnessError("NATIVE_CHECKPOINT_SCOPE", "Export checkpoint session changed.")
         return {**manifest, "manifest_sha256": digest_json(manifest)}

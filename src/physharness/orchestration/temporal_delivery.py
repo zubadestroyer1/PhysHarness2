@@ -50,7 +50,27 @@ class TemporalDelivery:
             # Validate both active and completed identities. USE_EXISTING would
             # silently acknowledge an active workflow with different command input.
             execution = await self.client.get_workflow_handle(workflow_id).describe()
-            if execution.workflow_type != workflow_type or await execution.memo() != memo:
+            existing_memo = await execution.memo()
+            payload = item.get("payload")
+            continuation_duplicate = (
+                item["kind"] == "task.queued"
+                and isinstance(payload, dict)
+                and bool(payload.get("continuation"))
+                and existing_memo.get("canonical_aggregate") == item["aggregate_id"]
+                and existing_memo.get("project_id") == item["project_id"]
+                and execution.status == WorkflowExecutionStatus.RUNNING
+            )
+            continuation_after_close = (
+                item["kind"] == "task.queued"
+                and isinstance(payload, dict)
+                and bool(payload.get("continuation"))
+                and existing_memo.get("canonical_aggregate") == item["aggregate_id"]
+                and existing_memo.get("project_id") == item["project_id"]
+                and execution.status == WorkflowExecutionStatus.COMPLETED
+            )
+            if execution.workflow_type != workflow_type or (
+                existing_memo != memo and not (continuation_duplicate or continuation_after_close)
+            ):
                 raise HarnessError(
                     "WORKFLOW_IDENTITY_CONFLICT",
                     "Existing workflow has different canonical inputs.",
@@ -70,3 +90,26 @@ class TemporalDelivery:
                     "EXPERIMENT_WORKFLOW_CLOSED",
                     "A closed campaign workflow needs explicit recovery.",
                 ) from None
+            if item["kind"] == "task.queued":
+                if not (isinstance(payload, dict) and payload.get("continuation")):
+                    return
+                if execution.status == WorkflowExecutionStatus.RUNNING:
+                    return
+                continuation = payload["continuation"]
+                digest = continuation.get("source_checkpoint_digest")
+                if not isinstance(digest, str) or not digest:
+                    raise HarnessError(
+                        "CONTINUATION_STALE", "Continuation lacks a source digest."
+                    ) from None
+                successor_id = f"task:{item['aggregate_id']}:resume:{digest}"
+                try:
+                    await self.client.start_workflow(
+                        TaskWorkflow.run, item, id=successor_id, memo=memo, **options
+                    )
+                except WorkflowAlreadyStartedError:
+                    successor = await self.client.get_workflow_handle(successor_id).describe()
+                    if successor.workflow_type != workflow_type or await successor.memo() != memo:
+                        raise HarnessError(
+                            "WORKFLOW_IDENTITY_CONFLICT", "Continuation workflow identity changed."
+                        ) from None
+                return

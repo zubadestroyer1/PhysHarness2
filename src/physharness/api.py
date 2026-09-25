@@ -14,6 +14,7 @@ from starlette.exceptions import HTTPException
 
 from . import __version__
 from .config import Settings
+from .discussion_models import DiscussionCreate, DiscussionPostCreate
 from .domain import (
     ArtifactCreate,
     BranchCreate,
@@ -28,6 +29,14 @@ from .domain import (
 from .errors import HarnessError
 from .logging import configure_logging
 from .service import HarnessService
+from .workforce_models import (
+    ConfigureWorkforceRequest,
+    JoinResearchTeamRequest,
+    PublishResearchProfileRequest,
+    RecruitResearcherRequest,
+    RequestResearchCapacityRequest,
+    SeedPortfolioRequest,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,6 +61,10 @@ class ClaimInput(StrictModel):
 class VerifyInput(StrictModel):
     artifact_id: str
     publication: bool = False
+
+
+class CandidateSourceInput(StrictModel):
+    source: str = Field(min_length=1, max_length=5_000_000)
 
 
 class SourceInput(StrictModel):
@@ -85,6 +98,21 @@ class ContextInput(StrictModel):
     evidence_ids: list[str] = Field(default_factory=list, max_length=1000)
     max_bytes: int = Field(default=65536, ge=1, le=8_388_608)
     max_estimated_tokens: int = Field(default=16384, ge=1, le=8_388_608)
+
+
+class ResearchNotesInput(StrictModel):
+    approach: str = Field(min_length=1, max_length=8192)
+    unresolved_obligations: list[str] = Field(max_length=100)
+    summary: str | None = Field(default=None, max_length=8192)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=100)
+    task_id: str | None = None
+    holder: str | None = None
+    fence: int | None = None
+    max_bytes: int = Field(default=8192, ge=1, le=65536)
+
+
+class DiscussionSubscriptionInput(StrictModel):
+    subscribed: bool
 
 
 def create_app(settings: Settings | None = None, service: HarnessService | None = None) -> FastAPI:
@@ -330,6 +358,106 @@ def create_app(settings: Settings | None = None, service: HarnessService | None 
     def ledger(identifier: str, actor: Actor):
         return service.ledger(identifier, actor)
 
+    @app.post("/v1/experiments/{identifier}/workforce")
+    def configure_workforce(
+        identifier: str, body: ConfigureWorkforceRequest, actor: Actor, key: Key
+    ):
+        return service.configure_workforce(identifier, body, actor, key)
+
+    @app.post("/v1/experiments/{identifier}/portfolio", status_code=201)
+    def seed_portfolio(identifier: str, body: SeedPortfolioRequest, actor: Actor, key: Key):
+        return service.seed_portfolio(identifier, body, actor, key)
+
+    @app.post("/v1/experiments/{identifier}/recruit", status_code=201)
+    def recruit_researcher(identifier: str, body: RecruitResearcherRequest, actor: Actor, key: Key):
+        return service.recruit_researcher(identifier, body, actor, key)
+
+    @app.post("/v1/experiments/{identifier}/research-profile")
+    def publish_research_profile(
+        identifier: str, body: PublishResearchProfileRequest, actor: Actor, key: Key
+    ):
+        return service.publish_research_profile(identifier, body, actor, key)
+
+    @app.get("/v1/experiments/{identifier}/research-directory")
+    def research_directory(
+        identifier: str,
+        actor: Actor,
+        after: str | None = None,
+        limit: int = Query(default=20, ge=1, le=20),
+    ):
+        return service.research_directory(identifier, actor, after=after, limit=limit)
+
+    @app.post("/v1/experiments/{identifier}/research-team")
+    def join_research_team(identifier: str, body: JoinResearchTeamRequest, actor: Actor, key: Key):
+        return service.join_research_team(identifier, body, actor, key)
+
+    @app.get("/v1/experiments/{identifier}/research-capacity")
+    def research_capacity(identifier: str, actor: Actor):
+        return service.research_capacity(identifier, actor)
+
+    @app.post("/v1/experiments/{identifier}/research-capacity-requests")
+    def request_research_capacity(
+        identifier: str, body: RequestResearchCapacityRequest, actor: Actor, key: Key
+    ):
+        return service.request_research_capacity(identifier, body, actor, key)
+
+    @app.post("/v1/experiments/{identifier}/schedule-synthesis")
+    def schedule_research_synthesis(identifier: str, actor: Actor, key: Key):
+        return service.schedule_research_synthesis(identifier, actor, key)
+
+    @app.post("/v1/experiments/{identifier}/discussions", status_code=201)
+    def create_discussion(identifier: str, body: DiscussionCreate, actor: Actor, key: Key):
+        return service.create_discussion(identifier, body, actor, key)
+
+    @app.get("/v1/experiments/{identifier}/discussions")
+    def discussion_page(
+        identifier: str,
+        actor: Actor,
+        after: int | None = Query(default=None, ge=0),
+        limit: int = Query(default=20, ge=1, le=20),
+    ):
+        return service.discussion_page(identifier, actor, after=after, limit=limit)
+
+    @app.post("/v1/discussions/{topic_id}/posts", status_code=201)
+    def post_discussion(topic_id: str, body: DiscussionPostCreate, actor: Actor, key: Key):
+        return service.post_discussion(topic_id, body, actor, key)
+
+    @app.get("/v1/discussions/{topic_id}/posts")
+    def discussion_posts(
+        topic_id: str,
+        actor: Actor,
+        after: int | None = Query(default=None, ge=0),
+        limit: int = Query(default=20, ge=1, le=20),
+    ):
+        return service.discussion_posts(topic_id, actor, after=after, limit=limit)
+
+    @app.get("/v1/discussion-posts/{post_id}")
+    def read_discussion_post(post_id: str, actor: Actor):
+        return service.read_discussion_post(post_id, actor)
+
+    @app.get("/v1/research-messages/{message_id}")
+    def read_research_message(message_id: str, actor: Actor):
+        return service.read_research_message(message_id, actor)
+
+    @app.post("/v1/discussions/{topic_id}/subscription")
+    def subscribe_discussion(
+        topic_id: str, body: DiscussionSubscriptionInput, actor: Actor, key: Key
+    ):
+        return service.subscribe_discussion(topic_id, body.subscribed, actor, key)
+
+    @app.get("/v1/experiments/{identifier}/discussion-updates")
+    def discussion_updates(
+        identifier: str,
+        actor: Actor,
+        after: int | None = Query(default=None, ge=0),
+        limit: int = Query(default=10, ge=1, le=10),
+    ):
+        return service.discussion_updates(identifier, actor, after=after, limit=limit)
+
+    @app.post("/v1/experiments/{identifier}/discussion-updates/{delivery_id}/ack")
+    def acknowledge_discussion_updates(identifier: str, delivery_id: str, actor: Actor, key: Key):
+        return service.acknowledge_discussion_updates(identifier, delivery_id, actor, key)
+
     @app.post("/v1/experiments/{identifier}/branches", status_code=201)
     def branch(identifier: str, body: BranchCreate, actor: Actor, key: Key):
         return service.create_branch(identifier, body, actor, key)
@@ -375,6 +503,21 @@ def create_app(settings: Settings | None = None, service: HarnessService | None 
     def create_task(body: TaskCreate, actor: Actor, key: Key):
         return service.create_task(body, actor, key)
 
+    @app.get("/v1/tasks/{identifier}/joined-results")
+    def joined_results(identifier: str, actor: Actor):
+        joined = service.joined_task_statuses(identifier, actor)
+        if actor.role == "agent":
+            return service.delegated_task_statuses(
+                identifier, [item["task_id"] for item in joined["children"]], actor
+            )
+        return joined
+
+    @app.post("/v1/experiments/{identifier}/submit-candidate", status_code=201)
+    def submit_candidate_source(
+        identifier: str, body: CandidateSourceInput, actor: Actor, key: Key
+    ):
+        return service.submit_candidate_source(identifier, body.source, actor, key)
+
     @app.get("/v1/branches/{identifier}/restart-brief")
     def restart_brief(identifier: str, actor: Actor):
         return service.restart_brief(identifier, actor)
@@ -390,6 +533,10 @@ def create_app(settings: Settings | None = None, service: HarnessService | None 
     @app.post("/v1/messages", status_code=201)
     def send_message(body: MessageInput, actor: Actor, key: Key):
         return service.send_message(**body.model_dump(), actor=actor, key=key)
+
+    @app.get("/v1/branches/{identifier}/mailbox")
+    def mailbox(identifier: str, actor: Actor, after: str | None = None):
+        return service.mailbox_page(identifier, actor, after=after)
 
     @app.get("/v1/experiments/{identifier}/knowledge")
     def knowledge(
@@ -411,6 +558,20 @@ def create_app(settings: Settings | None = None, service: HarnessService | None 
 
         return PortableMemory(service).checkpoint(identifier, actor, key, **body.model_dump())
 
+    @app.post("/v1/branches/{identifier}/research-notes", status_code=201)
+    def research_notes(identifier: str, body: ResearchNotesInput, actor: Actor, key: Key):
+        from .memory import PortableMemory
+
+        return PortableMemory(service).checkpoint_research_notes(
+            identifier, actor, key, **body.model_dump()
+        )
+
+    @app.get("/v1/branches/{identifier}/handoff-notes")
+    def handoff_notes(identifier: str, actor: Actor, task_id: str | None = None):
+        from .memory import PortableMemory
+
+        return PortableMemory(service).handoff_notes(identifier, actor, task_id=task_id)
+
     @app.get("/v1/branches/{identifier}/context/{checkpoint_id}")
     def restore_context(identifier: str, checkpoint_id: str, actor: Actor):
         from .memory import PortableMemory
@@ -422,13 +583,64 @@ def create_app(settings: Settings | None = None, service: HarnessService | None 
         identifier: str,
         actor: Actor,
         kind: str,
-        limit: int = Query(default=50, ge=1, le=500),
+        limit: int = Query(default=50, ge=1, le=100),
         after: str | None = None,
     ):
         from .memory import PortableMemory
 
         return PortableMemory(service).history_page(
             identifier, actor, kind=kind, limit=limit, after=after
+        )
+
+    @app.get("/v1/branches/{identifier}/working-context")
+    def working_context(identifier: str, actor: Actor, task_id: str | None = None):
+        from .memory import PortableMemory
+
+        return PortableMemory(service).working_context(identifier, actor, task_id=task_id)
+
+    @app.get("/v1/branches/{identifier}/index")
+    def context_index(
+        identifier: str,
+        actor: Actor,
+        index: str,
+        limit: int = Query(default=50, ge=1, le=100),
+        after: str | None = None,
+    ):
+        from .memory import PortableMemory
+
+        return PortableMemory(service).index_page(
+            identifier, actor, index=index, limit=limit, after=after
+        )
+
+    @app.get("/v1/branches/{identifier}/research-graph")
+    def research_graph(
+        identifier: str,
+        actor: Actor,
+        limit: int = Query(default=50, ge=1, le=100),
+        after: str | None = None,
+    ):
+        from .memory import PortableMemory
+
+        return PortableMemory(service).research_graph_page(
+            identifier, actor, limit=limit, after=after
+        )
+
+    @app.get("/v1/branches/{identifier}/records/{kind}/{record_id}")
+    def context_record(identifier: str, kind: str, record_id: str, actor: Actor):
+        from .memory import PortableMemory
+
+        return PortableMemory(service).read_record(
+            identifier, actor, kind=kind, identifier=record_id
+        )
+
+    @app.get("/v1/branches/{identifier}/artifacts/{artifact_id}/chunk")
+    def context_artifact_chunk(
+        identifier: str, artifact_id: str, actor: Actor, offset: int = Query(default=0, ge=0)
+    ):
+        from .memory import PortableMemory
+
+        return PortableMemory(service).read_artifact_chunk(
+            identifier, actor, artifact_id=artifact_id, offset=offset
         )
 
     return app

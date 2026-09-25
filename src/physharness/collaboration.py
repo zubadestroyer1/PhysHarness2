@@ -1,10 +1,12 @@
 """Durable delegation, fenced completion, mailboxes and evidence-preserving restart briefs."""
 
+import copy
+
 from sqlalchemy import select
 
 from .domain import Principal, TaskCreate, canonical_json, utcnow
 from .errors import HarnessError
-from .storage import EdgeRow, LeaseRow, RecordRow
+from .storage import EdgeRow, EventRow, LeaseRow, RecordRow, record_json_text
 from .worker_authority import current_worker_effects
 
 
@@ -16,22 +18,397 @@ def controller_only(actor):
 
 
 class CollaborationMixin:
+    def retire_queued_after_verified(self, task_id, receipt_id, actor, key):
+        """Durably supersede an unleased task after exact independent acceptance."""
+        controller_only(actor)
+
+        def action(session, op):
+            self.db.command_lock(session, self._digest(["task-lease", task_id]))
+            task = self._get(session, "task", task_id, actor)
+            experiment = self._get(session, "experiment", task.payload["experiment_id"], actor)
+            receipt = session.get(RecordRow, receipt_id)
+            if (
+                receipt is None
+                or receipt.project_id != actor.project_id
+                or receipt.kind != "verification"
+                or not self._accepted_evidence(session, receipt, experiment, {"independent_kernel"})
+            ):
+                raise HarnessError("TARGET_NOT_VERIFIED", "Exact target has no accepted receipt.")
+            if task.payload.get("status") != "queued":
+                return {"retired": False, "task_id": task_id, "status": task.payload.get("status")}
+            lease = session.get(LeaseRow, task_id)
+            if lease and lease.expires_at > utcnow().timestamp():
+                return {"retired": False, "task_id": task_id, "status": "leased"}
+            ready = task.payload.get("ready_continuation")
+            if ready:
+                link = session.scalar(
+                    select(RecordRow)
+                    .where(
+                        RecordRow.project_id == actor.project_id,
+                        RecordRow.kind == "continuation_link",
+                        record_json_text("task_id") == task_id,
+                        RecordRow.payload["ordinal"].as_integer() == ready["ordinal"],
+                    )
+                    .limit(1)
+                )
+                if link is None or link.payload.get("status") != "issued":
+                    raise HarnessError("CONTINUATION_LINEAGE_MISMATCH", "Ready link changed.")
+                self._replace(
+                    session, link, {"status": "retired", "retired_by_receipt_id": receipt_id}
+                )
+            result = self._replace(
+                session,
+                task,
+                {
+                    "status": "blocked",
+                    "error_code": "TARGET_ALREADY_VERIFIED",
+                    "superseded_by_receipt_id": receipt_id,
+                    "retired_continuation": ready,
+                    "ready_continuation": None,
+                },
+            )
+            self._event(
+                session,
+                actor,
+                op,
+                "task.superseded_by_verification",
+                task_id,
+                {"experiment_id": experiment.id, "receipt_id": receipt_id},
+            )
+            return {
+                "retired": True,
+                "task_id": task_id,
+                "status": result["status"],
+                "code": "TARGET_ALREADY_VERIFIED",
+            }
+
+        return self._execute(
+            actor,
+            key,
+            "task.retire-after-verification",
+            {
+                "task_id": task_id,
+                "receipt_id": receipt_id,
+            },
+            action,
+        )
+
+    def message_delivery_status(self, message_id, actor):
+        """Expose sender-visible delivery progress, never recipient mailbox contents."""
+        self._research_role(actor)
+        with self.db.sessions() as session:
+            message = self._get(session, "message", message_id, actor)
+            data = message.payload
+            if actor.role == "agent" and data.get("sender_branch_id") != actor.branch_id:
+                raise HarnessError(
+                    "BRANCH_AUTHORITY", "Only the sender can inspect delivery.", status=403
+                )
+            event = session.scalar(
+                select(EventRow)
+                .where(
+                    EventRow.project_id == actor.project_id,
+                    EventRow.kind == "message.created",
+                    EventRow.payload["message_id"].as_string() == message_id,
+                )
+                .limit(1)
+            )
+            if event is None:
+                raise HarnessError("DELIVERY_MISMATCH", "Message event is missing.")
+            deliveries = list(
+                session.scalars(
+                    select(RecordRow)
+                    .where(
+                        RecordRow.project_id == actor.project_id,
+                        RecordRow.kind == "discussion_delivery",
+                        record_json_text("experiment_id") == data["experiment_id"],
+                        record_json_text("reader_key") == f"branch:{data['recipient_branch_id']}",
+                        RecordRow.payload["start_sequence"].as_integer() < event.sequence,
+                        RecordRow.payload["end_sequence"].as_integer() >= event.sequence,
+                    )
+                    .order_by(RecordRow.id)
+                    .limit(11)
+                )
+            )
+            if len(deliveries) > 10:
+                raise HarnessError(
+                    "DELIVERY_MISMATCH", "Overlapping delivery history exceeds bound."
+                )
+            state = "queued"
+            for delivery in deliveries:
+                for item in delivery.payload.get("items", []):
+                    if item.get("sequence") != event.sequence:
+                        continue
+                    if item.get("source_kind") == "withdrawal":
+                        state = "withdrawn_unavailable"
+                    elif item.get("source_kind") == "message" and item.get("id") == message_id:
+                        if state != "withdrawn_unavailable":
+                            state = (
+                                "acknowledged"
+                                if delivery.payload.get("status") == "acknowledged"
+                                else "presented_unacknowledged"
+                            )
+            if (
+                state == "queued"
+                and self._branch_availability(
+                    session, data["experiment_id"], data["recipient_branch_id"], actor
+                )
+                == "terminal"
+            ):
+                # Never presented, and no live or queued recipient work will read it.
+                state = "recipient_unavailable"
+            return {
+                "message_id": message_id,
+                "recipient_branch_id": data["recipient_branch_id"],
+                "state": state,
+                "meaning": "acknowledged means delivered, not adopted",
+            }
+
+    def _branch_availability(self, session, experiment_id, branch_id, actor):
+        """Coarse scheduling state from at most 100 unfinished tasks; no task content."""
+        rows = list(
+            session.scalars(
+                select(RecordRow)
+                .where(
+                    RecordRow.project_id == actor.project_id,
+                    RecordRow.kind == "task",
+                    record_json_text("experiment_id") == experiment_id,
+                    record_json_text("branch_id") == branch_id,
+                    record_json_text("status").in_(["queued", "running"]),
+                )
+                .order_by(RecordRow.id)
+                .limit(100)
+            )
+        )
+        now = utcnow().timestamp()
+        states = set()
+        for row in rows:
+            ready = row.payload.get("ready_continuation") or {}
+            lease = session.get(LeaseRow, row.id)
+            if row.payload["status"] == "running" and lease and lease.expires_at > now:
+                states.add("active")
+            elif ready.get("peer_wait") or ready.get("wait_task_ids"):
+                states.add("waiting")
+            else:
+                states.add("queued")
+        return next((s for s in ("active", "queued", "waiting") if s in states), "terminal")
+
+    def peer_availability(self, experiment_id, actor, *, after=None, limit=20):
+        """Page peer branch availability; agents see peers only under ideas sharing."""
+        self._research_role(actor)
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise HarnessError("INVALID_PAGE_SIZE", "Availability page size is 1–20.", status=422)
+        with self.db.sessions() as session:
+            experiment = self._get(session, "experiment", experiment_id, actor)
+            shared = actor.role != "agent" or experiment.payload.get("sharing") == "ideas"
+            items, cursor, more = [], after, False
+            while not more:
+                query = select(RecordRow).where(
+                    RecordRow.project_id == actor.project_id,
+                    RecordRow.kind == "branch",
+                    record_json_text("experiment_id") == experiment_id,
+                )
+                if cursor:
+                    query = query.where(RecordRow.id > cursor)
+                rows = list(session.scalars(query.order_by(RecordRow.id).limit(100)))
+                for row in rows:
+                    if len(items) >= limit:
+                        more = True
+                        break
+                    cursor = row.id
+                    if row.id == actor.branch_id or not (
+                        shared or self._in_scope(session, row, actor)
+                    ):
+                        continue
+                    items.append(
+                        {
+                            "branch_id": row.id,
+                            "state": self._branch_availability(
+                                session, experiment_id, row.id, actor
+                            ),
+                        }
+                    )
+                if len(rows) < 100:
+                    break
+            return {
+                "items": items,
+                "next_cursor": cursor if more else None,
+                "meaning": "scheduling state only; no task content or proof status",
+            }
+
+    def amend_queued_task_objective(self, task_id, expected_revision, objective, actor, key):
+        """Replace an unstarted assignment under the same lock as lease admission."""
+        self._research_role(actor)
+        if not isinstance(objective, str) or not objective.strip() or len(objective) > 20000:
+            raise HarnessError("INVALID_OBJECTIVE", "Objective must contain 1–20,000 characters.")
+        if type(expected_revision) is not int or expected_revision < 1:
+            raise HarnessError("REVISION_REQUIRED", "Exact task revision is required.")
+
+        def action(session, op):
+            self.db.command_lock(session, self._digest(["task-lease", task_id]))
+            task = session.get(RecordRow, task_id)
+            if task is None or task.kind != "task" or task.project_id != actor.project_id:
+                raise HarnessError("NOT_FOUND", "Assignment was not found.", status=404)
+            self._active(session, task.payload["experiment_id"], actor)
+            binding = current_worker_effects.get()
+            owner = task.payload.get("created_by") == actor.id
+            parent_worker = (
+                actor.role == "agent"
+                and binding is not None
+                and task.payload.get("delegated_from_task_id") == binding.task_id
+            )
+            if actor.role not in {"operator", "admin"} and not (owner or parent_worker):
+                raise HarnessError(
+                    "TASK_AUTHORITY", "Only the assignment owner may amend it.", status=403
+                )
+            if not parent_worker:
+                self._get(session, "task", task_id, actor)
+            if task.payload["status"] != "queued" or session.get(LeaseRow, task_id):
+                raise HarnessError("TASK_NOT_QUEUED", "Assignment has already started.")
+            history = list(task.payload.get("superseded_objectives", []))
+            history.append({"revision": task.revision, "objective": task.payload["objective"]})
+            # Keep the last 8 objectives verbatim; older ones survive as a hash chain.
+            dropped = dict(
+                task.payload.get("superseded_objectives_dropped") or {"count": 0, "digest": None}
+            )
+            changes = {"objective": objective, "superseded_objectives": history[-8:]}
+            for entry in history[:-8]:
+                dropped = {
+                    "count": dropped["count"] + 1,
+                    "digest": self._digest([dropped["digest"], entry]),
+                }
+            if dropped["count"]:
+                changes["superseded_objectives_dropped"] = dropped
+            result = self._replace(session, task, changes, expected_revision)
+            self._event(
+                session,
+                actor,
+                op,
+                "task.objective_amended",
+                task_id,
+                {"experiment_id": result["experiment_id"], "revision": result["revision"]},
+            )
+            if parent_worker:
+                return {
+                    key: result[key]
+                    for key in (
+                        "id",
+                        "revision",
+                        "objective",
+                        "superseded_objectives",
+                        "superseded_objectives_dropped",
+                        "status",
+                    )
+                    if key in result
+                }
+            return result
+
+        return self._execute(
+            actor,
+            key,
+            "task.objective-amend",
+            {"task_id": task_id, "expected_revision": expected_revision, "objective": objective},
+            action,
+        )
+
+    def _recipient_visible_artifacts(
+        self, session, artifact_ids, experiment_id, recipient_branch_id, actor, *, strict
+    ):
+        """Check actual recipient branch scope before queuing a message."""
+        recipient = Principal(
+            id=f"recipient:{recipient_branch_id}",
+            project_id=actor.project_id,
+            role="agent",
+            experiment_id=experiment_id,
+            branch_id=recipient_branch_id,
+        )
+        visible = []
+        for identifier in artifact_ids:
+            evidence = self._get(session, "artifact", identifier, actor)
+            if evidence.payload.get("experiment_id") != experiment_id:
+                raise HarnessError(
+                    "EVIDENCE_SCOPE", "Message evidence belongs to another experiment."
+                )
+            if self._in_scope(session, evidence, recipient):
+                visible.append(identifier)
+            elif strict:
+                raise HarnessError(
+                    "MESSAGE_ATTACHMENT_INACCESSIBLE",
+                    "The recipient cannot read a referenced artifact.",
+                    status=422,
+                )
+        return visible
+
+    def mailbox_page(self, branch_id, actor, *, after=None, limit=3):
+        """Page only messages addressed to this branch under existing sharing rules."""
+        self._research_role(actor)
+        if not 1 <= limit <= 3:
+            raise HarnessError("INVALID_PAGE_SIZE", "Mailbox page size is 1–3.", status=422)
+        branch = self.get_record("branch", branch_id, actor)
+        if actor.role == "agent" and branch_id != actor.branch_id:
+            raise HarnessError("BRANCH_AUTHORITY", "Mailbox belongs to another branch.", status=403)
+        page = self.page_records("message", actor, branch["experiment_id"], limit, after)
+        return {
+            "items": [
+                {
+                    key: msg.get(key)
+                    for key in (
+                        "id",
+                        "sender_branch_id",
+                        "recipient_branch_id",
+                        "attributed_to",
+                        "content",
+                        "artifact_ids",
+                        "evidence_status",
+                        "reply_to_parent_task_id",
+                        "child_task_id",
+                        "created_at",
+                    )
+                }
+                for msg in page["items"]
+                if msg.get("recipient_branch_id") == branch_id
+            ],
+            "next_cursor": page["next_cursor"],
+            "evidence_status": "attributed_idea",
+        }
+
     def create_task(self, request: TaskCreate, actor: Principal, key: str) -> dict:
         self._research_role(actor)
         data = request.model_dump(mode="json")
+        if data.get("strategy") is None:
+            data.pop("strategy")  # Absent strategies keep legacy payloads and command digests.
         binding = current_worker_effects.get()
         delegated_from_task_id = binding.task_id if actor.role == "agent" and binding else None
         if delegated_from_task_id:
             data["delegated_from_task_id"] = delegated_from_task_id
+        elif request.detached and actor.role == "agent":
+            raise HarnessError("DETACHED_SCOPE", "Detached work requires a current parent task.")
 
         def action(session, op):
             branch = self._writable_branch(session, request.branch_id, actor, delegation=True)
             experiment_id = branch.payload["experiment_id"]
-            self._active(session, experiment_id, actor)
+            self._admit_research_tasks(session, experiment_id, actor)
             if len(set(request.dependency_ids)) != len(request.dependency_ids):
                 raise HarnessError(
                     "DUPLICATE_DEPENDENCY", "Task dependencies must be unique.", status=422
                 )
+            if delegated_from_task_id and not request.detached:
+                ancestor_id = delegated_from_task_id
+                while ancestor_id:
+                    if ancestor_id in request.dependency_ids:
+                        raise HarnessError(
+                            "JOIN_DEPENDENCY_CYCLE",
+                            "Joined work cannot depend on an ancestor that waits for it.",
+                            status=422,
+                        )
+                    ancestor = session.get(RecordRow, ancestor_id)
+                    if (
+                        ancestor is None
+                        or ancestor.kind != "task"
+                        or ancestor.project_id != actor.project_id
+                        or ancestor.payload.get("experiment_id") != experiment_id
+                    ):
+                        raise HarnessError("TASK_SCOPE", "Delegated task lineage changed.")
+                    ancestor_id = ancestor.payload.get("reply_to_parent_task_id")
             for identifier in request.dependency_ids:
                 dependency = self._get(session, "task", identifier, actor)
                 if dependency.payload["experiment_id"] != experiment_id:
@@ -48,6 +425,9 @@ class CollaborationMixin:
                     "status": "queued",
                     "evidence_ids": [],
                     "created_by": actor.id,
+                    "reply_to_parent_task_id": delegated_from_task_id
+                    if not request.detached
+                    else None,
                 },
             )
             for identifier in request.dependency_ids:
@@ -178,15 +558,143 @@ class CollaborationMixin:
             task = self._get(session, "task", task_id, actor)
             self._active(session, task.payload["experiment_id"], actor)
             lease = self._fenced(session, task_id, holder, fence)
+            if status == "completed":
+                pending = session.scalar(
+                    select(RecordRow.id)
+                    .where(
+                        RecordRow.project_id == actor.project_id,
+                        RecordRow.kind == "task",
+                        RecordRow.payload["reply_to_parent_task_id"].as_string() == task_id,
+                        RecordRow.payload["status"]
+                        .as_string()
+                        .not_in(["completed", "failed", "blocked"]),
+                    )
+                    .limit(1)
+                )
+                if pending:
+                    raise HarnessError(
+                        "JOINED_CHILDREN_PENDING", "Joined work must settle before task completion."
+                    )
+            output_summary = None
             for identifier in evidence_ids:
                 artifact = self._get(session, "artifact", identifier, actor)
                 if artifact.payload.get("experiment_id") != task.payload["experiment_id"]:
                     raise HarnessError(
                         "EVIDENCE_SCOPE", "Completion evidence belongs to another experiment."
                     )
-                self.artifacts.get(artifact.payload["sha256"])
+                content = self.artifacts.get(artifact.payload["sha256"])
+                if (
+                    output_summary is None
+                    and artifact.payload.get("artifact_kind") == "research_output"
+                    and artifact.payload.get("branch_id") == task.payload["branch_id"]
+                ):
+                    output_summary = content.decode("utf-8", errors="replace")[:4000]
             self._fenced(session, task_id, holder, fence)
-            result = self._replace(session, task, {"status": status, "evidence_ids": evidence_ids})
+            result = self._replace(
+                session,
+                task,
+                {
+                    "status": status,
+                    "evidence_ids": evidence_ids,
+                    "execution_status": status,
+                    "terminal_recovery": None,
+                    "error_code": (
+                        "RESEARCH_STAGNATION_EXHAUSTED"
+                        if status == "blocked"
+                        and task.payload.get("research_progress_status") == "recovery_exhausted"
+                        else task.payload.get("error_code")
+                    ),
+                    "return_result": {
+                        **(task.payload.get("return_result") or {}),
+                        "execution_status": status,
+                        "artifact_ids": list(
+                            dict.fromkeys(
+                                (task.payload.get("return_result") or {}).get("artifact_ids", [])
+                                + evidence_ids
+                            )
+                        ),
+                        "summary": (task.payload.get("return_result") or {}).get("summary")
+                        or output_summary,
+                        "execution_failure": (
+                            (task.payload.get("return_result") or {}).get("execution_failure")
+                            if status == "completed"
+                            else {"status": status, "artifact_ids": evidence_ids}
+                        ),
+                        "evidence_status": (task.payload.get("return_result") or {}).get(
+                            "evidence_status", "unverified"
+                        ),
+                    }
+                    if task.payload.get("reply_to_parent_task_id")
+                    else task.payload.get("return_result"),
+                },
+            )
+            if (
+                status == "blocked"
+                and task.payload.get("research_progress_status") == "recovery_exhausted"
+            ):
+                branch = self._get(session, "branch", task.payload["branch_id"], actor)
+                self._replace(
+                    session,
+                    branch,
+                    {"status": "parked", "error_code": "RESEARCH_STAGNATION_EXHAUSTED"},
+                )
+            parent_task_id = task.payload.get("reply_to_parent_task_id")
+            if parent_task_id:
+                experiment = self._get(session, "experiment", task.payload["experiment_id"], actor)
+                if experiment.payload.get("sharing") == "ideas":
+                    parent = session.get(RecordRow, parent_task_id)
+                    if (
+                        parent is None
+                        or parent.kind != "task"
+                        or parent.project_id != actor.project_id
+                        or parent.payload.get("experiment_id") != task.payload["experiment_id"]
+                    ):
+                        raise HarnessError("RETURN_RESULT_SCOPE", "Parent task binding changed.")
+                    returned = result["return_result"]
+                    visible_ids = self._recipient_visible_artifacts(
+                        session,
+                        returned.get("artifact_ids", []),
+                        task.payload["experiment_id"],
+                        parent.payload["branch_id"],
+                        actor,
+                        strict=False,
+                    )
+                    parent_result = copy.deepcopy(returned)
+                    parent_result["artifact_ids"] = visible_ids
+                    if len(visible_ids) != len(returned.get("artifact_ids", [])):
+                        parent_result["attachments_omitted_for_recipient"] = True
+                    failure = parent_result.get("execution_failure")
+                    if isinstance(failure, dict) and "artifact_ids" in failure:
+                        failure["artifact_ids"] = [
+                            identifier
+                            for identifier in failure["artifact_ids"]
+                            if identifier in visible_ids
+                        ]
+                    notice = self._insert(
+                        session,
+                        "message",
+                        actor,
+                        {
+                            "experiment_id": task.payload["experiment_id"],
+                            "sender_branch_id": task.payload["branch_id"],
+                            "branch_id": task.payload["branch_id"],
+                            "recipient_branch_id": parent.payload["branch_id"],
+                            "reply_to_parent_task_id": parent_task_id,
+                            "child_task_id": task_id,
+                            "attributed_to": returned.get("attributed_to", holder),
+                            "content": canonical_json(parent_result),
+                            "artifact_ids": visible_ids,
+                            "evidence_status": "attributed_idea",
+                        },
+                    )
+                    self._event(
+                        session,
+                        actor,
+                        op,
+                        "message.created",
+                        parent.payload["branch_id"],
+                        {"message_id": notice["id"], "child_task_id": task_id},
+                    )
             lease.expires_at = 0
             self._event(
                 session,
@@ -209,6 +717,101 @@ class CollaborationMixin:
                 "fence": fence,
                 "evidence_ids": evidence_ids,
                 "status": status,
+            },
+            action,
+        )
+
+    def return_result(
+        self,
+        task_id,
+        evidence_status,
+        artifact_ids,
+        unresolved_obligations,
+        execution_failure,
+        actor,
+        key,
+        *,
+        summary=None,
+    ):
+        """Record a typed child finding; parent visibility follows sharing policy."""
+        self._research_role(actor)
+        binding = current_worker_effects.get()
+        if (
+            actor.role != "agent"
+            or binding is None
+            or binding.task_id != task_id
+            or evidence_status not in {"unverified", "rejected", "unknown"}
+            or len(artifact_ids) > 100
+            or len(set(artifact_ids)) != len(artifact_ids)
+            or len(unresolved_obligations) > 100
+            or any(not isinstance(item, str) or len(item) > 2000 for item in unresolved_obligations)
+            or (summary is not None and (not isinstance(summary, str) or len(summary) > 8192))
+            or (
+                execution_failure is not None
+                and (
+                    not isinstance(execution_failure, dict)
+                    or set(execution_failure) - {"code", "message"}
+                    or not isinstance(execution_failure.get("code"), str)
+                    or len(execution_failure["code"]) > 100
+                    or not isinstance(execution_failure.get("message", ""), str)
+                    or len(execution_failure.get("message", "")) > 1000
+                )
+            )
+        ):
+            raise HarnessError(
+                "RETURN_RESULT_INVALID", "A current child needs a bounded typed result."
+            )
+
+        def action(session, op):
+            task = self._get(session, "task", task_id, actor)
+            self._fenced(session, task_id, binding.holder, binding.fence)
+            if task.payload.get("branch_id") != actor.branch_id or not task.payload.get(
+                "reply_to_parent_task_id"
+            ):
+                raise HarnessError(
+                    "RETURN_RESULT_SCOPE", "Only joined child work returns to a parent."
+                )
+            for identifier in artifact_ids:
+                artifact = self._get(session, "artifact", identifier, actor)
+                if artifact.payload.get("experiment_id") != task.payload["experiment_id"]:
+                    raise HarnessError(
+                        "EVIDENCE_SCOPE", "Result artifact is outside the experiment."
+                    )
+            result = {
+                "evidence_status": evidence_status,
+                "artifact_ids": artifact_ids,
+                "unresolved_obligations": unresolved_obligations,
+                "summary": summary,
+                "execution_failure": execution_failure,
+                "execution_status": "running",
+                "attributed_to": actor.id,
+                "task_id": task_id,
+            }
+            self._replace(session, task, {"return_result": result})
+            self._event(
+                session,
+                actor,
+                op,
+                "task.result_recorded",
+                task_id,
+                {
+                    "parent_task_id": task.payload["reply_to_parent_task_id"],
+                    "evidence_status": evidence_status,
+                },
+            )
+            return result
+
+        return self._execute(
+            actor,
+            key,
+            "task.return-result",
+            {
+                "task_id": task_id,
+                "evidence_status": evidence_status,
+                "artifact_ids": artifact_ids,
+                "unresolved_obligations": unresolved_obligations,
+                "summary": summary,
+                "execution_failure": execution_failure,
             },
             action,
         )
@@ -242,12 +845,9 @@ class CollaborationMixin:
                 raise HarnessError(
                     "MAILBOX_SCOPE", "Branches must share an experiment to exchange messages."
                 )
-            for identifier in artifact_ids:
-                evidence = self._get(session, "artifact", identifier, actor)
-                if evidence.payload.get("experiment_id") != experiment_id:
-                    raise HarnessError(
-                        "EVIDENCE_SCOPE", "Message evidence belongs to another experiment."
-                    )
+            self._recipient_visible_artifacts(
+                session, artifact_ids, experiment_id, recipient_id, actor, strict=True
+            )
             record = self._insert(
                 session,
                 "message",

@@ -55,6 +55,7 @@ forward an SSH agent, edit SSH configuration, or enable port forwarding.
 
 ```sh
 export COLIMA_HOME="$HOME/.local/share/physharness-colima"
+mkdir -p "$COLIMA_HOME"
 colima start --arch aarch64 --vm-type vz --cpus 6 --memory 12 --disk 160 \
   --mount "$PWD:w" --activate=false --ssh-config=false --ssh-agent=false \
   --port-forwarder=none
@@ -80,7 +81,10 @@ The observed build used an aarch64 VM with 6 CPUs, 12 GiB RAM and a 160 GiB data
 The original 60 GiB disk ran out of space during Docker layer unpacking after compilation;
 expanding that same VM preserved the completed build.
 
-New VMs must keep `COLIMA_HOME` in persistent user-owned storage as above. Historical evidence
+New VMs must keep `COLIMA_HOME` in persistent user-owned storage as above. With Colima 0.10.3,
+the directory must exist before `colima start`; otherwise Colima silently uses its default
+`~/.colima` home, and the `DOCKER_HOST` path shown above will point to a nonexistent socket.
+Historical evidence
 and commands identify the earlier dedicated VM at `/private/tmp/physharness-colima`; do not
 migrate or recreate that VM merely to rewrite its provenance. In the current recovery incident,
 temporary Colima metadata disappeared while the VM or Docker endpoint could still exist, so

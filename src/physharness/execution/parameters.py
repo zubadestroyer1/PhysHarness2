@@ -52,6 +52,11 @@ class TextParameters(_ParameterObject):
     verbosity: Literal["low", "medium", "high"] | None = None
 
 
+class CompactionParameters(_ParameterObject):
+    type: Literal["compaction"]
+    compact_threshold: Annotated[int, Field(ge=1)]
+
+
 class ResponsesParameters(_ParameterObject):
     instructions: str | None = None
     reasoning: ReasoningParameters | None = None
@@ -59,6 +64,9 @@ class ResponsesParameters(_ParameterObject):
     temperature: Annotated[float, Field(ge=0, le=2, allow_inf_nan=False)] | None = None
     top_p: Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)] | None = None
     service_tier: Literal["auto", "default", "flex", "scale", "priority", "fast"] | None = None
+    context_management: (
+        Annotated[list[CompactionParameters], Field(min_length=1, max_length=1)] | None
+    ) = None
 
 
 def validate_responses_parameters(parameters: dict) -> dict:
