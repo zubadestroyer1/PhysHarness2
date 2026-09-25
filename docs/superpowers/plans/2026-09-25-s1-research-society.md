@@ -16,10 +16,11 @@
 
 ## Progress (2026-09-25)
 
-**Tasks 1–10 are implemented, pending the final review.** No live run has taken place:
-the S1 live comparison needs the approvals listed in
+**Tasks 1–10 are complete.** The final whole-branch review ("with fixes") found three
+Important and seven Minor items; all are fixed in `daf2c9a..4f8e054`. No live run has
+taken place: the S1 live comparison needs the approvals listed in
 [`work/society-s1/RUN_PLAN.md`](../../../work/society-s1/RUN_PLAN.md) §8. The full suite
-passes 1,521 tests with 1 opt-in skip; ruff is clean.
+passes 1,560 tests with 2 opt-in skips; ruff is clean.
 
 | Task | Status | Commits |
 |---|---|---|
@@ -31,8 +32,9 @@ passes 1,521 tests with 1 opt-in skip; ruff is clean.
 | 6. `run_computation` and the workbench v2 definition (not built) | Implemented; reviewed | `3b3bf29..22f4a98` |
 | 7. Brokered literature with contamination policy | Implemented; reviewed after 1 fix round | `3b3bf29..7efee65` |
 | 8. Skills, constitution, check-ins, nudges | Implemented; reviewed | `3b3bf29..3af61c9` |
-| 9. Society tool profile and worker wiring | Implemented; R23 fix round awaiting re-review | `d81a4aa..b539741` |
-| 10. Simulation, metrics, run plan, docs | Implemented; awaiting review | branch `kieranpi/s1-t10-simulation` |
+| 9. Society tool profile and worker wiring | Complete; reviewed after the R23 fix round | `753d690..7bced5d` |
+| 10. Simulation, metrics, run plan, docs | Complete; reviewed after 1 fix round (R24) | `63253bc..45b7660` |
+| Final whole-branch review | 3 Important and 7 Minor findings fixed | `daf2c9a..4f8e054` |
 
 ## Global Constraints
 
