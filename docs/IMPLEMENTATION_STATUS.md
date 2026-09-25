@@ -65,8 +65,8 @@ What exists (Tasks 1–10):
   cap. Minor fixes: infrastructure failures never demote a node, one withheld-source
   reason code, batched hole elaboration, benchmark refusal of search pages, and an
   opt-in PostgreSQL commons smoke in CI.
-- **Tests.** The full suite passes 1,560 tests with 2 opt-in skips, one of them the
-  PostgreSQL commons smoke (1,258 before S1). Ruff check and format are clean.
+- **Tests.** The full suite passes 1,562 tests with 2 opt-in PostgreSQL skips (1,258
+  before S1). Ruff check and format are clean.
 
 Deferred by design:
 - node-level independent acceptance (the `accepted` status for non-root nodes);
