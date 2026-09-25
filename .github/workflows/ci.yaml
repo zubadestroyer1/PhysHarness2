@@ -55,7 +55,7 @@ jobs:
         with:
           python-version: "3.12.13"
       - run: uv sync --locked
-      - run: uv run pytest tests/test_infrastructure.py tests/test_acceptance_integration.py -k postgresql -q
+      - run: uv run pytest tests/test_infrastructure.py tests/test_acceptance_integration.py tests/test_commons_postgresql.py -k postgresql -q
         env:
           PHYSHARNESS_TEST_DATABASE_URL: postgresql+psycopg://ci:ephemeral_ci_only@localhost:5432/physharness_ci
 
