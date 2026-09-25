@@ -62,6 +62,29 @@ def _graph_too_large():
     )
 
 
+def _dependency_children(edges, within=None):
+    children = defaultdict(list)
+    for source, target in sorted(edges):
+        if within is None or (source in within and target in within):
+            children[source].append(target)
+    return children
+
+
+def _depends_closure(children, start, limit):
+    """The single depends_on walker: breadth-first from ``start`` (excluded), bounded."""
+    seen, reached, queue = {start}, [], deque([start])
+    while queue:
+        for target in children.get(queue.popleft(), ()):
+            if target in seen:
+                continue
+            if len(reached) >= limit:
+                return reached, True
+            seen.add(target)
+            reached.append(target)
+            queue.append(target)
+    return reached, False
+
+
 class CommonsMixin:
     def society_policy(self, experiment_id, actor):
         with self.db.sessions() as session:
@@ -281,7 +304,14 @@ class CommonsMixin:
             )
             for edge in request.edges:
                 self._add_edge(
-                    session, op, experiment, record["id"], edge.relation, edge.target_id, actor
+                    session,
+                    op,
+                    experiment,
+                    record["id"],
+                    edge.relation,
+                    edge.target_id,
+                    actor,
+                    new_source=True,
                 )
             return record
 
@@ -289,53 +319,28 @@ class CommonsMixin:
             actor, key, "commons.node_create", {"experiment_id": experiment_id, **data}, action
         )
 
-    def _depends_targets(self, session, node_id, project_id):
-        return session.scalars(
-            select(EdgeRow.target_id)
-            .where(
-                EdgeRow.source_id == node_id,
-                EdgeRow.relation == DEPENDS_ON,
-                EdgeRow.project_id == project_id,
-            )
-            .order_by(EdgeRow.target_id)
-        ).all()
-
-    def _depends_path(self, session, start, goal, project_id):
-        """Whether ``goal`` is reachable from ``start`` over depends_on (bounded DFS)."""
-        stack, seen = [start], set()
-        while stack:
-            node = stack.pop()
-            if node == goal:
-                return True
-            if node in seen:
-                continue
-            seen.add(node)
-            if len(seen) > MAX_GRAPH_NODES:
-                raise _graph_too_large()
-            stack.extend(
-                t for t in self._depends_targets(session, node, project_id) if t not in seen
-            )
-        return False
-
-    def _add_edge(self, session, op, experiment, source_id, relation, target_id, actor):
-        if relation not in EDGE_RELATIONS:
-            raise HarnessError(
-                "INVALID_EDGE", f"Use one of: {', '.join(EDGE_RELATIONS)}.", status=422
-            )
+    def _add_edge(
+        self, session, op, experiment, source_id, relation, target_id, actor, *, new_source=False
+    ):
+        """Insert one validated edge; ``relation`` is already one of ``EDGE_RELATIONS``."""
         if target_id == source_id:
             raise HarnessError("SELF_EDGE", "A node cannot relate to itself.", status=422)
         self._commons_node(session, target_id, actor, experiment.id)
         stored = EDGE_PREFIX + relation
         if session.get(EdgeRow, (source_id, target_id, stored)) is not None:
             return False
-        if relation == "depends_on" and self._depends_path(
-            session, target_id, source_id, experiment.project_id
-        ):
-            raise HarnessError(
-                "DEPENDENCY_CYCLE",
-                "The target already depends on the source.",
-                remediation="Link the dependency in the other direction or split the node.",
-            )
+        # A brand-new source has no incoming edges, so its dependencies cannot close a cycle.
+        if relation == "depends_on" and not new_source:
+            children = _dependency_children(self._experiment_dependencies(session, experiment))
+            reached, truncated = _depends_closure(children, target_id, MAX_GRAPH_NODES)
+            if source_id in set(reached):
+                raise HarnessError(
+                    "DEPENDENCY_CYCLE",
+                    "The target already depends on the source.",
+                    remediation="Link the dependency in the other direction or split the node.",
+                )
+            if truncated:
+                raise _graph_too_large()
         session.add(
             EdgeRow(
                 source_id=source_id,
@@ -384,85 +389,85 @@ class CommonsMixin:
 
     # Reads ---------------------------------------------------------------------
 
-    def _edge_list(self, session, node_id, actor, *, outgoing):
+    @staticmethod
+    def _edge_pairs(session, node_id, actor, *, outgoing):
         here, there = (
             (EdgeRow.source_id, EdgeRow.target_id)
             if outgoing
             else (EdgeRow.target_id, EdgeRow.source_id)
         )
-        edges = session.execute(
-            select(EdgeRow.relation, there)
-            .where(
-                here == node_id,
-                EdgeRow.project_id == actor.project_id,
-                EdgeRow.relation.in_(COMMONS_RELATIONS),
-            )
-            .order_by(EdgeRow.relation, there)
-            .limit(MAX_EDGE_LIST)
-        ).all()
-        items = []
-        for relation, identifier in edges:
-            row = session.get(RecordRow, identifier)
-            if row is None or row.kind != "commons_node" or not self._in_scope(session, row, actor):
-                continue
-            items.append(
-                {
-                    "relation": relation.removeprefix(EDGE_PREFIX),
-                    "node_id": identifier,
-                    "title": row.payload["title"],
-                    "status": row.payload["status"],
-                    "node_type": row.payload["node_type"],
-                }
-            )
-        return items
-
-    def _dependencies(self, session, node_id, actor):
-        """Breadth-first transitive depends_on closure, bounded for agent reads."""
-        seen, queue, found = {node_id}, deque([node_id]), []
-        while queue:
-            for target in self._depends_targets(session, queue.popleft(), actor.project_id):
-                if target in seen:
-                    continue
-                if len(found) >= MAX_RESTS_ON:
-                    return found, True
-                seen.add(target)
-                row = session.get(RecordRow, target)
-                if row is None or row.kind != "commons_node":
-                    continue
-                if not self._in_scope(session, row, actor):
-                    continue
-                found.append(
-                    {"node_type": row.payload["node_type"], "status": row.payload["status"]}
+        return [
+            (relation.removeprefix(EDGE_PREFIX), identifier)
+            for relation, identifier in session.execute(
+                select(EdgeRow.relation, there)
+                .where(
+                    here == node_id,
+                    EdgeRow.project_id == actor.project_id,
+                    EdgeRow.relation.in_(COMMONS_RELATIONS),
                 )
-                queue.append(target)
-        return found, False
+                .order_by(EdgeRow.relation, there)
+                .limit(MAX_EDGE_LIST)
+            )
+        ]
+
+    def _node_summaries(self, session, experiment, actor, identifiers):
+        """Type, title and status of visible same-experiment nodes, in one statement."""
+        if not identifiers:
+            return {}
+        rows = session.scalars(select(RecordRow).where(RecordRow.id.in_(sorted(identifiers))))
+        return {
+            row.id: {key: row.payload[key] for key in ("node_type", "title", "status")}
+            for row in rows
+            if row.kind == "commons_node"
+            and row.project_id == actor.project_id
+            and row.payload.get("experiment_id") == experiment.id
+            and self._in_scope(session, row, actor)
+        }
 
     def read_node(self, node_id, actor):
         self._research_role(actor)
         with self.db.sessions() as session:
+            # Hold the scope rows so per-row authorization does not reload them.
+            _scope = [
+                session.get(RecordRow, i) for i in (actor.experiment_id, actor.branch_id) if i
+            ]
             row = self._get(session, "commons_node", node_id, actor)
             experiment_id = row.payload["experiment_id"]
-            self._commons_experiment(session, experiment_id, actor, active=False)
+            experiment = self._commons_experiment(session, experiment_id, actor, active=False)
             node = copy.deepcopy(row.payload)
-            edges_out = self._edge_list(session, row.id, actor, outgoing=True)
-            edges_in = self._edge_list(session, row.id, actor, outgoing=False)
-            dependencies, truncated = self._dependencies(session, row.id, actor)
-        receipt = self._goal_receipt(
-            experiment_id, actor, [node, *edges_out, *edges_in, *dependencies]
-        )
+            edges_out = self._edge_pairs(session, row.id, actor, outgoing=True)
+            edges_in = self._edge_pairs(session, row.id, actor, outgoing=False)
+            children = _dependency_children(self._experiment_dependencies(session, experiment))
+            rests_on, truncated = _depends_closure(children, row.id, MAX_RESTS_ON)
+            summaries = self._node_summaries(
+                session,
+                experiment,
+                actor,
+                {identifier for _, identifier in edges_out + edges_in} | set(rests_on),
+            )
+        receipt = self._goal_receipt(experiment_id, actor, [node, *summaries.values()])
+        views = {i: self._goal_view(summary, receipt) for i, summary in summaries.items()}
 
-        def edge(item):
-            view = self._goal_view(item, receipt)
-            return {k: view[k] for k in ("relation", "node_id", "title", "status")}
+        def edges(pairs):
+            return [
+                {
+                    "relation": relation,
+                    "node_id": identifier,
+                    "title": views[identifier]["title"],
+                    "status": views[identifier]["status"],
+                }
+                for relation, identifier in pairs
+                if identifier in views
+            ]
 
-        statuses = [self._goal_view(d, receipt)["status"] for d in dependencies]
+        statuses = [views[i]["status"] for i in rests_on if i in views]
         return {
             "node": self._goal_view(node, receipt),
-            "edges_out": [edge(e) for e in edges_out],
-            "edges_in": [edge(e) for e in edges_in],
+            "edges_out": edges(edges_out),
+            "edges_in": edges(edges_in),
             "rests_on": {
                 "counts": dict(Counter(statuses)),
-                "conditional": any(status != "accepted" for status in statuses),
+                "conditional": truncated or any(status != "accepted" for status in statuses),
                 "truncated": truncated,
             },
             "claimants": [],
@@ -523,19 +528,14 @@ class CommonsMixin:
         """Transparent ranking of open work: root path, waiting dependents, neglect."""
         visible = {node["id"] for node in nodes}
         open_ids = {node["id"] for node in nodes if node["status"] not in CLOSED_STATUSES}
-        children, waiting = defaultdict(list), Counter()
-        for source, target in dependencies:
-            if source in visible and target in visible:
-                children[source].append(target)
-                if source in open_ids:
-                    waiting[target] += 1
+        waiting = Counter(
+            target for source, target in dependencies if source in open_ids and target in visible
+        )
         goal = next((node["id"] for node in nodes if node["node_type"] == "goal"), None)
-        root_path, queue = ({goal}, deque([goal])) if goal else (set(), deque())
-        while queue:
-            for target in children[queue.popleft()]:
-                if target not in root_path:
-                    root_path.add(target)
-                    queue.append(target)
+        root_path = set()
+        if goal is not None:
+            children = _dependency_children(dependencies, within=visible)
+            root_path = {goal, *_depends_closure(children, goal, MAX_GRAPH_NODES)[0]}
         now = utcnow()
         items = []
         for node in selected:
@@ -591,10 +591,8 @@ class CommonsMixin:
         self._ensure_goal_for_read(experiment_id, actor)
         with self.db.sessions() as session:
             experiment = self._commons_experiment(session, experiment_id, actor, active=False)
-            nodes = [
-                copy.deepcopy(row.payload)
-                for row in self._experiment_nodes(session, experiment, actor)
-            ]
+            # Read-only references; returned items are rebuilt from immutable fields.
+            nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
             dependencies = self._experiment_dependencies(session, experiment) if frontier else []
         receipt = self._goal_receipt(experiment_id, actor, nodes)
         nodes = [self._goal_view(node, receipt) for node in nodes]
