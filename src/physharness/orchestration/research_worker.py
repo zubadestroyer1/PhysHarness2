@@ -403,16 +403,25 @@ def _capacity_guidance(capacity):
     }
 
 
-def research_tools(service, agent, branch_id, *, task_context=None, workspace_tools=None):
-    dispatcher = ToolDispatcher()
-    sharing = service.get_record("experiment", agent.experiment_id, agent).get("sharing", "none")
-    tool_task = service.get_record("task", task_context["task_id"], agent) if task_context else None
+def worker_check(service, agent, task_context):
+    """A callable that fails unless the experiment is active and the task lease is current."""
 
     def check_worker():
         if task_context:
             with service.db.sessions() as session:
                 service._active(session, agent.experiment_id, agent)
                 service._fenced(session, **task_context)
+
+    return check_worker
+
+
+def tool_registrar(dispatcher, service, agent, task_context):
+    """Register strict tools whose handlers run under the worker's fenced effect binding.
+
+    Expected ``HarnessError`` rejections become model-visible envelopes; a lost lease or an
+    inactive experiment stops the runtime instead.
+    """
+    check_worker = worker_check(service, agent, task_context)
 
     def register(name, properties, handler, description, *, defaults=None):
         async def wrapped(args, operation_id):
@@ -444,6 +453,16 @@ def research_tools(service, agent, branch_id, *, task_context=None, workspace_to
             description,
             defaults=defaults,
         )
+
+    return register
+
+
+def research_tools(service, agent, branch_id, *, task_context=None, workspace_tools=None):
+    dispatcher = ToolDispatcher()
+    sharing = service.get_record("experiment", agent.experiment_id, agent).get("sharing", "none")
+    tool_task = service.get_record("task", task_context["task_id"], agent) if task_context else None
+    check_worker = worker_check(service, agent, task_context)
+    register = tool_registrar(dispatcher, service, agent, task_context)
 
     def delegated(args, key, **extra):
         # Model-supplied oversize text is a recoverable tool rejection, not a failed call.
