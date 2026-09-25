@@ -248,6 +248,7 @@ class CollaborationMixin:
             task = session.get(RecordRow, task_id)
             if task is None or task.kind != "task" or task.project_id != actor.project_id:
                 raise HarnessError("NOT_FOUND", "Assignment was not found.", status=404)
+            self._guard_referee_task(task, actor)
             self._active(session, task.payload["experiment_id"], actor)
             binding = current_worker_effects.get()
             owner = task.payload.get("created_by") == actor.id
