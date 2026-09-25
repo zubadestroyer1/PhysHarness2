@@ -1220,6 +1220,12 @@ class HarnessService(
                 "Only an unbound operator may record private workspace recovery evidence.",
                 status=403,
             )
+        if actor.role == "agent" and request.kind in {"masked_reference", "literature_screen"}:
+            raise HarnessError(
+                "ARTIFACT_KIND_RESERVED",
+                "Masked references and literature screens are written only by the platform.",
+                status=403,
+            )
         if actor.role == "agent" and request.experiment_id != actor.experiment_id:
             raise HarnessError(
                 "ARTIFACT_SCOPE", "Agent artifacts require their assigned experiment.", status=403
