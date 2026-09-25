@@ -292,9 +292,16 @@ def _scan(source: str, index: int, out: list, close: str | None) -> int:
 
 
 def lean_code(source: str) -> str:
-    """Lean source with comments blanked and literals and quotations made opaque tokens."""
+    """Lean source with comments blanked and literals and quotations made opaque tokens.
+
+    Source nested too deeply to scan (interpolations or quotations) yields no code, so
+    nothing in it counts as a declaration.
+    """
     out: list[str] = []
-    _scan(source, 0, out, None)
+    try:
+        _scan(source, 0, out, None)
+    except RecursionError:
+        return ""
     return "".join(out)
 
 
