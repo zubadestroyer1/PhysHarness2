@@ -1932,3 +1932,10 @@ async def test_local_compile_accepts_a_hole_node_universe_header_line(lab):
     source = f"import Mathlib\nuniverse u_1\n\n{theorem}"
     recorded = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
     assert recorded["local_compile"]["recorded"] is True
+
+
+def test_statement_search_fails_closed_on_pathologically_nested_source():
+    nested = "def s := " + 's!"{' * 3000 + "\n" + STATEMENT + " rfl\n"
+    assert (
+        statement_found(f"import Mathlib\n\n{nested}", "trace_add", ": (1 : Nat) + 1 = 2") is False
+    )
