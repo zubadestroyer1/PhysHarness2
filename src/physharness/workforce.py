@@ -1,5 +1,6 @@
 """Atomic research recruitment with central task admission and opt-in discovery."""
 
+import copy
 import re
 
 from sqlalchemy import func, select
@@ -378,6 +379,7 @@ class WorkforceMixin:
         detached=False,
         public_summary=None,
         lab="inherit",
+        task_extra=None,
     ):
         models = experiment.payload["models"]
         if model_index is not None and model_index >= len(models):
@@ -435,26 +437,27 @@ class WorkforceMixin:
                     project_id=actor.project_id,
                 )
             )
-        task = self._insert(
-            session,
-            "task",
-            actor,
-            {
-                "branch_id": branch["id"],
-                "objective": objective,
-                "dependency_ids": [],
-                "detached": detached,
-                "experiment_id": experiment.id,
-                "status": "queued",
-                "evidence_ids": [],
-                "created_by": actor.id,
-                "reply_to_parent_task_id": parent_task_id,
-                "delegated_from_task_id": binding.task_id if binding and parent_id else None,
-                "discussion_refs": discussion_refs or [],
-                "synthesis": synthesis,
-                "synthesis_scope": synthesis_scope,
-            },
-        )
+        task_payload = {
+            "branch_id": branch["id"],
+            "objective": objective,
+            "dependency_ids": [],
+            "detached": detached,
+            "experiment_id": experiment.id,
+            "status": "queued",
+            "evidence_ids": [],
+            "created_by": actor.id,
+            "reply_to_parent_task_id": parent_task_id,
+            "delegated_from_task_id": binding.task_id if binding and parent_id else None,
+            "discussion_refs": discussion_refs or [],
+            "synthesis": synthesis,
+            "synthesis_scope": synthesis_scope,
+        }
+        if task_extra is not None:
+            # Platform-assigned fields (e.g. a referee's review assignment) only add keys.
+            if task_payload.keys() & task_extra.keys():
+                raise ValueError("task_extra cannot replace canonical task fields")
+            task_payload.update(copy.deepcopy(task_extra))
+        task = self._insert(session, "task", actor, task_payload)
         if public_summary:
             # The recruiter can opt to publish only this bounded summary for the
             # new child. The child branch's private objective stays scoped.
