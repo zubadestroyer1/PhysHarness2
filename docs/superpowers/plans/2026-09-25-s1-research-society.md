@@ -179,7 +179,7 @@ class CommonsMixin:
   - Created lazily and idempotently under `self.db.command_lock(session, self._digest(["commons-goal", experiment_id]))`. The lookup is `kind == "commons_node"`, `experiment_id`, `node_type == "goal"`.
   - It is inserted with `Principal(id=PLATFORM, project_id=..., role="operator")`, so `branch_id` is None.
   - Payload: `title` = problem title, `statement` = problem `informal_statement[:8000]`, `assumptions` = problem assumptions[:32] (each truncated to 512), `lean_statement=None`, `formal_target=True`, `problem_revision_id`, `status="formally_stated"`, reason "reviewed target".
-  - `read_node`/`query_nodes` report the goal as `accepted` when `self.verified_target_receipt(experiment_id, actor)` is not None, and persist that transition lazily through `_set_node_status`.
+  - `read_node`/`query_nodes` report the goal as `accepted` (derived, `status_derived: true`, not persisted) when `self.verified_target_receipt(experiment_id, actor)` is not None; reads never write. Task 3 persists it from the acceptance commit.
   - The API `create_node` refuses `node_type == "goal"` (the model already excludes it).
 - **`create_node`:**
   - Validates edges (see below) and `artifact_ids` (same experiment, via `_get`).
@@ -337,7 +337,7 @@ def _insert_post(self, session, op, topic_row, data: dict, actor) -> dict
 ### Task 3: Referee and fidelity reviews, Lean statement and local-compile evidence
 
 **Files:**
-- Modify: `src/physharness/commons.py`, `src/physharness/workforce.py` (`_new_branch_task(..., task_extra=None)` merges into the task payload; unchanged when None)
+- Modify: `src/physharness/commons.py`, `src/physharness/workforce.py` (`_new_branch_task(..., task_extra=None)` merges into the task payload; unchanged when None), `src/physharness/acceptance.py` (goal-accepted hook, see below)
 - Test: `tests/test_commons_review.py`
 
 **Interfaces:**
@@ -389,6 +389,7 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
   - It stores the header, name and statement, the sha, and `lean_elaborated = elaboration["ok"]`.
   - If the status is `formally_stated` or `compiles_locally`, the status moves down to `refereed` (when a non-stale sound quorum exists for the informal statement) or `informal`, with reason "Lean statement changed".
   - It touches the node.
+- **Goal-accepted hook:** in `AcceptanceMixin.process_verification`'s commit, after a verified `independent_kernel` receipt for the experiment target is stored, and only when the experiment has a society policy, call `self._commons_goal_accepted(session, experiment_row, receipt_id, op)`. It ensures the goal node in-session and runs `_set_node_status(goal, "accepted", reason="independent kernel receipt", evidence={"receipt_id"})`. Its status post reaches every subscriber. A legacy experiment is a no-op; test that the legacy commit path is unchanged.
 - **`record_local_compile`:** if the node is `formally_stated`, and `compile_result["complete"]` and `compile_result["statement_found"]` are both true, move to `compiles_locally` with evidence `{source_sha256, backend, axioms}`. Otherwise it records nothing and returns `{"recorded": False, "reason": ...}`.
 
 - [ ] **Step 1: Write failing tests** in `tests/test_commons_review.py`:
@@ -407,6 +408,8 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
   - `test_changing_lean_statement_demotes_formally_stated`
   - `test_record_local_compile_requires_formal_statement_and_completion`
   - `test_new_branch_task_without_extra_unchanged`: the task payload keys equal the pre-change set.
+  - `test_goal_accepted_hook_on_verified_target_receipt`: use a stub verifier returning a verified independent-kernel outcome, following the existing acceptance tests' pattern.
+  - `test_legacy_verification_commit_unchanged`
 - [ ] **Step 2:** Run; expect failures.
 - [ ] **Step 3:** Implement.
 - [ ] **Step 4:** Run the new tests, the full suite and ruff. Expect green.
@@ -759,7 +762,7 @@ SOCIETY_TOOL_NAMES = (...)  # the widest catalog, for tests
 | `write_file` | path, content | `workspace_tools.write` |
 | `run_computation` | path, args, timeout_seconds, seed | `ComputationRunner.run` |
 | `lean_check` | source, node_id (nullable), automate (default true) | `LeanSession.check`. When `node_id` is set: find the node, set `statement_found` when the whitespace-normalized source contains the normalized `theorem {lean_name} {lean_statement}` (or `lemma`), and call `record_local_compile`. Also `_touch_node` through a claim renew attempt (ignore `CLAIM_NOT_HELD`). |
-| `lean_sketch` | source, parent_node_id, create_nodes (default true) | `LeanSession.sketch_goals`. For each extracted hole, when `create_nodes`: `create_node(NodeCreate(node_type="lemma", title=f"Hole {i} of {parent title}"[:200], statement="Lean hole goal: " + goal[:7000], lean_header=header, lean_name=f"{parent_lean_name or 'node'}_hole_{i}", lean_statement=sig, edges=[EdgeSpec("depends_on"...)]))` and link parent `depends_on` hole. Elaborate each statement (`elaborate_statement`) and call `set_lean_statement` with the elaboration result. Returns hole → node ids. |
+| `lean_sketch` | source, parent_node_id, create_nodes (default true) | `LeanSession.sketch_goals`. For each extracted hole, when `create_nodes`: `create_node(NodeCreate(node_type="lemma", title=f"Hole {i} of {parent title}"[:200], statement="Lean hole goal: " + goal[:7000], lean_header=header, lean_name=f"{parent_lean_name or 'node'}_hole_{i}", lean_statement=sig))`, then `link_nodes(parent, "depends_on", hole)`. Elaborate each statement (`elaborate_statement`) and call `set_lean_statement` with the elaboration result. Returns hole → node ids. |
 | `search_library` | query | `workspace_tools.search_library` |
 | `read_source` | path | `workspace_tools.lookup_library_source` |
 | `search_literature` | query | Only when policy mode ≠ off: `broker.search` |
