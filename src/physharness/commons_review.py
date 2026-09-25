@@ -15,7 +15,7 @@ from pydantic import Field, StrictBool, ValidationError, model_validator
 from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
 
-from .commons import _lean_digest, _platform
+from .commons import PLATFORM, _lean_digest, _platform
 from .commons_models import ALLOWED_TRANSITIONS, CLOSED_STATUSES, LEAN_NAME
 from .domain import StrictModel, digest_json, new_id
 from .errors import HarnessError
@@ -340,6 +340,14 @@ class CommonsReviewMixin:
     def _guard_referee_branch(branch, actor):
         """Only the referee branch itself delegates into, or recruits under, a referee."""
         if branch.payload.get("hat") == REFEREE_HAT and actor.branch_id != branch.id:
+            raise _referee_isolated()
+
+    @staticmethod
+    def _guard_referee_task(task, actor):
+        """Only the platform rewrites a referee assignment's platform-written objective."""
+        if task.payload.get("review_assignment") is not None and not (
+            actor.id == PLATFORM and actor.role == "operator"
+        ):
             raise _referee_isolated()
 
     @staticmethod

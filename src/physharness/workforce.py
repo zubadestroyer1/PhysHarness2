@@ -5,6 +5,7 @@ import re
 
 from sqlalchemy import func, select
 
+from .commons_review import REFEREE_HAT
 from .domain import Principal, make_record, new_id, utcnow
 from .errors import HarnessError
 from .storage import BudgetRow, EdgeRow, EventRow, LeaseRow, RecordRow, record_json_text
@@ -1024,6 +1025,21 @@ class WorkforceMixin:
             action,
         )
 
+    def _synthesis_parent(self, session, experiment, sampled, actor):
+        """The first sampled post's branch that exists, is visible and is not a referee."""
+        for post in sampled:
+            branch = session.get(RecordRow, post.payload.get("branch_id") or "")
+            if (
+                branch is not None
+                and branch.kind == "branch"
+                and branch.project_id == experiment.project_id
+                and branch.payload.get("experiment_id") == experiment.id
+                and branch.payload.get("hat") != REFEREE_HAT
+                and self._in_scope(session, branch, actor)
+            ):
+                return branch.id
+        return None
+
     def schedule_research_synthesis(self, experiment_id: str, actor: Principal, key: str) -> dict:
         """Queue one ordinary synthesis task when new public discourse merits it.
 
@@ -1140,9 +1156,15 @@ class WorkforceMixin:
                 "Identify useful next experiments; treat every claim as unverified "
                 "until the normal verifier accepts independent evidence."
             )
-            parent_branch_id = sampled[0].payload.get("branch_id")
-            if not parent_branch_id:
-                return {"scheduled": False, "reason": "source_branch_missing"}
+            if experiment.payload.get("society"):
+                # Referee objections come from isolated branches and platform status posts
+                # have none, so neither may parent; without an eligible author branch the
+                # synthesis runs parentless instead of wedging the pending sample.
+                parent_branch_id = self._synthesis_parent(session, experiment, sampled, actor)
+            else:
+                parent_branch_id = sampled[0].payload.get("branch_id")
+                if not parent_branch_id:
+                    return {"scheduled": False, "reason": "source_branch_missing"}
             result = self._new_branch_task(
                 session,
                 op,
