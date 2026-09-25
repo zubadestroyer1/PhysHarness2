@@ -69,12 +69,13 @@ What exists (Tasks 1–10):
   - The one-shot Lean fallback reads `#print axioms` from `lean --json`, because plain
     `lean` prints those reports without a position. A complete proof is now reported
     complete, so `compiles_locally` is reachable on images without the REPL. This was
-    checked against real Lean 4.32 and 4.33.
+    checked against real Lean 4.32 and 4.33. On both backends, axiom reports now parse
+    Lean names that contain `'`.
   - Referees get referee-specific norms, check-ins, nudges and skill lists, which name
     only the tools they have.
   - In society profiles, a call to an unregistered tool name is a recoverable rejection
     rather than a fatal error. Repeating such a call trips the stagnation detector.
-- **Tests.** The full suite passes 1,573 tests with 2 opt-in PostgreSQL skips (1,258
+- **Tests.** The full suite passes 1,577 tests with 2 opt-in PostgreSQL skips (1,258
   before S1). Ruff check and format are clean.
 
 Deferred by design:
