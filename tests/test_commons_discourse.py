@@ -711,3 +711,31 @@ def test_bounded_reply_reference_and_live_claim_scan(lab, monkeypatch):
     frontier = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
     item = next(i for i in frontier if i["id"] == node["id"])
     assert item["score_components"]["claimants"] == -1.0
+
+
+def test_abandon_rereads_node_after_experiment_lock(lab, monkeypatch):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    concurrent_write(service, monkeypatch, node["id"], citation_count=5)
+    abandoned = service.abandon_node(node["id"], "Dead end.", alpha, "abandon")
+    assert abandoned["status"] == "abandoned" and abandoned["citation_count"] == 5
+    closing = service.create_node(exp["id"], lemma("Closing"), alpha, "closing")
+    concurrent_write(service, monkeypatch, closing["id"], status="refuted")
+    with pytest.raises(HarnessError) as err:
+        service.abandon_node(closing["id"], "Too late.", alpha, "late-abandon")
+    assert err.value.code == "NODE_CLOSED"
+
+
+def test_self_cite_counts_subscribes_and_touches(lab):
+    # The cited row is the host row: its topic is read before the citation replace, and
+    # _touch_node then works on the reloaded revision.
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    host = service.create_node(exp["id"], lemma("Host"), alpha, "host")
+    posted = service.post_on_node(host["id"], note(cites=[host["id"]]), beta, "self-cite")
+    assert posted["auto_subscribed"] is True
+    stored = service.get_record("commons_node", host["id"], beta)
+    assert stored["citation_count"] == 1
+    assert stored["last_activity_at"] > host["last_activity_at"]
+    assert subscribed_topics(service, beta, exp["id"]) == {host["topic_id"]}
+    news = service.post_on_node(host["id"], note(), alpha, "news")
+    assert news["id"] in [i["id"] for i in drain(service, exp["id"], beta)["items"]]

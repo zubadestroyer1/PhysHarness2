@@ -654,6 +654,8 @@ class CommonsMixin:
         def action(session, op):
             row = self._get(session, "commons_node", node_id, actor)
             self._commons_experiment(session, row.payload["experiment_id"], actor)
+            # Under the experiment lock: see writes committed while this command waited.
+            session.refresh(row)
             if row.payload["node_type"] == "goal":
                 raise HarnessError(
                     "GOAL_NODE_RESERVED", "The goal node cannot be abandoned.", status=403
