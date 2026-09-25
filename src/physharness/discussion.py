@@ -5,6 +5,7 @@ import json
 
 from sqlalchemy import and_, func, or_, select
 
+from .commons import PLATFORM
 from .discussion_models import DiscussionCreate, DiscussionPostCreate
 from .domain import Principal, new_id, utcnow
 from .errors import HarnessError
@@ -269,42 +270,57 @@ class DiscussionMixin:
                     raise HarnessError(
                         "DISCUSSION_SCOPE", "The branch belongs to another experiment."
                     )
-            record = self._insert(
-                session,
-                "discussion_topic",
-                actor,
-                {
-                    "experiment_id": experiment_id,
-                    "branch_id": branch_id,
-                    "title": request.title,
-                    "summary": request.summary,
-                    "attributed_to": actor.id,
-                    "evidence_status": "unverified_discussion",
-                    **self._discussion_pins(experiment, target),
-                },
+            return self._insert_topic(
+                session, op, experiment, target, branch_id, request.title, request.summary, actor
             )
-            self._event(
-                session,
-                actor,
-                op,
-                "discussion.topic_created",
-                record["id"],
-                {"experiment_id": experiment_id, "topic_id": record["id"]},
-            )
-            return record
 
         return self._execute(
             actor, key, "discussion.create", {"experiment_id": experiment_id, **data}, action
         )
+
+    def _insert_topic(
+        self, session, op, experiment, target, branch_id, title, summary, actor, *, node_id=None
+    ):
+        """Insert one pinned topic and its discovery event; callers check authority."""
+        data = {
+            "experiment_id": experiment.id,
+            "branch_id": branch_id,
+            "title": title,
+            "summary": summary,
+            "attributed_to": actor.id,
+            "evidence_status": "unverified_discussion",
+            **self._discussion_pins(experiment, target),
+        }
+        if node_id is not None:
+            data["node_id"] = node_id
+        record = self._insert(session, "discussion_topic", actor, data)
+        self._event(
+            session,
+            actor,
+            op,
+            "discussion.topic_created",
+            record["id"],
+            {"experiment_id": experiment.id, "topic_id": record["id"]},
+        )
+        return record
 
     def post_discussion(
         self, topic_id: str, request: DiscussionPostCreate, actor: Principal, key: str
     ) -> dict:
         self._research_role(actor)
         data = request.model_dump(mode="json")
+        if data.get("abstract") is None:
+            # Posts without an abstract keep byte-identical payloads and command fingerprints.
+            data.pop("abstract", None)
 
         def action(session, op):
-            topic, experiment, target = self._discussion_topic(session, topic_id, actor)
+            topic, experiment, _ = self._discussion_topic(session, topic_id, actor)
+            if topic.payload.get("node_id"):
+                raise HarnessError(
+                    "NODE_THREAD_USE_COMMONS",
+                    "Posts on a commons node thread go through the commons.",
+                    remediation="Use post_on_node (the commons_post tool) for this node's thread.",
+                )
             self._active(session, experiment.id, actor)
             post_branch = (
                 actor.branch_id if actor.role == "agent" else topic.payload.get("branch_id")
@@ -352,43 +368,57 @@ class DiscussionMixin:
                         "Cross-branch artifacts require ideas sharing.",
                         status=403,
                     )
-            record = self._insert(
-                session,
-                "discussion_post",
-                actor,
-                {
-                    "experiment_id": experiment.id,
-                    "topic_id": topic_id,
-                    "branch_id": post_branch,
-                    "attributed_to": actor.id,
-                    "post_kind": request.kind,
-                    "content": request.content,
-                    "reply_to_post_id": request.reply_to_post_id,
-                    "artifact_ids": request.artifact_ids,
-                    "reference_post_ids": request.reference_post_ids,
-                    "evidence_status": "unverified_discussion",
-                    **self._discussion_pins(experiment, target),
-                },
-            )
-            event = EventRow(
-                project_id=actor.project_id,
-                operation_id=op,
-                kind="discussion.post_created",
-                aggregate_id=topic_id,
-                payload={
-                    "experiment_id": experiment.id,
-                    "topic_id": topic_id,
-                    "post_id": record["id"],
-                },
-                created_at=utcnow().isoformat(),
-            )
-            session.add(event)
-            session.flush()
-            return self._replace(
-                session, session.get(RecordRow, record["id"]), {"sequence": event.sequence}
-            )
+            return self._insert_post(session, op, topic, {**data, "branch_id": post_branch}, actor)
 
         return self._execute(actor, key, "discussion.post", {"topic_id": topic_id, **data}, action)
+
+    _POST_EXTENSIONS = ("abstract", "node_id", "cites", "platform_status")
+
+    def _insert_post(self, session, op, topic_row, data, actor):
+        """Insert one attributed post and the event that sequences its delivery.
+
+        Callers check scope and references. ``data`` uses request field names plus the post's
+        ``branch_id``. Commons fields are stored only when present, so legacy payloads are
+        unchanged.
+        """
+        topic = topic_row.payload
+        payload = {
+            "experiment_id": topic["experiment_id"],
+            "topic_id": topic_row.id,
+            "branch_id": data.get("branch_id"),
+            "attributed_to": actor.id,
+            "post_kind": data["kind"],
+            "content": data["content"],
+            "reply_to_post_id": data.get("reply_to_post_id"),
+            "artifact_ids": list(data.get("artifact_ids", [])),
+            "reference_post_ids": list(data.get("reference_post_ids", [])),
+            "evidence_status": "unverified_discussion",
+            # The caller validated these pins against the current target.
+            **{k: topic[k] for k in ("problem_revision_id", "target_digest", "environment_digest")},
+        }
+        platform = actor.id == PLATFORM and actor.role == "operator"
+        for field in self._POST_EXTENSIONS:
+            # Defense in depth: only the platform principal records a status announcement.
+            if data.get(field) is not None and (field != "platform_status" or platform):
+                payload[field] = copy.deepcopy(data[field])
+        record = self._insert(session, "discussion_post", actor, payload)
+        event = EventRow(
+            project_id=topic_row.project_id,
+            operation_id=op,
+            kind="discussion.post_created",
+            aggregate_id=topic_row.id,
+            payload={
+                "experiment_id": topic["experiment_id"],
+                "topic_id": topic_row.id,
+                "post_id": record["id"],
+            },
+            created_at=utcnow().isoformat(),
+        )
+        session.add(event)
+        session.flush()
+        return self._replace(
+            session, session.get(RecordRow, record["id"]), {"sequence": event.sequence}
+        )
 
     def discussion_page(self, experiment_id, actor, *, after=None, limit=20):
         self._research_role(actor)
@@ -515,91 +545,7 @@ class DiscussionMixin:
                     "DELIVERY_PENDING",
                     "Acknowledge the outstanding delivery before changing subscriptions.",
                 )
-            prior = session.scalar(
-                select(RecordRow)
-                .where(
-                    RecordRow.project_id == actor.project_id,
-                    RecordRow.kind == "discussion_subscription",
-                    record_json_text("experiment_id") == experiment.id,
-                    record_json_text("topic_id") == topic.id,
-                    record_json_text("reader_key") == reader_key,
-                )
-                .limit(1)
-            )
-            if prior:
-                if prior.payload["subscribed"] == subscribed:
-                    return copy.deepcopy(prior.payload)
-                if subscribed:
-                    count = (
-                        session.scalar(
-                            select(func.count())
-                            .select_from(RecordRow)
-                            .where(
-                                RecordRow.project_id == actor.project_id,
-                                RecordRow.kind == "discussion_subscription",
-                                record_json_text("experiment_id") == experiment.id,
-                                record_json_text("reader_key") == reader_key,
-                                RecordRow.payload["subscribed"].as_boolean().is_(True),
-                            )
-                        )
-                        or 0
-                    )
-                    if count >= 100:
-                        raise HarnessError(
-                            "SUBSCRIPTION_LIMIT",
-                            "A reader may subscribe to at most 100 topics.",
-                            status=422,
-                        )
-                values = {
-                    "subscribed": subscribed,
-                    "start_sequence": self._discussion_max_sequence(session)
-                    if subscribed
-                    else prior.payload["start_sequence"],
-                }
-                result = self._replace(session, prior, values)
-            else:
-                count = (
-                    session.scalar(
-                        select(func.count())
-                        .select_from(RecordRow)
-                        .where(
-                            RecordRow.project_id == actor.project_id,
-                            RecordRow.kind == "discussion_subscription",
-                            record_json_text("experiment_id") == experiment.id,
-                            record_json_text("reader_key") == reader_key,
-                            RecordRow.payload["subscribed"].as_boolean().is_(True),
-                        )
-                    )
-                    or 0
-                )
-                if subscribed and count >= 100:
-                    raise HarnessError(
-                        "SUBSCRIPTION_LIMIT",
-                        "A reader may subscribe to at most 100 topics.",
-                        status=422,
-                    )
-                result = self._insert(
-                    session,
-                    "discussion_subscription",
-                    actor,
-                    {
-                        "experiment_id": experiment.id,
-                        "topic_id": topic.id,
-                        "reader_key": reader_key,
-                        "branch_id": actor.branch_id,
-                        "subscribed": subscribed,
-                        "start_sequence": self._discussion_max_sequence(session),
-                    },
-                )
-            self._event(
-                session,
-                actor,
-                op,
-                "discussion.subscription_changed",
-                topic.id,
-                {"experiment_id": experiment.id, "subscribed": subscribed},
-            )
-            return result
+            return self._set_subscription(session, op, topic, None, subscribed, actor)
 
         return self._execute(
             actor,
@@ -608,6 +554,87 @@ class DiscussionMixin:
             {"topic_id": topic_id, "subscribed": subscribed},
             action,
         )
+
+    def _set_subscription(self, session, op, topic_row, branch_id, subscribed, actor):
+        """Set one reader's topic subscription under that reader's lock.
+
+        ``branch_id`` names a branch reader (``branch:<id>``); None is the actor's own reader.
+        Raises SUBSCRIPTION_LIMIT rather than exceed 100 active subscriptions.
+        """
+        experiment_id = topic_row.payload["experiment_id"]
+        reader_key = (
+            f"branch:{branch_id}"
+            if branch_id
+            else self._discussion_reader_key(experiment_id, actor)
+        )
+        self.db.command_lock(
+            session, self._digest(["discussion-reader", experiment_id, reader_key])
+        )
+        reader_subscriptions = (
+            RecordRow.project_id == topic_row.project_id,
+            RecordRow.kind == "discussion_subscription",
+            record_json_text("experiment_id") == experiment_id,
+            record_json_text("reader_key") == reader_key,
+        )
+        prior = session.scalar(
+            select(RecordRow)
+            .where(*reader_subscriptions, record_json_text("topic_id") == topic_row.id)
+            .limit(1)
+        )
+        if prior and prior.payload["subscribed"] == subscribed:
+            return copy.deepcopy(prior.payload)
+        if subscribed:
+            count = (
+                session.scalar(
+                    select(func.count())
+                    .select_from(RecordRow)
+                    .where(
+                        *reader_subscriptions,
+                        RecordRow.payload["subscribed"].as_boolean().is_(True),
+                    )
+                )
+                or 0
+            )
+            if count >= 100:
+                raise HarnessError(
+                    "SUBSCRIPTION_LIMIT",
+                    "A reader may subscribe to at most 100 topics.",
+                    status=422,
+                )
+        if prior:
+            result = self._replace(
+                session,
+                prior,
+                {
+                    "subscribed": subscribed,
+                    "start_sequence": self._discussion_max_sequence(session)
+                    if subscribed
+                    else prior.payload["start_sequence"],
+                },
+            )
+        else:
+            result = self._insert(
+                session,
+                "discussion_subscription",
+                actor,
+                {
+                    "experiment_id": experiment_id,
+                    "topic_id": topic_row.id,
+                    "reader_key": reader_key,
+                    "branch_id": branch_id or actor.branch_id,
+                    "subscribed": subscribed,
+                    "start_sequence": self._discussion_max_sequence(session),
+                },
+            )
+        self._event(
+            session,
+            actor,
+            op,
+            "discussion.subscription_changed",
+            topic_row.id,
+            {"experiment_id": experiment_id, "subscribed": subscribed},
+        )
+        return result
 
     @staticmethod
     def _discussion_max_sequence(session):
@@ -719,7 +746,11 @@ class DiscussionMixin:
                 else:
                     post = self._discussion_post(session, source_id, actor)
                     safe_post = self._discussion_safe_post(session, post, actor)
-                    excerpt = self._discussion_excerpt(safe_post)
+                    topic = session.get(RecordRow, safe_post["topic_id"])
+                    if topic.payload.get("node_id"):
+                        excerpt = self._node_thread_item(session, safe_post, topic, actor)
+                    else:
+                        excerpt = self._discussion_excerpt(safe_post)
                 if len(json.dumps(items + [excerpt], ensure_ascii=False).encode("utf-8")) > 12000:
                     break
                 items.append(excerpt)
@@ -727,7 +758,10 @@ class DiscussionMixin:
                     break
             if not items:
                 return {"delivery_id": None, "items": [], "next_cursor": ack, "redelivered": False}
-            end = items[-1]["sequence"]
+            # The cursor is the highest delivered sequence; urgent node-thread items come first.
+            # The sort is stable, so sequence order holds within each group.
+            end = max(item["sequence"] for item in items)
+            items.sort(key=lambda item: not item.get("urgent", False))
             delivery = self._insert(
                 session,
                 "discussion_delivery",

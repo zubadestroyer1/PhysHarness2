@@ -15,6 +15,7 @@ from .acceptance import AcceptanceMixin
 from .artifacts import ArtifactStore
 from .collaboration import CollaborationMixin
 from .commons import CommonsMixin
+from .commons_discourse import CommonsDiscourseMixin
 from .continuation import ContinuationMixin
 from .discussion import DiscussionMixin
 from .domain import (
@@ -83,6 +84,7 @@ def require_role(actor: Principal, *roles: str) -> None:
 class HarnessService(
     AcceptanceMixin,
     CollaborationMixin,
+    CommonsDiscourseMixin,
     CommonsMixin,
     ContinuationMixin,
     DiscussionMixin,
