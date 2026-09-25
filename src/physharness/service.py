@@ -16,6 +16,7 @@ from .artifacts import ArtifactStore
 from .collaboration import CollaborationMixin
 from .commons import CommonsMixin
 from .commons_discourse import CommonsDiscourseMixin
+from .commons_review import CommonsReviewMixin
 from .continuation import ContinuationMixin
 from .discussion import DiscussionMixin
 from .domain import (
@@ -86,6 +87,7 @@ class HarnessService(
     CollaborationMixin,
     CommonsDiscourseMixin,
     CommonsMixin,
+    CommonsReviewMixin,
     ContinuationMixin,
     DiscussionMixin,
     ResearchMixin,
@@ -382,6 +384,8 @@ class HarnessService(
 
     def _writable_branch(self, session, branch_id, actor, *, delegation=False):
         branch = self._get(session, "branch", branch_id, actor)
+        if delegation:
+            self._guard_referee_branch(branch, actor)
         if actor.role == "agent" and not actor.agent_orchestrator:
             own = actor.branch_id == branch_id
             legacy = not actor.branch_id and branch.payload.get("origin_actor_id") == actor.id
@@ -1165,6 +1169,7 @@ class HarnessService(
             parent = None
             if request.parent_id:
                 parent = self._writable_branch(session, request.parent_id, actor)
+                self._guard_referee_branch(parent, actor)
                 if parent.payload["experiment_id"] != experiment_id:
                     raise HarnessError(
                         "BRANCH_EXPERIMENT_MISMATCH",

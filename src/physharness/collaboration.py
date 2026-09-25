@@ -248,6 +248,7 @@ class CollaborationMixin:
             task = session.get(RecordRow, task_id)
             if task is None or task.kind != "task" or task.project_id != actor.project_id:
                 raise HarnessError("NOT_FOUND", "Assignment was not found.", status=404)
+            self._guard_referee_task(task, actor)
             self._active(session, task.payload["experiment_id"], actor)
             binding = current_worker_effects.get()
             owner = task.payload.get("created_by") == actor.id
@@ -858,6 +859,7 @@ class CollaborationMixin:
             raise HarnessError(
                 "MAILBOX_SCOPE", "Branches must share an experiment to exchange messages."
             )
+        self._guard_referee_recipient(sender, recipient)
         self._lab_route(experiment, sender, recipient)
         self._recipient_visible_artifacts(
             session, artifact_ids, experiment_id, recipient_id, actor, strict=True

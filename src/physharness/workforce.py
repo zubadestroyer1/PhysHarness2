@@ -1,9 +1,11 @@
 """Atomic research recruitment with central task admission and opt-in discovery."""
 
+import copy
 import re
 
 from sqlalchemy import func, select
 
+from .commons_review import REFEREE_HAT
 from .domain import Principal, make_record, new_id, utcnow
 from .errors import HarnessError
 from .storage import BudgetRow, EdgeRow, EventRow, LeaseRow, RecordRow, record_json_text
@@ -21,6 +23,15 @@ from .workforce_models import (
 DEFAULT_MAX_TOTAL_TASKS = 10_000
 DEFAULT_MAX_PENDING_TASKS = 10_000
 LAB_NAME = re.compile(LAB_PATTERN)
+
+
+def _extended(payload, extra):
+    """Append platform-assigned fields (``None`` leaves the payload as it is)."""
+    if extra is None:
+        return payload
+    if payload.keys() & extra.keys():
+        raise ValueError("Extra fields cannot replace canonical fields")
+    return {**payload, **copy.deepcopy(extra)}
 
 
 def _lab_not_found():
@@ -378,6 +389,8 @@ class WorkforceMixin:
         detached=False,
         public_summary=None,
         lab="inherit",
+        task_extra=None,
+        branch_extra=None,
     ):
         models = experiment.payload["models"]
         if model_index is not None and model_index >= len(models):
@@ -391,6 +404,7 @@ class WorkforceMixin:
                 )
             if actor.role == "agent" and parent_id != actor.branch_id:
                 raise HarnessError("BRANCH_AUTHORITY", "Recruit from your own branch.", status=403)
+            self._guard_referee_branch(parent, actor)
         binding = current_worker_effects.get() if actor.role == "agent" else None
         if actor.role == "agent" and parent_id and not detached and binding is None:
             raise HarnessError(
@@ -409,21 +423,24 @@ class WorkforceMixin:
             session,
             "branch",
             actor,
-            {
-                "title": title,
-                "objective": objective,
-                "relation": relation,
-                "parent_id": parent_id,
-                "reply_to_parent": parent_id,
-                "checkpoint_id": None,
-                "model_index": model_index,
-                "experiment_id": experiment.id,
-                "target_digest": experiment.payload["target_digest"],
-                "status": "open",
-                "execution_identity": new_id(),
-                "model_configuration": selected_model,
-                **self._branch_lab(session, experiment, parent, branch_id, lab),
-            },
+            _extended(
+                {
+                    "title": title,
+                    "objective": objective,
+                    "relation": relation,
+                    "parent_id": parent_id,
+                    "reply_to_parent": parent_id,
+                    "checkpoint_id": None,
+                    "model_index": model_index,
+                    "experiment_id": experiment.id,
+                    "target_digest": experiment.payload["target_digest"],
+                    "status": "open",
+                    "execution_identity": new_id(),
+                    "model_configuration": selected_model,
+                    **self._branch_lab(session, experiment, parent, branch_id, lab),
+                },
+                branch_extra,
+            ),
             record_id=branch_id,
         )
         if parent_id:
@@ -435,26 +452,23 @@ class WorkforceMixin:
                     project_id=actor.project_id,
                 )
             )
-        task = self._insert(
-            session,
-            "task",
-            actor,
-            {
-                "branch_id": branch["id"],
-                "objective": objective,
-                "dependency_ids": [],
-                "detached": detached,
-                "experiment_id": experiment.id,
-                "status": "queued",
-                "evidence_ids": [],
-                "created_by": actor.id,
-                "reply_to_parent_task_id": parent_task_id,
-                "delegated_from_task_id": binding.task_id if binding and parent_id else None,
-                "discussion_refs": discussion_refs or [],
-                "synthesis": synthesis,
-                "synthesis_scope": synthesis_scope,
-            },
-        )
+        task_payload = {
+            "branch_id": branch["id"],
+            "objective": objective,
+            "dependency_ids": [],
+            "detached": detached,
+            "experiment_id": experiment.id,
+            "status": "queued",
+            "evidence_ids": [],
+            "created_by": actor.id,
+            "reply_to_parent_task_id": parent_task_id,
+            "delegated_from_task_id": binding.task_id if binding and parent_id else None,
+            "discussion_refs": discussion_refs or [],
+            "synthesis": synthesis,
+            "synthesis_scope": synthesis_scope,
+        }
+        # Platform-assigned fields (e.g. a referee's review assignment) only add keys.
+        task = self._insert(session, "task", actor, _extended(task_payload, task_extra))
         if public_summary:
             # The recruiter can opt to publish only this bounded summary for the
             # new child. The child branch's private objective stays scoped.
@@ -1007,6 +1021,21 @@ class WorkforceMixin:
             action,
         )
 
+    def _synthesis_parent(self, session, experiment, sampled, actor):
+        """The first sampled post's branch that exists, is visible and is not a referee."""
+        for post in sampled:
+            branch = session.get(RecordRow, post.payload.get("branch_id") or "")
+            if (
+                branch is not None
+                and branch.kind == "branch"
+                and branch.project_id == experiment.project_id
+                and branch.payload.get("experiment_id") == experiment.id
+                and branch.payload.get("hat") != REFEREE_HAT
+                and self._in_scope(session, branch, actor)
+            ):
+                return branch.id
+        return None
+
     def schedule_research_synthesis(self, experiment_id: str, actor: Principal, key: str) -> dict:
         """Queue one ordinary synthesis task when new public discourse merits it.
 
@@ -1123,9 +1152,15 @@ class WorkforceMixin:
                 "Identify useful next experiments; treat every claim as unverified "
                 "until the normal verifier accepts independent evidence."
             )
-            parent_branch_id = sampled[0].payload.get("branch_id")
-            if not parent_branch_id:
-                return {"scheduled": False, "reason": "source_branch_missing"}
+            if experiment.payload.get("society"):
+                # Referee objections come from isolated branches and platform status posts
+                # have none, so neither may parent; without an eligible author branch the
+                # synthesis runs parentless instead of wedging the pending sample.
+                parent_branch_id = self._synthesis_parent(session, experiment, sampled, actor)
+            else:
+                parent_branch_id = sampled[0].payload.get("branch_id")
+                if not parent_branch_id:
+                    return {"scheduled": False, "reason": "source_branch_missing"}
             result = self._new_branch_task(
                 session,
                 op,
