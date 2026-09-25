@@ -101,6 +101,17 @@ def test_probe_uses_full_schema_and_refuses_repeat(tmp_path):
         asyncio.run(probe.run_probe(path, client=fake))
 
 
+def test_widest_legacy_catalog_is_byte_identical():
+    from physharness.domain import digest_json
+
+    definitions = probe.definitions()
+    assert len(definitions) == 63
+    # Recorded before the society profile (Task 9); the legacy catalog must not drift.
+    assert digest_json(definitions) == (
+        "82d0b2b75885e3526d637d0c1025a90793577547c7b0735db44d928d11a5e70a"
+    )
+
+
 def test_schema_context_allows_only_two_exact_registration_reads():
     actor = object()
     service = probe.SchemaOnlyService(actor)
