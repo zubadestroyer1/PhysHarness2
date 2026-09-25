@@ -21,12 +21,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from physharness.errors import HarnessError
 from physharness.formal_tools import lean_session_daemon as daemon
 from physharness.orchestration.lean_session import (
     AUTOMATION,
     DAEMON_PATH,
+    MAX_SOURCE_BYTES,
     REPL_CANDIDATES,
     LeanSession,
+    parse_extracted,
     parse_lean_output,
     signature_from_extracted,
     split_header,
@@ -70,6 +73,18 @@ def _fake_pids(state):
 def _commands(state):
     path = state.logs / "commands.jsonl"
     return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def _raw_request(path, request):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as conn:
+        conn.settimeout(20)
+        conn.connect(path)
+        conn.sendall(json.dumps(request).encode())
+        conn.shutdown(socket.SHUT_WR)
+        data = b""
+        while chunk := conn.recv(65536):
+            data += chunk
+    return json.loads(data)
 
 
 def _shutdown(path):
@@ -138,6 +153,7 @@ class FakeWorkspaceTools:
         self.env, self.background = state.env, background
         self.policy = SimpleNamespace(timeout_seconds=timeout)
         self.scratch, self.calls = list(scratch), []
+        self.canned = []  # stdout answers that replace real daemon runs (hostile VM tests)
         self.marker = state.root / "repl-binary"
         self.marker.write_text("")
         self.marker.chmod(0o755)
@@ -168,6 +184,18 @@ class FakeWorkspaceTools:
             argv.append(item)
         assert arguments["cwd"] == "."
         assert 0 < arguments["timeout_seconds"] <= self.policy.timeout_seconds
+        if self.canned and "lean_session.py" in argv[-1]:
+            result = {
+                "operation_id": operation_id,
+                "execution_id": "local",
+                "exit_code": 0,
+                "stdout": self.canned.pop(0),
+                "stderr": "",
+                "stdout_truncated": False,
+                "stderr_truncated": False,
+            }
+            self.calls.append(("run", argv, operation_id, arguments["timeout_seconds"], result))
+            return result
         completed = subprocess.run(
             argv,
             cwd=self.root,
@@ -399,12 +427,19 @@ def test_daemon_compound_check_automates_and_extracts_inline(lean_env):
     }
     result = run_daemon(lean_env, "inline", request)
     first, second, third = result["sorries"]
-    assert first["automation"]["closed_by"] == "linarith" and first["extracted"] is None
+    statement = "theorem extracted_1 (x : Nat) : x = x := sorry"
+    # Extraction runs for every hole before automation, so it survives slow automation.
+    assert first["extracted"] == second["extracted"] == statement
+    assert first["automation"]["closed_by"] == "linarith"
     assert second["automation"]["suggestion"] == "exact fake_lemma"
     assert third["automation"]["closed_by"] is None
     assert third["automation"]["tried"] == list(AUTOMATION)
     assert third["extracted"] is None
     assert result["axioms"] is None  # holes remain, so no axiom report
+    sent = [c["tactic"] for c in _commands(lean_env) if c.get("proofState") == 0]
+    assert sent[0] == "extract_goal"
+    assert sent[1] == f"set_option maxHeartbeats {daemon.TACTIC_HEARTBEATS} in rfl"
+    assert "exact?" in [c["tactic"] for c in _commands(lean_env) if c.get("proofState") == 1]
     (pid,) = _fake_pids(lean_env)
     assert not _alive(pid)
     assert not Path(lean_env.socket).exists()
@@ -519,7 +554,9 @@ async def test_check_one_shot_fallback_when_repl_missing(lean_env):
     tools.scratch.append(("{path}:3:8: warning: declaration uses 'sorry'\n", 0))
     sketch = await LeanSession(tools).sketch_goals(SOURCE, operation_id="op2")
     assert sketch["backend"] == "one_shot" and sketch["header"] == "import Mathlib"
-    assert sketch["holes"] == [{"index": 0, "goal": None, "extract_failed": True}]
+    assert sketch["holes"] == [
+        {"index": 0, "goal": None, "extract_failed": True, "reason": "goal_unavailable"}
+    ]
     assert sketch["reason_code"] == "lean_repl_unavailable"
 
 
@@ -529,7 +566,8 @@ async def test_sketch_goals_extracts_signatures(lean_env):
         "  have h0 : x = x := by\n    sorry\n"
         "  have h1 : x = x := by\n    sorry\n"
         "  have h2 : x = x := by\n    sorry\n"
-        "  sorry -- goal: NOEXTRACT\n"
+        "  have h3 : x = x := by\n    sorry -- goal: NOEXTRACT\n"
+        "  sorry -- goal: UNIVERSE\n"
     )
     tools = FakeWorkspaceTools(lean_env)
     result = await LeanSession(tools).sketch_goals(source, operation_id="op")
@@ -544,8 +582,21 @@ async def test_sketch_goals_extracts_signatures(lean_env):
                 "goal": "x : Nat\n⊢ x = x",
                 "lean_name": "hole_2",
                 "lean_statement": "(x : Nat) : x = x",
+                "universes": [],
             },
-            {"index": 3, "goal": "⊢ NOEXTRACT", "extract_failed": True},
+            {
+                "index": 3,
+                "goal": "⊢ NOEXTRACT",
+                "extract_failed": True,
+                "reason": "extract_goal_failed",
+            },
+            {
+                "index": 4,
+                "goal": "⊢ UNIVERSE",
+                "lean_name": "hole_4",
+                "lean_statement": "{α : Type u_1} (a : α) : a = a",
+                "universes": ["u_1"],
+            },
         ],
         "closed": [
             {"index": 0, "closed_by": "linarith", "suggestion": None},
@@ -553,7 +604,7 @@ async def test_sketch_goals_extracts_signatures(lean_env):
         ],
     }
     extracted = [c["proofState"] for c in _commands(lean_env) if c.get("tactic") == "extract_goal"]
-    assert extracted == [2, 3]
+    assert extracted == [0, 1, 2, 3, 4]
     assert len(tools.runs()) == 2  # probe + one compound request
 
 
@@ -615,8 +666,8 @@ async def test_axioms_printed_for_top_level_names_only(lean_env):
 async def test_outputs_bounded(lean_env):
     lines = ["import Mathlib", ""]
     for index in range(40):
-        lines += [f"theorem t{index} (x : Nat) : x = x := by", "  sorry -- goal: " + "g" * 5000]
-    lines += ["-- WARN " + "w" * 3000 for _ in range(60)]
+        lines += [f"theorem t{index} (x : Nat) : x = x := by", "  sorry -- goal: LONG"]
+    lines += ["-- WARN LONG" for _ in range(60)]  # the fake expands LONG to 3000-5000 chars
     source = "\n".join(lines)
     tools = FakeWorkspaceTools(lean_env)
     result = await LeanSession(tools).check(source, automate=True, operation_id="op")
@@ -759,3 +810,250 @@ async def test_daemon_placement_failure_falls_back_to_one_shot(lean_env):
     assert result["backend"] == "one_shot" and result["reason_code"] == "lean_repl_unavailable"
     assert result["messages"][0]["text"].startswith("Lean REPL could not start")
     assert "the daemon could not be placed" in result["messages"][0]["text"]
+
+
+# Fix round 1: hostile answers, automation budget, upload limit, completeness, universes, caps
+
+GOOD = {
+    "op": "check",
+    "counts": {"errors": 0, "messages": 0, "sorries": 0, "sorry_warnings": 0},
+    "messages": [],
+    "sorries": [],
+    "axioms": None,
+}
+
+
+def _assert_bounded_check(result):
+    assert result["backend"] in ("repl", "repl_inline", "one_shot")
+    assert type(result["ok"]) is bool and type(result["complete"]) is bool
+    assert result["proof_status"] == "not_accepted"
+    assert result["reason_code"] is None or isinstance(result["reason_code"], str)
+    assert isinstance(result["messages"], list) and len(result["messages"]) <= 50
+    for message in result["messages"]:
+        assert set(message) == {"severity", "line", "col", "text"}
+        assert message["severity"] in ("error", "warning", "info")
+        for value in (message["line"], message["col"]):
+            assert value is None or (type(value) is int and value >= 0)
+        assert isinstance(message["text"], str) and len(message["text"]) <= 2000
+    assert len(result["holes"]) <= 32
+    for hole in result["holes"]:
+        assert type(hole["index"]) is int
+        assert hole["goal"] is None or (isinstance(hole["goal"], str) and len(hole["goal"]) <= 4000)
+        automation = hole["automation"]
+        assert automation["closed_by"] is None or automation["closed_by"] in AUTOMATION
+        assert automation["suggestion"] is None or isinstance(automation["suggestion"], str)
+        assert len(automation["tried"]) <= 10
+        assert all(tactic in AUTOMATION for tactic in automation["tried"])
+    assert isinstance(result["axioms"], dict) and len(result["axioms"]) <= 32
+    for name, values in result["axioms"].items():
+        assert isinstance(name, str) and len(name) <= 200 and len(values) <= 32
+        assert all(isinstance(value, str) and len(value) <= 200 for value in values)
+
+
+MALFORMED = [
+    "not json at all",
+    "[1, 2]",
+    json.dumps({"error": ["x"]}),
+    json.dumps({"error": {"nested": 1}, "detail": 5}),
+    json.dumps({"phase_error": {}}),
+    json.dumps({**GOOD, "op": "tactics"}),
+    json.dumps({**GOOD, "counts": 5}),
+    json.dumps({**GOOD, "messages": "abc"}),
+    json.dumps({**GOOD, "sorries": {"a": 1}}),
+    json.dumps({**GOOD, "axioms": [1]}),
+]
+
+
+@pytest.mark.parametrize("stdout", MALFORMED)
+async def test_hostile_daemon_answers_become_bounded_failures(lean_env, stdout):
+    tools = FakeWorkspaceTools(lean_env)
+    tools.canned = [stdout] * 3
+    session = LeanSession(tools)
+    result = await session.check(SOURCE, automate=True, operation_id="a")
+    _assert_bounded_check(result)
+    assert result["ok"] is False and result["complete"] is False
+    assert result["reason_code"] == "lean_session_failed"
+    sketch = await session.sketch_goals(SOURCE, operation_id="b")
+    assert sketch["holes"] == [] and sketch["reason_code"] == "lean_session_failed"
+    elaboration = await session.elaborate_statement(
+        "import Mathlib", "t", ": True", operation_id="c"
+    )
+    assert elaboration["ok"] is False and elaboration["reason_code"] == "lean_session_failed"
+
+
+async def test_hostile_daemon_fields_are_retyped(lean_env):
+    payload = {
+        **GOOD,
+        "counts": {"errors": -3, "messages": "x", "sorries": 2, "sorry_warnings": None},
+        "messages": [
+            {"data": "no severity"},
+            {"severity": ["x"], "pos": {"line": "1", "column": -2}, "data": 7},
+            7,
+            {"severity": "error", "pos": {"line": 3, "column": 1}, "data": "e" * 5000},
+        ],
+        "sorries": [
+            {
+                "automation": {"tried": 5, "closed_by": "rm -rf", "suggestion": 3},
+                "extracted": 7,
+                "goal": 3,
+                "pos": "x",
+            },
+            {
+                "automation": {"tried": ["simp", "evil", "linarith"], "closed_by": "simp"},
+                "goal": "⊢ True",
+                "extracted": "theorem x : True := sorry",
+            },
+        ],
+        "axioms": {"a": [1, "propext", "x" * 300], "b" * 300: ["c"], "c": "not a list"},
+        "phase_error": {},
+    }
+    tools = FakeWorkspaceTools(lean_env)
+    tools.canned = [json.dumps(payload)] * 2
+    session = LeanSession(tools)
+    result = await session.check(SOURCE, automate=True, operation_id="a")
+    _assert_bounded_check(result)
+    assert [m["severity"] for m in result["messages"]] == ["info", "info", "error"]
+    assert result["messages"][1] == {"severity": "info", "line": None, "col": None, "text": ""}
+    assert result["messages"][2]["line"] == 3 and len(result["messages"][2]["text"]) == 2000
+    assert result["ok"] is False and result["complete"] is False
+    assert result["reason_code"] == "lean_session_failed"
+    assert result["holes"][0] == {
+        "index": 0,
+        "line": None,
+        "col": None,
+        "goal": None,
+        "automation": {"closed_by": None, "suggestion": None, "tried": []},
+    }
+    assert result["holes"][1]["automation"] == {
+        "closed_by": "simp",
+        "suggestion": None,
+        "tried": ["simp", "linarith"],
+    }
+    assert result["axioms"] == {"a": ["propext"]}
+    sketch = await session.sketch_goals(SOURCE, operation_id="b")
+    assert sketch["holes"] == [
+        {"index": 0, "goal": None, "extract_failed": True, "reason": "extract_goal_failed"}
+    ]
+    assert sketch["closed"] == [{"index": 1, "closed_by": "simp", "suggestion": None}]
+
+
+def test_daemon_automation_budget_keeps_repl_and_extraction(lean_env):
+    warm = run_daemon(lean_env, "request", {"op": "check", "source": SOURCE})
+    request = {"op": "check", "source": SOURCE, "automation": ["slow"] * 16}
+    request["extract_goals"] = True
+    result = run_daemon(lean_env, "request", request, timeout=5)
+    assert "error" not in result and "phase_error" not in result
+    assert result["automation_stopped"] == "budget_exhausted"
+    hole = result["sorries"][0]
+    assert hole["extracted"] == "theorem extracted_1 (x : Nat) : x = x := sorry"
+    tried = hole["automation"]["tried"]
+    assert 0 < len(tried) < 16
+    sent = [c for c in _commands(lean_env) if c.get("tactic", "").endswith(" in slow")]
+    assert len(sent) == len(tried)  # only tactics actually sent are recorded
+    assert result["generation"] == warm["generation"]
+    (pid,) = _fake_pids(lean_env)
+    assert _alive(pid)  # the idle, in-sync REPL was not reset
+    again = run_daemon(lean_env, "request", {"op": "check", "source": SOURCE})
+    assert again["header_cached"] is True and again["generation"] == warm["generation"]
+
+
+def test_daemon_expired_request_fails_fast_without_reset(lean_env):
+    warm = run_daemon(lean_env, "request", {"op": "check", "source": SOURCE})
+    stale = {"op": "check", "source": SOURCE, "deadline": time.time() - 5}
+    assert _raw_request(lean_env.socket, stale)["error"] == "budget_exhausted"
+    status = run_daemon(lean_env, "request", {"op": "status"})
+    assert status["running"] is True and status["generation"] == warm["generation"]
+    assert status["headers_cached"] == 1 and len(_fake_pids(lean_env)) == 1
+
+
+async def test_budget_stop_is_reported_on_the_host(lean_env):
+    payload = {
+        **GOOD,
+        "counts": {"errors": 0, "messages": 0, "sorries": 1, "sorry_warnings": 0},
+        "sorries": [{"goal": "⊢ True", "automation": {"tried": ["rfl"]}}],
+        "automation_stopped": "budget_exhausted",
+    }
+    tools = FakeWorkspaceTools(lean_env)
+    tools.canned = [json.dumps(payload)]
+    result = await LeanSession(tools).check(SOURCE, automate=True, operation_id="a")
+    assert result["ok"] is True and result["reason_code"] == "lean_automation_budget_exhausted"
+    assert result["holes"][0]["automation"]["tried"] == ["rfl"]
+
+
+async def test_source_limit_matches_upload_limit(lean_env):
+    tools = FakeWorkspaceTools(lean_env)
+    session = LeanSession(tools)
+    with pytest.raises(HarnessError) as error:
+        await session.check("-- " + "x" * MAX_SOURCE_BYTES, automate=True, operation_id="big")
+    assert error.value.code == "SOURCE_LIMIT" and tools.calls == []
+    # JSON escaping can push an in-limit source past the 32,768-byte upload limit.
+    with pytest.raises(HarnessError) as error:
+        await session.check("-- " + '"' * 20000, automate=True, operation_id="quoted")
+    assert error.value.code == "SOURCE_LIMIT"
+    assert [call[1] for call in tools.calls if call[0] == "write"] == [DAEMON_PATH]
+    one_shot = FakeWorkspaceTools(lean_env, repl_present=False)
+    with pytest.raises(HarnessError) as error:
+        await LeanSession(one_shot).check(
+            "x" * (MAX_SOURCE_BYTES + 1), automate=False, operation_id="one"
+        )
+    assert error.value.code == "SOURCE_LIMIT" and one_shot.calls == []
+
+
+async def test_axiom_phase_error_is_never_complete(lean_env):
+    tools = FakeWorkspaceTools(lean_env)
+    tools.canned = [json.dumps({**GOOD, "phase_error": "timeout"})]
+    result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="a")
+    assert result["ok"] is True and result["complete"] is False
+    assert result["reason_code"] == "lean_timeout" and result["axioms"] == {}
+    scratch = [("", 0), ("'top' depends on axioms: [propext]\n", 1)]
+    tools = FakeWorkspaceTools(lean_env, repl_present=False, scratch=scratch)
+    result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="b")
+    assert result["ok"] is True and result["complete"] is False
+
+
+def test_parse_extracted_universe_parameters():
+    text = (
+        "theorem extracted_1.{u_1, u_2} {α : Type u_1} {β : Type u_2} (f : α → β) :\n"
+        "    f = f := sorry"
+    )
+    signature = "{α : Type u_1} {β : Type u_2} (f : α → β) : f = f"
+    assert parse_extracted(text) == ("extracted_1", signature, ["u_1", "u_2"])
+    assert signature_from_extracted(text) == ("extracted_1", signature)
+    assert parse_extracted("theorem Foo.bar (x : Nat) : x = x := sorry") == (
+        "Foo.bar",
+        "(x : Nat) : x = x",
+        [],
+    )
+
+
+async def test_sketch_caps_header_and_statement(lean_env):
+    source = (
+        "import Mathlib\n-- " + "c" * 2100 + "\nimport Physlib\n" + THREE_HOLES.split("\n", 1)[1]
+    )
+    sketch = await LeanSession(FakeWorkspaceTools(lean_env)).sketch_goals(source, operation_id="a")
+    assert sketch["header"] is None
+    assert sketch["holes"] == [
+        {
+            "index": 2,
+            "goal": "x : Nat\n⊢ x = x",
+            "extract_failed": True,
+            "reason": "header_too_long",
+        }
+    ]
+    long_statement = "theorem extracted_1 (x : Nat) : " + "x = x ∧ " * 3000 + "True := sorry"
+    payload = {
+        **GOOD,
+        "counts": {"errors": 0, "messages": 0, "sorries": 2, "sorry_warnings": 0},
+        "sorries": [
+            {"goal": "⊢ a", "extracted": long_statement},
+            {"goal": "⊢ b", "extracted": "theorem extracted_1 (x : Nat) : x = x…"},
+        ],
+    }
+    tools = FakeWorkspaceTools(lean_env)
+    tools.canned = [json.dumps(payload)]
+    sketch = await LeanSession(tools).sketch_goals(SOURCE, operation_id="b")
+    assert sketch["header"] == "import Mathlib"
+    assert sketch["holes"] == [
+        {"index": 0, "goal": "⊢ a", "extract_failed": True, "reason": "statement_too_long"},
+        {"index": 1, "goal": "⊢ b", "extract_failed": True, "reason": "statement_too_long"},
+    ]

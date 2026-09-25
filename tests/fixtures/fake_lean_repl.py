@@ -8,11 +8,14 @@ Commands:
   ``{"cmd", "env"}`` continues an existing one. In both, each line containing ``sorry``
   yields a ``sorries`` entry with a new proofState (``-- goal: G`` on that line sets the
   goal to ``⊢ G``). ``ERROR`` yields an error message, ``WARN`` a warning carrying the line
-  text, and ``#print axioms N`` an info message. The body ``CRASH`` exits the process; the
+  text, and ``#print axioms N`` an info message. ``LONG`` in a goal or WARN line expands to
+  thousands of characters. The body ``CRASH`` exits the process; the
   body ``SLEEP`` hangs.
 - ``{"tactic", "proofState"}``: ``linarith`` closes proofState 0, ``exact?`` closes proofState 1
-  with a "Try this" suggestion, and ``extract_goal`` reports
-  ``theorem extracted_1 (x : Nat) : x = x := sorry`` unless the goal mentions NOEXTRACT.
+  with a "Try this" suggestion, ``slow`` takes half a second without progress, and
+  ``extract_goal`` reports ``theorem extracted_1 (x : Nat) : x = x := sorry`` (a
+  universe-polymorphic statement when the goal mentions UNIVERSE; an error for NOEXTRACT).
+  A ``set_option maxHeartbeats N in`` prefix is accepted and stripped.
 
 When ``FAKE_LEAN_REPL_DIR`` is set, the process appends its pid to ``pids.txt`` and every
 received command to ``commands.jsonl`` there.
@@ -20,6 +23,7 @@ received command to ``commands.jsonl`` there.
 
 import json
 import os
+import re
 import sys
 import time
 
@@ -68,7 +72,8 @@ class FakeRepl:
             if column >= 0:
                 goal = DEFAULT_GOAL
                 if "-- goal:" in line:
-                    goal = "⊢ " + line.split("-- goal:", 1)[1].strip()
+                    marker = line.split("-- goal:", 1)[1].strip()
+                    goal = "⊢ " + marker.replace("LONG", "g" * 5000)
                 sorries.append(
                     {
                         "pos": {"line": number, "column": column},
@@ -82,7 +87,7 @@ class FakeRepl:
                     message("error", number, line.find("ERROR"), "unknown identifier 'ERROR'")
                 )
             if "WARN" in line:
-                messages.append(message("warning", number, 0, line))
+                messages.append(message("warning", number, 0, line.replace("LONG", "w" * 3000)))
             if line.startswith("#print axioms "):
                 name = line.split()[2]
                 messages.append(
@@ -108,6 +113,10 @@ class FakeRepl:
         if number not in self.goals:
             return {"message": "Unknown proof state."}
         goal = self.goals[number]
+        wrapped = re.fullmatch(r"set_option maxHeartbeats \d+ in (.+)", tactic or "", re.S)
+        tactic = wrapped.group(1) if wrapped else tactic
+        if tactic == "slow":
+            time.sleep(0.5)
         if tactic == "linarith" and number == 0:
             return {"proofStatus": "Completed", "proofState": self.state(None), "goals": []}
         if tactic == "exact?" and number == 1:
@@ -120,13 +129,14 @@ class FakeRepl:
         if tactic == "extract_goal":
             if "NOEXTRACT" in (goal or ""):
                 return {"message": "Lean error:\nextract_goal failed"}
+            statement = "theorem extracted_1 (x : Nat) : x = x := sorry"
+            if "UNIVERSE" in (goal or ""):
+                statement = "theorem extracted_1.{u_1} {α : Type u_1} (a : α) : a = a := sorry"
             return {
                 "proofStatus": "Incomplete: open goals remain",
                 "proofState": self.state(goal),
                 "goals": [goal],
-                "messages": [
-                    message("info", 0, 0, "theorem extracted_1 (x : Nat) : x = x := sorry")
-                ],
+                "messages": [message("info", 0, 0, statement)],
             }
         if tactic == "omega":
             return {"message": "Lean error:\nomega could not prove the goal"}

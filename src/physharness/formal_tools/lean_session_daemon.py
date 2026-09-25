@@ -39,6 +39,11 @@ MAX_SORRIES = 32
 MAX_TACTICS = 16
 MAX_TACTIC_ITEMS = 8
 MAX_NAMES = 32
+# Automation tactics run as ``set_option maxHeartbeats N in <tactic>`` so Lean aborts them.
+TACTIC_HEARTBEATS = 200000
+# ``exact?`` renders its suggestion from source positions that the wrapper shifts (Lean 4.32
+# panics on stderr); it bounds its own search, so it runs unwrapped.
+_UNWRAPPED = ("exact?",)
 SORRY_WARNING = re.compile(r"declaration uses ['`]sorry['`]")
 _AXIOMS = re.compile(r"'([^'\n]+)' depends on axioms: \[([^\]]*)\]")
 _NO_AXIOMS = re.compile(r"'([^'\n]+)' does not depend on any axioms")
@@ -266,13 +271,16 @@ class Session:
         self.repl, self.commands, self.envs, self.proof_states = None, 0, {}, set()
 
     def send(self, command, deadline):
+        if deadline - time.monotonic() <= 0:
+            # Nothing was written, so the REPL is still in sync: no reset.
+            raise ReplError("budget_exhausted", "no time was left to send the command")
         if self.repl is None:
             self.repl = Repl(self.repl_argv, self.cwd)
             self.generation += 1
         try:
             response = self.repl.call(command, deadline)
         except ReplError:
-            self.reset()
+            self.reset()  # The command was sent and its reply is outstanding.
             raise
         self.commands += 1
         return response
@@ -364,28 +372,35 @@ class Session:
         }
         if len(messages) > MAX_MESSAGES or len(sorries) > MAX_SORRIES:
             result["truncated"] = True
-        # Automation may not starve goal extraction of its reserve.
-        reserve = min(20.0, max(1.0, (deadline - time.monotonic()) / 4))
-        for hole in result["sorries"]:
-            state = hole["proofState"]
-            if automation and _integer(state):
-                hole["automation"] = self.run_tactics(state, automation, True, deadline - reserve)
-                hole["automation"].pop("results")
-                if "error" in hole["automation"]:
-                    result["phase_error"] = hole["automation"]["error"]
-                    return result
+        # Extraction is cheap and comes first, so a sketch survives slow automation.
         for hole in result["sorries"] if request.get("extract_goals") else []:
-            closed = hole["automation"] and hole["automation"]["closed_by"]
-            if _integer(hole["proofState"]) and not closed:
+            if _integer(hole["proofState"]):
                 outcome = self.run_tactics(hole["proofState"], ["extract_goal"], False, deadline)
-                if "error" in outcome:
-                    result["phase_error"] = outcome["error"]
+                if "error" in outcome or "stopped" in outcome:
+                    result["phase_error"] = outcome.get("error") or outcome["stopped"]
                     return result
                 infos = [m for r in outcome["results"] for m in r["messages"]]
                 hole["extracted"] = next(
                     (str(m.get("data")) for m in infos if "theorem" in str(m.get("data", ""))),
                     None,
                 )
+        # New tactics start only while this budget lasts; the reserve lets the last one finish.
+        send_by = deadline - min(20.0, max(1.0, (deadline - time.monotonic()) / 4))
+        for hole in result["sorries"] if automation else []:
+            if not _integer(hole["proofState"]):
+                continue
+            outcome = self.run_tactics(
+                hole["proofState"], automation, True, send_by, deadline, bounded=True
+            )
+            outcome.pop("results")
+            stopped, error = outcome.pop("stopped", None), outcome.pop("error", None)
+            hole["automation"] = outcome
+            if error:
+                result["phase_error"] = error
+                return result
+            if stopped:
+                result["automation_stopped"] = stopped
+                break
         if names and not errors and not sorries and not warnings:
             # The declarations already live in the body's env; only the report is new.
             command = {"cmd": "\n".join("#print axioms " + n for n in names)}
@@ -409,15 +424,26 @@ class Session:
         outcome.update(op="tactics", generation=self.generation)
         return outcome
 
-    def run_tactics(self, state, tactics, stop_on_success, deadline):
+    def run_tactics(self, state, tactics, stop_on_success, send_by, reply_by=None, bounded=False):
+        """Apply tactics to one proof state; ``tried`` lists only tactics actually sent."""
         outcome = {"closed_by": None, "suggestion": None, "tried": [], "results": []}
         for tactic in tactics:
-            outcome["tried"].append(tactic)
+            text = tactic
+            if bounded and tactic not in _UNWRAPPED:
+                text = f"set_option maxHeartbeats {TACTIC_HEARTBEATS} in {tactic}"
             try:
-                response = self.send({"tactic": tactic, "proofState": state}, deadline)
+                # Sending checks the automation budget; the reply may use the whole deadline.
+                if send_by - time.monotonic() <= 0:
+                    raise ReplError("budget_exhausted", "automation budget exhausted")
+                response = self.send({"tactic": text, "proofState": state}, reply_by or send_by)
             except ReplError as exc:
+                if exc.code == "budget_exhausted":
+                    outcome["stopped"] = exc.code
+                    return outcome
+                outcome["tried"].append(tactic)
                 outcome["error"] = exc.code
                 return outcome
+            outcome["tried"].append(tactic)
             if _integer(response.get("proofState")):
                 self.proof_states.add(response["proofState"])
             messages = response.get("messages") or []
@@ -538,7 +564,8 @@ def _deadline(request):
         remaining = float(request.get("deadline")) - time.time()
     except (TypeError, ValueError):
         remaining = 120.0
-    return time.monotonic() + min(max(remaining, 0.05), 86400.0)
+    # A request whose deadline passed while it queued fails fast without touching the REPL.
+    return time.monotonic() + min(remaining, 86400.0)
 
 
 def _handle(session, request, deadline):
