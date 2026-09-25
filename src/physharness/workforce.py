@@ -54,7 +54,11 @@ class WorkforceMixin:
             self.db.command_lock(session, self._digest(["task-lease", task_id]))
             task = self._get(session, "task", task_id, actor)
             branch = self._get(session, "branch", task.payload["branch_id"], actor)
-            if branch.payload.get("parent_id") or task.payload.get("delegated_from_task_id"):
+            if (
+                branch.payload.get("parent_id")
+                or task.payload.get("delegated_from_task_id")
+                or task.payload.get("review_assignment")  # a platform referee is no root
+            ):
                 raise HarnessError("ROOT_TASK_REQUIRED", "Only a root task can use this policy.")
             existing = task.payload.get("root_replan_limit")
             if existing is not None:

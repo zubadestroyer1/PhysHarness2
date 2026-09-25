@@ -12,6 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import select
 
+from ..commons_review import REFEREE_HAT
 from ..domain import (
     ArtifactCreate,
     BranchCreate,
@@ -354,6 +355,15 @@ class CanonicalRuntimeStore:
         if native_digest(content) != archive_id:
             raise HarnessError("NATIVE_ARCHIVE_MISMATCH", "Native archive digest mismatch.")
         return content
+
+
+def _requested_by(task):
+    """The requester branch of a platform-assigned referee task, else None."""
+    assignment = task.get("review_assignment")
+    if task.get("hat") != REFEREE_HAT or not isinstance(assignment, dict):
+        return None
+    requested_by = assignment.get("requested_by")
+    return requested_by if isinstance(requested_by, str) else None
 
 
 def _task_contract(task, branch):
@@ -2063,7 +2073,9 @@ class ResearchTeamRunner:
             raise HarnessError("TEAM_LIMIT", "Explicit tasks exceed the finite task limit.")
         if manifest.max_root_replans:
             roots = [
-                self.service.configure_root_replans(
+                root
+                if root.get("review_assignment")  # platform referees are never roots
+                else self.service.configure_root_replans(
                     root["id"],
                     manifest.max_root_replans,
                     actor,
@@ -2095,6 +2107,18 @@ class ResearchTeamRunner:
         scheduled_synthesis_ids = set()
         next_synthesis_tick = 0.0
 
+        def referee_task_ids(tasks):
+            """Referee tasks and the work delegated from them: platform-owned lineages."""
+            referee_branches = {
+                task["branch_id"] for task in tasks if task.get("hat") == REFEREE_HAT
+            }
+            return {
+                task["id"]
+                for task in tasks
+                if task["branch_id"] in branch_parents
+                and root_lineage(task["branch_id"], branch_parents) in referee_branches
+            }
+
         def selected_tasks(tasks=None):
             tasks = (
                 tasks if tasks is not None else list(self._records("task", actor, experiment["id"]))
@@ -2107,6 +2131,14 @@ class ResearchTeamRunner:
                     if task.get("synthesis") is True
                     and task["branch_id"] in branch_parents
                     and root_lineage(task["branch_id"], branch_parents) in own_root_lineages
+                )
+                # Platform referees are parentless; a referee belongs to the run whose
+                # branch requested its review.
+                selected_ids.update(
+                    task["id"]
+                    for task in tasks
+                    if _requested_by(task) in branch_parents
+                    and root_lineage(_requested_by(task), branch_parents) in own_root_lineages
                 )
             if manifest.include_delegated:
                 while True:
@@ -2180,8 +2212,12 @@ class ResearchTeamRunner:
                         for branch in self._records("branch", actor, experiment["id"])
                     }
                 now = asyncio.get_running_loop().time()
+                # Platform referee lineages never count as another runner's work.
+                referee_ids = referee_task_ids(all_tasks)
                 all_root_lineages = {
-                    root_lineage(task["branch_id"], branch_parents) for task in all_tasks
+                    root_lineage(task["branch_id"], branch_parents)
+                    for task in all_tasks
+                    if task["id"] not in referee_ids
                 }
                 if not accepted and now >= next_synthesis_tick:
                     next_synthesis_tick = now + 5.0

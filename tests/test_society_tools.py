@@ -30,11 +30,17 @@ from physharness.domain import (
     digest_json,
     new_id,
 )
+from physharness.errors import HarnessError
 from physharness.execution import ResponsesRuntime, RuntimeLimits
 from physharness.execution.stagnation import observe
 from physharness.knowledge.literature import LiteratureBroker
 from physharness.orchestration import research_worker
-from physharness.orchestration.research_worker import ResearchTaskExecutor, research_tools
+from physharness.orchestration.research_worker import (
+    ResearchTaskExecutor,
+    ResearchTeamRunner,
+    TeamRunManifest,
+    research_tools,
+)
 from physharness.orchestration.society_prompt import (
     checkin_note,
     constitution,
@@ -44,6 +50,7 @@ from physharness.orchestration.society_tools import SOCIETY_TOOL_NAMES, society_
 from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
 from physharness.orchestration.workspaces import WorkspaceBroker
 from physharness.skills import list_skills, load_skill
+from physharness.workforce_models import ConfigureWorkforceRequest
 
 # Recorded from the pre-change code (research_worker.research_tools before Task 9).
 LEGACY_DIGESTS = {
@@ -1032,3 +1039,152 @@ def test_branch_claims_lists_live_claims_of_this_branch(lab, clock):
     assert [item["node_id"] for item in service.branch_claims(exp["id"], beta)["items"]] == [
         nodes[3]["id"]
     ]
+
+
+# Runner selection of platform-owned referees (ruling R20) ------------------------------------
+
+
+def society_runner(service, route):
+    client = mock_client(route)
+    executor = ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
+        limits=RuntimeLimits(max_turns=30),
+    )
+    return ResearchTeamRunner(service, executor=executor), client
+
+
+def run_manifest(experiment, author, root_task, **extra):
+    return TeamRunManifest(
+        experiment_id=experiment["id"],
+        project_id=author.project_id,
+        mode="replay",
+        task_ids=[root_task["id"]],
+        max_concurrency=1,
+        max_tasks=4,
+        timeout_seconds=20,
+        **extra,
+    )
+
+
+def scripted_society_route(root_steps):
+    """Route by prompt: a referee submits one sound verdict; the root follows its script."""
+    phases = {"root": 0, "referee": 0}
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payload = json.loads(request.content)
+        prompt = json.loads(payload["input"][0]["content"])
+        role = "referee" if prompt.get("review_assignment") else "root"
+        phase = phases[role]
+        phases[role] += 1
+        outputs = [
+            json.loads(item["output"])
+            for item in payload["input"]
+            if item.get("type") == "function_call_output"
+        ]
+        if role == "referee":
+            items = (
+                [tool_call("submit_review", VERDICT, "verdict-1")]
+                if phase == 0
+                else [message("Reviewed.")]
+            )
+        else:
+            items = root_steps(phase, outputs)
+        return httpx.Response(200, json=response(items, response_id=f"{role}-{phase}"))
+
+    return route, phases
+
+
+VERDICT = {"verdict": "sound", "summary": "Each step checks out.", "objections": []}
+
+
+async def test_runner_selects_and_executes_referee_requested_by_own_agent(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            return [tool_call("commons_node", lemma_args(), "create-1")]
+        if phase == 1:
+            node_id = outputs[0]["id"]
+            request = {"action": "request_review", "node_id": node_id, "scope": "informal"}
+            return [tool_call("commons_node", request, "review-1")]
+        return [message("Root done.")]
+
+    route, phases = scripted_society_route(root_steps)
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    referees = [
+        task
+        for task in service.list_records("task", author, exp["id"])
+        if task.get("review_assignment")
+    ]
+    assert len(referees) == 1
+    referee = referees[0]
+    assert referee["review_assignment"]["requested_by"] == branches[0]["id"]
+    assert referee["delegated_from_task_id"] is None
+    assert service.get_record("task", referee["id"], author)["status"] == "completed"
+    assert phases == {"root": 3, "referee": 2}
+    assert report["status"] == "completed"
+    node = service.get_record("commons_node", referee["review_assignment"]["node_id"], author)
+    assert node["status"] == "refereed"
+
+
+async def test_synthesis_gate_opens_with_a_referee_lineage_present(lab, monkeypatch):
+    service, author, exp, branches, (alpha, _beta) = society_lab(lab)
+    service.configure_workforce(
+        exp["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=100, max_pending_tasks=50, synthesis_interval_posts=4
+        ),
+        OPERATOR,
+        "workforce",
+    )
+    node = service.create_node(
+        exp["id"],
+        NodeCreate(node_type="lemma", title="Trace lemma", statement="The trace is additive."),
+        alpha,
+        "node",
+    )
+    service.request_review(node["id"], "informal", alpha, "review")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    scheduled = []
+
+    def schedule(experiment_id, actor, key):
+        scheduled.append(experiment_id)
+        return {"scheduled": False}
+
+    monkeypatch.setattr(service, "schedule_research_synthesis", schedule)
+    route, phases = scripted_society_route(lambda phase, outputs: [message("Root done.")])
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert scheduled, "a platform referee lineage must not close the synthesis gate"
+    assert phases == {"root": 1, "referee": 2}
+    assert report["status"] == "completed"
+
+
+def test_referee_task_is_not_a_root_for_replan_policy(lab):
+    service, author, exp, _, (alpha, _beta) = society_lab(lab)
+    node = service.create_node(
+        exp["id"],
+        NodeCreate(node_type="lemma", title="Trace lemma", statement="The trace is additive."),
+        alpha,
+        "node",
+    )
+    requested = service.request_review(node["id"], "informal", alpha, "review")
+    with pytest.raises(HarnessError) as caught:
+        service.configure_root_replans(requested["review_task_id"], 1, OPERATOR, "replan")
+    assert caught.value.code == "ROOT_TASK_REQUIRED"
