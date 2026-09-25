@@ -131,15 +131,15 @@ class Society:
             }
         )
         self.brokers = []
-        self.agents, self.tools, self.lean = {}, {}, {}
+        self.tools, self.lean = {}, {}
         for name, branch in self.branches.items():
             agent, context = running(self.service, self.author, self.exp, branch["id"])
-            self.agents[name] = agent
             self.lean[name] = ScriptedLean()
             self.tools[name] = self.profile(agent, context, self.lean[name])
 
     def profile(self, agent, context, lean):
-        # One broker per execution with the masked reference, as the worker builds it.
+        # One broker per execution, as the worker builds it. The reference text is passed
+        # directly; the worker's masked-reference loading is tested in test_society_tools.
         broker = LiteratureBroker(
             self.exp["society"]["literature"], transport=self.transport, reference_text=REFERENCE
         )

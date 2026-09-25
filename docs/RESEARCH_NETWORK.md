@@ -95,6 +95,84 @@ it does not claim to have read the entire discussion or settle disagreement by v
 Automatic synthesis only runs when the finite supervisor owns all experiment roots.
 Operators can also call `schedule_research_synthesis` explicitly.
 
+## Research-society commons (S1)
+
+An experiment created with a `society` policy replaces free-form discussion with a
+shared blueprint (PLAN §2). The policy requires `sharing="ideas"`, and it is immutable
+after creation. Experiments without it keep everything above unchanged: the 63 legacy
+tools, the prompts and the delivery shapes.
+
+- **Nodes and edges.**
+  - The platform creates one `goal` node that mirrors the reviewed target. Agents
+    propose lemma, definition, conjecture, approach, tangent, obstacle, counterexample
+    and computation nodes. A tangent must be `motivated_by` another node.
+  - A node records its author branch and that branch's lab.
+  - Edges are `depends_on` (cycle-checked), `motivated_by`, `refutes`, `generalizes`,
+    `specializes` and `duplicates`.
+  - The frontier ranks open nodes by root path, waiting dependents, neglect and live
+    claims. The score is attention, never proof.
+- **Status ladder.** `informal` → `refereed` → `formally_stated` → `compiles_locally` →
+  `accepted`, with `abandoned` (the author, with a reason) and `refuted` as exits.
+  - Only platform code moves a node. A sound referee quorum makes it refereed. A
+    faithful fidelity review of a statement that elaborates makes it formally stated. A
+    complete platform compile of the node's exact Lean statement, using only standard
+    axioms, makes it compile locally. The independent receipt on the exact target
+    accepts the goal.
+  - Changing a Lean statement moves the node back down.
+  - In S1 no platform path refutes a node or accepts a non-root node.
+- **Claims.** A claim says "I am working on this". It expires after the policy TTL
+  (default 900 s) unless renewed by activity. Several branches may hold one claim, and
+  the frontier shows the count.
+- **Threads and digests.**
+  - Every node has a discussion thread. Authors, claimants, citers and dependents are
+    subscribed automatically, best-effort under the 100-subscription reader cap.
+  - Posts carry an abstract and a body that is retrieved on demand.
+  - The existing durable inbox delivers them, urgent items first: an objection to your
+    node, or a followed node becoming accepted or refuted.
+  - Status moves are posted by the platform.
+- **Referees.** `request_review` makes the platform create an isolated referee:
+  - a detached branch with no parent and no lab, marked `hat="referee"`;
+  - on a different model family when the experiment records one;
+  - unreachable by direct message or delegation from other branches.
+
+  The referee submits one verdict. Negative verdicts stay on the thread as objections.
+- **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
+  (`lab="new"`), up to `lab_size_max`. `message(to="lab")` fans out to the lab. Direct
+  messages across labs are refused unless the policy allows them, so cross-lab
+  discourse goes through the commons.
+
+Society workers get the consolidated profile in
+`src/physharness/orchestration/society_tools.py`. The widest catalog has 25 tools:
+
+| Group | Tools |
+|---|---|
+| Workspace and computation | `shell`, `read_file`, `write_file`, `run_computation` |
+| Lean | `lean_check`, `lean_sketch` |
+| Library and literature | `search_library`, `read_source`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
+| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `inbox` |
+| Society | `recruit`, `message`, `wait` |
+| Evidence | `submit_for_verification`, `verification_status` |
+| Memory and skills | `notebook`, `load_skill` |
+| Task-specific | `return_result` (joined children), `submit_review` (referee tasks) |
+
+The prompt carries the constitution (community norms and an optional playbook), the
+frontier, the lab roster and the agent's claimed nodes. Optional check-ins and
+stagnation nudges are switched per campaign. The finite supervisor runs the referee
+tasks its own lineages request, and synthesis tasks that have no parent branch.
+
+Operators prepare a society arm from a run plan with a `society` block. See
+`work/society-s1/run-plan.example.json` and the
+[S1 live-run plan](../work/society-s1/RUN_PLAN.md).
+- A benchmark-mode plan needs a private `masked_reference` artifact.
+- The preflight blocks a benchmark run without it.
+- Society exports add `commons_node`, `commons_claim`, `commons_review` and
+  `literature_fetch` records and an `edges` list.
+- `python tools/society_metrics.py <export>` reports the PLAN §9 metrics from an export.
+
+No live run has used the society profile yet. Its evidence is deterministic and
+mocked-provider tests, including a no-model end-to-end simulation
+(`tests/test_society_simulation.py`).
+
 ## Qualification boundary
 
 Protocol tests and mocked-provider replays test delivery, recovery, admission and

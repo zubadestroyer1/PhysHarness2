@@ -318,10 +318,8 @@ EXAMPLE_CHOICES = {
     ".target.formal_source_file": "Challenge.lean",
     ".target.environment_file": "environment.json",
     ".target.target_theorem": "target",
-    ".models[0].model": "family-a-test-model",
-    ".models[1].model": "family-a-test-model",
-    ".models[2].model": "family-b-test-model",
-    ".models[3].model": "family-b-test-model",
+    # Eight seeded roots, four per model family.
+    **{f".models[{i}].model": f"family-{'ab'[i // 4]}-test-model" for i in range(8)},
     ".budget.max_cost_usd": "480",
     ".budget.max_runtime_seconds": 14400,
     ".budget.max_tokens": 40000000,
@@ -341,7 +339,10 @@ def test_society_example_plan_validates_once_user_decisions_are_filled(lab, tmp_
     plan = RunPlan.model_validate(fill(example, dict(EXAMPLE_CHOICES)))
     assert plan.society is not None and plan.sharing == "ideas"
     assert plan.society.literature.mode == "benchmark"
-    assert {model.model for model in plan.models} == {"family-a-test-model", "family-b-test-model"}
+    assert [model.model for model in plan.models] == ["family-a-test-model"] * 4 + [
+        "family-b-test-model"
+    ] * 4
+    assert plan.budget.max_concurrency == 12
     service, actor, _ = lab
     source_files(tmp_path)
     prepared = prepare_run(service, actor, plan.model_copy(update={"project_id": "lab"}), tmp_path)

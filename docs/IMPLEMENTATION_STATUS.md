@@ -1,3 +1,82 @@
+## S1 research society — 2026-09-25
+
+**Status:** implemented, pending the final review. The society is opt-in: only
+experiments created with a `society` policy (which requires `sharing="ideas"`) behave
+differently. Legacy experiments keep their exact payloads, 63 tools, prompts, delivery
+shapes and exports; pinned digests guard each of these. The evidence is deterministic and
+mocked-provider tests only. **No live model run, VM, image build or E2B sandbox has
+exercised any society path, and no research-performance claim is made.** See the
+[S1 plan](superpowers/plans/2026-09-25-s1-research-society.md) and [PLAN.md](../PLAN.md) §7.
+
+What exists (Tasks 1–10):
+- **Commons.**
+  - Attributed nodes: a platform-created goal mirroring the reviewed target, plus lemma,
+    definition, conjecture, approach, tangent, obstacle, counterexample and computation
+    nodes, each in its author's lab.
+  - Typed edges with cycle checks, bounded query and read, and a transparent frontier
+    score.
+  - A status ladder that only platform code moves, apart from abandonment by the author.
+- **Discourse.**
+  - Expiring work claims; several branches may hold one node.
+  - A thread per node, with best-effort auto-subscriptions and bounded digests that put
+    urgent items first (objections to your node, and followed nodes becoming accepted or
+    refuted).
+- **Checks.**
+  - Referees are platform-created, parentless, lab-less branches, isolated from other
+    branches and assigned a different model family when one exists.
+  - Informal verdicts are sound, gaps or wrong; fidelity verdicts are faithful or
+    unfaithful. Ladder moves are bound to evidence: the review quorum, the platform's Lean
+    elaboration, and a complete local compile of the node's exact statement using only
+    standard axioms.
+  - Goal acceptance is persisted from the independent target receipt.
+- **Labs.** Membership is capped, lab broadcast exists, and direct messages across labs
+  are blocked by default.
+- **Toolkit.**
+  - A Lean session: a REPL daemon, an inline REPL on local_docker, or a one-shot fallback,
+    with automation on holes and sketch-goal extraction.
+  - `run_computation` with reproducibility records.
+  - A literature broker: arXiv, OpenAlex and allowlisted fetch, with a benchmark
+    blocklist and an overlap screen against the masked reference.
+  - Ten technique skills, a constitution, check-ins and stagnation nudges.
+  - The `workbench-v2` image **definition** (numerics and a pinned REPL). It is not built.
+- **Society tool profile.** Twenty-five tools in the widest case; the legacy tools remain
+  as adapters. The finite runner runs referee tasks, and synthesis tasks without a
+  parent branch.
+- **Task 10.**
+  - A no-model end-to-end simulation (three agents plus referees, through the tool
+    dispatchers).
+  - `tools/society_metrics.py` for the PLAN §9 metrics.
+  - Society exports now carry commons nodes, claims, reviews, literature fetches and
+    edges.
+  - `RunPlan` has an optional society policy, and the preflight blocks benchmark mode
+    without its masked reference.
+  - The [S1 live-run plan](../work/society-s1/RUN_PLAN.md) and an example society-arm
+    manifest.
+  - The simulation found one integration gap: nodes did not record their author's lab.
+    It is fixed, with a regression test.
+- **Tests.** The full suite passes 1,521 tests with 1 opt-in skip (1,258 before S1).
+  Ruff check and format are clean.
+
+Deferred by design:
+- node-level independent acceptance (the `accepted` status for non-root nodes);
+- the root fidelity ensemble before launch;
+- background computation jobs and Ray;
+- general web search, which needs a paid search API key;
+- the attention allocator with reserves, fresh-eyes reseeding, synthesizer and maintainer
+  agents, and an automated stagnation stop;
+- hierarchical budgets and model tiers.
+
+In S1, `refuted` has no platform path.
+
+Needs user approval before the live 8–16 agent comparison ([RUN_PLAN §8](../work/society-s1/RUN_PLAN.md#8-prerequisites-and-approvals)):
+- the budget;
+- the choice of target (candidates are proposed) and its masked reference;
+- the tool-matching design;
+- the two model families (both on the Responses runtime);
+- the workbench v2 rebuild and qualification (every `TODO(pin-at-rebuild)` resolved);
+- verifier bundle registration for the chosen target;
+- the choice between E2B and local_docker, and a larger VM for concurrency 12.
+
 ## Persistent-swarm hardening — 2026-09-25
 
 The four fix groups from the harder-target audit are implemented with deterministic regressions.
