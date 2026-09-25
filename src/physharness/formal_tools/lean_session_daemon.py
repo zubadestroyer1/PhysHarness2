@@ -47,9 +47,10 @@ EXTRACT_RESERVE_SECONDS = 0.5
 # panics on stderr); it bounds its own search, so it runs unwrapped.
 _UNWRAPPED = ("exact?",)
 SORRY_WARNING = re.compile(r"declaration uses ['`]sorry['`]")
-# A name may contain ' (Lean prints ``foo'`` as ``'foo''``); the fixed suffix ends it.
-_AXIOMS = re.compile(r"'([^\n]+?)' depends on axioms: \[([^\]]*)\]")
-_NO_AXIOMS = re.compile(r"'([^\n]+?)' does not depend on any axioms")
+# A name may contain ' (Lean prints ``foo'`` as ``'foo''``); the fixed suffix ends it. Each
+# report starts a line, and anchoring there keeps matching linear in lines full of primes.
+_AXIOMS = re.compile(r"(?m)^'([^\n]+?)' depends on axioms: \[([^\]]*)\]")
+_NO_AXIOMS = re.compile(r"(?m)^'([^\n]+?)' does not depend on any axioms")
 
 
 def split_header(source):

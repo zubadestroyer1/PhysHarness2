@@ -369,6 +369,23 @@ def test_parse_axioms_primed_names():
     }
 
 
+def test_parse_axioms_reads_only_reports_that_start_a_line():
+    assert daemon.parse_axioms("note: 'foo' does not depend on any axioms") == {}
+    assert daemon.parse_axioms("x 'foo'' depends on axioms: [propext]") == {}
+    assert daemon.parse_axioms("junk\n'foo' does not depend on any axioms") == {"foo": []}
+
+
+def test_parse_axioms_is_linear_in_primes():
+    primes = "'" * 64_000
+    for text in (primes, "'thm' depends on axioms: [a" + primes + "]"):
+        start = time.perf_counter()
+        daemon.parse_axioms(text)
+        assert time.perf_counter() - start < 1.0
+    assert daemon.parse_axioms("'thm' depends on axioms: [a" + primes + "]") == {
+        "thm": ["a" + primes]
+    }
+
+
 def test_daemon_is_packaged_bounded_and_matches_candidates():
     text = resources.files("physharness.formal_tools").joinpath("lean_session_daemon.py")
     data = text.read_bytes()
