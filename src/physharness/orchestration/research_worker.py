@@ -2250,6 +2250,18 @@ class ResearchTeamRunner:
                             # synthesis branch has a parent (a society sample may have none).
                             scheduled_synthesis_ids.add(synthesis["task"]["id"])
                             all_tasks = list(self._records("task", actor, experiment["id"]))
+                if experiment.get("society"):
+                    # Adopt queued parentless synthesis left by a crashed or timed-out run:
+                    # while one stays queued, schedule_research_synthesis reports it as
+                    # outstanding and no further synthesis can start.
+                    scheduled_synthesis_ids.update(
+                        task["id"]
+                        for task in all_tasks
+                        if task.get("synthesis") is True
+                        and task["status"] == "queued"
+                        and task["branch_id"] in branch_parents
+                        and branch_parents[task["branch_id"]] is None
+                    )
                 selected = selected_tasks(all_tasks)
                 if accepted:
                     for queued in selected:
