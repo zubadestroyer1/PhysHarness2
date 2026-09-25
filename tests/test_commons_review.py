@@ -476,6 +476,7 @@ def test_sound_review_referees_node_and_posts_status(lab):
     updated = service.get_record("commons_node", node["id"], alpha)
     assert updated["status"] == "refereed"
     assert updated["status_evidence"]["review_ids"] == [review["id"]]
+    assert updated["status_evidence"]["counts"] == {"sound": 1, "gaps": 0, "wrong": 0}
     (item,) = drain(service, exp["id"], alpha)["items"]
     assert item["attributed_to"] == PLATFORM and item["post_kind"] == "update"
     assert item["excerpt"].startswith("Status informal → refereed")
@@ -507,6 +508,61 @@ def test_quorum_two_requires_two_sound_reviews(lab):
     for index, verdict in enumerate(("wrong", "sound", "sound")):
         requested = service.request_review(other["id"], "informal", beta, f"o-{index}")
         assert submit(service, requested, exp, verdict)["node_status"] == "informal"
+
+
+def rewrite_statement(service, node_id, statement):
+    """Stand-in for a revised informal statement (no API edits statements yet)."""
+    with service.db.transaction() as session:
+        service._replace(session, session.get(RecordRow, node_id), {"statement": statement})
+
+
+def verdicts(service, experiment, node, requester, scope, *answers):
+    """Request and submit one review per answer; return the node status after each."""
+    statuses = []
+    for answer in answers:
+        requested = service.request_review(
+            node["id"], scope, requester, f"{scope}-{node['id']}-{len(statuses)}-{answer}"
+        )
+        statuses.append(submit(service, requested, experiment, answer)["node_status"])
+    return statuses
+
+
+def test_sound_reviews_must_outnumber_negative_reviews(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)  # referee_quorum = 1
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    assert verdicts(service, exp, node, beta, "informal", "gaps", "sound") == [
+        "informal",
+        "informal",
+    ]
+    # A second sound verdict outweighs the gap report.
+    assert verdicts(service, exp, node, beta, "informal", "sound") == ["refereed"]
+    evidence = service.get_record("commons_node", node["id"], alpha)["status_evidence"]
+    assert evidence["counts"] == {"sound": 2, "gaps": 1, "wrong": 0}
+    assert len(evidence["review_ids"]) == 2
+    # Fidelity follows the same rule: faithful verdicts must outnumber unfaithful ones.
+    other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
+    formalize(service, other, alpha, key="lean-other")
+    assert verdicts(service, exp, other, beta, "fidelity", "unfaithful", "faithful") == [
+        "informal",
+        "informal",
+    ]
+    assert verdicts(service, exp, other, beta, "fidelity", "faithful") == ["formally_stated"]
+    evidence = service.get_record("commons_node", other["id"], alpha)["status_evidence"]
+    assert evidence["counts"] == {"faithful": 2, "unfaithful": 1}
+
+
+def test_statement_change_resets_review_counts(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    assert verdicts(service, exp, node, beta, "informal", "wrong") == ["informal"]
+    rewrite_statement(service, node["id"], "The trace is additive on finite sums.")
+    # The standing "wrong" judged the old statement, so it no longer counts.
+    assert verdicts(service, exp, node, beta, "informal", "sound") == ["refereed"]
+    other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
+    formalize(service, other, alpha, key="lean-other")
+    assert verdicts(service, exp, other, beta, "fidelity", "unfaithful") == ["informal"]
+    formalize(service, other, alpha, statement="∀ n : Nat, 0 + n = n", key="lean-other-2")
+    assert verdicts(service, exp, other, beta, "fidelity", "faithful") == ["formally_stated"]
 
 
 def test_negative_review_posts_objection_keeps_status(lab):
@@ -571,7 +627,8 @@ def test_faithful_review_formally_states(lab):
     stored = service.get_record("commons_node", node["id"], alpha)
     assert stored["status"] == "formally_stated"
     assert stored["status_evidence"] == {
-        "review_id": review["id"],
+        "review_ids": [review["id"]],
+        "counts": {"faithful": 1, "unfaithful": 0},
         "lean_statement_sha256": lean["lean_statement_sha256"],
     }
     # A faithful verdict needs a statement that still elaborates.
@@ -706,13 +763,14 @@ def test_set_lean_statement_authority_and_bounds(lab, clock):
 def test_record_local_compile_requires_formal_statement_and_completion(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
-    formalize(service, node, alpha)
-    early = service.record_local_compile(node["id"], "c" * 64, COMPILED, beta, "early")
+    lean = formalize(service, node, alpha)
+    built = {**COMPILED, "lean_statement_sha256": lean["lean_statement_sha256"]}
+    early = service.record_local_compile(node["id"], "c" * 64, built, beta, "early")
     assert early["recorded"] is False and "formally_stated" in early["reason"]
     set_status(service, node["id"], "formally_stated")
     for key, result in (
-        ("incomplete", {**COMPILED, "complete": False}),
-        ("missing", {**COMPILED, "statement_found": False}),
+        ("incomplete", {**built, "complete": False}),
+        ("missing", {**built, "statement_found": False}),
     ):
         outcome = service.record_local_compile(node["id"], "c" * 64, result, beta, key)
         assert outcome["recorded"] is False and outcome["reason"]
@@ -720,18 +778,20 @@ def test_record_local_compile_requires_formal_statement_and_completion(lab):
             "formally_stated"
         )
     for source, result in (
-        ("short", COMPILED),
-        ("c" * 64, {**COMPILED, "complete": "yes"}),
-        ("c" * 64, {**COMPILED, "extra": 1}),
-        ("c" * 64, {k: v for k, v in COMPILED.items() if k != "axioms"}),
-        ("c" * 64, {**COMPILED, "axioms": {"x": "a" * 9000}}),
+        ("short", built),
+        ("c" * 64, {**built, "complete": "yes"}),
+        ("c" * 64, {**built, "extra": 1}),
+        ("c" * 64, {k: v for k, v in built.items() if k != "axioms"}),
+        ("c" * 64, {**built, "axioms": {"x": "a" * 9000}}),
+        ("c" * 64, COMPILED),  # no statement digest
+        ("c" * 64, {**built, "lean_statement_sha256": "short"}),
     ):
         error = rejected(
             lambda s=source, r=result: service.record_local_compile(node["id"], s, r, beta, "bad")
         )
         assert (error.code, error.status) == ("INVALID_COMPILE_RESULT", 422)
     drain(service, exp["id"], alpha)
-    compiled = service.record_local_compile(node["id"], "c" * 64, COMPILED, beta, "done")
+    compiled = service.record_local_compile(node["id"], "c" * 64, built, beta, "done")
     assert compiled["recorded"] is True and compiled["status"] == "compiles_locally"
     stored = service.get_record("commons_node", node["id"], alpha)
     assert stored["status"] == "compiles_locally"
@@ -743,8 +803,30 @@ def test_record_local_compile_requires_formal_statement_and_completion(lab):
     (item,) = drain(service, exp["id"], alpha)["items"]
     assert item["excerpt"].startswith("Status formally_stated → compiles_locally")
     # A second compile of a compiled node records nothing.
-    again = service.record_local_compile(node["id"], "d" * 64, COMPILED, beta, "again")
+    again = service.record_local_compile(node["id"], "d" * 64, built, beta, "again")
     assert again["recorded"] is False
+    # The goal has no node Lean statement, so no compile can bind to it.
+    goal = service.ensure_goal_node(exp["id"], author)
+    unbound = service.record_local_compile(goal["id"], "c" * 64, built, beta, "goal")
+    assert unbound["recorded"] is False
+
+
+def test_local_compile_after_statement_change_not_recorded(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    compiled_statement = formalize(service, node, alpha)["lean_statement_sha256"]
+    set_status(service, node["id"], "formally_stated")
+    # The platform compiled the old statement; meanwhile the author replaced it and the
+    # new statement was formally stated again.
+    current = formalize(service, node, alpha, statement="∀ n : Nat, 0 + n = n")
+    assert current["status"] == "informal"
+    set_status(service, node["id"], "formally_stated")
+    stale = {**COMPILED, "lean_statement_sha256": compiled_statement}
+    outcome = service.record_local_compile(node["id"], "c" * 64, stale, beta, "stale")
+    assert outcome == {"recorded": False, "reason": "statement_changed"}
+    assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
+    fresh = {**COMPILED, "lean_statement_sha256": current["lean_statement_sha256"]}
+    assert service.record_local_compile(node["id"], "c" * 64, fresh, beta, "fresh")["recorded"]
 
 
 # Workforce -----------------------------------------------------------------
