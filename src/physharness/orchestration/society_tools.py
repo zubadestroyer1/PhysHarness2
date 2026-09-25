@@ -16,6 +16,7 @@ fatal schema failure. Arrays keep ``maxItems``.
 
 import asyncio
 import inspect
+import logging
 from contextlib import contextmanager
 
 from pydantic import ValidationError
@@ -30,7 +31,7 @@ from ..commons_models import (
     NodeCreate,
     NodePostCreate,
 )
-from ..commons_review import REVIEW_VERDICTS
+from ..commons_review import REVIEW_VERDICTS, is_referee_task
 from ..domain import Principal
 from ..errors import HarnessError
 from ..execution import ToolDispatcher
@@ -47,6 +48,9 @@ from .lean_session import (
     top_level_declarations,
 )
 from .research_worker import FATAL_TOOL_CODES, tool_registrar, worker_check
+from .society_prompt import REFEREE_EXCLUDED_SKILLS
+
+log = logging.getLogger(__name__)
 
 # Every society tool. A worker's widest catalog (a joined child task with a workspace and
 # literature) has all but submit_review; a referee task gets REFEREE_TOOL_NAMES at most.
@@ -123,6 +127,7 @@ MAX_EVIDENCE = 50
 MAX_WAIT_IDS = 100
 FOCUS_EXCERPT = 2000
 MAX_SKETCH_MESSAGES = 5
+MAX_TOOL_NAME = 100  # Of a model-supplied name echoed in a rejection.
 # A local compile counts only on Lean's standard axioms; anything else (sorryAx, an
 # added axiom, Lean.ofReduceBool from native_decide) leaves the node where it is.
 STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
@@ -469,6 +474,29 @@ def _recruit_objective(brief, focus, hat):
 # The profile ------------------------------------------------------------------------------
 
 
+class SocietyDispatcher(ToolDispatcher):
+    """Answers a tool name outside the profile with a recoverable rejection.
+
+    Models do emit unregistered names (a referee calling ``wait``, or
+    ``multi_tool_use.parallel``); the base dispatcher's fatal error would end the runtime.
+    """
+
+    async def dispatch(self, name, arguments, operation_id):
+        if name not in self._tools:
+            error = HarnessError(
+                "TOOL_UNAVAILABLE",
+                f"Tool {name[:MAX_TOOL_NAME]!r} is not in this agent's tool profile.",
+                remediation="Call one of the tools in details.available_tools.",
+                details={"available_tools": sorted(self._tools)},
+                operation_id=operation_id,
+            )
+            log.warning(
+                "Research tool rejected: %s", error.code, extra={"operation_id": operation_id}
+            )
+            return error.envelope()
+        return await super().dispatch(name, arguments, operation_id)
+
+
 def society_tools(
     service, agent, branch_id, *, task_context, workspace_tools, literature=None
 ) -> ToolDispatcher:
@@ -479,8 +507,8 @@ def society_tools(
         raise HarnessError("SOCIETY_DISABLED", "This experiment has no research-society policy.")
     tool_task = service.get_record("task", task_context["task_id"], agent) if task_context else None
     assignment = tool_task.get("review_assignment") if tool_task else None
-    referee = bool(task_context) and isinstance(assignment, dict)
-    dispatcher = ToolDispatcher()
+    referee = bool(task_context) and is_referee_task(tool_task)
+    dispatcher = SocietyDispatcher()
     register = tool_registrar(dispatcher, service, agent, task_context)
     check_worker = worker_check(service, agent, task_context)
     experiment_id = agent.experiment_id
@@ -1307,9 +1335,11 @@ def society_tools(
         },
     )
     if policy["scaffolding"]["skills"]:
+        excluded = REFEREE_EXCLUDED_SKILLS if referee else ()
+        skills = [entry["name"] for entry in list_skills() if entry["name"] not in excluded]
         add(
             "load_skill",
-            {"name": choice([entry["name"] for entry in list_skills()], "The technique note.")},
+            {"name": choice(skills, "The technique note.")},
             lambda a, k: load_skill(a["name"]),
             "Load an optional technique note (method, pitfalls, Lean hints).",
         )

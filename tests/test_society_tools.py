@@ -31,7 +31,7 @@ from physharness.domain import (
     new_id,
 )
 from physharness.errors import HarnessError
-from physharness.execution import ResponsesRuntime, RuntimeLimits
+from physharness.execution import ExecutionError, ResponsesRuntime, RuntimeLimits
 from physharness.execution.stagnation import observe
 from physharness.knowledge.literature import LiteratureBroker
 from physharness.orchestration import research_worker
@@ -44,6 +44,9 @@ from physharness.orchestration.research_worker import (
 from physharness.orchestration.society_prompt import (
     checkin_note,
     constitution,
+    referee_checkin_note,
+    referee_constitution,
+    referee_stagnation_suggestions,
     stagnation_suggestions,
 )
 from physharness.orchestration.society_tools import (
@@ -535,6 +538,15 @@ async def test_overlong_and_invalid_arguments_are_recoverable_rejections():
     assert lean["error"]["code"] == "LEAN_UNAVAILABLE"
 
 
+def mentioned_tools(texts):
+    return {
+        token
+        for value in texts
+        for token in TOKEN.findall(value)
+        if len(token.split("_")[0]) > 1  # u_n, x_i and similar are mathematics
+    }
+
+
 def test_note_and_prompt_tool_names_exist_in_catalog():
     required = {
         "commons_post",
@@ -559,13 +571,63 @@ def test_note_and_prompt_tool_names_exist_in_catalog():
     for entry in list_skills():
         body = load_skill(entry["name"])["text"].split("---", 2)[2]
         texts.append(re.sub(r"`[^`]*`", "", body))  # Lean names sit in backticks
-    mentioned = {
-        token
-        for value in texts
-        for token in TOKEN.findall(value)
-        if len(token.split("_")[0]) > 1  # u_n, x_i and similar are mathematics
-    }
+    mentioned = mentioned_tools(texts)
     assert mentioned and mentioned <= set(SOCIETY_TOOL_NAMES), mentioned - set(SOCIETY_TOOL_NAMES)
+
+
+# Tools every referee profile has; workspace tools need a workspace, literature its policy.
+REFEREE_TEXT_TOOLS = {
+    "commons_query",
+    "commons_read",
+    "commons_post",
+    "inbox",
+    "verification_status",
+    "notebook",
+    "load_skill",
+    "submit_review",
+}
+
+
+@pytest.mark.parametrize("literature_enabled", [True, False])
+def test_referee_texts_name_only_referee_tools(literature_enabled):
+    assert REFEREE_TEXT_TOOLS <= set(REFEREE_TOOLS)
+    allowed = REFEREE_TEXT_TOOLS | (
+        {"search_literature", "fetch_source"} if literature_enabled else set()
+    )
+    policy = policy_dict()
+    constitution_text = referee_constitution(policy, literature_enabled=literature_enabled)
+    texts = [
+        constitution_text,
+        referee_checkin_note(),
+        *referee_stagnation_suggestions(literature_enabled=literature_enabled),
+    ]
+    mentioned = mentioned_tools(texts)
+    assert "submit_review" in mentioned and mentioned <= allowed, mentioned - allowed
+    # Every technique note offered to a referee names only tools a referee profile can have.
+    [skills] = [line for line in constitution_text.splitlines() if "load_skill" in line]
+    listed = skills.split(": ", 1)[1].split(", ")
+    assert listed == [
+        entry["name"] for entry in list_skills() if entry["name"] != "lean-sketch-then-fill"
+    ]
+    for name in listed:
+        body = load_skill(name)["text"].split("---", 2)[2]
+        named = mentioned_tools([re.sub(r"`[^`]*`", "", body)])  # Lean names sit in backticks
+        assert named <= set(REFEREE_TOOLS), (name, named - set(REFEREE_TOOLS))
+
+
+def test_referee_load_skill_offers_only_the_listed_notes():
+    [skills] = [
+        line
+        for line in referee_constitution(policy_dict(), literature_enabled=True).splitlines()
+        if "load_skill" in line
+    ]
+    listed = skills.split(": ", 1)[1].split(", ")
+
+    def offered(dispatcher):
+        return definition(dispatcher, "load_skill")["parameters"]["properties"]["name"]["enum"]
+
+    assert offered(referee_catalog()) == listed
+    assert offered(widest()) == [entry["name"] for entry in list_skills()]
 
 
 def test_society_reads_count_toward_stagnation():
@@ -578,6 +640,19 @@ def test_society_reads_count_toward_stagnation():
     shell = {"argv": ["cat", "notes.txt"], "cwd": ".", "timeout_seconds": 5}
     signals = [observe(state, "shell", shell, {"exit_code": 0, "stdout": "x"}) for _ in range(4)]
     assert signals[-1] == "stagnation_warning"
+
+
+async def test_repeated_unknown_tool_calls_trip_the_stagnation_detector():
+    dispatcher, state, signals = referee_catalog(), {}, []
+    for _ in range(8):
+        rejected = await call(dispatcher, "wait", {"for": "tasks"})
+        signals.append(observe(state, "wait", {"for": "tasks"}, rejected))
+    assert signals == [None] * 3 + ["stagnation_warning"] + [None] * 3 + ["recovery_requested"]
+    # Other rejections still neither count as repeated reads nor as progress.
+    state = {}
+    invalid = {"error": {"code": "INVALID_ARGUMENTS", "message": "bad"}}
+    assert [observe(state, "commons_read", {}, invalid) for _ in range(8)] == [None] * 8
+    assert state == {}
 
 
 async def test_referee_task_gets_submit_review(lab):
@@ -612,6 +687,69 @@ async def test_referee_task_gets_submit_review(lab):
     assert review["verdict"] == "sound" and review["node_status"] == "refereed"
     worker, work_context = running(service, author, exp, branches[0]["id"])
     assert "submit_review" not in names(profile(service, worker, work_context))
+
+
+async def test_referee_calling_an_absent_tool_still_submits_its_review(lab):
+    """Ruling R28: an unregistered tool name is a recoverable rejection; the review lands."""
+    service, author, exp, _branches, (alpha, beta) = society_lab(lab)
+    node = service.create_node(
+        exp["id"],
+        NodeCreate(node_type="lemma", title="Trace lemma", statement="The trace is additive."),
+        alpha,
+        "node",
+    )
+    requested = service.request_review(node["id"], "informal", beta, "review")
+
+    def script(phase, payload):
+        if phase == 0:
+            return [tool_call("wait", {"for": "tasks", "task_ids": []}, "wait-1")]
+        if phase == 1:
+            return [tool_call("submit_review", VERDICT, "verdict-1")]
+        return [message("Reviewed.")]
+
+    result, seen = await run_worker(service, author, requested["review_task_id"], script)
+    assert result["status"] == "completed"
+    rejected = next(
+        json.loads(item["output"])
+        for item in seen["payloads"][1]["input"]
+        if item.get("type") == "function_call_output"
+    )
+    assert rejected["error"]["code"] == "TOOL_UNAVAILABLE"
+    reviews = service.list_records("commons_review", author, exp["id"])
+    assert [review["task_id"] for review in reviews] == [requested["review_task_id"]]
+    assert service.get_record("commons_node", node["id"], author)["status"] == "refereed"
+
+
+async def test_society_profiles_answer_unknown_tool_names_with_an_envelope(caplog):
+    for dispatcher, unknown in (
+        (referee_catalog(), "wait"),
+        (referee_catalog(), "multi_tool_use.parallel"),
+        (widest(), "multi_tool_use.parallel"),
+        (widest(), "submit_review"),
+    ):
+        rejected = await call(dispatcher, unknown, {"anything": 1})
+        assert set(rejected) == {"error"}
+        assert rejected["error"]["code"] == "TOOL_UNAVAILABLE"
+        assert unknown in rejected["error"]["message"]
+        assert rejected["error"]["details"] == {"available_tools": sorted(names(dispatcher))}
+    assert "Research tool rejected: TOOL_UNAVAILABLE" in caplog.text
+    # The model-supplied name is clipped; registered names still dispatch normally.
+    clipped = (await call(widest(), "x" * 500, {}))["error"]["message"]
+    assert "x" * 100 in clipped and "x" * 101 not in clipped
+    unleased = society_tools(
+        CatalogService(policy_dict()),
+        SimpleNamespace(experiment_id="e", project_id="lab"),
+        "b",
+        task_context=None,
+        workspace_tools=None,
+    )
+    known = await call(unleased, "load_skill", {"name": "sos-certificates"})
+    assert known["name"] == "sos-certificates"
+    # The legacy profile keeps the fatal error.
+    legacy = research_tools(CatalogOnlyService("none"), SimpleNamespace(experiment_id="e"), "b")
+    with pytest.raises(ExecutionError) as failure:
+        await legacy.dispatch("multi_tool_use.parallel", {}, "op")
+    assert failure.value.code == "TOOL_UNAVAILABLE"
 
 
 async def test_commons_node_actions_dispatch(lab):
@@ -1004,6 +1142,53 @@ async def test_worker_society_prompt_contains_constitution_and_frontier(lab):
     ]
     sessions = service.list_records("session", author, exp["id"])
     assert sessions[0]["tool_definition_digest"] == digest_json(kwargs["dispatcher"].definitions)
+
+
+async def test_worker_referee_prompt_uses_referee_texts(lab):
+    scaffolding = ScaffoldingPolicy(checkin_every_turns=2)
+    service, author, exp, branches, (alpha, beta) = society_lab(lab, scaffolding=scaffolding)
+    node = service.create_node(
+        exp["id"],
+        NodeCreate(node_type="lemma", title="Trace lemma", statement="The trace is additive."),
+        alpha,
+        "node",
+    )
+    requested = service.request_review(node["id"], "informal", beta, "review")
+    result, seen = await run_worker(service, author, requested["review_task_id"])
+    assert result["status"] == "completed"
+    task = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Society objective"), author, "task"
+    )
+    _, worker = await run_worker(service, author, task["id"])
+    prompt = json.loads(seen["payloads"][0]["input"][0]["content"])
+    anchor = json.loads(seen["anchors"][0])
+    for view, worker_view in (
+        (prompt, json.loads(worker["payloads"][0]["input"][0]["content"])),
+        (anchor, json.loads(worker["anchors"][0])),
+    ):
+        # Only the texts differ: every other key of the context stays.
+        assert set(view) == set(worker_view)
+        assert set(view["capacity_guidance"]) == set(worker_view["capacity_guidance"])
+        assert view["instructions"] == referee_constitution(
+            exp["society"], literature_enabled=False
+        )
+        assert view["review_assignment"]["node_id"] == node["id"]
+        note = view["capacity_guidance"]["note"]
+        assert note and not any(word in note for word in ("wait", "recruit", "commons_claim"))
+        # A referee delegates nothing, so it has no delegated task to wait for.
+        assert view["capacity_guidance"]["optional_wait_for_delegated_task"] is False
+        assert worker_view["capacity_guidance"]["optional_wait_for_delegated_task"] is True
+    kwargs = seen["kwargs"]
+    assert kwargs["stagnation_suggestions"] == referee_stagnation_suggestions(
+        literature_enabled=False
+    )
+    assert [await kwargs["turn_note"](turns) for turns in (0, 1, 2, 3, 4)] == [
+        None,
+        None,
+        referee_checkin_note(),
+        None,
+        referee_checkin_note(),
+    ]
 
 
 @pytest.mark.parametrize("kind", ["masked_reference", "note"])

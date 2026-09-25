@@ -74,6 +74,14 @@ REFEREE_OBJECTIVE = {
 }
 
 
+def is_referee_task(task):
+    """Whether a task payload is a platform-assigned referee task.
+
+    The one rule for both the referee tool profile and the referee prompt texts.
+    """
+    return isinstance(task.get("review_assignment"), dict)
+
+
 def statement_digest(node):
     """Digest of what an informal referee judges: the statement and its assumptions."""
     return digest_json({"statement": node["statement"], "assumptions": node["assumptions"]})
