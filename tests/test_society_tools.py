@@ -538,6 +538,15 @@ async def test_overlong_and_invalid_arguments_are_recoverable_rejections():
     assert lean["error"]["code"] == "LEAN_UNAVAILABLE"
 
 
+def mentioned_tools(texts):
+    return {
+        token
+        for value in texts
+        for token in TOKEN.findall(value)
+        if len(token.split("_")[0]) > 1  # u_n, x_i and similar are mathematics
+    }
+
+
 def test_note_and_prompt_tool_names_exist_in_catalog():
     required = {
         "commons_post",
@@ -562,22 +571,8 @@ def test_note_and_prompt_tool_names_exist_in_catalog():
     for entry in list_skills():
         body = load_skill(entry["name"])["text"].split("---", 2)[2]
         texts.append(re.sub(r"`[^`]*`", "", body))  # Lean names sit in backticks
-    mentioned = {
-        token
-        for value in texts
-        for token in TOKEN.findall(value)
-        if len(token.split("_")[0]) > 1  # u_n, x_i and similar are mathematics
-    }
+    mentioned = mentioned_tools(texts)
     assert mentioned and mentioned <= set(SOCIETY_TOOL_NAMES), mentioned - set(SOCIETY_TOOL_NAMES)
-
-
-def mentioned_tools(texts):
-    return {
-        token
-        for value in texts
-        for token in TOKEN.findall(value)
-        if len(token.split("_")[0]) > 1  # u_n, x_i and similar are mathematics
-    }
 
 
 # Tools every referee profile has; workspace tools need a workspace, literature its policy.
@@ -618,6 +613,21 @@ def test_referee_texts_name_only_referee_tools(literature_enabled):
         body = load_skill(name)["text"].split("---", 2)[2]
         named = mentioned_tools([re.sub(r"`[^`]*`", "", body)])  # Lean names sit in backticks
         assert named <= set(REFEREE_TOOLS), (name, named - set(REFEREE_TOOLS))
+
+
+def test_referee_load_skill_offers_only_the_listed_notes():
+    [skills] = [
+        line
+        for line in referee_constitution(policy_dict(), literature_enabled=True).splitlines()
+        if "load_skill" in line
+    ]
+    listed = skills.split(": ", 1)[1].split(", ")
+
+    def offered(dispatcher):
+        return definition(dispatcher, "load_skill")["parameters"]["properties"]["name"]["enum"]
+
+    assert offered(referee_catalog()) == listed
+    assert offered(widest()) == [entry["name"] for entry in list_skills()]
 
 
 def test_society_reads_count_toward_stagnation():
@@ -1165,6 +1175,9 @@ async def test_worker_referee_prompt_uses_referee_texts(lab):
         assert view["review_assignment"]["node_id"] == node["id"]
         note = view["capacity_guidance"]["note"]
         assert note and not any(word in note for word in ("wait", "recruit", "commons_claim"))
+        # A referee delegates nothing, so it has no delegated task to wait for.
+        assert view["capacity_guidance"]["optional_wait_for_delegated_task"] is False
+        assert worker_view["capacity_guidance"]["optional_wait_for_delegated_task"] is True
     kwargs = seen["kwargs"]
     assert kwargs["stagnation_suggestions"] == referee_stagnation_suggestions(
         literature_enabled=False
