@@ -14,7 +14,7 @@ from test_core import setup_experiment
 from test_execution_responses import message
 from test_literature import REFERENCE, REFERENCE_WORDS, FakeTransport, ok, page
 from test_research_loop_integration import PRICES, response, tool_call
-from test_sharing import approaches
+from test_sharing import approaches, artifact
 from test_workspace_service import FakeVM
 
 from physharness import commons_discourse
@@ -210,6 +210,7 @@ class FakeLean:
 
     def __init__(self, *, complete=True, sketch=None, elaborates=None):
         self.complete, self.sketch = complete, sketch
+        self.axioms = {"trace_add": ["propext"], "other": ["Classical.choice"]}
         self.elaborates = elaborates or (lambda header, name, signature: True)
         self.calls = []
 
@@ -221,7 +222,7 @@ class FakeLean:
             "complete": self.complete,
             "messages": [],
             "holes": [],
-            "axioms": {"trace_add": ["propext"], "other": ["Classical.choice"]},
+            "axioms": self.axioms,
             "source_sha256": sha(source),
             "proof_status": "not_accepted",
             "automation_available": True,
@@ -249,11 +250,13 @@ class FakeLean:
 class FakeWorkspace:
     """Only what the society profile calls; every VM call is recorded."""
 
-    def __init__(self, lean=None):
+    def __init__(self, lean=None, provider=None):
         self.lean = lean or FakeLean()
         self.policy = SimpleNamespace(
             timeout_seconds=600, template_id="fake", environment_digest="a" * 64
         )
+        if provider is not None:
+            self.broker = SimpleNamespace(provider_spec={"provider": provider})
         self.calls = []
 
     def lean_session(self):
@@ -264,7 +267,11 @@ class FakeWorkspace:
         return {"exit_code": 0, "stdout": "", "stderr": ""}
 
     async def run(self, arguments, operation_id):
-        return await self._record("run", arguments)
+        result = await self._record("run", arguments)
+        if arguments["argv"][:2] == ["python3", "-c"]:  # run_computation's version probe
+            observed = {"script_sha256": "d" * 64, "python": "3.12.0", "packages": {}}
+            result = {**result, "stdout": json.dumps(observed)}
+        return result
 
     async def read(self, arguments, operation_id):
         return await self._record("read", arguments)
@@ -1275,4 +1282,206 @@ async def test_runner_runs_parentless_synthesis_and_gate_reopens(lab, monkeypatc
     assert calls[0]["scheduled"] is True
     # After the parentless synthesis finished, the gate opened again for later synthesis.
     assert any(call["synthesis_before"] == ["completed"] for call in calls[1:])
+    assert report["status"] == "completed"
+
+
+# Fix round 1 (ruling R23) ----------------------------------------------------------------
+
+
+async def test_write_file_respects_e2b_file_limit(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    workspace = FakeWorkspace(provider="e2b")
+    tools = profile(service, alpha, context, workspace=workspace)
+    content = definition(tools, "write_file")["parameters"]["properties"]["content"]
+    assert "32,768 UTF-8 bytes" in content["description"]
+    too_big = "é" * 16_385  # 32,770 UTF-8 bytes in fewer than 32,768 characters
+    rejected = await call(tools, "write_file", {"path": "big.txt", "content": too_big})
+    assert rejected["error"]["code"] == "INVALID_ARGUMENTS"
+    assert "32,768 bytes per file" in rejected["error"]["message"]
+    assert workspace.calls == []
+    fits = await call(tools, "write_file", {"path": "ok.txt", "content": "x" * 32_768})
+    assert "error" not in fits and workspace.calls[-1][0] == "write"
+    # Other providers keep the generic cap.
+    docker = profile(service, alpha, context, workspace=FakeWorkspace(provider="local_docker"))
+    generic = definition(docker, "write_file")["parameters"]["properties"]["content"]
+    assert "At most 1,000,000 characters" in generic["description"]
+
+
+async def test_lean_sketch_refuses_closed_parent_before_creating_nodes(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    lean = FakeLean(sketch={"backend": "repl", "ok": True, "header": "", "holes": []})
+    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean))
+    parent = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "abandon", "node_id": parent["id"], "reason": "Moot."}
+    )
+    before = service.query_nodes(exp["id"], alpha)["items"]
+    refused = await call(tools, "lean_sketch", {"source": "s", "parent_node_id": parent["id"]})
+    assert refused["error"]["code"] == "NODE_CLOSED"
+    assert lean.calls == [] and service.query_nodes(exp["id"], alpha)["items"] == before
+
+
+async def test_local_compile_requires_standard_axioms(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    workspace = FakeWorkspace()
+    tools = profile(service, alpha, context, workspace=workspace)
+    node = await call(tools, "commons_node", lemma_args(**LEAN))
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    set_status(service, node["id"], "formally_stated")
+    workspace.lean.axioms = {"trace_add": ["propext", "Lean.ofReduceBool", "sorryAx"]}
+    checked = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert checked["complete"] is True
+    assert checked["local_compile"] == {
+        "recorded": False,
+        "reason": "nonstandard_axioms",
+        "axioms": ["Lean.ofReduceBool", "sorryAx"],
+    }
+    assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
+    workspace.lean.axioms = {"trace_add": ["propext", "Classical.choice", "Quot.sound"]}
+    standard = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert standard["local_compile"]["recorded"] is True
+
+
+async def test_every_society_tool_dispatches_without_tool_failure(lab):
+    """Smoke: each tool no other test dispatches runs against the real service and fakes."""
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    workspace = FakeWorkspace()
+    tools = profile(service, alpha, context, workspace=workspace)
+    recruited = await call(tools, "recruit", {"brief": "Check the base case.", "title": "Base"})
+    child_task = service.get_record("task", recruited["task_id"], author)
+    child, child_context = running(service, author, exp, recruited["branch_id"], task=child_task)
+    child_tools = profile(service, child, child_context, workspace=FakeWorkspace())
+    source = artifact(service, alpha, "theorem target : (1 : Nat) = 1 := by rfl")
+    receipt = service.verify_candidate(exp["id"], source["id"], True, alpha, "receipt")
+    calls = [
+        (
+            tools,
+            "notebook",
+            {
+                "action": "write",
+                "approach": "Induct on n.",
+                "unresolved_obligations": ["Base case."],
+            },
+        ),
+        (tools, "notebook", {"action": "read"}),
+        (tools, "verification_status", {"receipt_id": receipt["id"], "wait_seconds": 0}),
+        (tools, "submit_for_verification", {"path": "Proof.lean", "sha256": "e" * 64}),
+        (tools, "load_skill", {"name": "sos-certificates"}),
+        (
+            tools,
+            "run_computation",
+            {"path": "calc.py", "args": ["3"], "timeout_seconds": 10, "seed": 7},
+        ),
+        (tools, "read_file", {"path": "calc.py", "offset": 0, "length": 100}),
+        (tools, "write_file", {"path": "calc.py", "content": "print(3)"}),
+        (tools, "search_library", {"query": "trace"}),
+        (tools, "read_source", {"path": "mathlib/Mathlib/Order/Basic.lean"}),
+        (
+            child_tools,
+            "return_result",
+            {
+                "evidence_status": "unverified",
+                "artifact_ids": [],
+                "unresolved_obligations": [],
+                "summary": "Holds.",
+                "execution_failure": None,
+            },
+        ),
+        (tools, "wait", {"for": "tasks", "ids": [recruited["task_id"]]}),
+    ]
+    results = {}
+    for dispatcher, name, arguments in calls:
+        result = await call(dispatcher, name, arguments)  # TOOL_FAILED would raise here
+        assert isinstance(result, dict) and "error" not in result, (name, result)
+        results[name] = result
+    assert results["verification_status"]["status"] == "queued"
+    assert results["run_computation"]["evidence_status"] == "numerical_evidence_not_proof"
+    assert results["load_skill"]["name"] == "sos-certificates"
+    assert results["return_result"]["summary"] == "Holds."
+    assert results["wait"]["intent"]["wait_task_ids"] == [recruited["task_id"]]
+    submitted = next(args for name, args in workspace.calls if name == "submit")
+    assert submitted["target_digest"] == exp["target_digest"]
+    assert set(results) | {"shell", "lean_check", "lean_sketch"} >= {
+        name
+        for name in names(tools)
+        if name
+        not in {
+            "commons_query",
+            "commons_read",
+            "commons_node",
+            "commons_post",
+            "commons_claim",
+            "inbox",
+            "recruit",
+            "message",
+        }
+    }
+
+
+async def test_runner_ignores_referee_requested_from_another_lineage(lab):
+    service, author, exp, branches, (_alpha, beta) = society_lab(lab)
+    node = service.create_node(
+        exp["id"],
+        NodeCreate(node_type="lemma", title="Beta lemma", statement="Beta holds."),
+        beta,
+        "node",
+    )
+    requested = service.request_review(node["id"], "informal", beta, "review")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    route, phases = scripted_society_route(lambda phase, outputs: [message("Root done.")])
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert phases == {"root": 1, "referee": 0}
+    assert service.get_record("task", requested["review_task_id"], author)["status"] == "queued"
+    assert requested["review_task_id"] not in {item["task_id"] for item in report["outcomes"]}
+
+
+async def test_runner_adopts_orphaned_parentless_synthesis(lab):
+    service, author, exp, branches, (alpha, _beta) = society_lab(lab)
+    service.configure_workforce(
+        exp["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=100, max_pending_tasks=50, synthesis_interval_posts=4
+        ),
+        OPERATOR,
+        "workforce",
+    )
+    for title in ("Trace lemma", "Gap lemma"):
+        node = service.create_node(
+            exp["id"], NodeCreate(node_type="lemma", title=title, statement="S."), alpha, title
+        )
+        set_status(service, node["id"], "refereed", "formally_stated")  # platform posts
+    # The state a crashed first run leaves: a parentless synthesis it scheduled, never run.
+    orphan = service.schedule_research_synthesis(exp["id"], OPERATOR, "run-synthesis:first")
+    assert orphan["scheduled"] is True and orphan["parent_branch_id"] is None
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    objectives = []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payload = json.loads(request.content)
+        objectives.append(json.loads(payload["input"][0]["content"])["objective"])
+        return httpx.Response(200, json=response([message("done")], response_id="r"))
+
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert service.get_record("task", orphan["task"]["id"], author)["status"] == "completed"
+    assert sum(objective.startswith("Compare only the sampled") for objective in objectives) == 1
     assert report["status"] == "completed"
