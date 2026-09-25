@@ -739,3 +739,63 @@ def test_self_cite_counts_subscribes_and_touches(lab):
     assert subscribed_topics(service, beta, exp["id"]) == {host["topic_id"]}
     news = service.post_on_node(host["id"], note(), alpha, "news")
     assert news["id"] in [i["id"] for i in drain(service, exp["id"], beta)["items"]]
+
+
+def cite_all(service, actor, host_id, node_ids, key):
+    """Follow every node through citations: 20 cites per post."""
+    for start in range(0, len(node_ids), 20):
+        cites = node_ids[start : start + 20]
+        service.post_on_node(host_id, note(cites=cites), actor, f"{key}-{start}")
+
+
+def test_own_node_subscription_evicts_third_party_follow_at_cap(lab):
+    """At the cap, a reader's own node still gets its thread, so objections reach it."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    peers = [service.create_node(exp["id"], lemma(f"Peer {n}"), beta, f"p{n}") for n in range(101)]
+    cite_all(service, alpha, peers[100]["id"], [peer["id"] for peer in peers[:100]], "cite")
+    before = subscribed_topics(service, alpha, exp["id"])
+    assert before == {peer["topic_id"] for peer in peers[:100]}  # only third-party follows
+    own = service.create_node(exp["id"], lemma("Mine"), alpha, "mine")
+    assert own["auto_subscribed"] is True
+    after = subscribed_topics(service, alpha, exp["id"])
+    assert after == before - {peers[0]["topic_id"]} | {own["topic_id"]}  # the oldest follow
+    objection = service.post_on_node(own["id"], note(kind="objection"), beta, "objection")
+    first = service.discussion_updates(exp["id"], alpha)["items"][0]
+    assert first["id"] == objection["id"] and first["urgent"] is True
+
+
+def test_auto_subscribe_eviction_order_and_protected_threads(lab, clock):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    old_follow = service.create_node(exp["id"], lemma("Old follow"), beta, "old-follow")
+    claimed = service.create_node(exp["id"], lemma("Claimed"), beta, "claimed")
+    own = service.create_node(exp["id"], lemma("Own"), alpha, "own")
+    closed = service.create_node(exp["id"], lemma("Closed"), beta, "closed")
+    host = service.create_node(exp["id"], lemma("Host"), beta, "host")
+    cite_all(service, alpha, host["id"], [old_follow["id"], closed["id"]], "cite")
+    service.claim_node(claimed["id"], "claim", alpha, "claim")
+    service.abandon_node(closed["id"], "Dead end.", beta, "abandon")
+    legacy = service.create_discussion(
+        exp["id"], DiscussionCreate(title="Board", summary="Research"), alpha, "topic"
+    )
+    service.subscribe_discussion(legacy["id"], True, alpha, "legacy")
+    fill_subscriptions(service, alpha, exp["id"], 95)  # non-node topics are never evicted
+    assert len(subscribed_topics(service, alpha, exp["id"])) == 100
+    # 1. A closed-node thread goes first, although the third-party follow is older.
+    first = service.create_node(exp["id"], lemma("First"), alpha, "first")
+    topics = subscribed_topics(service, alpha, exp["id"])
+    assert first["auto_subscribed"] is True
+    assert closed["topic_id"] not in topics and old_follow["topic_id"] in topics
+    # 2. Then the oldest follow of a node the reader neither wrote nor claims.
+    second = service.create_node(exp["id"], lemma("Second"), alpha, "second")
+    topics = subscribed_topics(service, alpha, exp["id"])
+    assert second["auto_subscribed"] is True and old_follow["topic_id"] not in topics
+    # Own nodes, live-claimed nodes and non-node topics are never evicted.
+    assert {own["topic_id"], claimed["topic_id"], legacy["id"]} <= topics
+    third = service.create_node(exp["id"], lemma("Third"), alpha, "third")
+    assert third["auto_subscribed"] is False
+    assert subscribed_topics(service, alpha, exp["id"]) == topics
+    # A lapsed claim no longer protects its thread.
+    clock.now += 10_000
+    fourth = service.create_node(exp["id"], lemma("Fourth"), alpha, "fourth")
+    topics = subscribed_topics(service, alpha, exp["id"])
+    assert fourth["auto_subscribed"] is True and claimed["topic_id"] not in topics

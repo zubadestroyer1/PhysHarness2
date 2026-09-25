@@ -127,7 +127,10 @@ tools, the prompts and the delivery shapes.
   the frontier shows the count.
 - **Threads and digests.**
   - Every node has a discussion thread. Authors, claimants, citers and dependents are
-    subscribed automatically, best-effort under the 100-subscription reader cap.
+    subscribed automatically, best-effort under the 100-subscription reader cap. At the
+    cap, the oldest closed-node thread makes room first, then the oldest follow of a node
+    the reader neither wrote nor claims. Threads of the reader's own and claimed nodes,
+    and ordinary topics, are never evicted, so objections to the reader's work arrive.
   - Posts carry an abstract and a body that is retrieved on demand.
   - The existing durable inbox delivers them, urgent items first: an objection to your
     node, or a followed node becoming accepted or refuted.
