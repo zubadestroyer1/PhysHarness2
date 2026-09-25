@@ -3,8 +3,10 @@
 About 22 tools replace the 63 legacy ones for experiments with a society policy. Each handler
 calls the same service or workspace method its legacy counterpart calls, so the legacy tools
 remain the adapters. Evidence that moves the commons ladder (Lean elaboration and local
-compile results) is produced here, on the platform side, from Lean session results and
-records this module reads itself; it never comes from model arguments.
+compile results) is assembled here from Lean session results and records this module reads
+itself; it never comes from model arguments. The Lean session runs in the agent-controlled
+workspace VM, so that evidence is VM-attested, not a trusted compile: only independent
+acceptance is trusted.
 
 String length limits are stated in each property's description and enforced here as
 recoverable ``INVALID_ARGUMENTS`` rejections. Strict provider schemas carry no string-length
@@ -38,6 +40,7 @@ from ..skills import list_skills, load_skill
 from ..worker_authority import current_worker_effects
 from ..workforce_models import RecruitResearcherRequest
 from .computation import MAX_ARG_CHARS, MAX_ARGS, MAX_TIMEOUT_SECONDS, ComputationRunner
+from .lean_session import lean_code, split_header, top_level_declarations
 from .research_worker import FATAL_TOOL_CODES, tool_registrar, worker_check
 
 # The widest catalog: a joined child task with a review assignment, a workspace and literature.
@@ -277,19 +280,44 @@ def _unbound():
 # Lean evidence ----------------------------------------------------------------------------
 
 
-def _normalized(value: str) -> str:
-    return " ".join(value.replace(":=", " := ").split())
+def _normalized(code: str) -> str:
+    return " ".join(code.replace(":=", " := ").split())
 
 
 def statement_found(source: str, lean_name: str, lean_statement: str) -> bool:
-    """Whether the source declares ``theorem|lemma <name> <statement> :=`` (whitespace-free).
+    """Whether the node's name is declared at top level only as ``theorem|lemma <name>
+    <statement> :=`` (whitespace-normalized).
 
-    The trailing ``:=`` keeps a longer statement that merely starts with the node's statement
-    from counting as the node's statement.
+    Comments, string and character literals and syntax quotations never count, nor do
+    declarations inside a namespace, section or mutual block. Every top-level declaration
+    of the name must match, so a quoted or mis-read copy cannot stand in for the real one.
+    The trailing ``:=`` keeps a longer statement that merely starts with the node's
+    statement from counting as the node's statement.
     """
-    body = " " + _normalized(source)
-    target = _normalized(f"{lean_name} {lean_statement}") + " :="
-    return any(f" {keyword} {target}" in body for keyword in ("theorem", "lemma"))
+    target = _normalized(lean_code(lean_statement)) + " :="
+    declarations = [
+        (keyword, rest)
+        for keyword, name, rest in top_level_declarations(lean_code(source))
+        if name == lean_name
+    ]
+    return bool(declarations) and all(
+        keyword in ("theorem", "lemma") and (_normalized(rest) + " ").startswith(target + " ")
+        for keyword, rest in declarations
+    )
+
+
+def _compile_refusal(source, node):
+    """Why a source cannot support a local compile of the node, before its statement is
+    looked for; None when it can."""
+    if "#exit" in source:  # Lean stops there: later declarations and reports never run.
+        return "exit_command"
+    header = {line.strip() for line in split_header(source)[0].split("\n")}
+    required = (line.strip() for line in (node.get("lean_header") or "").split("\n"))
+    if any(line and line not in header for line in required):
+        return "header_mismatch"
+    if any(keyword == "variable" for keyword, _, _ in top_level_declarations(lean_code(source))):
+        return "variable_command"
+    return None
 
 
 def _axiom_refusal(axioms, lean_name):
@@ -497,6 +525,9 @@ def society_tools(
             name, statement = node.get("lean_name"), node.get("lean_statement")
             if not name or not statement:
                 return {"recorded": False, "reason": "no_lean_statement"}
+            refusal = _compile_refusal(source, node)
+            if refusal is not None:
+                return {"recorded": False, "reason": refusal}
             if not statement_found(source, name, statement):
                 return {
                     "recorded": False,
@@ -542,11 +573,12 @@ def society_tools(
             lean_check,
             "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
             "automation on holes (automate=true) and #print axioms. With node_id, a complete "
-            "check that declares theorem <lean_name> <lean_statement> := ... at top level, "
-            "whose axiom report for that theorem lists only propext, Classical.choice and "
-            "Quot.sound, records a local compile, which moves a formally_stated node to "
-            "compiles_locally, and renews your claim. Only the independent verifier accepts "
-            "proofs.",
+            "check records a local compile, which moves a formally_stated node to "
+            "compiles_locally, and renews your claim. It counts when the file header holds "
+            "the node's lean_header lines, the file has no variable or #exit command, it "
+            "declares theorem <lean_name> <lean_statement> := ... once, outside comments, "
+            "namespaces and sections, and that theorem's axioms are only propext, "
+            "Classical.choice and Quot.sound. Only the independent verifier accepts proofs.",
             defaults={"node_id": None, "automate": True},
         )
 

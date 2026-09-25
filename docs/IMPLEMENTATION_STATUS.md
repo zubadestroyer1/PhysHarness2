@@ -25,9 +25,11 @@ What exists (Tasks 1–10):
   - Referees are platform-created, parentless, lab-less branches, isolated from other
     branches and assigned a different model family when one exists.
   - Informal verdicts are sound, gaps or wrong; fidelity verdicts are faithful or
-    unfaithful. Ladder moves are bound to evidence: the review quorum, the platform's Lean
-    elaboration, and a complete local compile of the node's exact statement using only
-    standard axioms.
+    unfaithful. Ladder moves are bound to evidence: the review quorum, Lean elaboration,
+    and a complete local compile of the node's exact top-level statement using only
+    standard axioms. Elaboration and local compiles run in the agent-controlled workspace
+    VM, so they are VM-attested evidence, not trusted platform checks; only independent
+    acceptance is trusted.
   - Goal acceptance is persisted from the independent target receipt.
 - **Labs.** Membership is capped, lab broadcast exists, and direct messages across labs
   are blocked by default.

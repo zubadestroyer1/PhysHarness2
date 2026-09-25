@@ -168,6 +168,142 @@ def top_level_names(source: str) -> list[str]:
     return names
 
 
+_RAW_STRING = re.compile(r'r(#*)"')
+_CHAR = re.compile(r"'(?:\\(?:x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|u\{[0-9a-fA-F]+\}|.)|[^\\'\n])'")
+_OPENERS = {")": "(", "}": "{"}
+_COMMAND = re.compile(
+    r"(?<![\w.'!?])(namespace|section|mutual|end|theorem|lemma|def|abbrev|axiom|opaque|"
+    r"instance|structure|class|inductive|variable)(?![\w'!?])"
+)
+_BLOCKS = ("namespace", "section", "mutual")
+_NAME = re.compile(r"\s*([\w.'!?]+)")
+
+
+def _ident_before(source: str, index: int) -> bool:
+    previous = source[index - 1] if index else ""
+    return bool(previous) and (previous.isalnum() or previous in "_'!?.")
+
+
+def _block_comment_end(source: str, index: int) -> int:
+    """The index after the ``-/`` that closes the (nested) block comment opened at index."""
+    depth, index = 1, index + 2
+    while index < len(source):
+        if source.startswith("/-", index):
+            depth, index = depth + 1, index + 2
+        elif source.startswith("-/", index):
+            depth, index = depth - 1, index + 2
+            if depth == 0:
+                return index
+        else:
+            index += 1
+    return len(source)
+
+
+def _string_end(source: str, index: int, interpolated: bool) -> int:
+    index += 1
+    while index < len(source):
+        character = source[index]
+        if character == "\\":
+            index += 2
+        elif character == '"':
+            return index + 1
+        elif interpolated and character == "{":
+            index = _scan(source, index + 1, [], "}")
+        else:
+            index += 1
+    return len(source)
+
+
+def _opaque(text: str) -> str:
+    """A literal as one token: equal literals stay equal, and no keyword can occur inside."""
+    return (
+        "\x00" + hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:16].upper() + "\x00"
+    )
+
+
+def _scan(source: str, index: int, out: list, close: str | None) -> int:
+    """Copy code into ``out`` from ``index`` until an unmatched ``close`` (or the end).
+
+    Comments become whitespace; string, character and raw-string literals, escaped
+    identifiers and syntax quotations become opaque tokens.
+    """
+    depth = 0
+    while index < len(source):
+        character = source[index]
+        if source.startswith("--", index):
+            end = source.find("\n", index)
+            end = len(source) if end < 0 else end
+            out.append(" ")
+        elif source.startswith("/-", index):
+            end = _block_comment_end(source, index)
+            out.append(" " + "\n" * source.count("\n", index, end))
+        elif character == '"':
+            interpolated = (
+                index >= 2 and source[index - 1] == "!" and _ident_before(source, index - 1)
+            )
+            end = _string_end(source, index, interpolated)
+            out.append(_opaque(source[index:end]))
+        elif (
+            character == "r"
+            and not _ident_before(source, index)
+            and _RAW_STRING.match(source, index)
+        ):
+            hashes = _RAW_STRING.match(source, index).group(1)
+            end = source.find('"' + hashes, _RAW_STRING.match(source, index).end())
+            end = len(source) if end < 0 else end + 1 + len(hashes)
+            out.append(_opaque(source[index:end]))
+        elif character == "'" and not _ident_before(source, index) and _CHAR.match(source, index):
+            end = _CHAR.match(source, index).end()
+            out.append(_opaque(source[index:end]))
+        elif character == "«":
+            end = source.find("»", index + 1)
+            end = len(source) if end < 0 else end + 1
+            out.append(_opaque(source[index:end]))
+        elif character == "`" and source.startswith(("`(", "``("), index):
+            start = source.index("(", index) + 1
+            end = _scan(source, start, [], ")")
+            out.append(_opaque(source[index:end]))
+        else:
+            if close is not None:
+                if character == _OPENERS[close]:
+                    depth += 1
+                elif character == close:
+                    if depth == 0:
+                        return index + 1
+                    depth -= 1
+            out.append(character)
+            end = index + 1
+        index = end
+    return len(source)
+
+
+def lean_code(source: str) -> str:
+    """Lean source with comments blanked and literals and quotations made opaque tokens."""
+    out: list[str] = []
+    _scan(source, 0, out, None)
+    return "".join(out)
+
+
+def top_level_declarations(code: str) -> list[tuple[str, str, str]]:
+    """``(keyword, name, rest)`` for each declaration outside every namespace, section and
+    mutual block of ``lean_code`` output, plus ``("variable", "", rest)`` for each variable
+    command anywhere, since variables change a declaration's signature."""
+    found, blocks = [], 0
+    for match in _COMMAND.finditer(code):
+        keyword = match.group(1)
+        if keyword in _BLOCKS:
+            blocks += 1
+        elif keyword == "end":
+            blocks = max(0, blocks - 1)
+        elif keyword == "variable":
+            found.append((keyword, "", code[match.end() :]))
+        elif blocks == 0:
+            name = _NAME.match(code, match.end())
+            if name is not None:
+                found.append((keyword, name.group(1), code[name.end() :]))
+    return found
+
+
 def _clean(value: str) -> str:
     """Replace lone surrogates (JSON ``\\ud800`` escapes) so the text is encodable UTF-8."""
     return value.encode("utf-8", "replace").decode("utf-8")
@@ -262,6 +398,34 @@ def _normalise_check(response):
                     _clean(v) for v in values if isinstance(v, str) and 0 < len(v) <= MAX_NAME
                 ][:MAX_AXIOM_NAMES]
     return clean_counts, clean_messages, holes, extracted, clean_axioms
+
+
+def _appended_axioms(report, source, names):
+    """``#print axioms`` results read only from the lines appended after ``source``.
+
+    Each report must be Lean's message at its own appended line of the scratch file, and
+    must open with the name printed there; output that agent code printed (``#eval``,
+    either stream) carries other positions or paths and is ignored, and so is any text
+    after the report in the same message.
+    """
+    output, path = report["diagnostics"], "/work/" + report["source_path"]
+    first = source.count("\n") + 2  # printed = source + "\n" + one line per name
+    axioms = {}
+    for stream in ("stdout", "stderr"):
+        for message in parse_lean_output(output.get(stream) or "", path):
+            index = (message["line"] or 0) - first
+            if message["severity"] != "info" or not 0 <= index < len(names):
+                continue
+            name, text = names[index], message["text"]
+            if text.startswith(f"'{name}' does not depend on any axioms"):
+                entry = []
+            elif text.startswith(f"'{name}' depends on axioms: [") and "]" in text:
+                entry = parse_axioms(text[: text.index("]") + 1]).get(name)
+            else:
+                entry = None
+            if entry is not None and name not in axioms:
+                axioms[name] = entry
+    return axioms
 
 
 class LeanSession:
@@ -573,11 +737,9 @@ class LeanSession:
                 report = await self._tools.lean_scratch(
                     {"source": printed}, operation_id + ":lean-one-axioms"
                 )
-                output = report["diagnostics"]
-                axioms_ok = output.get("exit_code") == 0
-                axioms = parse_axioms(
-                    (output.get("stdout") or "") + "\n" + (output.get("stderr") or "")
-                )
+                axioms = _appended_axioms(report, source, names)
+                # No report from the appended lines (an #exit, say) is no axiom report.
+                axioms_ok = report["diagnostics"].get("exit_code") == 0 and bool(axioms)
         return {
             "backend": "one_shot",
             "ok": ok,

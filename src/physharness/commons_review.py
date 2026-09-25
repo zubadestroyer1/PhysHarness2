@@ -765,7 +765,11 @@ class CommonsReviewMixin:
     # Local compiles ------------------------------------------------------------
 
     def record_local_compile(self, node_id, source_sha256, compile_result, actor, key) -> dict:
-        """Move a formally stated node to compiles_locally on a complete platform compile."""
+        """Move a formally stated node to compiles_locally on a complete workspace compile.
+
+        The compile ran in the agent-controlled workspace VM: this is attested evidence,
+        never acceptance, which only the independent verifier grants.
+        """
         self._research_role(actor)
         if actor.role == "agent" and not actor.branch_id:
             raise HarnessError(
