@@ -244,3 +244,17 @@ def successor_state(state: dict[str, Any]) -> dict[str, Any]:
         result["read_counts"] = {}
         result["warned"] = False
     return result
+
+
+WARNING_MESSAGE = (
+    "Repeated unchanged terminal results; perform substantive new work or revise the approach."
+)
+RECOVERY_MESSAGE = "Bounded recovery is required before more repeated reads."
+
+
+def signal_message(signal: str, suggestions: list[str] | None = None) -> str:
+    """Agent-visible text for a signal; optional suggestions are listed as options only."""
+    text = WARNING_MESSAGE if signal == "stagnation_warning" else RECOVERY_MESSAGE
+    if not suggestions:
+        return text
+    return text + " Options: " + "; ".join(suggestions)
