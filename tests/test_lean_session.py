@@ -99,7 +99,9 @@ def lean_env():
         "PATH": f"{shim}{os.pathsep}{os.environ.get('PATH', '')}",
         "FAKE_LEAN_REPL_DIR": str(logs),
     }
-    state = SimpleNamespace(root=root, socket=str(root / "s.sock"), logs=logs, env=env)
+    state = SimpleNamespace(
+        root=root, socket=str(root / "s.sock"), logs=logs, env=env, runtime=root / "rt"
+    )
     yield state
     _shutdown(state.socket)
     for pid in _fake_pids(state):
@@ -145,6 +147,7 @@ class FakeWorkspaceTools:
             (REPL_CANDIDATES[0], str(self.marker if repl_present else state.root / "missing")),
             ("/opt/sources/physlib", str(self.root)),
             ("/tmp/physharness-lean.sock", state.socket),
+            ("/tmp/physharness", str(state.runtime)),
         ]
 
     def allows_background_processes(self):
@@ -443,13 +446,15 @@ async def test_check_repl_backend_holes_and_automation(lean_env):
     ]
     writes = [call for call in tools.calls if call[0] == "write"]
     assert writes[0][1] == DAEMON_PATH
-    assert (tools.root / DAEMON_PATH).read_bytes() == DAEMON_FILE.read_bytes()
+    # The daemon runs from /tmp, outside the checkpointed workspace.
+    assert (lean_env.runtime / "lean_session.py").read_bytes() == DAEMON_FILE.read_bytes()
     probe, request = tools.runs()
     assert probe[1] == ["sh", "-c", f"test -x {tools.marker} && echo yes || echo no"]
-    expected = f"python3 {DAEMON_PATH} request --socket {lean_env.socket} --timeout 120 "
+    runtime = lean_env.runtime / "lean_session.py"
+    expected = f"python3 {runtime} request --socket {lean_env.socket} --timeout 120 "
     assert expected in request[1][2]
     assert request[3] <= tools.policy.timeout_seconds
-    assert not list((tools.root / ".physharness").glob("req-*.json"))
+    assert not (tools.root / ".physharness").exists()  # neither daemon nor request file
     await session.check(SOURCE, automate=False, operation_id="op2")
     assert [call[1] for call in tools.calls if call[0] == "write"].count(DAEMON_PATH) == 1
     assert len(tools.runs()) == 3  # the probe is cached; one round trip per check
@@ -463,6 +468,10 @@ async def test_check_repl_inline_when_background_disallowed(lean_env):
     assert result["backend"] == "repl_inline" and result["automation_available"] is True
     assert result["holes"][0]["automation"]["closed_by"] == "linarith"
     assert f"python3 {DAEMON_PATH} inline --timeout " in tools.runs()[-1][1][2]
+    # Without background processes the daemon stays in /work (local_docker has no writable /tmp).
+    assert (tools.root / DAEMON_PATH).read_bytes() == DAEMON_FILE.read_bytes()
+    assert not lean_env.runtime.exists()
+    assert [path.name for path in (tools.root / ".physharness").iterdir()] == ["lean_session.py"]
     pids = _fake_pids(lean_env)
     assert pids and not any(_alive(pid) for pid in pids)
     assert not Path(lean_env.socket).exists()
@@ -722,3 +731,31 @@ async def test_repl_start_failure_falls_back_to_one_shot(lean_env):
     again = await session.check("theorem t : True := trivial\n", automate=True, operation_id="b")
     assert again["backend"] == "one_shot" and again["messages"] == []
     assert again["complete"] is True and again["axioms"] == {"t": []}
+
+
+async def test_repl_daemon_reuploaded_when_tmp_copy_missing(lean_env):
+    tools = FakeWorkspaceTools(lean_env)
+    session = LeanSession(tools)
+    await session.check(SOURCE, automate=False, operation_id="first")
+    runtime = lean_env.runtime / "lean_session.py"
+    assert runtime.exists() and not (tools.root / ".physharness").exists()
+    _shutdown(lean_env.socket)  # A VM restore drops /tmp: both the daemon file and the server.
+    runtime.unlink()
+    result = await session.check(SOURCE, automate=False, operation_id="second")
+    assert result["backend"] == "repl" and result["ok"] is True
+    uploads = [call[2] for call in tools.calls if call[0] == "write" and call[1] == DAEMON_PATH]
+    assert uploads == ["first:lean-daemon", "second:lean-check:daemon"]
+    assert runtime.read_bytes() == DAEMON_FILE.read_bytes()
+    assert not (tools.root / ".physharness").exists()
+
+
+async def test_daemon_placement_failure_falls_back_to_one_shot(lean_env):
+    blocker = lean_env.root / "not-a-directory"
+    blocker.write_text("")
+    lean_env.runtime = blocker / "rt"  # mkdir -p under a regular file fails
+    scratch = [("", 0), ("'t' does not depend on any axioms\n", 0)]
+    tools = FakeWorkspaceTools(lean_env, scratch=scratch)
+    result = await LeanSession(tools).check(SOURCE, automate=True, operation_id="op")
+    assert result["backend"] == "one_shot" and result["reason_code"] == "lean_repl_unavailable"
+    assert result["messages"][0]["text"].startswith("Lean REPL could not start")
+    assert "the daemon could not be placed" in result["messages"][0]["text"]
