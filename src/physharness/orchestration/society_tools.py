@@ -292,14 +292,23 @@ def statement_found(source: str, lean_name: str, lean_statement: str) -> bool:
     return any(f" {keyword} {target}" in body for keyword in ("theorem", "lemma"))
 
 
-def _nonstandard_axioms(axioms, lean_name):
-    """Axioms outside the standard three: the node's entry, else every reported entry."""
-    reported = (
-        axioms[lean_name]
-        if lean_name in axioms
-        else sorted({name for values in axioms.values() for name in values})
-    )
-    return sorted(set(reported) - STANDARD_AXIOMS)
+def _axiom_refusal(axioms, lean_name):
+    """Why a compile's axiom report cannot support compiles_locally, or None when it can.
+
+    Only the node's own theorem entry counts: the report comes from the agent-controlled
+    workspace, so a missing entry fails closed and other declarations' entries never stand in.
+    """
+    entry = axioms.get(lean_name) if isinstance(axioms, dict) else None
+    if not isinstance(entry, list) or not all(isinstance(name, str) for name in entry):
+        return {"recorded": False, "reason": "axioms_unreported"}
+    nonstandard = sorted(set(entry) - STANDARD_AXIOMS)
+    if nonstandard:
+        return {
+            "recorded": False,
+            "reason": "nonstandard_axioms",
+            "axioms": nonstandard[:MAX_AXIOM_REPORT],
+        }
+    return None
 
 
 def _write_limit_bytes(workspace_tools):
@@ -495,19 +504,15 @@ def society_tools(
                     "reason": "The node's Lean statement was not found in the compiled source; "
                     "declare theorem <lean_name> <lean_statement> := ... exactly.",
                 }
-            axioms = result.get("axioms") or {}
-            nonstandard = _nonstandard_axioms(axioms, name)
-            if nonstandard:
-                return {
-                    "recorded": False,
-                    "reason": "nonstandard_axioms",
-                    "axioms": nonstandard[:MAX_AXIOM_REPORT],
-                }
+            axioms = result.get("axioms")
+            refusal = _axiom_refusal(axioms, name)
+            if refusal is not None:
+                return refusal
             compile_result = {
                 "complete": result["complete"],
                 "backend": result["backend"],
                 "statement_found": True,
-                "axioms": {name: axioms[name]} if name in axioms else axioms,
+                "axioms": {name: axioms[name]},
                 "lean_statement_sha256": _lean_digest(node.get("lean_header"), name, statement),
             }
             return _soft(
@@ -537,10 +542,11 @@ def society_tools(
             lean_check,
             "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
             "automation on holes (automate=true) and #print axioms. With node_id, a complete "
-            "check that declares theorem <lean_name> <lean_statement> := ... and uses only "
-            "propext, Classical.choice and Quot.sound records a local compile, which moves a "
-            "formally_stated node to compiles_locally, and renews your claim. Only the "
-            "independent verifier accepts proofs.",
+            "check that declares theorem <lean_name> <lean_statement> := ... at top level, "
+            "whose axiom report for that theorem lists only propext, Classical.choice and "
+            "Quot.sound, records a local compile, which moves a formally_stated node to "
+            "compiles_locally, and renews your claim. Only the independent verifier accepts "
+            "proofs.",
             defaults={"node_id": None, "automate": True},
         )
 
