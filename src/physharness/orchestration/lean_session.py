@@ -43,24 +43,42 @@ DAEMON_RUNTIME_PATH = DAEMON_RUNTIME_DIR + "/lean_session.py"
 REPL_CANDIDATES = ("/opt/lean-repl/.lake/build/bin/repl",)
 SOCKET_PATH = "/tmp/physharness-lean.sock"
 LAKE_PROJECT = "/opt/sources/physlib"
-MAX_SOURCE_BYTES = 1_000_000
+# E2B accepts at most 32,768 bytes per uploaded file (the request file, or lean_scratch's
+# scratch file); this leaves room for the request envelope around the source.
+MAX_UPLOAD_BYTES = 32_768
+MAX_SOURCE_BYTES = 30_000
 MAX_MESSAGES = 50
 MAX_MESSAGE_TEXT = 2000
 MAX_HOLES = 32
 MAX_GOAL = 4000
+MAX_HEADER = 2000  # NodeCreate.lean_header
+MAX_STATEMENT = 20000  # NodeCreate.lean_statement
+MAX_AXIOM_NAMES = 32
+MAX_NAME = 200
 # The daemon answers this long before the provider's own timeout, which quarantines the VM.
 RUN_MARGIN_SECONDS = 30
 _DAEMON_MISSING = 97
-_START_FAILURES = {"server_start_failed", "repl_start_failed"}
-_REASONS = {"timeout": "lean_timeout", "repl_crashed": "lean_repl_crashed"}
-_REASONS["repl_error"] = "lean_repl_error"
+_START_FAILURES = ("server_start_failed", "repl_start_failed")
+_SEVERITIES = ("error", "warning", "info")
+_ERRORS = {
+    "timeout": ("lean_timeout", "Lean did not finish before the time limit; the REPL restarted."),
+    "budget_exhausted": ("lean_timeout", "Lean ran out of time before the check could start."),
+    "repl_crashed": ("lean_repl_crashed", "The Lean REPL crashed; it restarts on the next call."),
+    "repl_error": ("lean_repl_error", "The Lean REPL rejected the request."),
+}
+_PHASES = {
+    "timeout": "lean_timeout",
+    "budget_exhausted": "lean_timeout",
+    "repl_crashed": "lean_repl_crashed",
+}
 _HEADER = re.compile(
     r"^(?P<path>.+?):(?P<line>\d+):(?P<col>\d+): "
     r"(?P<severity>error|warning|info|information)(?:\([^)]*\))?: ?(?P<text>.*)$"
 )
 _EXTRACTED = re.compile(
     r"(?:\A|\n)\s*(?:Try this:\s*)?(?:\[apply\]\s*)?(?:theorem|lemma)\s+"
-    r"(?P<name>[^\s(\[{:]+)(?P<signature>.*?):=\s*(?:by\s+)?sorry\s*\Z",
+    r"(?P<name>[^\s(\[{:]+?)(?:\.\{(?P<universes>[^{}]*)\})?"
+    r"(?P<signature>[\s(\[{:].*?):=\s*(?:by\s+)?sorry\s*\Z",
     re.S,
 )
 _DECLARATION = re.compile(
@@ -101,15 +119,27 @@ def parse_lean_output(text: str, path_hint: str | None) -> list[dict]:
     return messages
 
 
-def signature_from_extracted(text: str) -> tuple[str, str] | None:
-    """``theorem extracted_1 (x : ℝ) : P := sorry`` -> ``("extracted_1", "(x : ℝ) : P")``."""
+def parse_extracted(text: str) -> tuple[str, str, list[str]] | None:
+    """Name, signature and universe parameters of an ``extract_goal`` statement.
+
+    ``theorem extracted_1.{u_1} {α : Type u_1} : P := sorry`` ->
+    ``("extracted_1", "{α : Type u_1} : P", ["u_1"])``; a caller elaborating the signature
+    on its own needs ``universe u_1`` in scope.
+    """
     match = _EXTRACTED.search(text or "")
     if match is None:
         return None
     signature = " ".join(match["signature"].split())
     if ":" not in signature:
         return None
-    return match["name"], signature
+    universes = [u.strip() for u in (match["universes"] or "").split(",") if u.strip()]
+    return match["name"], signature, universes
+
+
+def signature_from_extracted(text: str) -> tuple[str, str] | None:
+    """``theorem extracted_1 (x : ℝ) : P := sorry`` -> ``("extracted_1", "(x : ℝ) : P")``."""
+    parsed = parse_extracted(text)
+    return None if parsed is None else parsed[:2]
 
 
 def top_level_names(source: str) -> list[str]:
@@ -152,6 +182,82 @@ def _no_automation():
     return {"closed_by": None, "suggestion": None, "tried": []}
 
 
+def _count(value):
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
+
+
+def _position(item):
+    """Line and column from a REPL ``pos``: non-negative ints or None."""
+    position = item.get("pos")
+    if not isinstance(position, dict):
+        return None, None
+    line, col = position.get("line"), position.get("column")
+    valid = [
+        v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else None
+        for v in (line, col)
+    ]
+    return valid[0], valid[1]
+
+
+def _normalise_check(response):
+    """Re-type a daemon ``check`` answer. The VM, so the agent, controls these bytes."""
+    counts, messages = response.get("counts"), response.get("messages", [])
+    sorries, axioms = response.get("sorries", []), response.get("axioms")
+    if (
+        response.get("op") != "check"
+        or not isinstance(counts, dict)
+        or not isinstance(messages, list)
+        or not isinstance(sorries, list)
+        or not (axioms is None or isinstance(axioms, dict))
+    ):
+        raise ValueError("malformed Lean session answer")
+    clean_counts = {
+        key: _count(counts.get(key)) for key in ("errors", "messages", "sorries", "sorry_warnings")
+    }
+    clean_messages = []
+    for item in messages:
+        if isinstance(item, dict):
+            severity = item.get("severity")
+            data = item.get("data")
+            clean_messages.append(
+                _message(
+                    severity if severity in _SEVERITIES else "info",
+                    *_position(item),
+                    data if isinstance(data, str) else "",
+                )
+            )
+    holes, extracted = [], []
+    for item in sorries:
+        if not isinstance(item, dict) or len(holes) >= MAX_HOLES:
+            continue
+        automation = item.get("automation") if isinstance(item.get("automation"), dict) else {}
+        tried = automation.get("tried") if isinstance(automation.get("tried"), list) else []
+        closed = automation.get("closed_by")
+        line, col = _position(item)
+        holes.append(
+            {
+                "index": len(holes),
+                "line": line,
+                "col": col,
+                "goal": _clip(item.get("goal"), MAX_GOAL),
+                "automation": {
+                    "closed_by": closed if closed in AUTOMATION else None,
+                    "suggestion": _clip(automation.get("suggestion"), MAX_MESSAGE_TEXT),
+                    "tried": [t for t in tried if t in AUTOMATION][: len(AUTOMATION)],
+                },
+            }
+        )
+        extracted.append(_clip(item.get("extracted"), MAX_STATEMENT + MAX_NAME))
+    clean_axioms = {}
+    for name, values in (axioms or {}).items():
+        if len(clean_axioms) < MAX_AXIOM_NAMES and 0 < len(name) <= MAX_NAME:
+            if isinstance(values, list):
+                clean_axioms[name] = [
+                    v for v in values if isinstance(v, str) and 0 < len(v) <= MAX_NAME
+                ][:MAX_AXIOM_NAMES]
+    return clean_counts, clean_messages, holes, extracted, clean_axioms
+
+
 class LeanSession:
     """One Lean session per workspace, reached through the existing broker tools."""
 
@@ -169,6 +275,7 @@ class LeanSession:
 
     async def sketch_goals(self, source: str, *, operation_id: str) -> dict:
         result, extracted = await self._check(source, True, True, operation_id, 120)
+        header = split_header(source)[0]
         holes, closed = [], []
         for hole, text in zip(result["holes"], extracted, strict=True):
             automation = hole["automation"]
@@ -181,17 +288,30 @@ class LeanSession:
                     }
                 )
                 continue
-            signature = signature_from_extracted(text) if text else None
             entry = {"index": hole["index"], "goal": hole["goal"]}
-            if signature is None:
-                entry["extract_failed"] = True
+            parsed = parse_extracted(text) if text else None
+            if len(header) > MAX_HEADER:
+                failure = "header_too_long"
+            elif text is None and result["backend"] == "one_shot":
+                failure = "goal_unavailable"
+            elif (text and text.endswith("…")) or (parsed and len(parsed[1]) > MAX_STATEMENT):
+                failure = "statement_too_long"  # never a silently truncated statement
+            elif parsed is None:
+                failure = "extract_goal_failed"
             else:
-                entry.update(lean_name=f"hole_{hole['index']}", lean_statement=signature[1])
+                failure = None
+                entry.update(
+                    lean_name=f"hole_{hole['index']}",
+                    lean_statement=parsed[1],
+                    universes=parsed[2],
+                )
+            if failure:
+                entry.update(extract_failed=True, reason=failure)
             holes.append(entry)
         return {
             "backend": result["backend"],
             "ok": result["ok"],
-            "header": split_header(source)[0],
+            "header": header if len(header) <= MAX_HEADER else None,
             "holes": holes,
             "closed": closed,
             "reason_code": result["reason_code"],
@@ -228,7 +348,11 @@ class LeanSession:
 
     async def _check(self, source, automate, extract, operation_id, timeout):
         if not isinstance(source, str) or len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
-            raise HarnessError("SOURCE_LIMIT", "Lean source must be text of at most one MiB.")
+            raise HarnessError(
+                "SOURCE_LIMIT",
+                f"Lean source must be text of at most {MAX_SOURCE_BYTES} bytes (the workspace "
+                "upload limit); split it, or run lake env lean on a workspace file.",
+            )
         digest = hashlib.sha256(source.encode()).hexdigest()
         if await self._select_backend(operation_id) != "one_shot":
             payload = {
@@ -239,12 +363,14 @@ class LeanSession:
                 "axiom_names": top_level_names(source),
             }
             response = await self._request(payload, operation_id + ":lean-check", timeout)
-            if response.get("error") not in _START_FAILURES:
+            error = response.get("error")
+            if not (isinstance(error, str) and error in _START_FAILURES):
                 return self._repl_result(response, digest)
             # The binary exists but cannot run: behave as if it were absent from now on.
             self._backend = "one_shot"
-            self._note = "Lean REPL could not start; using one-shot Lean. " + str(
-                response.get("detail", "")
+            detail = response.get("detail")
+            self._note = "Lean REPL could not start; using one-shot Lean. " + (
+                _clip(detail, 500) if isinstance(detail, str) else ""
             )
         result = await self._one_shot(source, digest, operation_id)
         return result, [None] * len(result["holes"])
@@ -288,6 +414,12 @@ class LeanSession:
     async def _request(self, payload, operation_id, timeout):
         """Write the request file and pipe it to the daemon; argv cannot carry stdin."""
         body = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        if len(body.encode("utf-8")) > MAX_UPLOAD_BYTES:
+            raise HarnessError(
+                "SOURCE_LIMIT",
+                f"The escaped Lean request exceeds the {MAX_UPLOAD_BYTES}-byte upload limit; "
+                "split the source.",
+            )
         # Unique per operation, so concurrent identical requests never share (and delete) a file.
         digest = hashlib.sha256(f"{operation_id}\n{body}".encode()).hexdigest()
         path = f".physharness/req-{digest}.json"
@@ -331,67 +463,66 @@ class LeanSession:
         return response
 
     def _repl_result(self, response, digest):
-        result = {
+        try:
+            return self._interpret(response, digest)
+        except Exception:  # A hostile or broken answer yields a bounded result, never a crash.
+            text = "The Lean session returned a malformed answer."
+            return self._failure(digest, "lean_session_failed", text), []
+
+    def _failure(self, digest, reason_code, text):
+        return {
             "backend": self._backend,
             "ok": False,
             "complete": False,
-            "messages": [],
+            "messages": [_message("error", None, None, text)],
             "holes": [],
             "axioms": {},
             "source_sha256": digest,
             "proof_status": "not_accepted",
             "automation_available": True,
-            "reason_code": None,
+            "reason_code": reason_code,
         }
+
+    def _interpret(self, response, digest):
         error = response.get("error")
-        if error:
-            text = f"Lean session {error}: {response.get('detail', '')}".strip()
-            if error == "timeout":
-                text = "Lean did not finish before the time limit; the REPL was restarted."
-            result["messages"] = [_message("error", None, None, text)]
-            result["reason_code"] = _REASONS.get(error, "lean_session_failed")
-            return result, []
-        counts = response.get("counts") or {}
-        raw = response.get("messages") or []
-        result["messages"] = [
-            _message(
-                m.get("severity", "info"),
-                (m.get("pos") or {}).get("line"),
-                (m.get("pos") or {}).get("column"),
-                str(m.get("data", "")),
-            )
-            for m in select_messages(raw, MAX_MESSAGES)
-        ]
-        sorries = (response.get("sorries") or [])[:MAX_HOLES]
-        for index, sorry in enumerate(sorries):
-            automation = sorry.get("automation") or {}
-            result["holes"].append(
-                {
-                    "index": index,
-                    "line": (sorry.get("pos") or {}).get("line"),
-                    "col": (sorry.get("pos") or {}).get("column"),
-                    "goal": _clip(sorry.get("goal"), MAX_GOAL),
-                    "automation": {
-                        "closed_by": automation.get("closed_by"),
-                        "suggestion": _clip(automation.get("suggestion"), MAX_MESSAGE_TEXT),
-                        "tried": list(automation.get("tried") or []),
-                    },
-                }
-            )
-        errors = counts.get("errors", 0) or any(m["severity"] == "error" for m in raw)
-        result["ok"] = not errors
-        result["axioms"] = response.get("axioms") or {}
-        result["complete"] = (
-            result["ok"]
-            and not sorries
-            and not counts.get("sorries")
-            and not counts.get("sorry_warnings")
-            and not any("sorryAx" in axioms for axioms in result["axioms"].values())
-        )
-        result["reason_code"] = _REASONS.get(response.get("phase_error"))
-        if response.get("phase_error") and result["reason_code"] is None:
-            result["reason_code"] = "lean_session_failed"
-        return result, [sorry.get("extracted") for sorry in sorries]
+        if error is not None:
+            code = error if isinstance(error, str) else ""
+            reason_code, text = _ERRORS.get(code, ("lean_session_failed", None))
+            detail = response.get("detail")
+            if text is None or code == "repl_error":
+                label = _clip(code, 40) or "malformed error"
+                text = f"Lean session failure ({label})" + (
+                    f": {detail}" if isinstance(detail, str) and detail else "."
+                )
+            return self._failure(digest, reason_code, text), []
+        counts, messages, holes, extracted, axioms = _normalise_check(response)
+        phase, stopped = response.get("phase_error"), response.get("automation_stopped")
+        ok = not counts["errors"] and not any(m["severity"] == "error" for m in messages)
+        reason_code = None
+        if phase is not None:
+            code = phase if isinstance(phase, str) else ""
+            reason_code = _PHASES.get(code, "lean_session_failed")
+        elif stopped is not None:
+            reason_code = "lean_automation_budget_exhausted"
+        result = {
+            "backend": self._backend,
+            "ok": ok,
+            # A phase error (for example in the axiom report) never yields a complete result.
+            "complete": ok
+            and not holes
+            and not counts["sorries"]
+            and not counts["sorry_warnings"]
+            and phase is None
+            and not any("sorryAx" in values for values in axioms.values()),
+            "messages": select_messages(messages, MAX_MESSAGES),
+            "holes": holes,
+            "axioms": axioms,
+            "source_sha256": digest,
+            "proof_status": "not_accepted",
+            "automation_available": True,
+            "reason_code": reason_code,
+        }
+        return result, extracted
 
     async def _one_shot(self, source, digest, operation_id):
         scratch = await self._tools.lean_scratch({"source": source}, operation_id + ":lean-one")
@@ -418,22 +549,27 @@ class LeanSession:
             )
         ][:MAX_HOLES]
         ok = not any(message["severity"] == "error" for message in messages)
-        axioms = {}
+        axioms, axioms_ok = {}, True
         names = top_level_names(source)
         printed = source + "\n" + "\n".join(f"#print axioms {name}" for name in names)
-        if ok and not holes and names and len(printed.encode("utf-8")) <= MAX_SOURCE_BYTES:
-            report = await self._tools.lean_scratch(
-                {"source": printed}, operation_id + ":lean-one-axioms"
-            )
-            output = report["diagnostics"]
-            axioms = parse_axioms(
-                (output.get("stdout") or "") + "\n" + (output.get("stderr") or "")
-            )
+        if ok and not holes and names:
+            # The axiom report is part of completeness: failing or skipping it is incomplete.
+            axioms_ok = len(printed.encode("utf-8")) <= MAX_UPLOAD_BYTES
+            if axioms_ok:
+                report = await self._tools.lean_scratch(
+                    {"source": printed}, operation_id + ":lean-one-axioms"
+                )
+                output = report["diagnostics"]
+                axioms_ok = output.get("exit_code") == 0
+                axioms = parse_axioms(
+                    (output.get("stdout") or "") + "\n" + (output.get("stderr") or "")
+                )
         return {
             "backend": "one_shot",
             "ok": ok,
             "complete": ok
             and not holes
+            and axioms_ok
             and not any("sorryAx" in axiom_list for axiom_list in axioms.values()),
             "messages": [
                 dict(m, text=_clip(m["text"], MAX_MESSAGE_TEXT))
