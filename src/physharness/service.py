@@ -125,6 +125,8 @@ class HarnessService(
             "runtime_event",
             "execution_failure",
             "workspace_recovery_observation",
+            "masked_reference",
+            "literature_screen",
         }
     )
 
