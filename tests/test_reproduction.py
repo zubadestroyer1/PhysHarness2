@@ -114,3 +114,82 @@ def test_cli_export_is_private_independently_of_umask(lab, tmp_path, monkeypatch
         os.umask(previous)
     assert stat.S_IMODE(target.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in target.iterdir())
+
+
+# Society records in exports -----------------------------------------------------------------
+
+LEGACY_RECORD_KINDS = [
+    "branch",
+    "task",
+    "claim",
+    "artifact",
+    "session",
+    "continuation_link",
+    "verification",
+    "program",
+    "message",
+    "source",
+    "workspace",
+    "workspace_operation",
+    "review",
+    "discussion_topic",
+    "discussion_post",
+    "discussion_reader",
+    "discussion_subscription",
+    "discussion_delivery",
+    "discussion_withdrawal",
+    "workforce_policy",
+    "workforce_profile",
+    "workforce_team",
+    "workforce_capacity_request",
+]
+# Recorded from the pre-change export (before society records were exported).
+LEGACY_EXPORT_DIGEST = "0efaa7e4b41ee8516078a376b687996ea43d24e3655a17d576e26273d6d6317f"
+
+
+def normalized_export(manifest):
+    """Digest with ids, times and hashes masked, and each record list in a stable order."""
+    from test_society_tools import HEX64, STAMP, UUID
+
+    text = json.dumps(manifest, sort_keys=True)
+    masked = json.loads(HEX64.sub("<sha256>", STAMP.sub("<time>", UUID.sub("<id>", text))))
+    masked["records"] = {
+        kind: sorted(rows, key=lambda row: json.dumps(row, sort_keys=True))
+        for kind, rows in masked["records"].items()
+    }
+    return digest_json(masked)
+
+
+def legacy_export(lab):
+    """A legacy ideas-sharing experiment with a task, an artifact, a message and a post."""
+    from test_sharing import approaches
+
+    from physharness.domain import TaskCreate
+    from physharness.discussion_models import DiscussionCreate
+
+    service, author, exp, branches, (alpha, beta) = approaches(lab, "ideas")
+    service.create_task(TaskCreate(branch_id=branches[0]["id"], objective="Work"), author, "t")
+    service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="finding", content="Idea"), alpha, "a"
+    )
+    service.send_message(branches[0]["id"], branches[1]["id"], "Hello.", [], alpha, "m")
+    service.create_discussion(
+        exp["id"], DiscussionCreate(title="Trace", summary="Opening summary."), alpha, "d"
+    )
+    return service.export_experiment(exp["id"], author)
+
+
+def test_legacy_export_is_byte_identical(lab):
+    manifest = legacy_export(lab)
+    assert list(manifest["records"]) == LEGACY_RECORD_KINDS
+    assert list(manifest) == [
+        "format",
+        "experiment",
+        "problem",
+        "records",
+        "ledger",
+        "snapshot",
+        "qualification",
+        "manifest_sha256",
+    ]
+    assert normalized_export(manifest) == LEGACY_EXPORT_DIGEST

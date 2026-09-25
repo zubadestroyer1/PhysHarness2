@@ -4,7 +4,7 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from physharness.domain import Principal
+from physharness.domain import Principal, digest_json
 from physharness.errors import HarnessError
 
 
@@ -204,3 +204,22 @@ def test_configured_preflight_forwards_nondefault_reviewed_theorem(lab, tmp_path
     assert calls[0].challenge_sha256 == hashlib.sha256(source.encode()).hexdigest()
     assert report["model_calls"] == 0
     assert service.list_records("task", operator) == []
+
+
+# Society arm plans ---------------------------------------------------------------------------
+
+# Recorded from the pre-change RunPlan (before the optional society field existed): the
+# digest of the plan as prepare_run stores it in the run_preparation artifact.
+LEGACY_PLAN_DIGEST = "1d4067e906d7b5a06d8ad907c384976bef596cedd95e0e9e7eaa4b90266c4ba5"
+
+
+def test_legacy_plan_prepares_exactly_as_before(lab, tmp_path):
+    from physharness.run_control import RunPlan, prepare_run
+
+    service, actor, _ = lab
+    source_files(tmp_path)
+    prepared = prepare_run(service, actor, RunPlan.model_validate(plan_input()), tmp_path)
+    experiment = service.get_record("experiment", prepared["experiment_id"], actor)
+    assert "society" not in experiment
+    content = service.artifact_content(prepared["preparation_artifact_id"], actor)
+    assert digest_json(json.loads(content)["plan"]) == LEGACY_PLAN_DIGEST
