@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from .acceptance import AcceptanceMixin
 from .artifacts import ArtifactStore
 from .collaboration import CollaborationMixin
+from .commons import CommonsMixin
 from .continuation import ContinuationMixin
 from .discussion import DiscussionMixin
 from .domain import (
@@ -82,6 +83,7 @@ def require_role(actor: Principal, *roles: str) -> None:
 class HarnessService(
     AcceptanceMixin,
     CollaborationMixin,
+    CommonsMixin,
     ContinuationMixin,
     DiscussionMixin,
     ResearchMixin,
@@ -340,6 +342,9 @@ class HarnessService(
                     ):
                         return False
             return True
+        if row.kind in {"commons_node", "commons_claim", "commons_review"}:
+            # The commons is an ideas-sharing grant to the whole experiment, not authorship.
+            return experiment.payload.get("sharing") == "ideas"
         if row.kind in {"session", "model_reservation", "continuation_link"} or (
             row.kind == "artifact"
             and row.payload.get("artifact_kind") in self._private_artifact_kinds - {"checkpoint"}
@@ -768,6 +773,9 @@ class HarnessService(
     def create_experiment(self, request: ExperimentCreate, actor: Principal, key: str) -> dict:
         require_role(actor, "researcher", "operator")
         data = request.model_dump(mode="json")
+        if data.get("society") is None:
+            # Legacy experiments keep byte-identical payloads and command fingerprints.
+            data.pop("society", None)
 
         def action(session, op):
             problem = self._get(session, "problem", request.problem_id, actor)
