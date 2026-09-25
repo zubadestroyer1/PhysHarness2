@@ -89,6 +89,41 @@ class EventRow(Base):
     created_at: Mapped[str] = mapped_column(String(40))
 
 
+Index(
+    "events_discussion_topic_sequence",
+    EventRow.project_id,
+    EventRow.kind,
+    EventRow.aggregate_id,
+    EventRow.sequence,
+)
+Index(
+    "events_discussion_experiment_sequence",
+    EventRow.project_id,
+    EventRow.kind,
+    EventRow.payload["experiment_id"].as_string(),
+    EventRow.sequence,
+)
+Index(
+    "records_discussion_reader",
+    RecordRow.project_id,
+    RecordRow.kind,
+    record_json_text("experiment_id"),
+    record_json_text("reader_key"),
+    sqlite_where=RecordRow.kind == "discussion_reader",
+    postgresql_where=RecordRow.kind == "discussion_reader",
+)
+Index(
+    "records_discussion_subscription",
+    RecordRow.project_id,
+    RecordRow.kind,
+    record_json_text("experiment_id"),
+    record_json_text("reader_key"),
+    record_json_text("topic_id"),
+    sqlite_where=RecordRow.kind == "discussion_subscription",
+    postgresql_where=RecordRow.kind == "discussion_subscription",
+)
+
+
 class OutboxRow(Base):
     __tablename__ = "outbox"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)

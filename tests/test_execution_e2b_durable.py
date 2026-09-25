@@ -340,6 +340,25 @@ async def test_files_export_restore_and_symlink_safety(tmp_path):
     assert not (tmp_path / "escape").exists()
 
 
+async def test_bounded_e2b_capture_streams_large_regular_file_and_refuses_link(tmp_path):
+    """Local command adapter exercises the E2B guest helper; no SDK or VM is called."""
+    p = provider(tmp_path)
+    root = tmp_path / "workspace"
+    root.mkdir(exist_ok=True)
+    source = b"theorem copied : True := by trivial\n" * 2000
+    (root / "proof.lean").write_bytes(source)
+    assert (
+        await p.capture_file("proof.lean", expected_execution_id="vm-source", max_bytes=100_000)
+        == source
+    )
+    with pytest.raises(ExecutionError):
+        await p.capture_file("proof.lean", expected_execution_id="vm-source", max_bytes=100)
+    (root / "escape.lean").symlink_to(tmp_path / "secret")
+    (tmp_path / "secret").write_bytes(b"secret")
+    with pytest.raises(ExecutionError):
+        await p.capture_file("escape.lean", expected_execution_id="vm-source", max_bytes=100_000)
+
+
 async def test_restore_refuses_stale_files_and_identity(tmp_path):
     p = provider(tmp_path)
     await p.upload_file("existing", b"old", expected_execution_id="vm-source")

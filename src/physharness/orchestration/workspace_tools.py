@@ -1,12 +1,32 @@
 """Model-facing VM tools: fixed authority, lazy budgeted allocation, explicit cleanup."""
 
+import hashlib
+import json
+import os
+import re
+import subprocess
 from decimal import Decimal
+from pathlib import Path
 
 from pydantic import Field
 
-from ..domain import Digest, StrictModel
+from ..domain import Digest, StrictModel, digest_json
 from ..errors import HarnessError
 from ..execution import CommandRequest
+
+
+def validated_lean_imports(imports: list[str]) -> list[str]:
+    if (
+        not isinstance(imports, list)
+        or not 1 <= len(imports) <= 16
+        or any(
+            not isinstance(module, str)
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*", module)
+            for module in imports
+        )
+    ):
+        raise ValueError("Lean imports must be bounded module names")
+    return imports
 
 
 class WorkspacePolicy(StrictModel):
@@ -14,7 +34,7 @@ class WorkspacePolicy(StrictModel):
     environment_digest: Digest
     qualification_report_sha256: Digest
     timeout_seconds: int = Field(ge=1, le=86400)
-    cost_bound_usd: Decimal = Field(gt=0, decimal_places=6, allow_inf_nan=False)
+    cost_bound_usd: Decimal = Field(ge=0, decimal_places=6, allow_inf_nan=False)
     cost_source: str = Field(min_length=1)
 
 
@@ -70,6 +90,354 @@ class WorkspaceTools:
             operation_id=operation_id,
         )
 
+    async def read(self, arguments, operation_id):
+        workspace = await self._ensure()
+        result = await self.broker.read_workspace_range(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            path=arguments["path"],
+            offset=arguments["offset"],
+            length=arguments["length"],
+            operation_id=operation_id,
+        )
+        import base64
+
+        data = base64.b64decode(result.pop("data"), validate=True)
+        return {
+            **result,
+            "path": arguments["path"],
+            "offset": arguments["offset"],
+            "text": data.decode("utf-8", errors="replace"),
+            "exact_base64": base64.b64encode(data).decode(),
+            "remaining_bytes": max(0, result["size_bytes"] - arguments["offset"] - len(data)),
+        }
+
+    async def store_workspace_artifact(self, arguments, operation_id, agent):
+        """Promote exact source bytes under the current task lease, without accepting proof."""
+        task = self.broker.service.get_record("task", self.broker.task_id, self.broker.actor)
+        if (
+            agent is None
+            or agent.role != "agent"
+            or agent.experiment_id != task["experiment_id"]
+            or agent.branch_id != task["branch_id"]
+        ):
+            raise HarnessError("WORKSPACE_SCOPE", "Agent does not own this workspace task.")
+        workspace = await self._ensure()
+        return await self.broker.promote_file(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            path=arguments["path"],
+            expected_sha256=arguments["sha256"],
+            expected_target_digest=arguments["target_digest"],
+            operation_id=operation_id,
+        )
+
+    async def submit_workspace_candidate(self, arguments, operation_id, agent):
+        promoted = await self.store_workspace_artifact(arguments, operation_id + ":capture", agent)
+        receipt = self.broker.service.verify_candidate(
+            agent.experiment_id,
+            promoted["artifact_id"],
+            True,
+            agent,
+            operation_id + ":verification",
+        )
+        return {
+            "artifact_id": promoted["artifact_id"],
+            "candidate_sha256": promoted["sha256"],
+            "receipt_id": receipt["id"],
+            "status": receipt["status"],
+        }
+
+    async def lean_scratch(self, arguments, operation_id):
+        source = arguments["source"]
+        if len(source.encode("utf-8")) > 1_000_000:
+            raise HarnessError("SOURCE_LIMIT", "Scratch Lean source exceeds one MiB.")
+        path = "scratch/" + hashlib.sha256(source.encode()).hexdigest() + ".lean"
+        workspace = await self._ensure()
+        await self.broker.upload_file(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            path=path,
+            data=source.encode(),
+            operation_id=operation_id + ":source",
+        )
+        result = await self.broker.run(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            request=CommandRequest(
+                operation_id=operation_id + ":lean",
+                argv=["lake", "--offline", "env", "lean", "/work/" + path],
+                cwd="/opt/sources/physlib",
+                timeout_seconds=min(self.policy.timeout_seconds, 120),
+                max_output_bytes=65536,
+            ),
+        )
+        return {
+            "source_path": path,
+            "source_sha256": hashlib.sha256(source.encode()).hexdigest(),
+            "diagnostics": result,
+            "proof_status": "not_accepted",
+        }
+
+    async def check_lean_type(self, arguments, operation_id):
+        expression = arguments["expression"]
+        try:
+            imports = validated_lean_imports(arguments["imports"])
+        except ValueError as exc:
+            raise HarnessError("INVALID_IMPORTS", str(exc)) from exc
+        if (
+            not isinstance(expression, str)
+            or not 1 <= len(expression.encode("utf-8")) <= 4096
+            or "\n" in expression
+            or "\r" in expression
+        ):
+            raise HarnessError("INVALID_TYPE_QUERY", "Supply one bounded Lean expression.")
+        result = await self.lean_scratch(
+            {
+                "source": "".join(f"import {module}\n" for module in imports)
+                + "#check ("
+                + expression
+                + ")\n"
+            },
+            operation_id,
+        )
+        return {
+            **result,
+            "mechanism": "lean_elaboration",
+            "expression": expression,
+            "imports": imports,
+            "reason_code": None
+            if result["diagnostics"]["exit_code"] == 0
+            else "lean_elaboration_failed",
+        }
+
+    async def lookup_library_declaration(self, arguments, operation_id):
+        name = arguments["name"]
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*", name
+        ):
+            raise HarnessError("INVALID_DECLARATION", "Supply a qualified Lean declaration name.")
+        try:
+            imports = validated_lean_imports(arguments["imports"])
+        except ValueError as exc:
+            raise HarnessError("INVALID_IMPORTS", str(exc)) from exc
+        source = "".join(f"import {module}\n" for module in imports)
+        source += f"#check {name}\n#print {name}\n"
+        result = await self.lean_scratch({"source": source}, operation_id)
+        return {
+            **result,
+            "name": name,
+            "imports": imports,
+            "mechanism": "lean_elaborated_declaration_lookup",
+            "environment_digest": self.policy.environment_digest,
+            "reason_code": None
+            if result["diagnostics"]["exit_code"] == 0
+            else "declaration_or_import_unavailable",
+        }
+
+    async def search_library(self, arguments, operation_id):
+        query = arguments["query"]
+        if not isinstance(query, str) or not 1 <= len(query) <= 200:
+            raise HarnessError("INVALID_QUERY", "Supply a bounded library search query.")
+        code = """
+import json, os, sys
+query = sys.argv[1].casefold()
+roots = ('/opt/sources/physlib', '/opt/sources/mathlib')
+hits = []
+available = []
+for root in roots:
+    if not os.path.isdir(root):
+        continue
+    available.append(root)
+    for folder, dirs, files in os.walk(root):
+        dirs.sort()
+        for name in sorted(files):
+            if not name.endswith('.lean'):
+                continue
+            path = os.path.join(folder, name)
+            canonical_path = os.path.join(os.path.basename(root), os.path.relpath(path, root))
+            with open(path, encoding='utf-8', errors='replace') as stream:
+                for number, line in enumerate(stream, 1):
+                    if query in line.casefold():
+                        hits.append({'path': canonical_path, 'guest_path': path,
+                                     'line': number, 'snippet': line[:300]})
+                        if len(hits) >= 40:
+                            break
+            if len(hits) >= 40:
+                break
+        if len(hits) >= 40:
+            break
+    if len(hits) >= 40:
+        break
+print(json.dumps({'hits': hits, 'available_roots': available}, ensure_ascii=False))
+"""
+        workspace = await self._ensure()
+        result = await self.broker.run(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            request=CommandRequest(
+                operation_id=operation_id,
+                argv=["python3", "-c", code, query],
+                cwd=".",
+                timeout_seconds=min(self.policy.timeout_seconds, 60),
+                max_output_bytes=65536,
+            ),
+        )
+        if result["exit_code"]:
+            return {"hits": [], "reason_code": "library_scan_failed", "diagnostics": result}
+        observed = json.loads(result["stdout"])
+        hits = observed["hits"]
+        return {
+            "hits": hits,
+            "reason_code": None
+            if hits
+            else (
+                "no_lexical_match" if observed["available_roots"] else "library_source_unavailable"
+            ),
+            "mechanism": "lexical_source_scan",
+            "environment_digest": self.policy.environment_digest,
+            "available_roots": observed["available_roots"],
+        }
+
+    async def lookup_library_source(self, arguments, operation_id):
+        path = arguments["path"]
+        if (
+            not isinstance(path, str)
+            or "\x00" in path
+            or not path.endswith(".lean")
+            or not any(path.startswith(prefix) for prefix in ("mathlib/", "physlib/"))
+            or any(part in {"", ".", ".."} for part in path.split("/"))
+        ):
+            raise HarnessError(
+                "UNSAFE_PATH",
+                "Library path must name a Mathlib or Physlib Lean source.",
+                remediation="Use an unchanged search_library_source hits[].path, such as "
+                "mathlib/Mathlib/Analysis/Example.lean; absolute and bare module paths "
+                "are invalid.",
+            )
+        guest = "/opt/sources/" + path
+        code = """
+import hashlib, json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+content = path.read_bytes()
+print(json.dumps({
+    'sha256': hashlib.sha256(content).hexdigest(),
+    'size_bytes': len(content),
+    'text': content[:32768].decode('utf-8', 'replace'),
+    'truncated': len(content) > 32768,
+}, ensure_ascii=False))
+"""
+        workspace = await self._ensure()
+        result = await self.broker.run(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            request=CommandRequest(
+                operation_id=operation_id,
+                argv=["python3", "-c", code, guest],
+                cwd=".",
+                timeout_seconds=min(self.policy.timeout_seconds, 15),
+                max_output_bytes=65536,
+            ),
+        )
+        if result["exit_code"]:
+            return {
+                "reason_code": "source_unavailable",
+                "path": path,
+                "guest_path": guest,
+                "diagnostics": result,
+            }
+        return {
+            **json.loads(result["stdout"]),
+            "path": path,
+            "guest_path": guest,
+            "environment_digest": self.policy.environment_digest,
+            "reason_code": None,
+        }
+
+    def polynomial(self, arguments, operation_id):
+        from ..science import check_polynomial_identity
+
+        if any(len(arguments[side].encode("utf-8")) > 100_000 for side in ("left", "right")):
+            raise HarnessError("CERTIFICATE_LIMIT", "Polynomial certificate JSON exceeds limit.")
+        try:
+            left, right = json.loads(arguments["left"]), json.loads(arguments["right"])
+        except (json.JSONDecodeError, TypeError) as exc:
+            raise HarnessError(
+                "INVALID_CERTIFICATE", "Polynomial expressions must be JSON."
+            ) from exc
+        return check_polynomial_identity(arguments["variables"], left, right).model_dump(
+            mode="json"
+        )
+
+    def matrix(self, arguments, operation_id):
+        from ..science import check_matrix_factorization
+
+        return check_matrix_factorization(
+            arguments["target"], arguments["left"], arguments["right"]
+        ).model_dump(mode="json")
+
+    async def prepare_handoff(self, operation_id: str) -> dict | None:
+        """Archive a provisioned workspace before the controller releases its lease."""
+        if self.workspace is None:
+            return None
+        exported = await self.broker.export_workspace(
+            self.workspace["id"],
+            expected_execution_id=self.workspace["execution_id"],
+            operation_id=operation_id,
+        )
+        return {
+            "artifact_id": exported["artifact"]["id"],
+            "archive_sha256": exported["archive_sha256"],
+            "source_execution_id": self.workspace["execution_id"],
+            "environment_digest": self.policy.environment_digest,
+            "qualification_report_sha256": self.policy.qualification_report_sha256,
+            "template_id": self.policy.template_id,
+            "workspace_policy_digest": digest_json(self.policy.model_dump(mode="json")),
+        }
+
+    async def restore_handoff(self, ticket: dict, operation_id: str) -> dict:
+        """Restore exact archived files into a fresh, fenced VM allocation."""
+        required = {
+            "artifact_id",
+            "archive_sha256",
+            "source_execution_id",
+            "environment_digest",
+            "qualification_report_sha256",
+            "template_id",
+            "workspace_policy_digest",
+        }
+        if (
+            not isinstance(ticket, dict)
+            or set(ticket) != required
+            or any(not isinstance(value, str) or not value for value in ticket.values())
+        ):
+            raise HarnessError("WORKSPACE_HANDOFF_MISMATCH", "Invalid workspace handoff ticket.")
+        if (
+            ticket["environment_digest"] != self.policy.environment_digest
+            or ticket["qualification_report_sha256"] != self.policy.qualification_report_sha256
+            or ticket["template_id"] != self.policy.template_id
+            or ticket["workspace_policy_digest"] != digest_json(self.policy.model_dump(mode="json"))
+        ):
+            raise HarnessError(
+                "WORKSPACE_HANDOFF_MISMATCH", "Workspace policy differs from saved handoff."
+            )
+        self.broker.load_handoff_archive(
+            ticket["artifact_id"], ticket["archive_sha256"], ticket["source_execution_id"]
+        )
+        workspace = await self._ensure()
+        if workspace["execution_id"] == ticket["source_execution_id"]:
+            raise HarnessError(
+                "WORKSPACE_IDENTITY_MISMATCH", "Successor VM reused the source execution identity."
+            )
+        return await self.broker.restore_workspace(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            archive_artifact_id=ticket["artifact_id"],
+            archive_sha256=ticket["archive_sha256"],
+            source_execution_id=ticket["source_execution_id"],
+            operation_id=operation_id,
+        )
+
     def unresolved(self):
         task = self.broker.service.get_record("task", self.broker.task_id, self.broker.actor)
         return [
@@ -87,11 +455,24 @@ class WorkspaceTools:
         if self.workspace is not None:
             observed = self.broker.inspect(self.workspace["id"])
             if observed["status"] != "destroyed":
+                if observed["status"] != "ready":
+                    raise HarnessError(
+                        "WORKSPACE_RECONCILIATION_REQUIRED",
+                        "Uncertain workspace cannot be destroyed during automatic cleanup.",
+                    )
+                if self.broker.provider_spec["provider"] == "local_docker":
+                    await self.broker.export_workspace(
+                        observed["id"],
+                        expected_execution_id=observed["execution_id"],
+                        operation_id=f"final-checkpoint:{self.broker.holder}",
+                    )
                 await self.broker.destroy(
                     observed["id"],
                     expected_execution_id=observed["execution_id"],
                     operation_id=f"cleanup:{self.broker.holder}",
-                    actual_cost_usd=None,
+                    actual_cost_usd="0"
+                    if self.broker.provider_spec["provider"] == "local_docker"
+                    else None,
                 )
         if self.unresolved():
             raise HarnessError(
@@ -99,7 +480,7 @@ class WorkspaceTools:
                 "Unresolved VM allocation retains its shared worker slot.",
             )
 
-    def register(self, register):
+    def register(self, register, *, agent=None):
         register(
             "run_command",
             {
@@ -113,15 +494,21 @@ class WorkspaceTools:
             },
             self.run,
             "Execute scientific code or Lean inside the pinned isolated VM. "
-            "Use cwd='.' for the upload/checkpoint root or a relative subdirectory. "
-            "Files outside that root are not included in workspace checkpoints. "
+            "Use cwd='.' for the workspace root or a workspace-relative subdirectory; "
+            "absolute cwd='/work' is invalid. "
+            "For Lean, cwd='/opt/sources/physlib' is the prepared Lake project and can import "
+            "both Physlib and Mathlib; pass uploaded files by their /work paths. "
+            "The standalone /opt/sources/mathlib Lake configuration is read-only. "
+            "For simple Lean checks, use run_lean_scratch. "
+            "Files outside /work are not included in workspace checkpoints. "
             "The real exit status and diagnostics are evidence, not proof acceptance.",
         )
         register(
             "write_workspace_file",
             {"path": {"type": "string"}, "content": {"type": "string"}},
             self.write,
-            "Write a bounded file in the isolated scientific workspace.",
+            "Write a bounded file using a workspace-relative path, such as scratch/Check.lean; "
+            "omit the /work/ prefix.",
         )
         register(
             "checkpoint_workspace",
@@ -129,6 +516,112 @@ class WorkspaceTools:
             self.checkpoint,
             "Archive bounded regular workspace files as an immutable artifact. "
             "This is not a full VM memory snapshot.",
+        )
+        register(
+            "read_workspace_file",
+            {
+                "path": {"type": "string"},
+                "offset": {"type": "integer", "minimum": 0},
+                "length": {"type": "integer", "minimum": 1, "maximum": 65536},
+            },
+            self.read,
+            "Read an exact bounded byte range using a workspace-relative path, such as "
+            "scratch/Check.lean; omit the /work/ prefix. Returns UTF-8 rendering and "
+            "whole-file digest.",
+        )
+        if agent is not None:
+            promotion_schema = {
+                "path": {"type": "string"},
+                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "target_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            }
+            register(
+                "store_workspace_artifact",
+                promotion_schema,
+                lambda a, k: self.store_workspace_artifact(a, k, agent),
+                "Capture an exact bounded Lean source file into a private immutable artifact "
+                "under the current lease. Supply the file's SHA-256 and current target digest. "
+                "This does not accept a proof.",
+            )
+            register(
+                "submit_workspace_candidate",
+                promotion_schema,
+                lambda a, k: self.submit_workspace_candidate(a, k, agent),
+                "Capture exact bounded Lean source bytes from the current workspace, then "
+                "queue the existing independent verifier. Local compilation is not acceptance.",
+            )
+        register(
+            "run_lean_scratch",
+            {"source": {"type": "string"}},
+            self.lean_scratch,
+            "Run scratch Lean against pinned offline library imports; "
+            "diagnostics do not accept a proof.",
+        )
+        register(
+            "check_lean_type",
+            {
+                "expression": {"type": "string"},
+                "imports": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 16,
+                },
+            },
+            self.check_lean_type,
+            "Elaborate a Lean expression in the pinned library environment and return diagnostics.",
+        )
+        register(
+            "lookup_library_declaration",
+            {
+                "name": {"type": "string"},
+                "imports": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "maxItems": 16,
+                },
+            },
+            self.lookup_library_declaration,
+            "Use Lean to inspect an exact qualified declaration under explicit pinned imports.",
+        )
+        register(
+            "search_library_source",
+            {"query": {"type": "string"}},
+            self.search_library,
+            "Lexically scan pinned Mathlib and Physlib Lean source; "
+            "each hits[].path is a canonical path accepted unchanged by "
+            "lookup_library_source; guest_path gives the absolute VM provenance.",
+        )
+        register(
+            "lookup_library_source",
+            {"path": {"type": "string"}},
+            self.lookup_library_source,
+            "Read a pinned library source by an unchanged search_library_source "
+            "hits[].path (mathlib/... or physlib/...) with hash, provenance and bounded text. "
+            "Absolute guest_path and bare module paths are invalid.",
+        )
+        register(
+            "check_polynomial_identity",
+            {
+                "variables": {"type": "array", "items": {"type": "string"}},
+                "left": {"type": "string"},
+                "right": {"type": "string"},
+            },
+            self.polynomial,
+            "Check exact rational polynomial coefficients; computation cannot confer proof status.",
+        )
+        register(
+            "check_matrix_factorization",
+            {
+                side: {
+                    "type": "array",
+                    "items": {"type": "array", "items": {"type": ["string", "integer"]}},
+                }
+                for side in ("target", "left", "right")
+            },
+            self.matrix,
+            "Check exact rational matrix product; computation cannot confer proof status.",
         )
 
 
@@ -164,4 +657,243 @@ def e2b_workspace_factory(policy: WorkspacePolicy):
         )
         return WorkspaceTools(broker, policy)
 
+    return construct
+
+
+def local_docker_workspace_factory(
+    policy: WorkspacePolicy,
+    *,
+    docker_host: str,
+    image_digest: str,
+    workspace_quota_bytes: int = 256 * 1024 * 1024,
+    max_workspaces: int = 1,
+):
+    """Return a workspace factory bound to one dedicated Linux Docker endpoint."""
+    from ..execution.local_docker import LocalDockerWorkspaceProvider
+    from .workspaces import WorkspaceBroker
+
+    # Validate the configuration without dispatching Docker or allocating a VM.
+    LocalDockerWorkspaceProvider(
+        docker_host=docker_host,
+        image_digest=image_digest,
+        timeout_seconds=policy.timeout_seconds,
+        workspace_quota_bytes=workspace_quota_bytes,
+        max_active_workspaces=max_workspaces,
+    )
+    if policy.template_id != image_digest:
+        raise HarnessError(
+            "WORKSPACE_ENVIRONMENT_MISMATCH",
+            "Policy template must be exact workbench image digest.",
+        )
+    if policy.cost_bound_usd != 0 or policy.cost_source != "local_no_external_invoice":
+        raise HarnessError(
+            "VM_COST_BOUND_REQUIRED",
+            "Local workbench requires explicit zero external charge provenance.",
+        )
+
+    def preflight(*, requested_concurrency: int = 1) -> dict:
+        socket_path = docker_host.removeprefix("unix://")
+        if not Path(socket_path).is_socket():
+            raise HarnessError("PROVIDER_UNAVAILABLE", "Dedicated Docker socket is unavailable.")
+        try:
+            observed = subprocess.run(
+                [
+                    "docker",
+                    "--host",
+                    docker_host,
+                    "image",
+                    "inspect",
+                    "--format",
+                    "{{.Id}}",
+                    image_digest,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            ).stdout.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HarnessError(
+                "PROVIDER_UNAVAILABLE",
+                "Pinned workbench image is unavailable on dedicated Docker endpoint.",
+            ) from exc
+        if observed != image_digest:
+            raise HarnessError(
+                "PROVIDER_POLICY_MISMATCH", "Workbench image digest does not match policy."
+            )
+        try:
+            active = subprocess.run(
+                [
+                    "docker",
+                    "--host",
+                    docker_host,
+                    "ps",
+                    "--filter",
+                    "label=physharness.workbench=true",
+                    "--format",
+                    '{{.ID}}\t{{.Label "physharness.capacity"}}',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=True,
+                env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            ).stdout.splitlines()
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise HarnessError(
+                "PROVIDER_UNAVAILABLE", "Cannot inspect workbench capacity."
+            ) from exc
+        try:
+            daemon = json.loads(
+                subprocess.run(
+                    ["docker", "--host", docker_host, "info", "--format", "{{json .}}"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=True,
+                    env={"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+                ).stdout
+            )
+            memory_bytes = daemon["MemTotal"]
+            cpu_count = daemon["NCPU"]
+            running_containers = daemon["ContainersRunning"]
+            if (
+                type(memory_bytes) is not int
+                or memory_bytes <= 0
+                or type(cpu_count) is not int
+                or cpu_count <= 0
+                or type(running_containers) is not int
+                or running_containers < 0
+            ):
+                raise ValueError("Invalid Docker resource report")
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError) as exc:
+            raise HarnessError(
+                "PROVIDER_UNAVAILABLE",
+                "Cannot inspect dedicated Docker daemon resources.",
+                remediation="Check the dedicated Docker endpoint and its resource report.",
+            ) from exc
+        gib = 1024**3
+        active_labels = [line.partition("\t")[2] for line in active if line]
+        active_count = len(active_labels)
+        if running_containers < active_count:
+            raise HarnessError(
+                "PROVIDER_UNAVAILABLE", "Docker daemon container report is inconsistent."
+            )
+        policy_conflict = any(
+            label != str(max_workspaces) and not (max_workspaces == 1 and not label)
+            for label in active_labels
+        )
+        available_slots = 0 if policy_conflict else max(0, max_workspaces - active_count)
+        # Docker reports daemon memory capacity, not live free memory. Reserve for
+        # observed workbenches, the independent verifier, and host overhead.
+        estimated_unallocated_memory_bytes = max(0, memory_bytes - active_count * 2 * gib)
+        required_memory_bytes = (requested_concurrency * 2 + 8 + 2) * gib
+        checks = [
+            {
+                "code": "WORKBENCH_DAEMON_NOT_DEDICATED",
+                "status": "blocked" if running_containers != active_count else "ready",
+                "running_containers": running_containers,
+                "active_workbenches": active_count,
+                "remediation": "Remove unrelated containers from the dedicated Docker daemon.",
+            },
+            {
+                "code": "WORKSPACE_CAPACITY_POLICY_MISMATCH",
+                "status": "blocked" if policy_conflict else "ready",
+                "configured_capacity": max_workspaces,
+                "active_workspaces": active_count,
+                "remediation": (
+                    "Use the active workbenches' capacity policy or clear them "
+                    "before changing capacity."
+                ),
+            },
+            {
+                "code": "WORKSPACE_CAPACITY",
+                "status": "ready" if requested_concurrency <= available_slots else "blocked",
+                "requested_workspaces": requested_concurrency,
+                "max_active_workspaces": max_workspaces,
+                "active_workspaces": active_count,
+                "available_slots": available_slots,
+                "remediation": "Reduce team concurrency or free dedicated workbench slots.",
+            },
+            {
+                "code": "WORKBENCH_MEMORY_INSUFFICIENT",
+                "status": (
+                    "ready"
+                    if required_memory_bytes <= estimated_unallocated_memory_bytes
+                    else "blocked"
+                ),
+                "requested_workers": requested_concurrency,
+                "worker_memory_bytes": 2 * gib,
+                "verifier_memory_bytes": 8 * gib,
+                "headroom_bytes": 2 * gib,
+                "daemon_memory_bytes": memory_bytes,
+                "estimated_unallocated_memory_bytes": estimated_unallocated_memory_bytes,
+                "required_memory_bytes": required_memory_bytes,
+                "remediation": "Increase Docker daemon memory or reduce requested concurrency.",
+            },
+            {
+                "code": "WORKBENCH_CPU_OVERSUBSCRIBED",
+                "status": (
+                    "warning"
+                    if (active_count + requested_concurrency) * 2 + 4 > cpu_count
+                    else "ready"
+                ),
+                "requested_worker_cpus": requested_concurrency * 2,
+                "active_worker_cpus": active_count * 2,
+                "verifier_cpus": 4,
+                "daemon_cpus": cpu_count,
+                "remediation": "Consider more daemon CPUs or lower concurrency for throughput.",
+            },
+        ]
+        return {
+            "provider": "local_docker",
+            "image_digest": observed,
+            "docker_host": docker_host,
+            "workspace_quota_bytes": workspace_quota_bytes,
+            "vm_started": False,
+            "max_workspaces": max_workspaces,
+            "checks": checks,
+        }
+
+    def construct(service, actor, task_id, holder, fence, worker_slot_id):
+        broker = WorkspaceBroker(
+            service,
+            actor=actor,
+            task_id=task_id,
+            holder=holder,
+            fence=fence,
+            worker_slot_id=worker_slot_id,
+            provider_spec={
+                "provider": "local_docker",
+                "template_id": image_digest,
+                "timeout_seconds": policy.timeout_seconds,
+            },
+            provider_factory=lambda *, journal, timeout_seconds: LocalDockerWorkspaceProvider(
+                docker_host=docker_host,
+                image_digest=image_digest,
+                timeout_seconds=timeout_seconds,
+                workspace_quota_bytes=workspace_quota_bytes,
+                max_active_workspaces=max_workspaces,
+                journal=journal,
+            ),
+        )
+        return WorkspaceTools(broker, policy)
+
+    construct.preflight = preflight
+    construct.provider = "local_docker"
+    construct.capabilities = frozenset(
+        {
+            "isolated_workspace",
+            "checkpoint_restore",
+            "library_source_lookup",
+            "library_source_search",
+            "library_declaration_lookup",
+            "lean_scratch",
+            "scientific_command",
+            "workspace_files",
+            "exact_polynomial",
+            "exact_matrix",
+        }
+    )
     return construct

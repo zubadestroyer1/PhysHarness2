@@ -85,7 +85,9 @@ def test_program_registration_pins_source_without_executing_it(lab, tmp_path):
     assert not marker.exists()
 
 
-def accepted_fixture(lab, sharing="verified", assurance="independent_kernel"):
+def accepted_fixture(
+    lab, sharing="verified", assurance="independent_kernel", source="synthetic proof"
+):
     """Synthetic acceptance result to exercise knowledge authority, never kernel evidence."""
     from test_sharing import approaches, artifact
 
@@ -112,7 +114,7 @@ def accepted_fixture(lab, sharing="verified", assurance="independent_kernel"):
             )
 
     service.verifier = TestChecker()
-    candidate = artifact(service, agents[1], "synthetic proof")
+    candidate = artifact(service, agents[1], source)
     receipt = service.verify_candidate(
         experiment["id"], candidate["id"], False, agents[1], "verify"
     )
@@ -129,6 +131,144 @@ def test_knowledge_bundle_returns_exact_source_and_requires_recomposition(lab):
     assert result["recomposition_required"] is True
     assert result["consuming_experiment_id"] == exp["id"]
     assert result["status"] == "accepted_dependency_source"
+
+
+@pytest.mark.integration
+async def test_opt_in_known_premise_recomposes_under_pinned_lean(lab):
+    """The fixture's acceptance is synthetic; this checks real Lean reuse only."""
+    import os
+
+    from physharness.execution.local_docker import LocalDockerWorkspaceProvider
+    from physharness.execution.types import CommandRequest
+
+    host = os.environ.get("PHYSHARNESS_WORKBENCH_DOCKER_HOST")
+    image = os.environ.get("PHYSHARNESS_WORKBENCH_IMAGE_DIGEST")
+    if not host or not image:
+        pytest.skip("Dedicated workbench endpoint and pinned image digest are required")
+    source = "import Mathlib\ntheorem known_true : True := by trivial\n"
+    service, _, experiment, _, (reader, _), receipt = accepted_fixture(lab, source=source)
+    hits = service.search_knowledge(experiment["id"], "Nat", reader)["items"]
+    assert any(hit["lemma"]["id"] == receipt["claim_id"] for hit in hits)
+    bundle = service.knowledge_bundle(experiment["id"], receipt["claim_id"], reader)
+    assert bundle["candidate_source"] == source
+    provider = LocalDockerWorkspaceProvider(
+        docker_host=host, image_digest=image, timeout_seconds=180
+    )
+    try:
+        await provider.create()
+        await provider.upload_file(
+            "consumer.lean",
+            (
+                bundle["candidate_source"] + "theorem use_known : True := by exact known_true\n"
+            ).encode(),
+            expected_execution_id=provider.execution_id,
+        )
+        result = await provider.run(
+            CommandRequest(
+                operation_id="reuse-known",
+                argv=["lake", "--offline", "env", "lean", "/work/consumer.lean"],
+                cwd="/opt/sources/physlib",
+                timeout_seconds=120,
+                max_output_bytes=65536,
+            )
+        )
+        assert result.exit_code == 0, result.stderr
+    finally:
+        await provider.close()
+
+
+def test_empty_accessible_knowledge_corpus_is_not_called_lexical_miss(lab):
+    service, actor, _ = lab
+    experiment, _ = setup_experiment(lab)
+    result = service.search_knowledge(experiment["id"], "energy", actor)
+    assert result["items"] == []
+    assert result["reason_code"] == "empty_accessible_corpus"
+
+
+def test_accepted_summary_is_compact_and_permission_checked(lab):
+    service, _, experiment, _, (reader, _), receipt = accepted_fixture(lab)
+    summary = service.accepted_proof_summary(experiment["id"], receipt["claim_id"], reader)
+    assert summary["status"] == "verified"
+    assert summary["receipt_id"] == receipt["id"]
+    assert summary["recomposition_required"] is True
+    assert "candidate_source" not in summary
+    assert "native_checkpoint" not in str(summary)
+
+
+def test_accepted_summary_does_not_release_private_peer_result(lab):
+    from physharness.errors import HarnessError
+
+    service, _, private, _, (outsider, _), private_receipt = accepted_fixture(lab, "none")
+    with pytest.raises(HarnessError) as error:
+        service.accepted_proof_summary(private["id"], private_receipt["claim_id"], outsider)
+    assert error.value.code == "KNOWLEDGE_NOT_APPLICABLE"
+
+
+def test_hidden_verified_claim_does_not_change_empty_search_diagnostics(lab):
+    from physharness.storage import RecordRow
+
+    service, _, experiment, _, (reader, _), receipt = accepted_fixture(lab, "none")
+    with_hidden = service.search_knowledge(experiment["id"], "synthetic proof", reader)
+    with service.db.transaction() as session:
+        session.delete(session.get(RecordRow, receipt["claim_id"]))
+    without_hidden = service.search_knowledge(experiment["id"], "synthetic proof", reader)
+    assert with_hidden["items"] == without_hidden["items"] == []
+    assert with_hidden["reason_code"] == without_hidden["reason_code"]
+
+
+def test_corrupt_cross_experiment_proof_does_not_disclose_candidate(lab):
+    from physharness.domain import BranchCreate, ExperimentCreate
+    from physharness.storage import RecordRow
+
+    service, author, origin, _, _, receipt = accepted_fixture(lab, "verified")
+    consumer = service.create_experiment(
+        ExperimentCreate(
+            campaign_id=origin["campaign_id"],
+            problem_id=origin["problem_id"],
+            models=origin["models"],
+            budget=origin["budget"],
+            sharing="verified",
+        ),
+        author,
+        "corrupt-consumer",
+    )
+    service.transition_experiment(consumer["id"], "start", 1, author, "corrupt-start")
+    branch = service.create_branch(
+        consumer["id"], BranchCreate(title="consumer", objective="review"), author, "branch"
+    )
+    reader = Principal(
+        id="consumer-reader",
+        project_id=author.project_id,
+        role="agent",
+        experiment_id=consumer["id"],
+        branch_id=branch["id"],
+    )
+    candidate = service.get_record("artifact", receipt["artifact_id"], author)
+    service.artifacts.path_for(candidate["sha256"]).write_bytes(b"corrupted")
+    with_corrupt = service.search_knowledge(consumer["id"], "Nat", reader)
+    with service.db.transaction() as session:
+        session.delete(session.get(RecordRow, receipt["claim_id"]))
+    without_claim = service.search_knowledge(consumer["id"], "Nat", reader)
+    assert with_corrupt["items"] == without_claim["items"] == []
+    assert with_corrupt["rejected_candidates"] == without_claim["rejected_candidates"] == []
+    assert with_corrupt["reason_code"] == without_claim["reason_code"]
+
+
+def test_accepted_summary_bounds_long_assumption_text(lab):
+    from physharness.storage import RecordRow
+
+    service, author, experiment, _, (reader, _), receipt = accepted_fixture(lab)
+    claim = service.get_record("claim", receipt["claim_id"], author)
+    with service.db.transaction() as session:
+        for _kind, identifier in (
+            ("claim", claim["id"]),
+            ("problem", claim["problem_revision_id"]),
+        ):
+            row = session.get(RecordRow, identifier)
+            service._replace(session, row, {"assumptions": ["A" * 100_000]})
+    summary = service.accepted_proof_summary(experiment["id"], claim["id"], reader)
+    assert len(summary["assumptions"][0]) <= 512
+    assert summary["assumptions_truncated"] is True
 
 
 def test_knowledge_broker_cannot_bypass_none_sharing(lab):
@@ -180,7 +320,8 @@ def test_cross_experiment_knowledge_requires_independent_acceptance(lab, assuran
         experiment_id=consumer["id"],
         branch_id=branch["id"],
     )
-    hits = service.search_knowledge(consumer["id"], "", agent)["items"]
+    search = service.search_knowledge(consumer["id"], "Nat", agent)
+    hits = search["items"]
     if shared:
         assert [hit["lemma"]["id"] for hit in hits] == [claim_id]
         assert (
@@ -189,6 +330,7 @@ def test_cross_experiment_knowledge_requires_independent_acceptance(lab, assuran
         )
     else:
         assert hits == []
+        assert search["reason_code"] == "empty_accessible_corpus"
         with pytest.raises(HarnessError) as error:
             service.knowledge_bundle(consumer["id"], claim_id, agent)
         assert error.value.code == "KNOWLEDGE_NOT_APPLICABLE"
@@ -338,6 +480,7 @@ def test_knowledge_continues_after_invalid_metadata_and_corrupt_proof(lab, monke
         "environment",
         "claim_binding",
         "private_origin",
+        "missing_origin",
     ],
 )
 def test_ranked_knowledge_rechecks_acceptance_and_skips_invalid_candidates(
@@ -362,6 +505,8 @@ def test_ranked_knowledge_rechecks_acceptance_and_skips_invalid_candidates(
             service._replace(
                 session, session.get(RecordRow, claim.payload["experiment_id"]), {"sharing": "none"}
             )
+        elif tamper == "missing_origin":
+            service._replace(session, claim, {"experiment_id": "nonexistent-origin"})
         else:
             field, value = {
                 "review_binding": ("review_id", "obsolete"),
@@ -404,3 +549,91 @@ def test_knowledge_private_candidates_never_fetch_source_or_disclose_rejections(
         exp["id"], "", author if private == "discovery" else alpha, limit=1
     )
     assert result["items"] == [] and result["rejected_candidates"] == []
+
+
+def _knowledge_consumer(service, author, origin, key):
+    from physharness.domain import BranchCreate, ExperimentCreate
+
+    consumer = service.create_experiment(
+        ExperimentCreate(
+            campaign_id=origin["campaign_id"],
+            problem_id=origin["problem_id"],
+            models=origin["models"],
+            budget=origin["budget"],
+            sharing="verified",
+        ),
+        author,
+        f"{key}-consumer",
+    )
+    service.transition_experiment(consumer["id"], "start", 1, author, f"{key}-start")
+    branch = service.create_branch(
+        consumer["id"], BranchCreate(title="consumer", objective="review"), author, f"{key}-b"
+    )
+    return consumer, Principal(
+        id=f"{key}-agent",
+        project_id=author.project_id,
+        role="agent",
+        experiment_id=consumer["id"],
+        branch_id=branch["id"],
+    )
+
+
+def test_ineligible_cross_experiment_claim_does_not_change_search_diagnostics(lab):
+    import json
+
+    from physharness.storage import RecordRow
+
+    service, author, origin, _, _, receipt = accepted_fixture(lab, "verified", "kernel")
+    consumer, agent = _knowledge_consumer(service, author, origin, "k1")
+    with_claim = service.search_knowledge(consumer["id"], "Nat", agent)
+    with service.db.transaction() as session:
+        session.delete(session.get(RecordRow, receipt["claim_id"]))
+    without_claim = service.search_knowledge(consumer["id"], "Nat", agent)
+    assert with_claim == without_claim
+    assert with_claim["reason_code"] == "empty_accessible_corpus"
+    assert receipt["claim_id"] not in json.dumps(with_claim)
+
+
+def test_claim_with_dangling_origin_experiment_is_skipped(lab):
+    from physharness.storage import RecordRow
+
+    service, author, origin, _, _, receipt = accepted_fixture(lab, "verified")
+    consumer, agent = _knowledge_consumer(service, author, origin, "dangling")
+    with service.db.transaction() as session:
+        row = session.get(RecordRow, receipt["claim_id"])
+        service._replace(session, row, {"experiment_id": "missing-experiment"})
+    result = service.search_knowledge(consumer["id"], "Nat", agent)
+    assert result["items"] == [] and result["rejected_candidates"] == []
+    assert result["reason_code"] == "empty_accessible_corpus"
+    assert receipt["claim_id"] not in str(result)
+
+
+def test_verified_target_check_ignores_unrelated_receipts_without_loading_them(lab, monkeypatch):
+    from physharness.storage import RecordRow
+
+    service, author, experiment, _, _, receipt = accepted_fixture(lab)
+    with service.db.transaction() as session:
+        for i in range(1000):
+            service._insert(
+                session,
+                "verification",
+                author,
+                {
+                    "experiment_id": experiment["id"],
+                    "status": "verified",
+                    "assurance": "independent_kernel" if i % 2 else "kernel",
+                    "target_digest": f"old-target-{i}",
+                    "problem_revision_id": experiment["problem_id"],
+                },
+            )
+    checked = []
+    original = service._accepted_evidence
+    monkeypatch.setattr(
+        service, "_accepted_evidence", lambda *a, **k: checked.append(1) or original(*a, **k)
+    )
+    found = service.verified_target_receipt(experiment["id"], author)
+    assert found["receipt_id"] == receipt["id"] and len(checked) == 1
+    with service.db.transaction() as session:
+        session.delete(session.get(RecordRow, receipt["id"]))
+    assert service.verified_target_receipt(experiment["id"], author) is None
+    assert len(checked) == 1

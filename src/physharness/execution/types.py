@@ -70,7 +70,10 @@ class ModelConfig(Record):
 class RuntimeLimits(Record):
     max_turns: int = Field(default=8, ge=1, le=1000)
     max_output_tokens: int = Field(default=4096, ge=1)
-    max_total_tokens: int = Field(default=32768, ge=1)
+    # None delegates the cumulative ceiling to the shared dollar/time budget.
+    # A numeric guard remains cumulative across compaction and continuation.
+    max_total_tokens: int | None = Field(default=32768, ge=1)
+    max_context_tokens: int | None = Field(default=None, ge=1)
     timeout_seconds: float = Field(default=300, gt=0, le=86400)
 
 
@@ -95,7 +98,9 @@ class RuntimeSession(Record):
     runtime: str
     model: ModelConfig
     limits: RuntimeLimits
-    status: Literal["ready", "running", "completed", "interrupted", "failed", "uncertain"] = "ready"
+    status: Literal[
+        "ready", "running", "completed", "interrupted", "failed", "uncertain", "handed_off"
+    ] = "ready"
     native_session_id: str | None = None
     turns: int = 0
     input_tokens: int = 0
@@ -140,6 +145,8 @@ class RuntimeResult(Record):
     output_text: str
     artifacts: list[OutputArtifact] = Field(default_factory=list)
     native_items: list[dict[str, Any]] = Field(default_factory=list)
+    continuation: dict[str, Any] | None = None
+    completion_reason: str | None = None
 
 
 class RuntimeEvent(Record):
@@ -155,6 +162,8 @@ EventSink = Callable[[RuntimeEvent], Awaitable[None]]
 class RuntimeStore(Protocol):
     async def save(self, checkpoint: RuntimeCheckpoint) -> None: ...
     async def load(self, session_id: str) -> RuntimeCheckpoint: ...
+    async def archive(self, session_id: str, content: dict[str, Any]) -> str: ...
+    async def load_archive(self, session_id: str, archive_id: str) -> dict[str, Any]: ...
 
 
 class RuntimeAdapter(Protocol):

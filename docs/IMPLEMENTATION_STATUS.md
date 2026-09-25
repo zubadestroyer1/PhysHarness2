@@ -1,10 +1,69 @@
+## Harder nonlinear-physics qualification — 2026-09-24
+
+A fresh four-worker retry completed cleanly on a substantially longer known-type nonlinear Duffing-network energy target: one exact-target proof accepted by Comparator, Lean and Nanoda after 17m03s, two roots plus four model-requested helpers, and observed helper-source reuse in the accepted proof. All six tasks/sessions completed; 3,246 exported artifacts and native usage reconciled. Conservative retry usage was $49.102475 under the user's explicit $100 live amendment. All three attempts in this round, including an earlier faulted-but-proved run, total $92.305730; prior historical usage remains separately recorded. This is not a novelty, human expert publication or fleet qualification claim.
+
+Pure workspace path validation now occurs before external-operation reservations and yields correctable model errors; genuine post-dispatch uncertainty still blocks. Durable repeated-continuation lineage and settled-compaction crash recovery have deterministic tests, and the earlier successful root continued through one real native compaction. The final retry had no compaction or handoff. The frozen main suite passed 1,194 tests (14 opt-in skips, 21 upstream warnings), with two additional standalone operator budget-amendment tests passing. A real Docker path-recovery regression and four-worker/verification/restore qualification passed separately. The dedicated VM is stopped and monitor paused. No changes or private results were pushed. See the [full outcome, faults and limits](../work/hardening-final-2026-09-24/REPORT.md). Next: measured 8–16-worker recovery/coordination qualification; the current single-team concurrency schema is capped at 100, so 128 requires a reviewed change and real endurance evidence.
+
+## Source retrieval repair — 2026-09-24
+
+The live-pilot search/read mismatch is now fixed: search returns canonical lookup-ready paths and separate absolute provenance; lookup preserves those paths and rejects malformed input explicitly. Root verification passed 1,097 full-suite tests (8 opt-in skips), plus 13 focused tests with the actual pinned VM libraries; lint and diff checks passed. No new model experiment was launched. See the [repair evidence](../work/source-lookup-fix-2026-09-24/DELIVERY.md) and [next-problem recommendation](../work/next-physics-problem-2026-09-24/RECOMMENDATION.md). Earlier pilot findings below describe the pre-fix revision.
+
+## Parallel collaboration pilot — 2026-09-24
+
+Capacity and dispatch checks now support two real simultaneous proof workbenches on the dedicated 16 GiB VM. Budget contention waits for confirmed reservations; unexpectedly large settlements retain actual usage and block new allocations. The full frozen suite passed 1,080 tests; seven opt-in skips were covered separately by PostgreSQL and real-VM checks. Fresh verifier qualification and both strengthened target controls passed.
+
+The four-arm GPT-6 Sol pilot completed: both targets were independently verified in both sharing configurations, with nine accepted candidates and a conservative model-cost total of $3.658018 including the probe (within $100 authorized). First proofs took 67–93 seconds; no output limits, compactions, handoffs, or peer messages occurred. These targets were too short to qualify long-horizon collaboration. The audit found a source-search/read path mismatch still requiring repair; a post-run delegation counter correction passed its regression. Exact target review was assistant-led under explicit delegation, not independent human expert review or publication approval. All four experiments are paused, exports passed artifact integrity checks, the VM is stopped and monitor paused. See the [full results and limitations](../work/parallel-pilot-2026-09-24/REPORT.md).
+
 # Implementation evidence ledger
 
-Updated 2026-09-22 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) remains the scope.
+## Next collaboration pilot preparation
+
+Two step-up known-result targets (Bell-state entanglement/marginal and damped-oscillator
+energy nonincrease) have exact pending-review bundles and four unstarted comparison
+experiments. Fresh preparation checks passed 46 pipeline tests and eight expected kernel
+outcomes. A real VM probe confirmed a launch blocker: the local provider permits only one
+active workbench, and the current preflight does not compare requested team concurrency
+with that physical limit. The proposed two-worker live test is **not ready** until the
+capacity/preflight change is qualified and new target/launch reviews are completed.
+No runtime source changed and no model API calls were made; the VM is stopped. See the
+[preparation and audit report](../work/collaboration-pilot-preparation-2026-09-23/README.md).
+
+## Current research-network implementation
+
+The [research-network plan](superpowers/plans/2026-09-23-research-network.md) is implemented:
+atomic portfolios and recruitment, opt-in researcher/team discovery, attributed discussions,
+a durable unified inbox, optional sampled synthesis, and shared admission/fair local dispatch.
+Responses checkpoints incoming peer data before acknowledgement; other runtimes use manual
+tools. Independent audit findings were repaired and rechecked. Fresh validation reports
+1,044 Python passes with PostgreSQL and Temporal enabled, 50 final network passes, and three
+separately run real VM passes. The refreshed verifier packet satisfies ten mechanical checks
+with 24 expected kernel outcomes and 16 boundary checks. See the
+[delivery report](../work/research-network-2026-09-23/DELIVERY.md) and
+[operator guide](RESEARCH_NETWORK.md). The 128-task queue replay used only two mock workers;
+scientific effectiveness and live fleet scale remain unqualified. No live research model
+API experiment was run. The dedicated VM is stopped.
+
+## Current research-effectiveness regression
+
+The [research-effectiveness plan](superpowers/plans/2026-09-23-research-effectiveness.md) adds research-sized compaction, joined delegation, bounded scientific context, isolated Lean/scientific workbenches, and streamed checkpoint restoration. Current implementation checks pass: 987 host tests (10 opt-in skips) and three dedicated-VM workbench checks. Independent reviews and current-source verifier evidence are recorded in the [delivery report](../work/research-effectiveness-2026-09-23/DELIVERY.md). Two startup faults were found and repaired. Both fresh known-result tasks now have exact-target, independent-kernel accepted proofs. Total recorded model cost is $0.756902, including the failed startup, within the original two $25 envelopes. Both exports passed artifact integrity checks, experiments are paused with no resource uncertainty, and the dedicated VM is stopped and monitor paused. These short trials did not exercise compaction or delegation; they do not qualify production, fleet capacity, or any complete wave.
+
+Updated 2026-09-23 UTC. The [approved specification](IMPLEMENTATION_PLAN.md) remains the scope.
 Every wave is **unqualified**. Several components are implemented and tested; none of the live
 scientific/fleet exit criteria has been substituted with a mock or a schema check.
 The [current Wave 0/1 delivery](../work/wave01/DELIVERY-2026-09-22.md) records the
 final 8 GiB control evidence and completed physics reports in both kernel modes.
+
+## 2026-09-23 long-horizon implementation and live trials
+
+The [continuation plan](superpowers/plans/2026-09-23-durable-research-continuation.md) now has implemented native Responses compaction, immutable discarded-history archives, bounded exact scientific context and retrieval, attributed handoff notes, fenced continuation tickets, shared descendant accounting, workspace restoration contracts, and settled-checkpoint recovery. Public HTTP/client/MCP tools expose scientific memory without exposing native session archives. Independent acceptance remains separate from model-authored summaries and task completion.
+
+The [current evidence ledger](../work/long-horizon-2026-09-23/LEDGER.md) records 894 ordinary Python tests, 5 real local Temporal tests, 3 real PostgreSQL tests, 36 frontend tests/build, Terraform validation and application container smoke. The [final scoped verifier packet](../work/pilot-qualification-2026-09-23/attempt-long-horizon-03/QUALIFICATION_REVIEW.md) satisfies all ten mechanical checks. These observations supersede earlier source snapshots only within their stated scope.
+
+The first fresh known-result trial completed autonomously: two accepted submissions through independent kernels, 42 native compactions, one delegated task and $3.419262 recorded model usage. The second trial made nine rejected submissions and 77 native compactions, then stopped at its shared token admission limit without an accepted proof ($7.878868). A misleading local budget error code found in terminal audit was corrected, independently audited and regression-tested. Both experiments are quiescent; the dedicated VM is stopped and the monitor paused. See the [delivery report](../work/long-horizon-2026-09-23/DELIVERY.md). These are local engineering/reproduction tests with deliberately aggressive compaction, not open-problem success, production deployment approval, E2B recovery qualification or fleet/endurance evidence. Expert semantic/novelty and broader wave exit gates remain separate.
+
+## 2026-09-23 pilot preparation evidence
+
+The fresh [pilot qualification packet](../work/pilot-qualification-2026-09-23/attempt-01/QUALIFICATION_REVIEW.md) binds current source scope `f13defb821a8043a16978a83058abd1e6f7cbed8a60bd36549fb647efe3cd70f` to the restored consolidated image and dedicated Linux runtime. All ten automatic checks are mechanically satisfied: 24/24 core and library cases across both kernel modes, 16/16 fixed boundary observations, and all 56 required host regressions passed within a JUnit run of 226 passes and one conditional PostgreSQL skip. The [independent audit](../work/pilot-qualification-2026-09-23/independent-audit.md) rechecked the packet and the separate selected-target fixture reports, which accepted two known reference proofs and rejected one alteration in each mode. The [retention record](../work/pilot-qualification-2026-09-23/retention-and-shutdown.json) confirms the named persistent VM retained the exact image across restart and was stopped after collection. These are engineering observations. Deployment approval, target scientific review, live agent proofs, and wave qualification remain pending; see the [pilot preparation review](../work/first-pilot-review.md).
 
 ## Initial development evidence
 
@@ -95,8 +154,8 @@ canonical team runner. The current delivery evidence is in
   verified but expert-held. The independent audit matched the stored full-suite
   assessment without discrepancies; older 2 GiB reports are historical only.
   The recorded 8 GiB scope also predates the combined PR #1/#20 and assessor changes;
-  its automatic checks are historical, and current-source qualification needs a
-  new scoped run and review.
+  its automatic checks are historical. The fresh current-source pilot control run
+  is recorded above and still requires authorized deployment review.
   [CI run 35796735015](https://github.com/zubadestroyer1/PhysHarness2/actions/runs/35796735015)
   passed all five jobs at `a58b94d`.
 
@@ -146,7 +205,8 @@ require a separate rebuild, rerun and repinning.
 
 A dedicated local Colima VM was used for real Linux builds and proof tests. Both the current
 and historical images were archived with a recorded SHA-256 and passing `zstd -t`; the
-VM was observed stopped on 2026-09-22. A fresh-VM restore remains untested. Details are
+VM was observed stopped on 2026-09-22. A fresh-VM restore and exact image retention
+through a restart were later observed for the pilot above. Details of the earlier build are
 in the [current delivery](../work/wave01/DELIVERY-2026-09-22.md). Lean candidate execution stays
 inside that Linux boundary, not the Mac's default environment. The temporary PostgreSQL container
 and tunnel were removed after the concurrency test. Hosted-model identifiers, credentials,
