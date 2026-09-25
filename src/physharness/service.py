@@ -471,7 +471,15 @@ class HarnessService(
             if cursor is None:
                 return items
 
-    def _insert(self, session: Session, kind: str, actor: Principal, data: dict) -> dict:
+    def _insert(
+        self,
+        session: Session,
+        kind: str,
+        actor: Principal,
+        data: dict,
+        *,
+        record_id: str | None = None,
+    ) -> dict:
         data = dict(data)
         data["origin_actor_id"] = actor.id
         experiment_id = data.get("experiment_id")
@@ -536,6 +544,9 @@ class HarnessService(
             if kind == "source" and linked and linked.payload.get("trusted_input"):
                 data["trusted_input"] = True
         record = make_record(kind, actor, data)
+        if record_id:
+            # A caller that derives payload fields from the new id reserves it first.
+            record["id"] = record_id
         session.add(
             RecordRow(
                 id=record["id"], project_id=actor.project_id, kind=kind, revision=1, payload=record
@@ -1149,6 +1160,7 @@ class HarnessService(
 
         def action(session, op):
             experiment = self._get(session, "experiment", experiment_id, actor)
+            parent = None
             if request.parent_id:
                 parent = self._writable_branch(session, request.parent_id, actor)
                 if parent.payload["experiment_id"] != experiment_id:
@@ -1180,6 +1192,7 @@ class HarnessService(
                 if request.parent_id
                 else experiment.payload["models"][0]
             )
+            branch_id = new_id()
             record = self._insert(
                 session,
                 "branch",
@@ -1192,7 +1205,10 @@ class HarnessService(
                     "status": "open",
                     "execution_identity": new_id(),
                     "model_configuration": selected_model,
+                    # Society roots found a lab; forks join their parent's lab.
+                    **self._branch_lab(session, experiment, parent, branch_id),
                 },
+                record_id=branch_id,
             )
             if request.parent_id:
                 session.add(
