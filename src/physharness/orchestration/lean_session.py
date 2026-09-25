@@ -168,9 +168,15 @@ def top_level_names(source: str) -> list[str]:
     return names
 
 
+def _clean(value: str) -> str:
+    """Replace lone surrogates (JSON ``\\ud800`` escapes) so the text is encodable UTF-8."""
+    return value.encode("utf-8", "replace").decode("utf-8")
+
+
 def _clip(value, limit):
     if not isinstance(value, str):
         return None
+    value = _clean(value)
     return value if len(value) <= limit else value[: limit - 1] + "…"
 
 
@@ -252,8 +258,8 @@ def _normalise_check(response):
     for name, values in (axioms or {}).items():
         if len(clean_axioms) < MAX_AXIOM_NAMES and 0 < len(name) <= MAX_NAME:
             if isinstance(values, list):
-                clean_axioms[name] = [
-                    v for v in values if isinstance(v, str) and 0 < len(v) <= MAX_NAME
+                clean_axioms[_clean(name)] = [
+                    _clean(v) for v in values if isinstance(v, str) and 0 < len(v) <= MAX_NAME
                 ][:MAX_AXIOM_NAMES]
     return clean_counts, clean_messages, holes, extracted, clean_axioms
 
@@ -347,7 +353,15 @@ class LeanSession:
         }
 
     async def _check(self, source, automate, extract, operation_id, timeout):
-        if not isinstance(source, str) or len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
+        try:
+            size = len(source.encode("utf-8"))
+        except (AttributeError, UnicodeEncodeError) as exc:
+            raise HarnessError(
+                "INVALID_SOURCE",
+                "Lean source must be valid Unicode text (no lone surrogate code points).",
+                status=422,
+            ) from exc
+        if size > MAX_SOURCE_BYTES:
             raise HarnessError(
                 "SOURCE_LIMIT",
                 f"Lean source must be text of at most {MAX_SOURCE_BYTES} bytes (the workspace "
@@ -452,7 +466,7 @@ class LeanSession:
             return {"error": "server_start_failed", "detail": "the daemon could not be placed"}
         try:
             response = json.loads(result["stdout"])
-        except (TypeError, ValueError):
+        except Exception:  # Includes RecursionError from deeply nested agent-controlled JSON.
             response = None
         if not isinstance(response, dict):
             detail = result.get("stderr") or result.get("stdout") or ""

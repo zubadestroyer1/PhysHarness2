@@ -852,6 +852,7 @@ def _assert_bounded_check(result):
 
 MALFORMED = [
     "not json at all",
+    "[" * 10000,  # RecursionError inside json.loads
     "[1, 2]",
     json.dumps({"error": ["x"]}),
     json.dumps({"error": {"nested": 1}, "detail": 5}),
@@ -864,7 +865,7 @@ MALFORMED = [
 ]
 
 
-@pytest.mark.parametrize("stdout", MALFORMED)
+@pytest.mark.parametrize("stdout", MALFORMED, ids=lambda stdout: stdout[:40])
 async def test_hostile_daemon_answers_become_bounded_failures(lean_env, stdout):
     tools = FakeWorkspaceTools(lean_env)
     tools.canned = [stdout] * 3
@@ -1057,3 +1058,86 @@ async def test_sketch_caps_header_and_statement(lean_env):
         {"index": 0, "goal": "⊢ a", "extract_failed": True, "reason": "statement_too_long"},
         {"index": 1, "goal": "⊢ b", "extract_failed": True, "reason": "statement_too_long"},
     ]
+
+
+# Fix round 2: residual hostile paths, invalid sources, extraction reserve
+
+SURROGATE = "\ud800"
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            **GOOD,
+            "counts": {"errors": 1, "messages": 1, "sorries": 1, "sorry_warnings": 0},
+            "messages": [{"severity": "error", "data": "bad " + SURROGATE}],
+            "sorries": [
+                {
+                    "goal": "⊢ " + SURROGATE,
+                    "extracted": "theorem extracted_1 (x : Nat) : x = " + SURROGATE + " := sorry",
+                    "automation": {"suggestion": SURROGATE, "tried": []},
+                }
+            ],
+            "axioms": {SURROGATE: [SURROGATE]},
+        },
+        {**GOOD, "axioms": {"t" + SURROGATE: ["propext" + SURROGATE]}},
+        {"error": "repl_error", "detail": "detail " + SURROGATE},
+        {"error": SURROGATE, "detail": SURROGATE},
+    ],
+    ids=["check", "axioms", "repl_error", "unknown_error"],
+)
+async def test_lone_surrogates_from_the_vm_are_replaced(lean_env, payload):
+    from physharness.domain import digest_json
+
+    stdout = json.dumps(payload)  # json escapes lone surrogates as \\ud800
+    assert "\\ud800" in stdout
+    tools = FakeWorkspaceTools(lean_env)
+    tools.canned = [stdout] * 3
+    session = LeanSession(tools)
+    results = [
+        await session.check(SOURCE, automate=True, operation_id="a"),
+        await session.sketch_goals(SOURCE, operation_id="b"),
+        await session.elaborate_statement("import Mathlib", "t", ": True", operation_id="c"),
+    ]
+    _assert_bounded_check(results[0])
+    for result in results:
+        json.dumps(result, ensure_ascii=False).encode("utf-8")  # no UnicodeEncodeError
+        digest_json(result)
+    assert SURROGATE not in json.dumps(results, ensure_ascii=False)
+
+
+async def test_invalid_unicode_source_is_rejected_before_any_call(lean_env):
+    tools = FakeWorkspaceTools(lean_env)
+    session = LeanSession(tools)
+    with pytest.raises(HarnessError) as error:
+        await session.check("theorem t : True := " + SURROGATE, automate=True, operation_id="a")
+    assert error.value.code == "INVALID_SOURCE" and error.value.status == 422
+    with pytest.raises(HarnessError) as error:
+        await session.sketch_goals(SURROGATE, operation_id="b")
+    assert error.value.code == "INVALID_SOURCE"
+    with pytest.raises(HarnessError) as error:
+        await session.elaborate_statement("import Mathlib", "t", ": " + SURROGATE, operation_id="c")
+    assert error.value.code == "INVALID_SOURCE"
+    with pytest.raises(HarnessError) as error:
+        await session.check(b"theorem", automate=True, operation_id="d")
+    assert error.value.code == "INVALID_SOURCE"
+    assert tools.calls == []
+
+
+def test_daemon_extraction_keeps_a_send_reserve(lean_env, monkeypatch):
+    monkeypatch.setenv("FAKE_LEAN_REPL_DIR", str(lean_env.logs))
+    session = daemon.Session([sys.executable, str(FAKE_REPL)], str(lean_env.root))
+    try:
+        session.handle({"op": "check", "source": SOURCE}, time.monotonic() + 20)
+        tight = time.monotonic() + daemon.EXTRACT_RESERVE_SECONDS * 0.8
+        result = session.handle({"op": "check", "source": SOURCE, "extract_goals": True}, tight)
+        assert result["header_cached"] is True
+        assert result["phase_error"] == "budget_exhausted"
+        assert result["sorries"][0]["extracted"] is None
+        # Nothing was written with too little time left, so the REPL was not reset.
+        assert session.repl is not None and session.repl.process.poll() is None
+        assert session.generation == 1
+        assert not [c for c in _commands(lean_env) if c.get("tactic") == "extract_goal"]
+    finally:
+        session.reset()
