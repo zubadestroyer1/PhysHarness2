@@ -268,6 +268,11 @@ class AcceptanceMixin:
                     self._get(session, "verification", identifier, actor),
                     {"claim_id": claim["id"]},
                 )
+                if result["assurance"] == "independent_kernel":
+                    experiment = session.get(RecordRow, receipt["experiment_id"])
+                    # Society experiments only; legacy experiments take no commons writes.
+                    if experiment is not None and experiment.payload.get("society"):
+                        self._commons_goal_accepted(session, experiment, identifier, op)
             self._event(
                 session,
                 actor,
