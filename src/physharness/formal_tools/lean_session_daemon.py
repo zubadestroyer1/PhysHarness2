@@ -41,6 +41,8 @@ MAX_TACTIC_ITEMS = 8
 MAX_NAMES = 32
 # Automation tactics run as ``set_option maxHeartbeats N in <tactic>`` so Lean aborts them.
 TACTIC_HEARTBEATS = 200000
+# Goal extraction is not started with less than this left, so it never races the deadline.
+EXTRACT_RESERVE_SECONDS = 0.5
 # ``exact?`` renders its suggestion from source positions that the wrapper shifts (Lean 4.32
 # panics on stderr); it bounds its own search, so it runs unwrapped.
 _UNWRAPPED = ("exact?",)
@@ -375,7 +377,13 @@ class Session:
         # Extraction is cheap and comes first, so a sketch survives slow automation.
         for hole in result["sorries"] if request.get("extract_goals") else []:
             if _integer(hole["proofState"]):
-                outcome = self.run_tactics(hole["proofState"], ["extract_goal"], False, deadline)
+                outcome = self.run_tactics(
+                    hole["proofState"],
+                    ["extract_goal"],
+                    False,
+                    deadline - EXTRACT_RESERVE_SECONDS,
+                    deadline,
+                )
                 if "error" in outcome or "stopped" in outcome:
                     result["phase_error"] = outcome.get("error") or outcome["stopped"]
                     return result
