@@ -1903,3 +1903,32 @@ async def test_lean_sketch_records_no_hole_elaboration_on_infrastructure_failure
     assert hole["elaboration"]["reason_code"] == "lean_timeout"
     assert recorded == []  # an infrastructure failure is no elaboration evidence
     assert service.get_record("commons_node", hole["node_id"], alpha)["lean_elaborated"] is False
+
+
+async def test_local_compile_accepts_a_hole_node_universe_header_line(lab):
+    """A hole node's header ends with its universe line, which is a command, not a header
+    line: it counts when the compiled source declares it outside comments and strings."""
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    workspace = FakeWorkspace()
+    tools = profile(service, alpha, context, workspace=workspace)
+    formal = {
+        "lean_header": "import Mathlib\nuniverse u_1",
+        "lean_name": "sq_pos_hole_2",
+        "lean_statement": "{α : Type u_1} (a : α) : a = a",
+    }
+    node = await call(tools, "commons_node", lemma_args(**formal))
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **formal}
+    )
+    set_status(service, node["id"], "formally_stated")
+    workspace.lean.axioms = {"sq_pos_hole_2": []}
+    theorem = "theorem sq_pos_hole_2 {α : Type u_1} (a : α) : a = a := rfl\n"
+    quoted = f'import Mathlib\n\ndef s := "\nuniverse u_1\n"\n{theorem}'
+    commented = f"import Mathlib\n\n-- universe u_1\n{theorem}"
+    for source in (quoted, commented):
+        refused = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
+        assert refused["local_compile"] == {"recorded": False, "reason": "header_mismatch"}
+    source = f"import Mathlib\nuniverse u_1\n\n{theorem}"
+    recorded = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
+    assert recorded["local_compile"]["recorded"] is True

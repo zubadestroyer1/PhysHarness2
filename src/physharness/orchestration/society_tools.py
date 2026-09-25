@@ -339,11 +339,15 @@ def _compile_refusal(source, node):
     looked for; None when it can."""
     if "#exit" in source:  # Lean stops there: later declarations and reports never run.
         return "exit_command"
+    code = lean_code(source)
     header = {line.strip() for line in split_header(source)[0].split("\n")}
+    # A hole node's header ends with a universe command, which split_header does not take
+    # as a header line; it counts when the source's code declares it.
+    header |= {line.strip() for line in code.split("\n") if line.strip().startswith("universe ")}
     required = (line.strip() for line in (node.get("lean_header") or "").split("\n"))
     if any(line and line not in header for line in required):
         return "header_mismatch"
-    if any(keyword == "variable" for keyword, _, _ in top_level_declarations(lean_code(source))):
+    if any(keyword == "variable" for keyword, _, _ in top_level_declarations(code)):
         return "variable_command"
     return None
 
