@@ -8,7 +8,7 @@ import hashlib
 import json
 import math
 import re
-import time
+from time import monotonic
 
 from ..domain import ArtifactCreate, canonical_json
 from ..errors import HarnessError
@@ -19,6 +19,13 @@ MAX_ARGS = 32
 MAX_ARG_CHARS = 500
 MAX_PATH_BYTES = 1024
 MAX_TIMEOUT_SECONDS = 1800
+# The script runs under guest-side GNU `timeout`, so an overrun ends as exit 124 (TERM) or
+# 137 (KILL after the grace period) instead of a provider timeout, which quarantines the VM.
+# Assumed GNU coreutils behaviour (not checked against local docs or source): without
+# --foreground, timeout signals the script's whole process group, so children die too.
+KILL_AFTER = "--kill-after=5s"
+PROVIDER_MARGIN_SECONDS = 30
+TIMED_OUT_EXIT_CODES = (124, 137)
 PROBE_TIMEOUT_SECONDS = 60
 RECORD_STREAM_CHARS = 16384
 RETURN_STDOUT_CHARS = 4000
@@ -121,6 +128,7 @@ def _seed(value) -> int | None:
 
 
 def _timeout(value, policy_seconds) -> int | float:
+    """Return the script budget, leaving the provider a margin above it."""
     if (
         isinstance(value, bool)
         or not isinstance(value, int | float)
@@ -128,7 +136,10 @@ def _timeout(value, policy_seconds) -> int | float:
         or value <= 0
     ):
         raise _invalid("Computation timeout_seconds must be a positive finite number.")
-    return min(value, policy_seconds, MAX_TIMEOUT_SECONDS)
+    budget = min(value, MAX_TIMEOUT_SECONDS, policy_seconds - PROVIDER_MARGIN_SECONDS)
+    if budget < 1:
+        raise _invalid("The workspace timeout leaves less than one second for the script.")
+    return budget
 
 
 def _sha256(text: str) -> str:
@@ -203,18 +214,24 @@ class ComputationRunner:
         )
         observed = _probe_observation(probe)
 
-        argv = ["env", "PYTHONHASHSEED=0"]
+        argv = ["timeout", KILL_AFTER, f"{timeout}s", "env", "PYTHONHASHSEED=0"]
         if seed is not None:
             argv.append(f"PHYSHARNESS_SEED={seed}")
         argv += ["python3", "-X", "utf8", path, *args]
-        started = time.monotonic()
+        started = monotonic()
         # WorkspaceTools.run applies the broker's 65536-byte output capture limit.
         result = await self.workspace_tools.run(
-            {"argv": argv, "cwd": ".", "timeout_seconds": timeout}, f"{operation_id}:run"
+            {
+                "argv": argv,
+                "cwd": ".",
+                "timeout_seconds": timeout + PROVIDER_MARGIN_SECONDS,
+            },
+            f"{operation_id}:run",
         )
-        duration = round(time.monotonic() - started, 3)
+        duration = round(monotonic() - started, 3)
 
         stdout, stderr = result["stdout"], result["stderr"]
+        timed_out = result["exit_code"] in TIMED_OUT_EXIT_CODES
         stdout_captured_short = bool(result.get("stdout_truncated"))
         stderr_captured_short = bool(result.get("stderr_truncated"))
         record = {
@@ -225,6 +242,7 @@ class ComputationRunner:
             "timeout_seconds": timeout,
             "argv": argv,
             "exit_code": result["exit_code"],
+            "timed_out": timed_out,
             "duration_seconds": duration,
             "stdout": stdout[:RECORD_STREAM_CHARS],
             "stderr": stderr[:RECORD_STREAM_CHARS],
@@ -241,16 +259,19 @@ class ComputationRunner:
             "execution_id": result.get("execution_id"),
             "evidence_status": EVIDENCE_STATUS,
         }
+        content = canonical_json(record)
+        # Keyed on content: an identical replay returns the same record, while a replay
+        # that re-ran with different timing or output stores a second evidence record.
         artifact = self.service.create_artifact(
             ArtifactCreate(
                 experiment_id=self.agent.experiment_id,
                 kind="computation_record",
                 media_type="application/json",
-                content=canonical_json(record),
+                content=content,
                 provenance={"branch_id": self.agent.branch_id},
             ),
             self.agent,
-            f"{operation_id}:computation",
+            f"{operation_id}:computation:{_sha256(content)[:16]}",
         )
         return {
             "artifact_id": artifact["id"],
@@ -263,4 +284,5 @@ class ComputationRunner:
             or len(stderr) > RETURN_STDERR_CHARS,
             "packages": observed["packages"],
             "evidence_status": EVIDENCE_STATUS,
+            "timed_out": timed_out,
         }
