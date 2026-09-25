@@ -190,6 +190,10 @@ class WorkspaceTools:
             self._lean_session = LeanSession(self)
         return self._lean_session
 
+    def lean_session(self) -> LeanSession:
+        """This workspace's one Lean session, shared by the society profile's Lean tools."""
+        return self._lean()
+
     async def lean_check(self, arguments, operation_id):
         """REPL-backed check with automation on holes (registered by the society profile)."""
         return await self._lean().check(

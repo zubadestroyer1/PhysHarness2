@@ -11,7 +11,7 @@ from collections import Counter
 
 from sqlalchemy import select
 
-from .commons import PLATFORM, _platform
+from .commons import MAX_PAGE, PLATFORM, _platform
 from .commons_models import CLOSED_STATUSES, NodePostCreate
 from .domain import utcnow
 from .errors import HarnessError
@@ -47,7 +47,7 @@ class CommonsDiscourseMixin:
         return not claim["released"] and claim["expires_at"] > now
 
     @staticmethod
-    def _live_claim_rows(session, project_id, experiment_id, now, node_id=None):
+    def _live_claim_rows(session, project_id, experiment_id, now, node_id=None, branch_id=None):
         query = select(RecordRow).where(
             RecordRow.project_id == project_id,
             RecordRow.kind == "commons_claim",
@@ -57,6 +57,8 @@ class CommonsDiscourseMixin:
         )
         if node_id is not None:
             query = query.where(record_json_text("node_id") == node_id)
+        if branch_id is not None:
+            query = query.where(record_json_text("branch_id") == branch_id)
         return session.scalars(query.order_by(RecordRow.id).limit(MAX_LIVE_CLAIMS))
 
     @staticmethod
@@ -98,6 +100,37 @@ class CommonsDiscourseMixin:
         now = _now() if now is None else now
         rows = self._live_claim_rows(session, experiment.project_id, experiment.id, now)
         return Counter(row.payload["node_id"] for row in rows)
+
+    def branch_claims(self, experiment_id, actor, *, limit=MAX_PAGE):
+        """The actor branch's live work claims (its focus nodes), with each node's summary."""
+        self._research_role(actor)
+        if type(limit) is not int or not 1 <= limit <= MAX_PAGE:
+            raise HarnessError(
+                "INVALID_PAGE_SIZE", f"Commons page size is 1–{MAX_PAGE}.", status=422
+            )
+        if not actor.branch_id:
+            return {"items": []}
+        with self.db.sessions() as session:
+            experiment = self._commons_experiment(session, experiment_id, actor, active=False)
+            rows = list(
+                self._live_claim_rows(
+                    session, experiment.project_id, experiment.id, _now(), branch_id=actor.branch_id
+                )
+            )[:limit]
+            summaries = self._node_summaries(
+                session, experiment, actor, {row.payload["node_id"] for row in rows}
+            )
+        return {
+            "items": [
+                {
+                    "node_id": row.payload["node_id"],
+                    **summaries[row.payload["node_id"]],
+                    "expires_at": row.payload["expires_at"],
+                }
+                for row in rows
+                if row.payload["node_id"] in summaries
+            ]
+        }
 
     def _claim_event(self, session, actor, op, claim, action):
         self._event(
