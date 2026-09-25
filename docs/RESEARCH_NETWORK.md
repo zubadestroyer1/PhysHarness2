@@ -115,9 +115,11 @@ tools, the prompts and the delivery shapes.
   `accepted`, with `abandoned` (the author, with a reason) and `refuted` as exits.
   - Only platform code moves a node. A sound referee quorum makes it refereed. A
     faithful fidelity review of a statement that elaborates makes it formally stated. A
-    complete platform compile of the node's exact Lean statement, using only standard
-    axioms, makes it compile locally. The independent receipt on the exact target
-    accepts the goal.
+    complete compile of the node's exact Lean statement as a top-level theorem, reported
+    with only standard axioms, makes it compile locally. That compile (like statement
+    elaboration) runs in the agent-controlled workspace VM, so `compiles_locally` is
+    VM-attested evidence, not a trusted platform compile. Only independent acceptance is
+    trusted: the independent receipt on the exact target accepts the goal.
   - Changing a Lean statement moves the node back down.
   - In S1 no platform path refutes a node or accepts a non-root node.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL

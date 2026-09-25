@@ -46,7 +46,11 @@ from physharness.orchestration.society_prompt import (
     constitution,
     stagnation_suggestions,
 )
-from physharness.orchestration.society_tools import SOCIETY_TOOL_NAMES, society_tools
+from physharness.orchestration.society_tools import (
+    SOCIETY_TOOL_NAMES,
+    society_tools,
+    statement_found,
+)
 from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
 from physharness.orchestration.workspaces import WorkspaceBroker
 from physharness.skills import list_skills, load_skill
@@ -1498,3 +1502,103 @@ async def test_runner_adopts_orphaned_parentless_synthesis(lab):
     assert service.get_record("task", orphan["task"]["id"], author)["status"] == "completed"
     assert sum(objective.startswith("Compare only the sampled") for objective in objectives) == 1
     assert report["status"] == "completed"
+
+
+# Final review fixes (I1: local compiles only for the node's real top-level declaration) ------
+
+STATEMENT = "theorem trace_add : (1 : Nat) + 1 = 2 :="
+DECOY = "theorem trace_add : True := trivial\n"
+FORGED_SOURCES = {
+    "line_comment": f"import Mathlib\n\n-- {STATEMENT}\n{DECOY}",
+    "doc_comment": f"import Mathlib\n\n/-- {STATEMENT} proved below -/\n{DECOY}",
+    "nested_comment": f"import Mathlib\n\n/- a /- b -/\n{STATEMENT} rfl\n-/\n{DECOY}",
+    "string": f'import Mathlib\n\ndef s := "{STATEMENT}"\n{DECOY}',
+    "char_then_string": f'import Mathlib\n\ndef c := \'"\'\ndef s := "{STATEMENT}"\n{DECOY}',
+    "interpolated_string": f'import Mathlib\n\ndef s := s!"{{ "{STATEMENT}" }}"\n{DECOY}',
+    "raw_string": f'import Mathlib\n\ndef s := r#"x"{STATEMENT}"#\n{DECOY}',
+    "guillemet_name": f'import Mathlib\n\ndef «"» := 1\ndef s := "{STATEMENT}"\n{DECOY}',
+    "quotation": f"import Mathlib\n\ndef q := `(command|\n{STATEMENT} rfl)\n{DECOY}",
+    "other_signature": (
+        "import Mathlib\n\ntheorem trace_add (h : False) : (1 : Nat) + 1 = 2 := h.elim\n"
+    ),
+    "namespaced": f"import Mathlib\n\nnamespace X\n{STATEMENT} rfl\nend X\n{DECOY}",
+    "in_section": f"import Mathlib\n\nsection\n{STATEMENT} rfl\nend\n",
+    "variable": f"import Mathlib\n\nvariable (h : False)\n{STATEMENT} h.elim\n",
+    "same_name_def": f"import Mathlib\n\n{STATEMENT} rfl\ndef trace_add := 1\n",
+    "missing_header": f"{STATEMENT} rfl\n",
+    "exit_command": f"import Mathlib\n\n{STATEMENT} rfl\n#exit\n",
+}
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        PROOF,
+        "import Mathlib\nopen Real\n\n/-- The sum. -/\n@[simp] theorem trace_add :"
+        " (1 : Nat) + 1 = 2 := by -- by computation\n  rfl\n",
+        f'import Mathlib\n\ndef note := "a -- b /- c"\n-- {DECOY}{STATEMENT}\n  rfl\n',
+        f"import Mathlib\n\nnamespace X\n{DECOY}end X\n{STATEMENT} rfl\n",
+        f"import Mathlib\n\ndef h' := 'a'\ndef s := \"{DECOY}\"\n{STATEMENT} rfl\n",
+    ],
+)
+def test_statement_found_accepts_the_real_top_level_declaration(source):
+    assert statement_found(source, "trace_add", ": (1 : Nat) + 1 = 2")
+
+
+# Refused by the other local-compile gates, before the statement is looked for.
+GATED = ("variable", "missing_header", "exit_command")
+
+
+@pytest.mark.parametrize("label", sorted(set(FORGED_SOURCES) - set(GATED)))
+def test_statement_found_ignores_comments_strings_and_nested_declarations(label):
+    assert not statement_found(FORGED_SOURCES[label], "trace_add", ": (1 : Nat) + 1 = 2")
+
+
+async def test_lean_check_refuses_forged_local_compiles(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    tools = profile(service, alpha, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args(**LEAN))
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    set_status(service, node["id"], "formally_stated")
+    # The fake session reports every source complete, with standard axioms for trace_add.
+    for label, source in FORGED_SOURCES.items():
+        checked = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
+        assert checked["complete"] is True, label
+        assert checked["local_compile"]["recorded"] is False, (label, checked["local_compile"])
+        stored = service.get_record("commons_node", node["id"], alpha)
+        assert stored["status"] == "formally_stated", label
+    reasons = {
+        label: (
+            await call(
+                tools, "lean_check", {"source": FORGED_SOURCES[label], "node_id": node["id"]}
+            )
+        )["local_compile"]["reason"]
+        for label in GATED
+    }
+    assert reasons == {
+        "variable": "variable_command",
+        "missing_header": "header_mismatch",
+        "exit_command": "exit_command",
+    }
+    recorded = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert recorded["local_compile"]["recorded"] is True
+
+
+async def test_lean_check_requires_every_node_header_line(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    tools = profile(service, alpha, context, workspace=FakeWorkspace())
+    formal = {**LEAN, "lean_header": "import Mathlib\nopen Real"}
+    node = await call(tools, "commons_node", lemma_args(**formal))
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **formal}
+    )
+    set_status(service, node["id"], "formally_stated")
+    missing = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert missing["local_compile"] == {"recorded": False, "reason": "header_mismatch"}
+    source = PROOF.replace("import Mathlib\n", "import Mathlib\nopen Real\nopen Nat\n")
+    recorded = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
+    assert recorded["local_compile"]["recorded"] is True
