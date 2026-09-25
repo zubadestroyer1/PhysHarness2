@@ -299,16 +299,182 @@ def test_http_transport_guards_redirect_hops_and_streams_bounded_bodies():
     assert broker.fetch("https://arxiv.org/abs/ok")["text"] == "hello"
 
 
-def test_fetch_pdf_uses_pypdf_or_reports_unavailable(monkeypatch):
-    url = "https://arxiv.org/pdf/2101.00001"
-    transport = FakeTransport({url: ok(minimal_pdf("Hello lattice gauge"), "application/pdf")})
-    assert LiteratureBroker(policy(), transport=transport).fetch(url)["text"] == (
+PDF_URL = "https://arxiv.org/pdf/2101.00001"
+
+
+def test_fetch_pdf_extracts_text_with_pypdf():
+    pytest.importorskip("pypdf")  # optional "papers" extra
+    transport = FakeTransport({PDF_URL: ok(minimal_pdf("Hello lattice gauge"), "application/pdf")})
+    assert LiteratureBroker(policy(), transport=transport).fetch(PDF_URL)["text"] == (
         "Hello lattice gauge"
     )
+
+
+def test_fetch_pdf_reports_unavailable_without_pypdf(monkeypatch):
     monkeypatch.setitem(sys.modules, "pypdf", None)
-    assert code_of(lambda: LiteratureBroker(policy(), transport=transport).fetch(url)) == (
+    transport = FakeTransport({PDF_URL: ok(minimal_pdf("Hello lattice gauge"), "application/pdf")})
+    assert code_of(lambda: LiteratureBroker(policy(), transport=transport).fetch(PDF_URL)) == (
         "PDF_TEXT_UNAVAILABLE"
     )
+
+
+def test_fetch_falls_back_when_charset_is_not_a_text_codec():
+    url = "https://ncatlab.org/nlab/show/gauge"
+    for charset in ("idna", "punycode", "rot13", "no-such-codec"):
+        body = "Gauge théorie".encode()
+        transport = FakeTransport({url: ok(body, f"text/plain; charset={charset}")})
+        assert LiteratureBroker(policy(), transport=transport).fetch(url)["text"] == (
+            "Gauge théorie"
+        ), charset
+
+
+def test_benchmark_fetch_refuses_provider_search_apis():
+    urls = [
+        "http://export.arxiv.org/api/query?search_query=all:gap",
+        "https://api.openalex.org/works?search=gap",
+        "https://api.semanticscholar.org/graph/v1/paper/search?query=gap",
+    ]
+    transport = FakeTransport({url: ok(b"{}", "application/json") for url in urls})
+    broker = LiteratureBroker(policy("benchmark"), transport=transport, reference_text=REFERENCE)
+    for url in urls:
+        with pytest.raises(HarnessError) as caught:
+            broker.fetch(url)
+        assert caught.value.code == "LITERATURE_SOURCE_BLOCKED", url
+        assert "use search_literature" in caught.value.message
+    assert transport.calls == []
+    wiki = "https://en.wikipedia.org/wiki/Mass_gap"
+    redirected = FakeTransport({wiki: ok(b"{}", "application/json", final_url=urls[1])})
+    assert code_of(
+        lambda: LiteratureBroker(
+            policy("benchmark"), transport=redirected, reference_text=REFERENCE
+        ).fetch(wiki)
+    ) == ("LITERATURE_SOURCE_BLOCKED")
+    assert LiteratureBroker(policy(), transport=transport).fetch(urls[1])["status"] == "ok"
+
+
+def test_benchmark_fetch_withholds_text_citing_blocked_keys():
+    pages = {
+        "A": "See arXiv:2101.00001v2 for the proof.",
+        "B": "Published as doi:10.1000/XYZ.1 in 2021.",
+        "C": "DataCite record 10.48550/arXiv.2101.00001 exists.",
+        "D": '{"ids": {"arxiv": "2101.00001"}}',
+        "E": "Unrelated 2101.000012, 12101.00001 and 10.1000/xyz.12 only.",
+    }
+    routes = {
+        f"https://en.wikipedia.org/wiki/{name}": ok(text.encode(), "text/plain")
+        for name, text in pages.items()
+    }
+    broker = LiteratureBroker(
+        policy("benchmark", ["2101.00001", "10.1000/xyz.1"]),
+        transport=FakeTransport(routes),
+        reference_text=REFERENCE,
+    )
+    for name in "ABCD":
+        result = broker.fetch(f"https://en.wikipedia.org/wiki/{name}")
+        assert set(result) == {"status", "url", "sha256", "flag"}, name
+        assert result["status"] == "withheld_contamination_risk"
+        assert result["flag"]["reason"] == "blocked_source_key"
+    assert broker.fetch("https://en.wikipedia.org/wiki/E")["text"] == pages["E"]
+
+
+def test_url_shaped_blocklist_entries_name_one_work():
+    blocked = [
+        "https://arxiv.org/abs/2101.00001v2",
+        "https://doi.org/10.2000/ABC",
+        "https://en.wikipedia.org/wiki/Mass_gap",
+    ]
+    pages = [
+        "https://arxiv.org/abs/2999.00001",
+        "https://en.wikipedia.org/wiki/Wilson_loop",
+        "https://arxiv.org/abs/2101.00001",
+        "https://en.wikipedia.org/wiki/Mass_gap",
+    ]
+    routes = {url: ok(b"<p>ok</p>") for url in pages} | search_routes()
+    broker = LiteratureBroker(
+        policy("benchmark", blocked), transport=FakeTransport(routes), reference_text=REFERENCE
+    )
+    assert [broker.fetch(url)["status"] for url in pages[:2]] == ["ok", "ok"]
+    for url in pages[2:]:
+        assert code_of(lambda url=url: broker.fetch(url)) == "LITERATURE_SOURCE_BLOCKED", url
+    result = broker.search("gap")
+    # Only the named arXiv work (and its OpenAlex copy) and the named DOI are removed.
+    assert [item["id"] for item in result["items"]] == ["2102.00002", "W4", "W5"]
+    assert result["blocked_count"] == 3
+
+
+def test_benchmark_requires_usable_reference():
+    transport = FakeTransport(search_routes())
+    for reference in (None, "", "seven words are far too few here"):
+        broker = LiteratureBroker(
+            policy("benchmark"), transport=transport, reference_text=reference
+        )
+        assert code_of(lambda broker=broker: broker.fetch("https://arxiv.org/abs/1")) == (
+            "LITERATURE_SCREEN_UNAVAILABLE"
+        )
+        assert code_of(lambda broker=broker: broker.search("gap")) == (
+            "LITERATURE_SCREEN_UNAVAILABLE"
+        )
+    assert transport.calls == []
+
+
+def test_benchmark_search_screens_titles_and_abstracts():
+    def index(words):
+        return {word: [position] for position, word in enumerate(words)}
+
+    works = {
+        "results": [
+            openalex_work("W7", "Leaky abstract", index=index(REFERENCE_WORDS[50:80])),
+            openalex_work("W8", "Cites the answer", index=index(["see", "arXiv:2101.00001v1"])),
+            openalex_work("W9", "Short echo", index=index(REFERENCE_WORDS[50:76])),
+            openalex_work("W5", "Clean monopole paper", landing="https://clean.example/5"),
+        ]
+    }
+    routes = {
+        ARXIV: ok(b'<feed xmlns="http://www.w3.org/2005/Atom"/>', "application/atom+xml"),
+        OPENALEX: ok(json.dumps(works).encode(), "application/json"),
+    }
+    result = LiteratureBroker(
+        policy("benchmark", ["2101.00001"]),
+        transport=FakeTransport(routes),
+        reference_text=REFERENCE,
+    ).search("gap")
+    # 30 copied words share 23 reference 8-grams (>= 20); 26 share 19 and are released.
+    assert [item["id"] for item in result["items"]] == ["W9", "W5"]
+    assert result["blocked_count"] == 2
+    assert "Leaky" not in json.dumps(result) and "Cites" not in json.dumps(result)
+    open_result = LiteratureBroker(policy(), transport=FakeTransport(routes)).search("gap")
+    assert len(open_result["items"]) == 4
+
+
+def test_close_releases_only_a_lazily_created_client(monkeypatch):
+    def handler(request):
+        return httpx.Response(200, headers={"Content-Type": "text/plain"}, content=b"hi")
+
+    created, real = [], literature.http_client
+
+    def factory():
+        created.append(real(transport=httpx.MockTransport(handler)))
+        return created[-1]
+
+    monkeypatch.setattr(literature, "http_client", factory)
+    with LiteratureBroker(policy()) as broker:
+        assert created == []
+        assert broker.fetch("https://arxiv.org/abs/1")["text"] == "hi"
+        assert len(created) == 1 and not created[0].is_closed
+    assert created[0].is_closed
+    broker.close()
+    assert broker.fetch("https://arxiv.org/abs/1")["text"] == "hi"
+    assert len(created) == 2
+    broker.close()
+    broker.close()
+    assert created[1].is_closed
+    external = real(transport=httpx.MockTransport(handler))
+    injected = LiteratureBroker(policy(), transport=literature.http_transport(external))
+    injected.close()
+    injected.close()
+    assert not external.is_closed
+    assert injected.fetch("https://arxiv.org/abs/1")["text"] == "hi"
+    external.close()
 
 
 def test_overlap_flag_withholds_text():
@@ -365,7 +531,13 @@ def withheld():
         "status": "withheld_contamination_risk",
         "url": "https://arxiv.org/abs/2301.00009",
         "sha256": "b" * 64,
-        "flag": {"shared": 40, "reference_ngrams": 293, "ratio": 0.136519, "threshold": 20},
+        "flag": {
+            "shared": 40,
+            "reference_ngrams": 293,
+            "ratio": 0.136519,
+            "threshold": 20,
+            "reason": "reference_overlap",
+        },
     }
 
 
@@ -398,7 +570,9 @@ def test_record_fetch_ingests_source_and_logs(lab):
 
 def test_flag_record_private_from_agents(lab):
     service, author, exp, _branches, (alpha, beta) = approaches(lab, "ideas")
-    record = service.record_literature_fetch(exp["id"], withheld(), alpha, "fetch-flag")
+    result = withheld()
+    result["flag"]["excerpt"] = "ref1 ref2 ref3 leaked words"
+    record = service.record_literature_fetch(exp["id"], result, alpha, "fetch-flag")
     assert record["flagged"] is True and record["status"] == "withheld_contamination_risk"
     assert record["source_id"] is None and record["artifact_id"] is None
     screens = [
@@ -409,7 +583,7 @@ def test_flag_record_private_from_agents(lab):
     assert [screen["id"] for screen in screens] == [record["screen_artifact_id"]]
     screen = json.loads(service.artifact_content(screens[0]["id"], author))
     assert screen["flag"] == withheld()["flag"] and screen["sha256"] == "b" * 64
-    assert "text" not in screen
+    assert "text" not in screen and "leaked" not in json.dumps(screen)
     for agent in (alpha, beta):
         with pytest.raises(HarnessError) as caught:
             service.get_record("artifact", screens[0]["id"], agent)
@@ -453,6 +627,27 @@ def test_masked_reference_artifact_invisible_to_agents(lab):
                 service.artifact_content(artifact["id"], agent)
     for agent in (alpha, beta):
         assert service.list_records("artifact", agent, exp["id"]) == []
+
+
+def test_agents_cannot_create_reserved_private_kinds(lab):
+    service, author, exp, _branches, (alpha, _beta) = approaches(lab, "ideas")
+    for kind in ("masked_reference", "literature_screen"):
+        with pytest.raises(HarnessError) as caught:
+            service.create_artifact(
+                ArtifactCreate(experiment_id=exp["id"], kind=kind, content="forged"),
+                alpha,
+                f"forge-{kind}",
+            )
+        assert (caught.value.code, caught.value.status) == ("ARTIFACT_KIND_RESERVED", 403)
+        created = service.create_artifact(
+            ArtifactCreate(experiment_id=exp["id"], kind=kind, content="real"), author, kind
+        )
+        assert created["artifact_kind"] == kind
+    # The platform path still records a private screen for an agent's flagged fetch.
+    record = service.record_literature_fetch(exp["id"], withheld(), alpha, "fetch-flag")
+    screen = service.get_record("artifact", record["screen_artifact_id"], author)
+    assert screen["artifact_kind"] == "literature_screen"
+    assert screen["branch_id"] == alpha.branch_id
 
 
 def minimal_pdf(text):

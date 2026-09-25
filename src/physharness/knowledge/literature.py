@@ -48,6 +48,8 @@ TITLE_CHARS = 500
 NAME_CHARS = 200
 OVERLAP_FLOOR = 20
 MODES = frozenset({"off", "open", "benchmark"})
+# Search APIs return other works' metadata; benchmark agents reach them only via search().
+PROVIDER_API_HOSTS = frozenset({"export.arxiv.org", "api.openalex.org", "api.semanticscholar.org"})
 
 _ATOM = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
 _ARXIV_ID = r"(?:\d{4}\.\d{4,5}|[a-z][a-z.\-]*/\d{7})(?:v\d+)?"
@@ -55,7 +57,13 @@ _ARXIV_URL = re.compile(rf"arxiv\.org/(?:abs|pdf|html)/({_ARXIV_ID})", re.IGNORE
 _ARXIV_DOI = re.compile(rf"10\.48550/arxiv\.({_ARXIV_ID})")
 _UNSAFE_URL = re.compile(r"[\s\\\x00-\x1f\x7f]")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-_DOI_PREFIXES = ("https://doi.org/", "http://doi.org/", "https://dx.doi.org/", "doi:")
+_DOI_PREFIXES = (
+    "https://doi.org/",
+    "http://doi.org/",
+    "https://dx.doi.org/",
+    "http://dx.doi.org/",
+    "doi:",
+)
 
 
 def _squash(value) -> str:
@@ -92,15 +100,32 @@ def _arxiv_from_url(url) -> str | None:
 
 
 def _needle(pattern: str) -> str:
-    """Normalize a blocklist entry: an arXiv id, a DOI, a domain or a title fragment."""
+    """Normalize a blocklist entry: an arXiv id, a DOI, a domain, a URL or a title fragment."""
     needle = pattern.strip().lower()
     doi = _doi(needle)
     if doi != needle and doi:
         return doi
     if "://" in needle:
-        return _hostname(needle) or needle
+        # A URL names one work or page, never its whole host.
+        arxiv = _arxiv_from_url(needle)
+        if arxiv:
+            return _unversioned(arxiv)
+        host = _hostname(needle)
+        return f"{host}{unquote(urlsplit(needle).path) or '/'}" if host else needle
     needle = needle.removeprefix("arxiv:")
     return _unversioned(needle) if re.fullmatch(_ARXIV_ID, needle) else needle
+
+
+def _key_pattern(needles) -> re.Pattern | None:
+    """Match blocked arXiv ids (any version) and DOIs where they appear in text."""
+    parts = [
+        rf"(?<!\d){re.escape(needle)}(?:v\d+)?(?![0-9a-z])"
+        if re.fullmatch(_ARXIV_ID, needle)
+        else rf"(?<![0-9a-z]){re.escape(needle)}(?![0-9a-z])"
+        for needle in needles
+        if re.fullmatch(_ARXIV_ID, needle) or re.fullmatch(r"10\.\d{4,9}/\S+", needle)
+    ]
+    return re.compile("|".join(parts)) if parts else None
 
 
 def _identity(item: dict) -> set[str]:
@@ -279,7 +304,7 @@ def _extract(body: bytes, headers) -> str:
     charset = re.search(r"charset=\"?([\w.:-]+)", content_type, re.IGNORECASE)
     try:
         text = body.decode(charset.group(1) if charset else "utf-8", errors="replace")
-    except LookupError:
+    except (LookupError, UnicodeError):  # unknown or non-text codecs such as idna
         text = body.decode("utf-8", errors="replace")
     if media in {"text/html", "application/xhtml+xml"}:
         text = html_to_text(text)
@@ -422,9 +447,24 @@ class LiteratureBroker:
         self.mode = mode
         self._benchmark = mode == "benchmark"
         self._needles = tuple(n for n in (_needle(item) for item in blocked) if n)
+        self._keys = _key_pattern(self._needles)
         self._threshold = threshold
-        self._reference = _ngrams(reference_text, 8) if reference_text else None
+        self._reference = _ngrams(reference_text, 8) if isinstance(reference_text, str) else set()
         self._transport = transport
+        self._client = None
+
+    def close(self):
+        """Close a lazily created HTTP client; an injected transport is left untouched."""
+        client, self._client = self._client, None
+        if client is not None:
+            self._transport = None
+            client.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        self.close()
 
     def _require_enabled(self):
         if self.mode == "off":
@@ -434,21 +474,43 @@ class LiteratureBroker:
                 status=403,
             )
 
+    def _require_screen(self):
+        # Fewer than eight reference words leave no n-grams: nothing could be screened.
+        if self._benchmark and not self._reference:
+            raise HarnessError(
+                "LITERATURE_SCREEN_UNAVAILABLE",
+                "Benchmark literature access requires a usable masked reference.",
+                status=409,
+            )
+
+    def _contamination(self, text: str) -> dict | None:
+        """The withholding flag for text released to benchmark agents, if any."""
+        measured = _measure(self._reference, text, 8)
+        threshold = max(OVERLAP_FLOOR, round(self._threshold * measured["reference_ngrams"], 6))
+        if self._keys and self._keys.search(text.lower()):
+            return {**measured, "threshold": threshold, "reason": "blocked_source_key"}
+        if measured["shared"] >= threshold:
+            return {**measured, "threshold": threshold, "reason": "reference_overlap"}
+        return None
+
     def _send(self, url: str, params=None):
         if self._transport is None:
-            self._transport = http_transport()
+            self._client = http_client()
+            self._transport = http_transport(self._client)
         return self._transport("GET", url, params=params, timeout=FETCH_TIMEOUT_SECONDS)
 
     def _item_blocked(self, item: dict, keys: set[str]) -> bool:
         host = _hostname(item.get("url"))
         title = item["title"].lower()
+        url = unquote(item.get("url") or "").lower()
         return any(
             f"arxiv:{needle}" in keys
             or f"doi:{needle}" in keys
             or _host_matches(host, needle)
             or needle in title
+            or ("/" in needle and needle in url)
             for needle in self._needles
-        )
+        ) or bool(self._contamination(f"{item['title']}\n{item['abstract']}"))
 
     def _screen(self, items: list[dict]) -> tuple[list[dict], int]:
         """Drop blocked items and every provider copy sharing a DOI or arXiv id with one."""
@@ -490,6 +552,7 @@ class LiteratureBroker:
 
     def search(self, query: str, limit: int = 8) -> dict:
         self._require_enabled()
+        self._require_screen()
         if (
             not isinstance(query, str)
             or not query.strip()
@@ -540,7 +603,13 @@ class LiteratureBroker:
         }
 
     def _check_source(self, url: str):
-        check_url(url)
+        host = check_url(url)
+        if self._benchmark and host in PROVIDER_API_HOSTS:
+            raise _blocked(
+                "LITERATURE_SOURCE_BLOCKED",
+                "Benchmark runs reach scholarly search APIs only through search: "
+                "use search_literature.",
+            )
         if self._benchmark and self._url_blocked(url):
             raise _blocked(
                 "LITERATURE_SOURCE_BLOCKED", "This source is blocked for the benchmark run."
@@ -549,12 +618,7 @@ class LiteratureBroker:
     def fetch(self, url: str) -> dict:
         self._require_enabled()
         self._check_source(url)
-        if self._benchmark and self._reference is None:
-            raise HarnessError(
-                "LITERATURE_SCREEN_UNAVAILABLE",
-                "Benchmark fetches require the masked reference for contamination screening.",
-                status=409,
-            )
+        self._require_screen()
         try:
             status, headers, body, final_url = self._send(url)
         except HarnessError:
@@ -584,16 +648,14 @@ class LiteratureBroker:
             )
         text = _extract(body, headers)[:MAX_TEXT_CHARS]
         digest = hashlib.sha256(body).hexdigest()
-        if self._benchmark:
-            measured = _measure(self._reference, text, 8)
-            threshold = max(OVERLAP_FLOOR, round(self._threshold * measured["reference_ngrams"], 6))
-            if measured["shared"] >= threshold:
-                return {
-                    "status": "withheld_contamination_risk",
-                    "url": url,
-                    "sha256": digest,
-                    "flag": {**measured, "threshold": threshold},
-                }
+        flag = self._contamination(text) if self._benchmark else None
+        if flag:
+            return {
+                "status": "withheld_contamination_risk",
+                "url": url,
+                "sha256": digest,
+                "flag": flag,
+            }
         return {
             "status": "ok",
             "url": url,

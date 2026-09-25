@@ -101,7 +101,7 @@ class ResearchMixin:
                 "LITERATURE_RESULT_INVALID", "Record only a literature broker fetch result."
             )
         self.get_record("experiment", experiment_id, actor)
-        source = screen = None
+        source = screen_content = None
         if text:
             source = self.ingest_source(
                 experiment_id,
@@ -114,26 +114,43 @@ class ResearchMixin:
                 f"literature-source:{key}",
             )
         if flagged:
-            # Only numeric screen measurements are retained; withheld text never is.
+            # Only screen measurements are retained; withheld text never is.
             flag = {
                 name: flag[name]
                 for name in ("shared", "reference_ngrams", "ratio", "threshold")
                 if type(flag.get(name)) in (int, float)
             }
-            screen = self.create_artifact(
-                ArtifactCreate(
-                    experiment_id=experiment_id,
-                    kind="literature_screen",
-                    content=canonical_json({"url": url, "sha256": digest, "flag": flag}),
-                    media_type="application/json",
-                    provenance={"uri": url},
-                ),
-                actor,
-                f"literature-screen:{key}",
-            )
+            if result["flag"].get("reason") in ("blocked_source_key", "reference_overlap"):
+                flag["reason"] = result["flag"]["reason"]
+            screen_content = canonical_json({"url": url, "sha256": digest, "flag": flag})
+            screen_content = screen_content.encode("utf-8")
 
         def action(session, op):
             self._get(session, "experiment", experiment_id, actor)
+            screen = None
+            if screen_content:
+                # Platform-written in the same transaction: agents cannot create this
+                # reserved private kind through create_artifact.
+                screen_sha256 = self.artifacts.put(screen_content)
+                screen = self._insert(
+                    session,
+                    "artifact",
+                    actor,
+                    {
+                        "experiment_id": experiment_id,
+                        "branch_id": None,
+                        "trusted_input": False,
+                        "media_type": "application/json",
+                        "provenance": {"uri": url},
+                        "artifact_kind": "literature_screen",
+                        "sha256": screen_sha256,
+                        "size_bytes": len(screen_content),
+                        "submitted_by": actor.id,
+                    },
+                )
+                self._event(
+                    session, actor, op, "artifact.created", screen["id"], {"sha256": screen_sha256}
+                )
             record = self._insert(
                 session,
                 "literature_fetch",
