@@ -37,6 +37,17 @@ READ_TOOLS = frozenset(
         "discussion_updates",
         "research_directory",
         "research_capacity",
+        # Society profile (Task 9): the consolidated read tools.
+        "commons_query",
+        "commons_read",
+        "inbox",
+        "read_file",
+        "search_library",
+        "read_source",
+        "search_literature",
+        "fetch_source",
+        "verification_status",
+        "load_skill",
     }
 )
 TERMINAL_READS = frozenset({"tail", "cat", "head", "sed", "rg", "grep", "awk"})
@@ -54,8 +65,13 @@ NON_PROGRESS_TOOLS = READ_TOOLS | frozenset(
         "publish_research_profile",
         "join_research_team",
         "request_research_capacity",
+        # Society profile (Task 9).
+        "notebook",
+        "commons_claim",
+        "wait",
     }
 )
+COMMAND_TOOLS = frozenset({"run_command", "shell"})
 STATE_KEYS = frozenset(
     {
         "progress_epoch",
@@ -106,7 +122,7 @@ def _read_target(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _work_identity(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> str:
-    if name == "write_workspace_file":
+    if name in {"write_workspace_file", "write_file"}:
         return _hash({"name": name, "content": arguments.get("content")})
     if name == "store_artifact":
         return _hash({"name": name, "content": arguments.get("content")})
@@ -149,9 +165,9 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def _terminal_read(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> bool:
-    if name == "discussion_updates":
+    if name in {"discussion_updates", "inbox"}:
         return bool(result.get("items")) and "error" not in result
-    if name in {"inspect_verification", "wait_for_verification"}:
+    if name in {"inspect_verification", "wait_for_verification", "verification_status"}:
         return result.get("status") in {"blocked", "rejected", "verified", "completed", "failed"}
     if name == "joined_children":
         children = result.get("children")
@@ -167,7 +183,7 @@ def _terminal_read(name: str, arguments: dict[str, Any], result: dict[str, Any])
             and bool(result.get("children"))
             and "error" not in result
         )
-    if name == "run_command":
+    if name in COMMAND_TOOLS:
         return _command_name(arguments) in TERMINAL_READS and result.get("exit_code") == 0
     return name in READ_TOOLS and "error" not in result
 
@@ -191,7 +207,7 @@ def observe(
         if (
             name not in NON_PROGRESS_TOOLS
             and "error" not in result
-            and (name != "run_command" or _command_name(arguments) in WORK_COMMANDS)
+            and (name not in COMMAND_TOOLS or _command_name(arguments) in WORK_COMMANDS)
         ):
             work = _work_identity(name, arguments, result)
             seen = state.setdefault("seen_work", [])
