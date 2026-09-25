@@ -5,10 +5,11 @@ from datetime import timedelta
 import pytest
 from commons_helpers import set_status, society_lab
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import event, select
 from test_core import setup_experiment
 from test_sharing import approaches, artifact
 
+from physharness import commons
 from physharness.commons import PLATFORM
 from physharness.commons_models import NodeCreate
 from physharness.domain import (
@@ -541,3 +542,64 @@ def test_society_lab_spreads_branches_over_models(lab):
     assert [m["model"] for m in exp["models"]] == ["explicit-test-model", "explicit-test-model-1"]
     assert [b["model_configuration"] for b in branches] == exp["models"]
     assert service.society_policy(exp["id"], beta)["referee_quorum"] == 2
+
+
+def chain(service, experiment_id, actor, size, prefix):
+    """Nodes n0 <- n1 <- ... where each node depends_on its predecessor."""
+    ids = []
+    for i in range(size):
+        edges = [{"relation": "depends_on", "target_id": ids[-1]}] if ids else []
+        request = lemma(f"{prefix} {i}", edges=edges)
+        ids.append(service.create_node(experiment_id, request, actor, f"{prefix}-{i}")["id"])
+    return ids
+
+
+def test_read_node_statement_count_is_independent_of_closure_size(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    statements = []
+
+    def count(*_):
+        statements.append(1)
+
+    costs = {}
+    for size in (10, 50):
+        ids = chain(service, exp["id"], alpha, size, f"c{size}")
+        event.listen(service.db.engine, "before_cursor_execute", count)
+        read = service.read_node(ids[-1], beta)
+        event.remove(service.db.engine, "before_cursor_execute", count)
+        assert read["rests_on"]["counts"] == {"informal": size - 1}
+        assert [e["node_id"] for e in read["edges_out"]] == [ids[-2]]
+        costs[size] = len(statements)
+        statements.clear()
+    assert costs[10] == costs[50] <= 25, costs
+
+
+def test_truncated_rests_on_is_conditional(lab, monkeypatch):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    ids = chain(service, exp["id"], alpha, 4, "t")
+    for identifier in ids[:3]:
+        set_status(service, identifier, "formally_stated", "accepted")
+    monkeypatch.setattr(commons, "MAX_RESTS_ON", 2)
+    assert service.read_node(ids[-1], alpha)["rests_on"] == {
+        "counts": {"accepted": 2},
+        "conditional": True,
+        "truncated": True,
+    }
+
+
+def test_new_node_edges_skip_cycle_walk_but_links_do_not(lab, monkeypatch):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    ids = chain(service, exp["id"], alpha, 2, "w")
+
+    def walked(*_):
+        raise AssertionError("dependency graph loaded")
+
+    monkeypatch.setattr(service, "_experiment_dependencies", walked)
+    service.create_node(
+        exp["id"],
+        lemma("Fresh", edges=[{"relation": "depends_on", "target_id": i} for i in ids]),
+        alpha,
+        "fresh",
+    )
+    with pytest.raises(AssertionError, match="dependency graph loaded"):
+        service.link_nodes(exp["id"], ids[0], "depends_on", ids[1], alpha, "walk")
