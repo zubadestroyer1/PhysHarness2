@@ -10,10 +10,19 @@ from pathlib import Path
 
 import pytest
 
-TOOL = Path(__file__).resolve().parents[1] / "tools/society_metrics.py"
+from physharness.domain import digest_json
+from physharness.orchestration.society_tools import SOCIETY_TOOL_NAMES
+
+ROOT = Path(__file__).resolve().parents[1]
+TOOL = ROOT / "tools/society_metrics.py"
 SPEC = importlib.util.spec_from_file_location("society_metrics_tool", TOOL)
 metrics_tool = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(metrics_tool)
+PROBE_SPEC = importlib.util.spec_from_file_location(
+    "society_metrics_legacy_probe", ROOT / "work/parallel-pilot-2026-09-24/probe_api.py"
+)
+legacy_probe = importlib.util.module_from_spec(PROBE_SPEC)
+PROBE_SPEC.loader.exec_module(legacy_probe)
 
 START = datetime(2026, 9, 25, 12, 0, tzinfo=UTC)
 T0 = START.timestamp()
@@ -61,6 +70,7 @@ EVENTS = [
     event("tool_completed", "run_computation"),
     event("tool_completed", "load_skill"),
     event("tool_completed", "post_discussion"),  # a legacy name classifies too
+    event("tool_completed", "future_tool"),  # a name no bucket documents
     event("stagnation_warning"),
     event("generation_started"),
 ]
@@ -113,7 +123,7 @@ def society_export(*, accepted=True):
         "experiment": {
             "id": "exp",
             "sharing": "ideas",
-            "society": {"tool_profile": "society"},
+            "society": {"tool_profile": "society", "claim_ttl_seconds": 3600},
             "target_digest": "t" * 64,
             "started_at": stamp(0),
         },
@@ -174,9 +184,15 @@ def society_export(*, accepted=True):
     }
 
 
+def signed(manifest):
+    """Attach manifest_sha256 exactly as service.export_experiment computes it."""
+    unsigned = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    return {**unsigned, "manifest_sha256": digest_json(unsigned)}
+
+
 def write_export(directory, manifest, contents=EVENTS):
     directory.mkdir()
-    (directory / "manifest.json").write_text(json.dumps(manifest))
+    (directory / "manifest.json").write_text(json.dumps(signed(manifest), indent=2))
     for content in contents:
         (directory / sha(content)).write_bytes(content)
     return directory
@@ -233,9 +249,10 @@ def test_metrics_over_a_society_export_directory(tmp_path):
     assert metrics["literature_by_status"] == {"ok": 1, "withheld_contamination_risk": 2}
     # Tool mix from the runtime events beside the manifest.
     mix = metrics["tool_call_mix"]
-    assert mix["available"] is True and mix["total"] == 8
-    assert (mix["commons_society"], mix["math_lean_computation"], mix["other"]) == (4, 3, 1)
-    assert mix["commons_society_share"] == 0.5
+    assert mix["available"] is True and mix["total"] == 9
+    buckets = ("commons_society", "math_lean_computation", "other", "unclassified")
+    assert tuple(mix[bucket] for bucket in buckets) == (4, 3, 1, 1)
+    assert mix["commons_society_share"] == pytest.approx(4 / 9, abs=1e-6)
     assert mix["by_tool"]["lean_check"] == 2 and mix["stagnation_warnings"] == 1
     assert mix["runtime_events"] == mix["runtime_events_read"] == len(EVENTS)
     assert metrics["lean_checks_per_accepted_result"] == 2.0
@@ -244,7 +261,7 @@ def test_metrics_over_a_society_export_directory(tmp_path):
 
 def test_bare_manifest_reports_the_tool_mix_unavailable(tmp_path):
     path = tmp_path / "manifest.json"
-    path.write_text(json.dumps(society_export(accepted=False)))
+    path.write_text(json.dumps(signed(society_export(accepted=False))))
     manifest, read_artifact = metrics_tool.load_export(path)
     metrics = metrics_tool.compute_metrics(manifest, read_artifact, as_of=T0)
     assert metrics["tool_call_mix"] == {"available": False}
@@ -285,3 +302,77 @@ def test_legacy_arm_root_needs_an_exact_independent_receipt(field, value):
     assert metrics["cross_model_share"] is None and metrics["literature_fetches"] == 0
     manifest["records"]["verification"][0][field] = value
     assert metrics_tool.compute_metrics(manifest, as_of=T0)["accepted_root"] is False
+
+
+def test_default_as_of_is_the_run_end_not_now():
+    """A post-run export judges claims at the run's last recorded activity, not today."""
+    manifest = society_export()
+    metrics = metrics_tool.compute_metrics(manifest)
+    # The latest timestamp is the verified claim's commit at +1800 s.
+    assert metrics["claims_as_of"] == T0 + 1800 and metrics["claims_as_of_source"] == "run_end"
+    # Lapsed by then: A on lemma-a (900) and B on lemma-b (900). Live: C (1900, 5000).
+    assert metrics["stale_claim_count"] == 2 and metrics["live_claim_count"] == 2
+    # Node activity and claim renewals count as run activity too.
+    manifest["records"]["commons_node"][1]["last_activity_at"] = stamp(1950)
+    later = metrics_tool.compute_metrics(manifest)
+    assert later["claims_as_of"] == T0 + 1950
+    assert later["stale_claim_count"] == 3 and later["live_claim_count"] == 1
+    renewed = metrics_tool.compute_metrics(
+        {
+            **manifest,
+            "experiment": {**manifest["experiment"], "society": {"claim_ttl_seconds": 100}},
+        }
+    )
+    assert renewed["claims_as_of"] == T0 + 4900  # lemma-c's claim was renewed at +4900 s
+    explicit = metrics_tool.compute_metrics(manifest, as_of=T0)
+    assert explicit["claims_as_of_source"] == "argument" and explicit["stale_claim_count"] == 0
+
+
+def test_manifest_digest_size_and_links_are_checked(tmp_path, monkeypatch):
+    directory = write_export(tmp_path / "export", society_export())
+    path = directory / "manifest.json"
+    manifest, _ = metrics_tool.load_export(path)
+    assert manifest["manifest_sha256"] == digest_json(
+        {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    )
+    tampered = json.loads(path.read_text())
+    tampered["ledger"]["spent_cost_usd"] = "0.01"
+    path.write_text(json.dumps(tampered))
+    with pytest.raises(ValueError, match="manifest_sha256"):
+        metrics_tool.load_export(directory)
+    unsigned = {key: value for key, value in tampered.items() if key != "manifest_sha256"}
+    path.write_text(json.dumps(unsigned))
+    with pytest.raises(ValueError, match="manifest_sha256"):
+        metrics_tool.load_export(directory)
+    path.write_text(json.dumps(signed(society_export())))
+    monkeypatch.setattr(metrics_tool, "MAX_MANIFEST_BYTES", 100)
+    with pytest.raises(ValueError, match="exceeds"):
+        metrics_tool.load_export(directory)
+    monkeypatch.undo()
+    linked = tmp_path / "linked.json"
+    linked.symlink_to(path)
+    with pytest.raises(ValueError, match="regular file"):
+        metrics_tool.load_export(linked)
+
+
+def legacy_tool_names():
+    return {definition["name"] for definition in legacy_probe.definitions()}
+
+
+def test_every_catalog_tool_has_a_documented_bucket():
+    """Each society and legacy tool is in exactly one bucket; RUN_PLAN lists the other one."""
+    buckets = {
+        "commons_society": metrics_tool.COMMONS_SOCIETY,
+        "math_lean_computation": metrics_tool.MATH_LEAN_COMPUTATION,
+        "other": metrics_tool.OTHER,
+    }
+    catalog = set(SOCIETY_TOOL_NAMES) | legacy_tool_names()
+    assert len(legacy_tool_names()) == 63
+    for name in catalog:
+        homes = [bucket for bucket, names in buckets.items() if name in names]
+        assert len(homes) == 1, (name, homes)
+    # No bucket names a tool that no catalog has.
+    assert set().union(*buckets.values()) == catalog
+    plan = (ROOT / "work/society-s1/RUN_PLAN.md").read_text()
+    section = plan.split("## 7.", 1)[1].split("## 8.", 1)[0]
+    assert all(f"`{name}`" in section for name in metrics_tool.OTHER)

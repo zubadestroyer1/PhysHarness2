@@ -38,7 +38,18 @@ arm's work. The model families are the same: family A and family B.
 |---|---|---|---|---|
 | **S. Society** | One society experiment (`sharing="ideas"`, society policy as in the example). Policy `independent` with 8 model entries (4 per family) seeds 8 roots. Each root founds a lab, and recruits join labs (`lab_size_max` 6). Referees are platform-created, cross-model and isolated (ruling R18). | 8 seeded roots, up to 16 research agents, plus referee tasks | 12 (8 roots and 4 slots for referees and recruits) | W |
 | **I. Independent attempts** | 8 roots (4 per family) that share nothing | 8 | 8 | B / (8 × $40) hours |
-| **1. Single agent** | One root, family A | 1 | 1 | B / $40 hours, or earlier when it finishes |
+| **1. Single agent** | One root, family A | 1 | 1 | B / $40 hours (at most 24 h), or earlier when it finishes |
+
+**W** is arm S's wall-clock ceiling. It is the arm's busy agent-hours divided by arm S's
+concurrency: 1 h, 1.5 h and 1.5 h in the three budget options of
+[section 5](#5-budget). The operator sets it as `run-team --timeout-seconds` and as the
+plan's `budget.max_runtime_seconds`.
+- Every arm's wall clock must fit one `run-team` invocation, which allows at most
+  86,400 s.
+- A timeout (`TEAM_TIMEOUT`) cancels active tasks and does not drain queued
+  verifications. The runner's 600-second verification drain applies only when generation
+  stops for another reason, such as an exhausted budget.
+- Allow room within W for a late candidate's verification.
 
 Concurrency 12 in arm S leaves room for referees. With 8 busy roots at concurrency 8, a
 referee would queue until a root yields, which repeats the helper queueing of the last
@@ -127,11 +138,11 @@ pinned libraries or given a reference proof.
 
 | # | Candidate | Program | Rationale (one line) |
 |---|---|---|---|
-| 1 | **Tsirelson's bound**: for Hermitian involutions A₀, A₁ on ℂᵐ and B₀, B₁ on ℂⁿ, every state satisfies ⟨A₀⊗(B₀+B₁) + A₁⊗(B₀−B₁)⟩ ≤ 2√2 | quantum | A known finite-dimensional operator inequality (Mathlib `Matrix`, Kronecker products, `PosSemidef`) whose proof needs a sum-of-squares operator identity and noncommutative algebra, a harder kind of step than the Duffing energy estimate. |
-| 2 | **Kepler orbit equation**: for r̈ = −μ r/‖r‖³ with specific angular momentum h = r × ṙ ≠ 0, ‖r‖(1 + e cos θ) = ‖h‖²/μ, where e and θ come from the Laplace–Runge–Lenz vector | classical | Several conserved quantities and cross-product identities in ℝ³ (`HasDerivAt`, Mathlib `crossProduct`), which split naturally into lemmas: L conserved, A conserved, A·r identity. |
-| 3 | **Explicit exponential stability of x′ = Ax from a Lyapunov pair**: with P ≻ 0, Q ≻ 0 and AᵀP + PA = −Q, ‖x(t)‖² ≤ (λmax(P)/λmin(P)) e^{−(λmin(Q)/λmax(P)) t} ‖x(0)‖² | classical | It extends the Duffing energy method to matrices and needs spectral bounds for positive definite matrices, but the `energy-lyapunov` skill names the route, so it is likely the easiest of the five. |
-| 4 | **Exponential convergence of a finite Markov chain under Doeblin's condition** (P(i,j) ≥ δ for all i, j): ‖μPᵗ − π‖_TV ≤ (1 − nδ)ᵗ, with a unique stationary π | classical (statistical physics) | Finite sums, a total-variation contraction lemma and existence and uniqueness of π; a nonlinear-ODE-free target that tests whether the society generalizes beyond energy estimates. |
-| 5 | **Gibbs variational principle (finite system)**: Σᵢ pᵢEᵢ + T Σᵢ pᵢ log pᵢ ≥ −T log Z for every distribution p, with equality exactly at the Gibbs distribution | classical (statistical physics) | Convexity (Gibbs or log-sum inequality) plus the equality case; possibly too easy if Mathlib's KL-divergence results apply directly, so it is a fallback or development rung. |
+| 1 | **Tsirelson's bound**: for Hermitian involutions A₀, A₁ (m × m) and B₀, B₁ (n × n), with C = A₀⊗(B₀+B₁) + A₁⊗(B₀−B₁) as a Kronecker product, every unit vector ψ ∈ ℂᵐⁿ satisfies Re⟨ψ, Cψ⟩ ≤ 2√2 | quantum | A known finite-dimensional operator inequality (Mathlib `Matrix`, Kronecker products, `PosSemidef`) whose proof needs a sum-of-squares operator identity and noncommutative algebra, a harder kind of step than the Duffing energy estimate. |
+| 2 | **Kepler orbit equation from conserved vectors**: let r : ℝ → ℝ³ satisfy r̈ = −μ r/‖r‖³ with μ > 0 and r(t) ≠ 0 for all t. Fix a time t₀ and set h₀ = r(t₀) × ṙ(t₀) and A₀ = ṙ(t₀) × h₀ − μ r(t₀)/‖r(t₀)‖. Then μ‖r(t)‖ + A₀·r(t) = ‖h₀‖² for every t, which is the orbit ‖r‖(1 + e cos θ) = ‖h₀‖²/μ with e = ‖A₀‖/μ | classical | Because h₀ and A₀ are fixed at t₀, the claim at other times needs both conservation lemmas (angular momentum, then the Laplace–Runge–Lenz vector) in ℝ³ (`HasDerivAt`, Mathlib `crossProduct`) before the dot-product identity, so it splits naturally into lemmas. |
+| 3 | **Explicit exponential stability of x′ = Ax from a Lyapunov pair**: for real n × n matrices with P, Q symmetric positive definite and AᵀP + PA = −Q, every solution satisfies ‖x(t)‖² ≤ (λmax(P)/λmin(P)) e^{−(λmin(Q)/λmax(P)) t} ‖x(0)‖² for all **t ≥ 0** (for t < 0 it fails in general) | classical | It extends the Duffing energy method to matrices and needs spectral bounds for positive definite matrices, but the `energy-lyapunov` skill names the route, so it is likely the easiest of the five. |
+| 4 | **Exponential convergence of a finite Markov chain under Doeblin's condition**: for a row-stochastic P on n states with P(i,j) ≥ δ > 0 for all i, j, there is a unique stationary distribution π, and every distribution μ satisfies d_TV(μPᵗ, π) ≤ (1 − nδ)ᵗ for all t ∈ ℕ, where d_TV(μ, ν) = sup over sets S of \|μ(S) − ν(S)\| = ½ Σⱼ \|μⱼ − νⱼ\| | classical (statistical physics) | Finite sums, the one-step total-variation contraction by 1 − nδ, and existence and uniqueness of π (which needs δ > 0); with the ℓ¹ norm instead of d_TV the constant would be 2(1 − nδ)ᵗ. A target free of nonlinear ODEs, which tests whether the society generalizes beyond energy estimates. |
+| 5 | **Gibbs variational principle (finite system)**: on a finite nonempty state set with energies Eᵢ and temperature T > 0, let Z = Σᵢ e^{−Eᵢ/T}. Every probability vector p satisfies Σᵢ pᵢEᵢ + T Σᵢ pᵢ log pᵢ ≥ −T log Z (with 0 log 0 = 0), with equality exactly when pᵢ = e^{−Eᵢ/T}/Z | classical (statistical physics) | Convexity (Gibbs or log-sum inequality) plus the equality case; possibly too easy if Mathlib's KL-divergence results apply directly, so it is a fallback or development rung. |
 
 ## 4. Literature mode
 
@@ -140,7 +151,8 @@ pinned libraries or given a reference proof.
     domains and identifiable title fragments.
   - `masked_reference_artifact_id` names a private `masked_reference` artifact holding
     the reference text. The operator uploads it before `prepare-run`, and agents cannot
-    read it.
+    read it. In the example it is the short placeholder
+    `USER DECISION REQUIRED: ref id`, because the field holds at most 36 characters.
   - The broker screens search results and fetched text for overlap with the reference
     (`overlap_threshold` 0.02) and withholds flagged text. Agents see only a reason code.
     The measurements stay in a private `literature_screen` artifact.
@@ -160,15 +172,24 @@ pinned libraries or given a reference proof.
 
 The planning figure is **$40 per busy agent-hour**, from PLAN §1. The Duffing retry cost
 $49.10 for 17 minutes with at most 4 concurrent workers, about $43 per busy agent-hour at
-full occupancy. Busy agent-hours include referee tasks. Arm I spends ceiling B over
+full occupancy. Busy agent-hours include referee tasks and assume every slot stays busy
+for the whole ceiling, so they are an upper bound on spend. Arm I spends ceiling B over
 B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 
-| Option | Arm S shape | Busy agent-hours per arm | Ceiling B per arm | Three arms | Development calibration | Total, one repetition | Total, two repetitions |
-|---|---|---|---|---|---|---|---|
-| Minimum | 8 concurrent × 1 h | 8 | $320 | $960 | $80 (2 agent-hours) | **$1,040** | $2,000 |
-| Recommended | 12 concurrent × 1.5 h | 18 | $720 | $2,160 | $160 (4 agent-hours) | **$2,320** | $4,480 |
-| Upper (16 agents) | 16 concurrent × 2 h | 32 | $1,280 | $3,840 | $160 | **$4,000** | $7,840 |
+| Option | Arm S shape (concurrency × W) | Busy agent-hours per arm | Ceiling B per arm | Arm I wall clock | Arm 1 wall clock | Three arms | Development calibration | Total, one repetition | Total, two repetitions |
+|---|---|---|---|---|---|---|---|---|---|
+| Minimum | 12 × 1 h | 12 | $480 | 1.5 h | 12 h | $1,440 | $80 (2 agent-hours) | **$1,520** | $2,960 |
+| Recommended | 12 × 1.5 h | 18 | $720 | 2.25 h | 18 h | $2,160 | $160 (4 agent-hours) | **$2,320** | $4,480 |
+| Upper (16 concurrent) | 16 × 1.5 h | 24 | $960 | 3 h | 24 h | $2,880 | $160 | **$3,040** | $5,920 |
 
+- **The Upper row is capped by arm 1.** Arm 1 has one agent, so its wall clock is B / $40.
+  A ceiling of $960 already needs 24 h, the most one `run-team --timeout-seconds` allows.
+  A larger B would need arm 1 to continue in a second `run-team` invocation after a
+  timeout. That would re-seed its root idempotently and resume the task through its
+  continuation, but no such resumption has been qualified, so this plan does not use
+  it.
+- The Upper row also needs `budget.max_concurrency` 16 in the plan (the example has 12)
+  and 16 concurrent workbenches.
 - The optional literature-assisted arm adds one more B.
 - These are model-cost planning figures. E2B sandbox time, if chosen, and verification
   compute are extra.
@@ -181,11 +202,11 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 ## 6. Stop rules (predeclared)
 
 1. **Root accepted.** An independent-kernel receipt on the exact target stops the run
-   (`stop_on_verified_target`). The runner drains already queued verifications for at
-   most 600 seconds.
+   (`stop_on_verified_target`, `TARGET_VERIFIED`). The runner retires queued tasks, starts
+   no new work and lets running tasks finish their bounded wrap-up.
 2. **Ceiling reached.** When the ledger reaches B, no new reservations are made.
-3. **Wall clock.** The experiment's `max_runtime_seconds` and the `run-team --timeout-seconds`
-   limit apply.
+3. **Wall clock.** Arm S stops at W, arm I at B / (8 × $40) and arm 1 at B / $40, each at
+   most 24 h: the `run-team --timeout-seconds` value and the plan's `max_runtime_seconds`.
 4. **Stagnation (operator rule).** S1 has no automated stagnation stop; CampaignRuntime
    in S2 adds one. So the operator exports every 15 minutes and runs
    `tools/society_metrics.py`. The operator stops the arm when no node has moved up the
@@ -215,16 +236,30 @@ proof and transcript bytes, so keep them private.
 | Cost per accepted node | `cost_per_accepted_result_usd`, `spent_cost_usd`, `tokens_spent` | Canonical ledger. |
 | Duplicated-work fraction | `duplicate_claim_fraction`, `claimed_nodes`, `duplicate_claimed_nodes` | An upper bound: a claim record keeps only its first claim and last expiry. There is no claim-based baseline for the last run, so compare against the audited overlap in the arm reports. |
 | Idle and waiting fraction; post-acceptance spend | Not computed | Needs event timelines, which the export does not contain. Use the database event log, as the earlier pilot evaluators did. |
-| Coordination versus mathematics | `tool_call_mix` (`commons_society`, `math_lean_computation`, `other`, `by_tool`) | Counts calls, not tokens. It needs the runtime-event artifact bytes in the export directory; otherwise `available` is false. |
+| Coordination versus mathematics | `tool_call_mix` (`commons_society`, `math_lean_computation`, `other`, `unclassified`, `by_tool`) | Counts calls, not tokens. It needs the runtime-event artifact bytes in the export directory; otherwise `available` is false. The buckets are listed below the table. |
 | Citation and reuse rate | `citations`, `cross_branch_citations`, `cross_branch_dependencies` | Confirm lemma reuse in the accepted proof by manual audit, as in the Duffing report. |
 | Retrieval hit rate | Not computed | S1 has no accepted non-root nodes to retrieve. |
 | Live approach families | `branches.labs`, `nodes_by_type` | Proxies. The count over time needs periodic exports. |
 | Referee catch rate; fidelity failure rate | `referee_negative_share`, `fidelity_failure_share`, `reviews_by_verdict`, `cross_model_share`, `stale_reviews` | These are negative-verdict shares. A true catch rate needs ground truth. |
-| Stale-claim rate | `stale_claim_count`, `live_claim_count`, `claims_as_of` | Unreleased claims past expiry at `--as-of`. |
+| Stale-claim rate | `stale_claim_count`, `live_claim_count`, `claims_as_of`, `claims_as_of_source` | Unreleased claims past expiry at `--as-of`. Without `--as-of`, claims are judged at the run's end (the latest activity in the export), so claims that merely outlived the run are not counted. Stale counts are meaningful only for in-run exports (the 15-minute checks) or with an explicit `--as-of`. A post-run count misses a lapse that the same branch later re-claimed, because the claim record is overwritten. |
 | Lean iterations per accepted node | `lean_checks_per_accepted_result` | Needs runtime events. |
 | Automation hit rate | Not computed | `lean_check` results are not persisted as records. |
 | Skill and literature usage; contamination flags | `tool_call_mix.by_tool` (`load_skill`, `search_literature`, `fetch_source`), `literature_fetches`, `literature_by_status`, `contamination_flags` | Whether cited sources contributed is a manual audit. |
 | Honest separation of evidence | `evidence.model_sessions`, `evidence.runtime_event_artifacts` | The operator labels each export as simulated, mocked-provider or live. |
+
+**Tool buckets.** Every tool of the society profile and of the 63-tool legacy profile is in
+exactly one bucket; `tests/test_society_metrics.py` enforces this. A tool in no bucket
+(one added later) counts as `unclassified`.
+- `commons_society`: commons, inbox, messaging, recruitment, waiting, delegation,
+  discussion, return and review tools.
+- `math_lean_computation`: shell, file, Lean, library, computation, candidate and
+  verification tools.
+- `other` (memory, knowledge, literature and skills): society `search_literature`,
+  `fetch_source`, `notebook`, `load_skill`; legacy `checkpoint_context`,
+  `checkpoint_research_notes`, `history_page`, `index_page`, `read_artifact`,
+  `read_artifact_chunk`, `read_dependency_bundle`, `read_scientific_record`,
+  `research_graph_page`, `restart_brief`, `restore_context`, `search_knowledge`,
+  `store_artifact`, `working_context`.
 
 **Predeclared reading of S1:**
 - **Success signal:** arm S has an accepted root; its `duplicate_claim_fraction` is at
@@ -261,6 +296,12 @@ Each item needs the user. None has been started.
      toolchain must be exactly `leanprover/lean4:v4.33.0`), and the versions plus
      aarch64 and x86_64 wheel SHA-256 values for python-flint, cvxpy, clarabel, scs and
      osqp in `formal/workbench-requirements.lock`.
+   - Pin the transitive dependencies the lock flags (recalled offline and not yet
+     verified). cvxpy needs osqp, clarabel and scs. osqp 0.6.x needs `qdldl`, a binary
+     wheel with its own pin. osqp 1.x instead needs `jinja2`, `joblib` and `setuptools`.
+     Prefer the Debian packages (`python3-jinja2`, `python3-joblib`,
+     `python3-setuptools`, and `python3-cffi` if any wheel needs cffi) when the snapshot
+     satisfies them. Otherwise give each its own hashed lock line.
    - Build, record the image digest, and requalify the workbench, including the REPL
      path `/opt/lean-repl/.lake/build/bin/repl`.
    - Without v2, `lean_check` falls back to one-shot Lean, which re-imports Mathlib on

@@ -279,27 +279,42 @@ def test_society_plan_is_checked_before_any_record(lab, update, fragment):
     assert service.list_records("campaign", actor) == []
 
 
+def guard_only(error):
+    """The rejection is the placeholder guard alone, not a field-type error on the input."""
+    messages = [item["msg"] for item in error.value.errors()]
+    assert messages == [
+        "Value error, Replace every USER DECISION REQUIRED placeholder before preparing"
+    ]
+
+
 def test_run_plan_rejects_unfilled_user_decisions():
     from physharness.run_control import RunPlan
 
     data = plan_input()
     data["target"]["title"] = "USER DECISION REQUIRED: choose the target"
-    with pytest.raises(ValidationError, match="USER DECISION REQUIRED"):
+    with pytest.raises(ValidationError) as error:
         RunPlan.model_validate(data)
+    guard_only(error)
 
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "work/society-s1/run-plan.example.json"
 PLACEHOLDER = "USER DECISION REQUIRED"
 
 
-def fill(value, choices, path=""):
+def fill(value, choices, path="", *, keep_unchosen=False):
     """Replace every placeholder with the test value chosen for its JSON path."""
     if isinstance(value, dict):
-        return {key: fill(item, choices, f"{path}.{key}") for key, item in value.items()}
+        return {
+            key: fill(item, choices, f"{path}.{key}", keep_unchosen=keep_unchosen)
+            for key, item in value.items()
+        }
     if isinstance(value, list):
-        return [fill(item, choices, f"{path}[{index}]") for index, item in enumerate(value)]
+        return [
+            fill(item, choices, f"{path}[{index}]", keep_unchosen=keep_unchosen)
+            for index, item in enumerate(value)
+        ]
     if isinstance(value, str) and PLACEHOLDER in value:
-        return choices.pop(path)
+        return choices.get(path, value) if keep_unchosen else choices.pop(path)
     return value
 
 
@@ -311,6 +326,13 @@ def placeholders(value, path=""):
     return [path] if isinstance(value, str) and PLACEHOLDER in value else []
 
 
+# Placeholders in fields a string cannot satisfy (a literal and numbers).
+TYPED_PLACEHOLDERS = (
+    ".target.program",
+    ".budget.max_cost_usd",
+    ".budget.max_runtime_seconds",
+    ".budget.max_tokens",
+)
 EXAMPLE_CHOICES = {
     ".target.title": "Test target",
     ".target.program": "classical",
@@ -336,6 +358,14 @@ def test_society_example_plan_validates_once_user_decisions_are_filled(lab, tmp_
     # As shipped, the skeleton cannot be prepared.
     with pytest.raises(ValidationError):
         RunPlan.model_validate(example)
+    # With only the typed fields (program, budget numbers) filled, every remaining
+    # placeholder fits its field, so the rejection is the placeholder guard itself.
+    typed = {path: EXAMPLE_CHOICES[path] for path in TYPED_PLACEHOLDERS}
+    partly = fill(example, typed, keep_unchosen=True)
+    assert sorted(placeholders(partly)) == sorted(set(EXAMPLE_CHOICES) - set(TYPED_PLACEHOLDERS))
+    with pytest.raises(ValidationError) as error:
+        RunPlan.model_validate(partly)
+    guard_only(error)
     plan = RunPlan.model_validate(fill(example, dict(EXAMPLE_CHOICES)))
     assert plan.society is not None and plan.sharing == "ideas"
     assert plan.society.literature.mode == "benchmark"

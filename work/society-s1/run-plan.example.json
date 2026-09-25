@@ -89,7 +89,7 @@
       "blocked_sources": [
         "USER DECISION REQUIRED: arXiv id, DOI, domain or title fragment of each known-solution source for the chosen target"
       ],
-      "masked_reference_artifact_id": "USER DECISION REQUIRED: masked_reference id",
+      "masked_reference_artifact_id": "USER DECISION REQUIRED: ref id",
       "overlap_threshold": 0.02
     },
     "scaffolding": {

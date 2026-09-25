@@ -6,9 +6,14 @@ Usage::
 
 ``EXPORT`` is either an export directory written by ``phys export`` (``manifest.json`` plus
 artifact files named by their SHA-256) or a bare manifest JSON file, the output of
-``service.export_experiment``. Runtime-event artifacts are read from files beside the
-manifest when present; they give the tool-call mix. Without them the mix is reported as
-unavailable. Every artifact read is hash-checked.
+``service.export_experiment``. The manifest must be a bounded regular file whose
+``manifest_sha256`` matches its content. Runtime-event artifacts are read from files
+beside the manifest when present; they give the tool-call mix. Without them the mix is
+reported as unavailable. Every artifact read is hash-checked.
+
+Claims are judged stale or live at ``--as-of``. By default that is the run's end: the
+latest activity the export records. A post-run export therefore does not count claims
+that simply outlived the run as stale.
 
 The tool reads canonical records only and never contacts a service or model. It works on
 all three S1 arms: legacy exports (single agent, independent attempts) have no commons
@@ -21,6 +26,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import stat
 import sys
 import time
 from collections import Counter
@@ -30,7 +37,12 @@ from pathlib import Path
 
 FORMAT = "physharness.society-metrics.v1"
 ACCEPTED = "accepted"
-# Tool-call groups. Legacy names are the 63-tool profile, so every arm is comparable.
+MAX_MANIFEST_BYTES = 200_000_000  # The bound reproduction.validate_export applies.
+MAX_ARTIFACT_BYTES = 20_000_000
+DEFAULT_CLAIM_TTL_SECONDS = 900
+# Tool-call buckets. Every tool of the society profile and of the 63-tool legacy profile is
+# in exactly one of the three documented buckets, so every arm is comparable; a name in
+# none of them (a tool added later) is counted as unclassified.
 COMMONS_SOCIETY = frozenset(
     {
         # Society profile.
@@ -112,6 +124,36 @@ MATH_LEAN_COMPUTATION = frozenset(
         "read_accepted_proof_summary",
     }
 )
+# Memory, knowledge, literature and skills: neither coordination nor mathematics.
+OTHER = frozenset(
+    {
+        # Society profile.
+        "search_literature",
+        "fetch_source",
+        "notebook",
+        "load_skill",
+        # Legacy profile.
+        "checkpoint_context",
+        "checkpoint_research_notes",
+        "history_page",
+        "index_page",
+        "read_artifact",
+        "read_artifact_chunk",
+        "read_dependency_bundle",
+        "read_scientific_record",
+        "research_graph_page",
+        "restart_brief",
+        "restore_context",
+        "search_knowledge",
+        "store_artifact",
+        "working_context",
+    }
+)
+BUCKETS = {
+    "commons_society": COMMONS_SOCIETY,
+    "math_lean_computation": MATH_LEAN_COMPUTATION,
+    "other": OTHER,
+}
 LEAN_CHECKS = frozenset({"lean_check", "lean_sketch", "run_lean_scratch", "check_lean_type"})
 
 
@@ -127,23 +169,68 @@ def _sorted(counter):
     return dict(sorted(counter.items()))
 
 
+def _read_bounded(path, limit):
+    """A regular file's bytes, refusing links, special files and anything over ``limit``."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError as error:
+        raise ValueError(f"{path.name} must be a readable regular file, not a link.") from error
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError(f"{path.name} must be a readable regular file, not a link.")
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError(f"{path.name} exceeds {limit:,} bytes.")
+    return data
+
+
+def _canonical_digest(value):
+    """``physharness.domain.digest_json``: SHA-256 of the canonical JSON encoding."""
+    text = json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False
+    )
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
 def load_export(path):
-    """The manifest and a hash-checked reader for artifact bytes stored beside it."""
+    """The verified manifest and a hash-checked reader for artifact bytes beside it."""
     path = Path(path)
-    manifest_path = path / "manifest.json" if path.is_dir() else path
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_path = path / "manifest.json" if path.is_dir() and not path.is_symlink() else path
+    manifest = json.loads(_read_bounded(manifest_path, MAX_MANIFEST_BYTES))
+    unsigned = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    if manifest.get("manifest_sha256") != _canonical_digest(unsigned):
+        raise ValueError("The manifest's manifest_sha256 does not match its content.")
     directory = manifest_path.parent
 
     def read_artifact(sha256):
         candidate = directory / sha256
         if len(sha256) != 64 or candidate.is_symlink() or not candidate.is_file():
             return None
-        data = candidate.read_bytes()
+        data = _read_bounded(candidate, MAX_ARTIFACT_BYTES)
         if hashlib.sha256(data).hexdigest() != sha256:
             raise ValueError(f"Artifact {sha256} failed its content hash.")
         return data
 
     return manifest, read_artifact
+
+
+def run_end(manifest):
+    """Epoch seconds of the latest activity the export records, or None when it has none.
+
+    Candidates are every record's ``created_at``, commons nodes' ``last_activity_at``, each
+    claim's last claim or renewal (its expiry less the policy TTL, never before it was
+    created) and the experiment's start.
+    """
+    society = manifest["experiment"].get("society") or {}
+    ttl = society.get("claim_ttl_seconds", DEFAULT_CLAIM_TTL_SECONDS)
+    times = [_epoch(manifest["experiment"].get("started_at"))]
+    for kind, rows in manifest["records"].items():
+        for row in rows:
+            times += [_epoch(row.get("created_at")), _epoch(row.get("last_activity_at"))]
+            if kind == "commons_claim" and isinstance(row.get("expires_at"), (int, float)):
+                times.append(max(row["expires_at"] - ttl, _epoch(row.get("created_at")) or 0))
+    times = [value for value in times if value is not None]
+    return max(times) if times else None
 
 
 def accepted_root_receipt(manifest):
@@ -292,12 +379,8 @@ def _tool_calls(records, read_artifact):
     total = sum(tools.values())
     groups = Counter()
     for name, count in tools.items():
-        if name in COMMONS_SOCIETY:
-            groups["commons_society"] += count
-        elif name in MATH_LEAN_COMPUTATION:
-            groups["math_lean_computation"] += count
-        else:
-            groups["other"] += count
+        bucket = next((key for key, names in BUCKETS.items() if name in names), None)
+        groups[bucket or "unclassified"] += count
     mix = {
         "available": True,
         "runtime_events": len(events),
@@ -306,6 +389,7 @@ def _tool_calls(records, read_artifact):
         "commons_society": groups["commons_society"],
         "math_lean_computation": groups["math_lean_computation"],
         "other": groups["other"],
+        "unclassified": groups["unclassified"],
         "commons_society_share": _share(groups["commons_society"], total),
         "by_tool": _sorted(tools),
         "stagnation_warnings": stagnation,
@@ -314,8 +398,17 @@ def _tool_calls(records, read_artifact):
 
 
 def compute_metrics(manifest, read_artifact=None, *, as_of=None):
-    """PLAN §9 metrics from one export manifest; ``as_of`` (epoch seconds) dates staleness."""
-    as_of = time.time() if as_of is None else as_of
+    """PLAN §9 metrics from one export manifest.
+
+    ``as_of`` (epoch seconds) dates claim staleness; by default it is ``run_end``, and the
+    current time only for an export that records no activity at all.
+    """
+    if as_of is not None:
+        source = "argument"
+    elif (as_of := run_end(manifest)) is not None:
+        source = "run_end"
+    else:
+        as_of, source = time.time(), "now"
     records = manifest["records"]
     experiment = manifest["experiment"]
     nodes = records.get("commons_node", [])
@@ -357,6 +450,7 @@ def compute_metrics(manifest, read_artifact=None, *, as_of=None):
         # Efficiency and knowledge.
         **_claims(records, as_of),
         "claims_as_of": as_of,
+        "claims_as_of_source": source,
         "citations": citations,
         "cross_branch_citations": cross_citations,
         "cross_branch_dependencies": _cross_branch_dependencies(edges, nodes),
@@ -394,7 +488,8 @@ def main(argv=None):
         "--as-of",
         type=float,
         default=None,
-        help="Epoch seconds at which claims are judged stale (default: now).",
+        help="Epoch seconds at which claims are judged stale (default: the run's end, the "
+        "latest activity in the export).",
     )
     arguments = parser.parse_args(argv)
     manifest, read_artifact = load_export(arguments.export)
