@@ -50,6 +50,7 @@ from physharness.orchestration.society_tools import SOCIETY_TOOL_NAMES, society_
 from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
 from physharness.orchestration.workspaces import WorkspaceBroker
 from physharness.skills import list_skills, load_skill
+from physharness.storage import RecordRow
 from physharness.workforce_models import ConfigureWorkforceRequest
 
 # Recorded from the pre-change code (research_worker.research_tools before Task 9).
@@ -1188,3 +1189,90 @@ def test_referee_task_is_not_a_root_for_replan_policy(lab):
     with pytest.raises(HarnessError) as caught:
         service.configure_root_replans(requested["review_task_id"], 1, OPERATOR, "replan")
     assert caught.value.code == "ROOT_TASK_REQUIRED"
+
+
+def finish_task(service, task_id):
+    """Close a task directly, as a completed worker would have."""
+    with service.db.transaction() as session:
+        service._replace(session, session.get(RecordRow, task_id), {"status": "completed"})
+
+
+async def test_runner_runs_parentless_synthesis_and_gate_reopens(lab, monkeypatch):
+    """Ruling R21: a sample led by referee and platform posts yields a parentless synthesis."""
+    service, author, exp, branches, (alpha, _beta) = society_lab(lab)
+    service.configure_workforce(
+        exp["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=100, max_pending_tasks=50, synthesis_interval_posts=4
+        ),
+        OPERATOR,
+        "workforce",
+    )
+    nodes = [
+        service.create_node(
+            exp["id"],
+            NodeCreate(node_type="lemma", title=title, statement=f"{title} holds."),
+            alpha,
+            title,
+        )
+        for title in ("Trace lemma", "Gap lemma")
+    ]
+    # First sampled post: a referee objection (an isolated referee branch may not parent).
+    requested = service.request_review(nodes[0]["id"], "informal", alpha, "review")
+    referee = Principal(
+        id="referee",
+        role="agent",
+        project_id="lab",
+        experiment_id=exp["id"],
+        branch_id=requested["branch_id"],
+    )
+    service.submit_review(
+        requested["review_task_id"], "gaps", "Step 2 is missing.", ["Step 2."], referee, "gaps"
+    )
+    finish_task(service, requested["review_task_id"])
+    # Then platform status posts on both node threads, which have no author branch.
+    set_status(service, nodes[0]["id"], "formally_stated")
+    set_status(service, nodes[1]["id"], "refereed", "formally_stated")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    real_schedule = service.schedule_research_synthesis
+    calls = []
+
+    def schedule(experiment_id, actor, key):
+        synthesis = [
+            task["status"]
+            for task in service.list_records("task", author, exp["id"])
+            if task.get("synthesis")
+        ]
+        result = real_schedule(experiment_id, actor, key)
+        calls.append({"synthesis_before": synthesis, "scheduled": result.get("scheduled")})
+        return result
+
+    monkeypatch.setattr(service, "schedule_research_synthesis", schedule)
+    objectives = []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payload = json.loads(request.content)
+        objectives.append(json.loads(payload["input"][0]["content"])["objective"])
+        return httpx.Response(200, json=response([message("done")], response_id="r"))
+
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    synthesis = [
+        task for task in service.list_records("task", author, exp["id"]) if task.get("synthesis")
+    ]
+    assert len(synthesis) == 1
+    branch = service.get_record("branch", synthesis[0]["branch_id"], author)
+    assert branch["parent_id"] is None  # no eligible author branch in the sample
+    assert synthesis[0]["status"] == "completed"
+    assert any(objective.startswith("Compare only the sampled") for objective in objectives)
+    assert calls[0]["scheduled"] is True
+    # After the parentless synthesis finished, the gate opened again for later synthesis.
+    assert any(call["synthesis_before"] == ["completed"] for call in calls[1:])
+    assert report["status"] == "completed"
