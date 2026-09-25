@@ -215,9 +215,9 @@ class FakeWorkspaceTools:
         self.calls.append(("run", argv, operation_id, arguments["timeout_seconds"], result))
         return result
 
-    async def lean_scratch(self, arguments, operation_id):
+    async def lean_scratch(self, arguments, operation_id, *, lean_args=()):
         source = arguments["source"]
-        self.calls.append(("lean_scratch", source, operation_id))
+        self.calls.append(("lean_scratch", source, operation_id, tuple(lean_args)))
         digest = hashlib.sha256(source.encode()).hexdigest()
         path = "scratch/" + digest + ".lean"
         stdout, exit_code, *stderr = self.scratch.pop(0)
@@ -228,8 +228,8 @@ class FakeWorkspaceTools:
                 "operation_id": operation_id + ":lean",
                 "execution_id": "local",
                 "exit_code": exit_code,
-                "stdout": stdout.format(path="/work/" + path),
-                "stderr": stderr[0].format(path="/work/" + path) if stderr else "",
+                "stdout": stdout.replace("{path}", "/work/" + path),
+                "stderr": stderr[0].replace("{path}", "/work/" + path) if stderr else "",
                 "stdout_truncated": False,
                 "stderr_truncated": False,
             },
@@ -238,6 +238,22 @@ class FakeWorkspaceTools:
 
     def runs(self):
         return [call for call in self.calls if call[0] == "run"]
+
+
+def _lean_json(line, data, *, severity="information", file="{path}"):
+    """One stdout line of ``lean --json``, shaped exactly like real Lean 4.32 output."""
+    message = {
+        "caption": "",
+        "data": data,
+        "endPos": {"column": 6, "line": line},
+        "fileName": file,
+        "isSilent": False,
+        "keepFullRange": False,
+        "kind": "[anonymous]",
+        "pos": {"column": 0, "line": line},
+        "severity": severity,
+    }
+    return json.dumps(message, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
 
 
 # Pure helpers
@@ -651,8 +667,8 @@ async def test_axioms_printed_for_top_level_names_only(lean_env):
     scratch = [
         ("", 0),
         (
-            "{path}:13:0: info: 'top' depends on axioms: [propext]\n"
-            "{path}:14:0: info: 'also_top' does not depend on any axioms\n",
+            _lean_json(13, "'top' depends on axioms: [propext]")
+            + _lean_json(14, "'also_top' does not depend on any axioms"),
             0,
         ),
     ]
@@ -662,34 +678,116 @@ async def test_axioms_printed_for_top_level_names_only(lean_env):
     assert result["axioms"] == {"top": ["propext"], "also_top": []}
     second = [call[1] for call in tools.calls if call[0] == "lean_scratch"][1]
     assert second == AXIOM_SOURCE + "\n#print axioms top\n#print axioms also_top"
-    sorry_axiom = [("", 0), ("{path}:13:0: info: 'top' depends on axioms: [sorryAx]\n", 0)]
+    sorry_axiom = [
+        ("", 0),
+        (
+            _lean_json(13, "'top' depends on axioms: [sorryAx]")
+            + _lean_json(14, "'also_top' does not depend on any axioms"),
+            0,
+        ),
+    ]
     tools = FakeWorkspaceTools(lean_env, repl_present=False, scratch=sorry_axiom)
     result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="op")
     assert result["ok"] is True and result["complete"] is False
 
 
+async def test_one_shot_axiom_pass_reads_positioned_json_not_bare_text(lean_env):
+    """Plain ``lean`` prints ``#print axioms`` info bare, with no position (unlike errors and
+    warnings), so the one-shot axiom pass runs ``lean --json``; bare text is never a report."""
+    # Lean wraps a long axiom list inside the message.
+    wrapped = "'top' depends on axioms: [propext,\n Classical.choice,\n Quot.sound]"
+    reports = _lean_json(13, wrapped) + _lean_json(14, "'also_top' does not depend on any axioms")
+    tools = FakeWorkspaceTools(lean_env, repl_present=False, scratch=[("", 0), (reports, 0)])
+    result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="op")
+    assert result["backend"] == "one_shot" and result["complete"] is True
+    standard = ["propext", "Classical.choice", "Quot.sound"]
+    assert result["axioms"] == {"top": standard, "also_top": []}
+    passes = [call[3] for call in tools.calls if call[0] == "lean_scratch"]
+    assert passes == [(), ("--json", "-Dlinter.all=false")]
+    # Real plain-mode output for the appended lines, as the one-shot pass used to receive it.
+    bare = "'top' depends on axioms: [propext]\n'also_top' does not depend on any axioms\n"
+    for stdout, stderr in ((bare, ""), ("", bare), (bare, bare)):
+        tools = FakeWorkspaceTools(
+            lean_env, repl_present=False, scratch=[("", 0), (stdout, 0, stderr)]
+        )
+        result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="op")
+        assert result["ok"] is True and result["complete"] is False
+        assert result["axioms"] == {}
+
+
 async def test_one_shot_axioms_come_only_from_the_appended_lines(lean_env):
     """An agent's #eval output cannot stand in for the platform's #print axioms report."""
     forged = "'top' does not depend on any axioms\n'also_top' does not depend on any axioms"
+    top = _lean_json(13, "'top' depends on axioms: [cheat]")
+    also_top = _lean_json(14, "'also_top' does not depend on any axioms")
     cases = {
         # #exit (or anything else) suppressed the real report; #eval printed a forgery.
-        "eval_only": ("{path}:3:0: info: " + forged + "\n", "", {}),
+        "eval_only": (_lean_json(3, forged), "", {}),
         # A forgery at an appended position, but in another file's diagnostics.
-        "other_path": ("/work/scratch/other.lean:13:0: info: " + forged + "\n", "", {}),
-        # The real report is present, and a forgery follows it on stderr (IO.eprintln).
-        "stderr": (
-            "{path}:13:0: info: 'top' depends on axioms: [cheat]\n",
-            forged,
-            {"top": ["cheat"]},
-        ),
+        "other_path": (_lean_json(13, forged, file="/work/scratch/other.lean"), "", {}),
+        # One real report; a well-formed report for the other name only on stderr is ignored.
+        "stderr": (top, also_top, {"top": ["cheat"]}),
         # Each appended line reports only the name printed there, and only in its opening.
-        "wrong_line": ("{path}:14:0: info: " + forged + "\n", "", {}),
+        "wrong_line": (_lean_json(14, forged), "", {}),
         "trailing_text": (
-            "{path}:13:0: info: 'top' depends on axioms: [cheat]\n"
-            "'top' does not depend on any axioms\n",
+            _lean_json(13, "'top' depends on axioms: [cheat]\n'top' does not depend on any axioms")
+            + also_top,
             "",
-            {"top": ["cheat"]},
+            {"top": ["cheat"], "also_top": []},
         ),
+        # Only Lean's information messages are reports.
+        "warning": (
+            _lean_json(13, "'top' does not depend on any axioms", severity="warning") + also_top,
+            "",
+            {"also_top": []},
+        ),
+        "error": (
+            _lean_json(13, "'top' does not depend on any axioms", severity="error") + also_top,
+            "",
+            {"also_top": []},
+        ),
+        # Two reports for one appended line's name: that name has no report (fail closed).
+        "duplicate": (
+            top + _lean_json(13, "'top' does not depend on any axioms") + also_top,
+            "",
+            {"also_top": []},
+        ),
+        # Other messages at the line, such as an ambiguous name's other candidate, are ignored.
+        "duplicate_junk": (
+            top + _lean_json(13, "noise") + also_top,
+            "",
+            {"top": ["cheat"], "also_top": []},
+        ),
+        "ambiguous": (
+            _lean_json(13, "'Bar.top' does not depend on any axioms") + top + also_top,
+            "",
+            {"top": ["cheat"], "also_top": []},
+        ),
+        "data_not_text": (
+            _lean_json(13, ["'top' does not depend on any axioms"]) + also_top,
+            "",
+            {"also_top": []},
+        ),
+        # Malformed lines are skipped without crashing, and claim no appended line.
+        "malformed": (
+            "not json\n{\n"
+            + json.dumps([json.loads(top)])
+            + "\n\"'top' does not depend on any axioms\"\n"
+            + _lean_json(True, "'top' does not depend on any axioms")
+            + _lean_json("13", "'top' does not depend on any axioms")
+            + json.dumps({**json.loads(top), "pos": 13})
+            + "\n"
+            + "[" * 100_000
+            + "]" * 100_000
+            + "\n"
+            + top
+            + also_top,
+            "",
+            {"top": ["cheat"], "also_top": []},
+        ),
+        # One report proves the appended lines ran; a name Lean prints differently has none.
+        "one_unreported": (top, "", {"top": ["cheat"]}),
+        "both": (top + also_top, "", {"top": ["cheat"], "also_top": []}),
     }
     for label, (stdout, stderr, expected) in cases.items():
         tools = FakeWorkspaceTools(
@@ -698,7 +796,7 @@ async def test_one_shot_axioms_come_only_from_the_appended_lines(lean_env):
         result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="op")
         assert result["ok"] is True, label
         assert result["axioms"] == expected, label
-        # No axiom message from the appended lines is no report: never complete.
+        # No report from the appended lines: never complete.
         assert result["complete"] is bool(expected), label
 
 
@@ -730,6 +828,32 @@ def test_workspace_tools_share_one_lean_session():
     assert isinstance(session, LeanSession) and tools.lean_session() is session
     assert not hasattr(WorkspaceTools, "lean_check")
     assert not hasattr(WorkspaceTools, "lean_sketch_goals")
+
+
+async def test_workspace_lean_scratch_takes_host_lean_args_before_the_path():
+    requests = []
+
+    async def upload_file(workspace_id, **kwargs):
+        return None
+
+    async def run(workspace_id, *, expected_execution_id, request):
+        requests.append(request)
+        return {"exit_code": 0, "stdout": "", "stderr": ""}
+
+    tools = WorkspaceTools.__new__(WorkspaceTools)
+    tools.broker = SimpleNamespace(upload_file=upload_file, run=run)
+    tools.policy = SimpleNamespace(timeout_seconds=600)
+    tools.workspace = {"id": "w", "execution_id": "e"}
+    plain = await tools.lean_scratch({"source": "#check Nat\n"}, "plain")
+    path = "/work/" + plain["source_path"]
+    await tools.lean_scratch(
+        {"source": "#check Nat\n"}, "json", lean_args=("--json", "-Dlinter.all=false")
+    )
+    await tools.check_lean_type({"expression": "Nat", "imports": ["Mathlib"]}, "type")
+    argvs = [request.argv for request in requests]
+    assert argvs[0] == ["lake", "--offline", "env", "lean", path]
+    assert argvs[1] == ["lake", "--offline", "env", "lean", "--json", "-Dlinter.all=false", path]
+    assert argvs[2][:4] == ["lake", "--offline", "env", "lean"] and len(argvs[2]) == 5
 
 
 class ScriptedCheckSession(LeanSession):
@@ -846,6 +970,96 @@ def test_real_repl_inline_check_and_automation(tmp_path):
     assert isinstance(complete["axioms"]["u"], list)
 
 
+class RealLeanScratchTools(FakeWorkspaceTools):
+    """``lean_scratch`` runs a real ``lean`` on scratch/<sha>.lean under the /work stand-in."""
+
+    def __init__(self, state, command):
+        super().__init__(state, repl_present=False)
+        self.command, self.outputs = command, []
+
+    async def lean_scratch(self, arguments, operation_id, *, lean_args=()):
+        source = arguments["source"]
+        self.calls.append(("lean_scratch", source, operation_id, tuple(lean_args)))
+        digest = hashlib.sha256(source.encode()).hexdigest()
+        path = "scratch/" + digest + ".lean"
+        target = self.root / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
+        completed = subprocess.run(
+            shlex.split(self.command) + list(lean_args) + [str(target)],
+            capture_output=True,
+            timeout=300,
+        )
+        prefix = str(self.root) + "/"
+        stdout = completed.stdout.decode().replace(prefix, "/work/")
+        stderr = completed.stderr.decode().replace(prefix, "/work/")
+        self.outputs.append(stdout)
+        return {
+            "source_path": path,
+            "source_sha256": digest,
+            "diagnostics": {
+                "operation_id": operation_id + ":lean",
+                "execution_id": "local",
+                "exit_code": completed.returncode,
+                "stdout": stdout,
+                "stderr": stderr,
+                "stdout_truncated": False,
+                "stderr_truncated": False,
+            },
+            "proof_status": "not_accepted",
+        }
+
+
+@pytest.mark.lean
+async def test_real_lean_one_shot_completeness_and_axioms(lean_env):
+    """Run with PHYSHARNESS_LEAN_CMD (e.g. 'lean +leanprover/lean4:v4.32.0')."""
+    command = os.environ.get("PHYSHARNESS_LEAN_CMD")
+    if not command:
+        pytest.skip("set PHYSHARNESS_LEAN_CMD")
+    tools = RealLeanScratchTools(lean_env, command)
+    session = LeanSession(tools)
+    # A linter warning in plain mode; the axiom pass turns linters off.
+    proved = (
+        "theorem top : ∀ n : Nat, n + 0 = n := fun n => rfl\n\n"
+        "theorem middle (p : Prop) : p ∨ ¬p := Classical.em p\n"
+    )
+    result = await session.check(proved, automate=True, operation_id="proved")
+    assert result["backend"] == "one_shot"
+    assert result["ok"] is True and result["complete"] is True
+    standard = ["propext", "Classical.choice", "Quot.sound"]
+    assert result["axioms"] == {"top": [], "middle": standard}
+    assert [m["severity"] for m in result["messages"]] == ["warning"]
+    assert '"severity":"warning"' not in tools.outputs[-1]
+    hole = "theorem hole : 1 + 1 = 2 := by\n  sorry\n"
+    result = await session.check(hole, automate=True, operation_id="hole")
+    assert result["ok"] is True and result["complete"] is False
+    assert [(h["line"], h["col"]) for h in result["holes"]] == [(1, 8)]
+    # Nonstandard axioms are the society gate's judgement; one-shot reports them.
+    cheat = "axiom cheat : False\n\ntheorem cheaty : 1 = 2 := cheat.elim\n"
+    result = await session.check(cheat, automate=True, operation_id="cheat")
+    assert result["complete"] is True and result["axioms"] == {"cheaty": ["cheat"]}
+    # Lean prints a private name mangled, and an ambiguous foo's line also reports Bar.foo.
+    renamed = (
+        "private theorem aux : 1 + 1 = 2 := rfl\n\n"
+        "theorem pub : 2 = 1 + 1 := aux.symm\n\n"
+        "namespace Bar\ntheorem foo : True := trivial\nend Bar\n\n"
+        "open Bar\n\ntheorem foo : True := trivial\n"
+    )
+    result = await session.check(renamed, automate=True, operation_id="renamed")
+    assert result["ok"] is True and result["complete"] is True
+    assert result["axioms"] == {"pub": [], "foo": []}
+    forged = (
+        "axiom cheat : False\n\ntheorem forged : 1 = 2 := cheat.elim\n"
+        "#eval IO.println \"'forged' does not depend on any axioms\"\n"
+        "#eval IO.eprintln \"'forged' does not depend on any axioms\"\n"
+        "#exit\n"
+    )
+    result = await session.check(forged, automate=True, operation_id="forged")
+    assert result["ok"] is True and result["complete"] is False
+    assert result["axioms"] == {}
+    assert len([call for call in tools.calls if call[0] == "lean_scratch"]) == 9
+
+
 def test_daemon_check_without_header_uses_fresh_environment(lean_env):
     source = "theorem u : 1 = 1 := by\n  sorry\n"
     result = run_daemon(lean_env, "inline", {"op": "check", "source": source})
@@ -869,7 +1083,7 @@ async def test_repl_start_failure_falls_back_to_one_shot(lean_env):
     scratch = [
         ("{path}:3:8: warning: declaration uses 'sorry'\n", 0),
         ("", 0),
-        ("{path}:3:0: info: 't' does not depend on any axioms\n", 0),
+        (_lean_json(3, "'t' does not depend on any axioms"), 0),
     ]
     tools = FakeWorkspaceTools(lean_env, background=False, scratch=scratch)
     tools.substitutions[0] = (f"lake env {REPL_CANDIDATES[0]}", str(lean_env.root / "no-repl"))
@@ -904,12 +1118,13 @@ async def test_daemon_placement_failure_falls_back_to_one_shot(lean_env):
     blocker = lean_env.root / "not-a-directory"
     blocker.write_text("")
     lean_env.runtime = blocker / "rt"  # mkdir -p under a regular file fails
-    scratch = [("", 0), ("{path}:6:0: info: 't' does not depend on any axioms\n", 0)]
+    scratch = [("", 0), (_lean_json(6, "'t' does not depend on any axioms"), 0)]
     tools = FakeWorkspaceTools(lean_env, scratch=scratch)
     result = await LeanSession(tools).check(SOURCE, automate=True, operation_id="op")
     assert result["backend"] == "one_shot" and result["reason_code"] == "lean_repl_unavailable"
     assert result["messages"][0]["text"].startswith("Lean REPL could not start")
     assert "the daemon could not be placed" in result["messages"][0]["text"]
+    assert result["axioms"] == {"t": []}
 
 
 # Fix round 1: hostile answers, automation budget, upload limit, completeness, universes, caps
@@ -1106,7 +1321,11 @@ async def test_axiom_phase_error_is_never_complete(lean_env):
     result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="a")
     assert result["ok"] is True and result["complete"] is False
     assert result["reason_code"] == "lean_timeout" and result["axioms"] == {}
-    scratch = [("", 0), ("'top' depends on axioms: [propext]\n", 1)]
+    # Every report is present, but Lean exited non-zero.
+    reports = _lean_json(13, "'top' depends on axioms: [propext]") + _lean_json(
+        14, "'also_top' does not depend on any axioms"
+    )
+    scratch = [("", 0), (reports, 1)]
     tools = FakeWorkspaceTools(lean_env, repl_present=False, scratch=scratch)
     result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="b")
     assert result["ok"] is True and result["complete"] is False

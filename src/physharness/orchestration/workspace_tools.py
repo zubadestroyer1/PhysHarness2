@@ -150,7 +150,8 @@ class WorkspaceTools:
             "status": receipt["status"],
         }
 
-    async def lean_scratch(self, arguments, operation_id):
+    async def lean_scratch(self, arguments, operation_id, *, lean_args=()):
+        """``lean_args`` precede the file path; tool dispatch never passes keywords."""
         source = arguments["source"]
         if len(source.encode("utf-8")) > 1_000_000:
             raise HarnessError("SOURCE_LIMIT", "Scratch Lean source exceeds one MiB.")
@@ -168,7 +169,7 @@ class WorkspaceTools:
             expected_execution_id=workspace["execution_id"],
             request=CommandRequest(
                 operation_id=operation_id + ":lean",
-                argv=["lake", "--offline", "env", "lean", "/work/" + path],
+                argv=["lake", "--offline", "env", "lean", *lean_args, "/work/" + path],
                 cwd="/opt/sources/physlib",
                 timeout_seconds=min(self.policy.timeout_seconds, 120),
                 max_output_bytes=65536,
