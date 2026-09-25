@@ -278,6 +278,8 @@ class CommonsMixin:
             experiment = self._commons_experiment(session, experiment_id, actor)
             for identifier in request.artifact_ids:
                 self._node_evidence(session, identifier, experiment, actor)
+            # The node belongs to its author branch's lab (None for lab-less authors).
+            author = session.get(RecordRow, actor.branch_id) if actor.branch_id else None
             record = self._insert(
                 session,
                 "commons_node",
@@ -290,6 +292,7 @@ class CommonsMixin:
                         status_reason="proposed",
                     ),
                     "branch_id": actor.branch_id,
+                    "lab": author.payload.get("lab") if author is not None else None,
                 },
             )
             self._event(
