@@ -5,6 +5,7 @@ import json
 
 from sqlalchemy import and_, func, or_, select
 
+from .commons import PLATFORM
 from .discussion_models import DiscussionCreate, DiscussionPostCreate
 from .domain import Principal, new_id, utcnow
 from .errors import HarnessError
@@ -314,6 +315,12 @@ class DiscussionMixin:
 
         def action(session, op):
             topic, experiment, _ = self._discussion_topic(session, topic_id, actor)
+            if topic.payload.get("node_id"):
+                raise HarnessError(
+                    "NODE_THREAD_USE_COMMONS",
+                    "Posts on a commons node thread go through the commons.",
+                    remediation="Use post_on_node (the commons_post tool) for this node's thread.",
+                )
             self._active(session, experiment.id, actor)
             post_branch = (
                 actor.branch_id if actor.role == "agent" else topic.payload.get("branch_id")
@@ -389,8 +396,10 @@ class DiscussionMixin:
             # The caller validated these pins against the current target.
             **{k: topic[k] for k in ("problem_revision_id", "target_digest", "environment_digest")},
         }
+        platform = actor.id == PLATFORM and actor.role == "operator"
         for field in self._POST_EXTENSIONS:
-            if data.get(field) is not None:
+            # Defense in depth: only the platform principal records a status announcement.
+            if data.get(field) is not None and (field != "platform_status" or platform):
                 payload[field] = copy.deepcopy(data[field])
         record = self._insert(session, "discussion_post", actor, payload)
         event = EventRow(

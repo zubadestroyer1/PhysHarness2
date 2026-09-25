@@ -24,6 +24,7 @@ CLOSED_NODE_POST_KINDS = frozenset({"synthesis", "update"})
 URGENT_STATUSES = frozenset({"accepted", "refuted"})
 EXCERPT_BYTES = 1024
 ITEM_BYTES = 2048
+MAX_LIVE_CLAIMS = 1000  # Bounded claim scan; read_node shows at most MAX_PAGE claimants.
 
 
 def _claim_not_held():
@@ -56,7 +57,7 @@ class CommonsDiscourseMixin:
         )
         if node_id is not None:
             query = query.where(record_json_text("node_id") == node_id)
-        return session.scalars(query)
+        return session.scalars(query.order_by(RecordRow.id).limit(MAX_LIVE_CLAIMS))
 
     @staticmethod
     def _claim_row(session, node_row, branch_id):
@@ -130,6 +131,8 @@ class CommonsDiscourseMixin:
         def apply(session, op):
             row = self._get(session, "commons_node", node_id, actor)
             experiment = self._commons_experiment(session, row.payload["experiment_id"], actor)
+            # Under the experiment lock: see writes committed while this command waited.
+            session.refresh(row)
             if action != "release" and row.payload["status"] in CLOSED_STATUSES:
                 raise _node_closed("A closed node takes no work claims.")
             # Reader lock before claim lock, the same order as post_on_node.
@@ -219,8 +222,10 @@ class CommonsDiscourseMixin:
     def _auto_subscribe(self, session, op, topic_id, branch_id, actor):
         """Best-effort subscription of a branch reader to a node thread.
 
-        At the reader's 100-subscription cap this skips and returns False instead of raising,
-        so the reader's inbox keeps working. Another branch's reader is written by the platform.
+        Never pushes the reader past its 100-subscription cap. At the cap it first frees the
+        slot of the reader's oldest closed-node thread; failing that it returns False instead
+        of raising, so the reader's inbox keeps working. Another branch's reader is written by
+        the platform.
         """
         if not topic_id or not branch_id:
             return False
@@ -228,12 +233,75 @@ class CommonsDiscourseMixin:
         if topic is None or topic.kind != "discussion_topic":
             return False
         writer = actor if actor.branch_id == branch_id else _platform(topic.project_id)
+        if self._try_subscribe(session, op, topic, branch_id, writer):
+            return True
+        return self._release_closed_thread(
+            session, op, topic.payload["experiment_id"], branch_id, writer
+        ) and self._try_subscribe(session, op, topic, branch_id, writer)
+
+    def _try_subscribe(self, session, op, topic, branch_id, writer):
         try:
             self._set_subscription(session, op, topic, branch_id, True, writer)
         except HarnessError as error:
             if error.code != "SUBSCRIPTION_LIMIT":
                 raise
             return False
+        return True
+
+    def _release_closed_thread(self, session, op, experiment_id, branch_id, writer):
+        """Unsubscribe a branch reader from its oldest closed-node thread; False if none.
+
+        Only threads of accepted, refuted or abandoned nodes are eligible. Open-node threads
+        and ordinary topics are never evicted. Oldest means the earliest subscription start.
+        """
+        project_id = writer.project_id
+        subscriptions = list(
+            session.scalars(
+                select(RecordRow)
+                .where(
+                    RecordRow.project_id == project_id,
+                    RecordRow.kind == "discussion_subscription",
+                    record_json_text("experiment_id") == experiment_id,
+                    record_json_text("reader_key") == f"branch:{branch_id}",
+                    RecordRow.payload["subscribed"].as_boolean().is_(True),
+                )
+                .limit(101)
+            )
+        )
+        topics = {
+            row.id: row
+            for row in session.scalars(
+                select(RecordRow).where(
+                    RecordRow.id.in_({row.payload["topic_id"] for row in subscriptions}),
+                    RecordRow.project_id == project_id,
+                    RecordRow.kind == "discussion_topic",
+                )
+            )
+            if row.payload.get("experiment_id") == experiment_id and row.payload.get("node_id")
+        }
+        closed = {
+            row.id
+            for row in session.scalars(
+                select(RecordRow).where(
+                    RecordRow.id.in_({row.payload["node_id"] for row in topics.values()}),
+                    RecordRow.project_id == project_id,
+                    RecordRow.kind == "commons_node",
+                )
+            )
+            if row.payload["status"] in CLOSED_STATUSES
+        }
+        candidates = [
+            row
+            for row in subscriptions
+            if row.payload["topic_id"] in topics
+            and topics[row.payload["topic_id"]].payload["node_id"] in closed
+        ]
+        if not candidates:
+            return False
+        oldest = min(candidates, key=lambda row: (row.payload["start_sequence"], row.id))
+        self._set_subscription(
+            session, op, topics[oldest.payload["topic_id"]], branch_id, False, writer
+        )
         return True
 
     # Posts ---------------------------------------------------------------------
@@ -250,6 +318,8 @@ class CommonsDiscourseMixin:
         def apply(session, op):
             row = self._get(session, "commons_node", node_id, actor)
             experiment = self._commons_experiment(session, row.payload["experiment_id"], actor)
+            # Under the experiment lock: see writes committed while this command waited.
+            session.refresh(row)
             if (
                 row.payload["status"] in CLOSED_STATUSES
                 and request.kind not in CLOSED_NODE_POST_KINDS
@@ -265,13 +335,12 @@ class CommonsDiscourseMixin:
             cited = [self._commons_node(session, i, actor, experiment.id) for i in request.cites]
             subscribed = []
             for cited_row in cited:
+                cited_topic = cited_row.payload.get("topic_id")
                 self._replace(
                     session, cited_row, {"citation_count": cited_row.payload["citation_count"] + 1}
                 )
                 subscribed.append(
-                    self._auto_subscribe(
-                        session, op, cited_row.payload.get("topic_id"), actor.branch_id, actor
-                    )
+                    self._auto_subscribe(session, op, cited_topic, actor.branch_id, actor)
                 )
             post = self._insert_post(
                 session,
@@ -328,7 +397,11 @@ class CommonsDiscourseMixin:
         if status is not None and post.get("origin_actor_id") == PLATFORM:
             return status.get("to") in URGENT_STATUSES
         reader_branch = actor.branch_id if actor.role == "agent" else None
-        if post["post_kind"] != "objection" or not reader_branch:
+        if (
+            post["post_kind"] != "objection"
+            or not reader_branch
+            or post.get("branch_id") == reader_branch
+        ):
             return False
         node = session.get(RecordRow, node_id)
         return bool(

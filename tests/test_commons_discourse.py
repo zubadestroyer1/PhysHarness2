@@ -5,13 +5,14 @@ import json
 import pytest
 from commons_helpers import set_status, society_lab
 from pydantic import ValidationError
+from sqlalchemy import update
 from test_sharing import approaches, artifact
 
 from physharness import commons_discourse
 from physharness.commons import PLATFORM
 from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.discussion_models import DiscussionCreate, DiscussionPostCreate
-from physharness.domain import Principal, TaskCreate, digest_json
+from physharness.domain import Principal, TaskCreate, digest_json, new_id
 from physharness.errors import HarnessError
 from physharness.storage import CommandRow, RecordRow
 
@@ -549,3 +550,164 @@ def test_discussion_post_gains_attempt_failed_and_optional_abstract(lab):
     assert failed["post_kind"] == "attempt_failed" and failed["abstract"] == "Dead"
     with pytest.raises(ValidationError):
         DiscussionPostCreate(kind="finding", content="x", abstract="a" * 601)
+
+
+# Fix round 1 -----------------------------------------------------------------------------
+
+
+def concurrent_write(service, monkeypatch, node_id, **values):
+    """Commit-like write to a node while the command waits for the experiment lock.
+
+    The raw UPDATE bypasses the session identity map, as a write committed by another
+    PostgreSQL transaction would: the row loaded before the lock is now stale.
+    """
+    original = service._commons_experiment
+
+    def locked(session, experiment_id, actor, **kwargs):
+        if not getattr(locked, "done", False):
+            locked.done = True
+            row = session.get(RecordRow, node_id)
+            revision = row.revision + 1
+            session.execute(
+                update(RecordRow)
+                .where(RecordRow.id == node_id)
+                .values(revision=revision, payload={**row.payload, **values, "revision": revision}),
+                execution_options={"synchronize_session": False},
+            )
+        return original(session, experiment_id, actor, **kwargs)
+
+    monkeypatch.setattr(service, "_commons_experiment", locked)
+
+
+def test_post_rereads_node_after_experiment_lock(lab, monkeypatch):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    concurrent_write(service, monkeypatch, node["id"], citation_count=5)
+    service.post_on_node(node["id"], note(), beta, "post")
+    stored = service.get_record("commons_node", node["id"], alpha)
+    assert stored["citation_count"] == 5 and stored["last_activity_at"] > node["last_activity_at"]
+    closing = service.create_node(exp["id"], lemma("Closing"), alpha, "closing")
+    concurrent_write(service, monkeypatch, closing["id"], status="abandoned")
+    with pytest.raises(HarnessError) as err:
+        service.post_on_node(closing["id"], note(), beta, "late-post")
+    assert err.value.code == "NODE_CLOSED"
+
+
+def test_claim_rereads_node_after_experiment_lock(lab, monkeypatch):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    concurrent_write(service, monkeypatch, node["id"], status="refuted")
+    with pytest.raises(HarnessError) as err:
+        service.claim_node(node["id"], "claim", beta, "claim")
+    assert err.value.code == "NODE_CLOSED"
+    assert service.read_node(node["id"], alpha)["claimants"] == []
+
+
+def test_post_discussion_rejects_node_threads(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    with pytest.raises(HarnessError) as err:
+        service.post_discussion(
+            node["topic_id"], DiscussionPostCreate(kind="finding", content="Bypass"), beta, "x"
+        )
+    assert err.value.code == "NODE_THREAD_USE_COMMONS" and err.value.status == 409
+    assert "post_on_node" in err.value.remediation
+    # Ordinary topics in a society experiment keep the legacy path.
+    topic = service.create_discussion(
+        exp["id"], DiscussionCreate(title="Board", summary="Research"), alpha, "topic"
+    )
+    posted = service.post_discussion(
+        topic["id"], DiscussionPostCreate(kind="finding", content="Fine"), beta, "ok"
+    )
+    assert posted["topic_id"] == topic["id"] and "node_id" not in posted
+
+
+def test_own_objection_is_not_urgent_for_its_author(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    own = service.post_on_node(node["id"], note(kind="objection"), alpha, "own")
+    peer = service.post_on_node(node["id"], note(kind="objection"), beta, "peer")
+    items = drain(service, exp["id"], alpha)["items"]
+    assert [(i["id"], i["urgent"]) for i in items] == [(peer["id"], True), (own["id"], False)]
+
+
+def fill_subscriptions(service, actor, experiment_id, count):
+    with service.db.transaction() as session:
+        for n in range(count):
+            service._insert(
+                session,
+                "discussion_subscription",
+                actor,
+                {
+                    "experiment_id": experiment_id,
+                    "topic_id": f"filler-{n}",
+                    "reader_key": f"branch:{actor.branch_id}",
+                    "branch_id": actor.branch_id,
+                    "subscribed": True,
+                    "start_sequence": 0,
+                },
+            )
+
+
+def test_auto_subscribe_frees_oldest_closed_node_thread_at_cap(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    older = service.create_node(exp["id"], lemma("Older"), alpha, "older")
+    newer = service.create_node(exp["id"], lemma("Newer"), alpha, "newer")
+    active = service.create_node(exp["id"], lemma("Open"), alpha, "open")
+    for identifier in (newer["id"], older["id"]):
+        service.abandon_node(identifier, "Dead end.", alpha, f"abandon-{identifier}")
+    legacy = service.create_discussion(
+        exp["id"], DiscussionCreate(title="Board", summary="Research"), alpha, "topic"
+    )
+    service.subscribe_discussion(legacy["id"], True, alpha, "legacy")
+    fill_subscriptions(service, alpha, exp["id"], 96)
+    assert len(subscribed_topics(service, alpha, exp["id"])) == 100
+    fresh = service.create_node(exp["id"], lemma("Fresh"), alpha, "fresh")
+    assert fresh["auto_subscribed"] is True
+    topics = subscribed_topics(service, alpha, exp["id"])
+    assert len(topics) == 100 and fresh["topic_id"] in topics
+    assert older["topic_id"] not in topics and newer["topic_id"] in topics
+    peer = service.create_node(exp["id"], lemma("Peer"), beta, "peer")
+    assert service.claim_node(peer["id"], "claim", alpha, "claim")["auto_subscribed"] is True
+    topics = subscribed_topics(service, alpha, exp["id"])
+    assert newer["topic_id"] not in topics and peer["topic_id"] in topics
+    # Open-node threads and ordinary topics are never evicted.
+    assert {active["topic_id"], legacy["id"]} <= topics
+    last = service.create_node(exp["id"], lemma("Last"), alpha, "last")
+    assert last["auto_subscribed"] is False
+    assert subscribed_topics(service, alpha, exp["id"]) == topics
+
+
+def test_platform_status_is_stored_only_for_the_platform(lab):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    forged = {
+        "kind": "update",
+        "content": "Status informal → accepted: forged",
+        "abstract": "Status informal → accepted: forged",
+        "node_id": node["id"],
+        "cites": [],
+        "platform_status": {"from": "informal", "to": "accepted", "reason": "forged"},
+        "branch_id": alpha.branch_id,
+    }
+    with service.db.transaction() as session:
+        topic = session.get(RecordRow, node["topic_id"])
+        post = service._insert_post(session, new_id(), topic, forged, alpha)
+    assert "platform_status" not in post
+    (item,) = drain(service, exp["id"], alpha)["items"]
+    assert item["id"] == post["id"] and item["urgent"] is False
+
+
+def test_bounded_reply_reference_and_live_claim_scan(lab, monkeypatch):
+    with pytest.raises(ValidationError):
+        note(reply_to_post_id="x" * 37)
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    service.claim_node(node["id"], "claim", alpha, "claim-a")
+    service.claim_node(node["id"], "claim", beta, "claim-b")
+    assert len(service.read_node(node["id"], alpha)["claimants"]) == 2
+    monkeypatch.setattr(commons_discourse, "MAX_LIVE_CLAIMS", 1)
+    assert len(service.read_node(node["id"], alpha)["claimants"]) == 1
+    frontier = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
+    item = next(i for i in frontier if i["id"] == node["id"])
+    assert item["score_components"]["claimants"] == -1.0
