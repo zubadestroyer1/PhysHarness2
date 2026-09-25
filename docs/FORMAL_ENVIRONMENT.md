@@ -137,6 +137,71 @@ chmod; it has passed Buildx's nonexecuting check but was not rebuilt end to end 
 these changes. Exact observed recovery Dockerfiles, their inputs and evidence hashes are
 in [physics evidence](../formal/evidence/physics/index.json).
 
+## Workbench v2 (pending rebuild)
+
+`formal/workbench.Dockerfile` now defines the next research workbench. It adds numerics
+packages for `run_computation` and a persistent Lean REPL for `lean_check`. **It has not
+been built or qualified.** Rebuilding it on the dedicated Colima/Linux builder and
+requalifying the workbench both need user approval. Until then, the workbench built
+from the previous definition stays in use. On that image, `run_computation` reports
+the new packages as `null`, and `lean_check` uses its one-shot fallback.
+
+| Component | Route | Pin status |
+| --- | --- | --- |
+| numpy, scipy, sympy, mpmath, ripgrep | Debian snapshot (unchanged) | Snapshot; the 2026-09-23 build observed 1.24.2, 1.10.1, 1.11.1, 1.2.1 |
+| networkx, matplotlib, z3 | Debian snapshot: `python3-networkx`, `python3-matplotlib`, `python3-z3` | Snapshot resolves versions; confirm the packages at rebuild |
+| pip (installer only) | Debian snapshot: `python3-pip` | Snapshot |
+| python-flint, cvxpy, clarabel, scs, osqp | pip wheels from `formal/workbench-requirements.lock` (`--no-deps --require-hashes --only-binary=:all:`, then `pip check`) | **TODO(pin-at-rebuild)**: versions and hashes |
+| Lean REPL | `leanprover-community/repl` commit tarball, SHA256-verified, built by the image's `lake` into `/opt/lean-repl` | **TODO(pin-at-rebuild)**: commit and tarball SHA256 |
+
+The five pip packages use pip because, as far as could be determined offline, bookworm
+does not package them. The snapshot itself could not be queried offline. The same goes
+for the three new apt packages: their names are believed correct but were not checked.
+Before building, confirm both inside the base image, for example with
+`apt-cache policy python3-networkx python3-matplotlib python3-z3 python3-flint python3-cvxpy python3-osqp python3-scs python3-clarabel`.
+If the snapshot does package any of the five pip packages, move it to the apt line and
+delete its lock line.
+
+Every remaining placeholder is `TODO(pin-at-rebuild)`. These values could not be
+determined offline:
+
+- `LEAN_REPL_REVISION` and `LEAN_REPL_SHA256` (Dockerfile `ARG` defaults). The only
+  local REPL checkout reaches tag `v4.33.0-rc1` (`1d238373119fa7cdb72ed7c24f6723d135b5b5fc`).
+  That commit declares `leanprover/lean4:v4.33.0-rc1`, so it would fail the build's
+  exact-toolchain check. Use the upstream `v4.33.0` tag commit instead.
+- In `formal/workbench-requirements.lock`, the exact version and the aarch64 and x86_64
+  wheel SHA256 values for python-flint, cvxpy, clarabel, scs and osqp. Add a pinned line
+  for any dependency that Debian does not provide.
+
+The Dockerfile has a pin gate that runs before anything is installed. It fails the build
+while the lock contains `TODO(pin-at-rebuild)`, or while either REPL pin is not an exact
+hex commit or hex SHA256. An unpinned image therefore cannot be built by accident.
+
+After approval, rebuild as follows:
+
+1. Pin the REPL. Resolve the tag with
+   `git ls-remote https://github.com/leanprover-community/repl refs/tags/v4.33.0`. Download
+   `https://codeload.github.com/leanprover-community/repl/tar.gz/<commit>`, record its
+   SHA256, and check that its `lean-toolchain` is `leanprover/lean4:v4.33.0`. Write both
+   values into the `ARG` defaults.
+2. Pin each wheel with `pip download --only-binary=:all: --no-deps --python-version 3.11
+   --implementation cp --abi cp311 --platform manylinux_2_28_<arch>
+   --platform manylinux2014_<arch> <name>==<version>`. Run it once for `aarch64` and once
+   for `x86_64`. Bookworm's glibc 2.36 accepts both tags. Hash each downloaded file and
+   follow the resolution rule in the lock header. Every `Requires-Dist` entry must be
+   satisfied by Debian numpy 1.24.2 and scipy 1.10.1, another Debian package, or its own
+   lock line.
+3. Build from exactly two files, with the isolated builder selected as in [Rebuild](#rebuild):
+
+   ```sh
+   tar -C formal -cf - workbench.Dockerfile workbench-requirements.lock | \
+     docker build --file workbench.Dockerfile --tag physharness-workbench:v2 -
+   ```
+
+4. Record the measured image digest. Requalify the workbench, including the pinned
+   REPL path `/opt/lean-repl/.lake/build/bin/repl`, before switching any workspace
+   template or environment digest to the new image.
+
 ## Use the selected physics libraries
 
 For a fresh trusted challenge bundle, use `formal/lakefile.physics.toml` as `lakefile.toml`,
