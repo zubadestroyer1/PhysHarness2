@@ -14,8 +14,12 @@ class DiscussionCreate(StrictModel):
 
 
 class DiscussionPostCreate(StrictModel):
-    kind: Literal["question", "finding", "objection", "help", "update", "synthesis"]
+    kind: Literal[
+        "question", "finding", "objection", "help", "update", "synthesis", "attempt_failed"
+    ]
     content: str = Field(min_length=1, max_length=12000)
+    # Optional structured header; omitted from stored payloads and fingerprints when None.
+    abstract: str | None = Field(default=None, max_length=600)
     reply_to_post_id: str | None = None
     artifact_ids: list[str] = Field(default_factory=list, max_length=12)
     reference_post_ids: list[str] = Field(default_factory=list, max_length=20)
