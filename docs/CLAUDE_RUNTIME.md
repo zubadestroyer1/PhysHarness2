@@ -1,7 +1,7 @@
 # Claude Agent SDK runtime
 
 `physharness.execution.claude.ClaudeRuntime` implements the existing runtime adapter contract
-using the official `claude-agent-sdk` **0.2.152**, whose installed Python source was inspected.
+using the official `claude-agent-sdk` **0.2.157**, whose installed Python source was inspected.
 The SDK's real client, control protocol, message parser and command builder are exercised by
 scripted-transport tests. No paid Claude query, native CLI run, cloud worker qualification or
 scientific result was produced during implementation.
@@ -108,6 +108,6 @@ interrupt/cancellation, cleanup uncertainty, budget overruns, stale checkpoints 
 They establish protocol behavior, not provider availability, credential validity, actual billing,
 native tool containment, VM isolation, successful physics research or live load qualification.
 
-Inspected sources: installed `claude_agent_sdk` 0.2.152 `types.py`, `client.py`, internal query and
+Inspected sources: installed `claude_agent_sdk` 0.2.157 `types.py`, `client.py`, internal query and
 subprocess transport, plus official [SDK source](https://github.com/anthropics/claude-agent-sdk-python)
 and [cost/usage documentation](https://code.claude.com/docs/en/agent-sdk/cost-tracking).
