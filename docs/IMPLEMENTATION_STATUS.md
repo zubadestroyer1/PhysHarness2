@@ -41,9 +41,10 @@ What exists (Tasks 1–10):
     blocklist and an overlap screen against the masked reference.
   - Ten technique skills, a constitution, check-ins and stagnation nudges.
   - The `workbench-v2` image **definition** (numerics and a pinned REPL). It is not built.
-- **Society tool profile.** Twenty-five tools in the widest case; the legacy tools remain
-  as adapters. The finite runner runs referee tasks, and synthesis tasks without a
-  parent branch.
+- **Society tool profile.** Twenty-five tools in all: 24 for a worker at most, and a
+  read-and-check profile of 17 for a referee. The legacy tools remain as adapters. The
+  finite runner runs referee tasks, synthesis tasks without a parent branch, and the
+  reviews those platform-rooted tasks request.
 - **Task 10.**
   - A no-model end-to-end simulation (three agents plus referees, through the tool
     dispatchers).

@@ -2134,13 +2134,19 @@ class ResearchTeamRunner:
                 tasks if tasks is not None else list(self._records("task", actor, experiment["id"]))
             )
             selected_ids = set(manifest.task_ids) | scheduled_synthesis_ids
-            if manifest.include_delegated:
+            if not manifest.include_delegated:
+                return [task for task in tasks if task["id"] in selected_ids]
+            # A selected platform-rooted task (a referee, or a parentless synthesis this run
+            # owns) makes its lineage this run's too, so the reviews and synthesis it starts
+            # run here; iterate to a fixpoint, which each round's growth bounds by the tasks.
+            lineages = set(own_root_lineages)
+            for _ in range(len(tasks) + 1):
                 selected_ids.update(
                     task["id"]
                     for task in tasks
                     if task.get("synthesis") is True
                     and task["branch_id"] in branch_parents
-                    and root_lineage(task["branch_id"], branch_parents) in own_root_lineages
+                    and root_lineage(task["branch_id"], branch_parents) in lineages
                 )
                 # Platform referees are parentless; a referee belongs to the run whose
                 # branch requested its review.
@@ -2148,9 +2154,8 @@ class ResearchTeamRunner:
                     task["id"]
                     for task in tasks
                     if _requested_by(task) in branch_parents
-                    and root_lineage(_requested_by(task), branch_parents) in own_root_lineages
+                    and root_lineage(_requested_by(task), branch_parents) in lineages
                 )
-            if manifest.include_delegated:
                 while True:
                     added = {
                         task["id"]
@@ -2160,6 +2165,17 @@ class ResearchTeamRunner:
                     if added <= selected_ids:
                         break
                     selected_ids.update(added)
+                grown = lineages | {
+                    task["branch_id"]
+                    for task in tasks
+                    if task["id"] in selected_ids
+                    and task["branch_id"] in branch_parents
+                    and branch_parents[task["branch_id"]] is None
+                    and (task.get("hat") == REFEREE_HAT or task.get("synthesis") is True)
+                }
+                if grown == lineages:
+                    break
+                lineages = grown
             return [task for task in tasks if task["id"] in selected_ids]
 
         async def cancel_active():

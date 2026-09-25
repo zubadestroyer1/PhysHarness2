@@ -138,13 +138,18 @@ tools, the prompts and the delivery shapes.
   - unreachable by direct message or delegation from other branches.
 
   The referee submits one verdict. Negative verdicts stay on the thread as objections.
+  Its tool profile only reads and checks: no `commons_node`, `commons_claim`,
+  `lean_sketch`, `recruit`, `message`, `wait` or `submit_for_verification`. Its
+  `lean_check` records no local compiles, and it posts questions, findings and
+  objections only on the assigned node's thread.
 - **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
   (`lab="new"`), up to `lab_size_max`. `message(to="lab")` fans out to the lab. Direct
   messages across labs are refused unless the policy allows them, so cross-lab
   discourse goes through the commons.
 
 Society workers get the consolidated profile in
-`src/physharness/orchestration/society_tools.py`. The widest catalog has 25 tools:
+`src/physharness/orchestration/society_tools.py`. It has 25 tools in all; a worker's
+widest catalog has 24 (all but `submit_review`), and a referee's has 17:
 
 | Group | Tools |
 |---|---|
@@ -160,7 +165,9 @@ Society workers get the consolidated profile in
 The prompt carries the constitution (community norms and an optional playbook), the
 frontier, the lab roster and the agent's claimed nodes. Optional check-ins and
 stagnation nudges are switched per campaign. The finite supervisor runs the referee
-tasks its own lineages request, and synthesis tasks that have no parent branch.
+tasks its own lineages request, and synthesis tasks that have no parent branch. A
+platform-rooted task it runs (a referee, or a parentless synthesis) adds its lineage to
+the run's own, so a review that such a task requests runs in the same run.
 
 Operators prepare a society arm from a run plan with a `society` block. See
 `work/society-s1/run-plan.example.json` and the

@@ -71,6 +71,28 @@ SOCIETY_TOOL_NAMES = (
     "return_result",
     "submit_review",
 )
+# A referee task (one with a review_assignment) reads, checks and submits its one verdict:
+# it neither builds nor recruits, and it posts findings only on the assigned node's thread.
+REFEREE_TOOL_NAMES = (
+    "shell",
+    "read_file",
+    "write_file",
+    "run_computation",
+    "lean_check",
+    "search_library",
+    "read_source",
+    "search_literature",
+    "fetch_source",
+    "commons_query",
+    "commons_read",
+    "commons_post",
+    "inbox",
+    "verification_status",
+    "notebook",
+    "load_skill",
+    "submit_review",
+)
+REFEREE_POST_KINDS = ("question", "finding", "objection")
 # PLAN §3.4: optional hats a recruiter may suggest; none is an assignment.
 HATS = {
     "explorer": "try new ideas, special cases and routes to the goal",
@@ -412,11 +434,14 @@ def _recruit_objective(brief, focus, hat):
 def society_tools(
     service, agent, branch_id, *, task_context, workspace_tools, literature=None
 ) -> ToolDispatcher:
-    """Build the society catalog for one worker; see ``SOCIETY_TOOL_NAMES`` for the widest."""
+    """Build the society catalog for one worker; ``SOCIETY_TOOL_NAMES`` lists every tool, and
+    a referee task gets ``REFEREE_TOOL_NAMES`` at most."""
     policy = service.society_policy(agent.experiment_id, agent)
     if not policy:
         raise HarnessError("SOCIETY_DISABLED", "This experiment has no research-society policy.")
     tool_task = service.get_record("task", task_context["task_id"], agent) if task_context else None
+    assignment = tool_task.get("review_assignment") if tool_task else None
+    referee = bool(task_context) and isinstance(assignment, dict)
     dispatcher = ToolDispatcher()
     register = tool_registrar(dispatcher, service, agent, task_context)
     check_worker = worker_check(service, agent, task_context)
@@ -424,6 +449,8 @@ def society_tools(
     memory = PortableMemory(service)
 
     def add(name, properties, handler, description, *, defaults=None):
+        if referee and name not in REFEREE_TOOL_NAMES:
+            return
         schema, caps = _split({"type": "object", "properties": properties})
         register(name, schema["properties"], _guard(handler, caps), description, defaults=defaults)
 
@@ -561,26 +588,37 @@ def society_tools(
                 return False  # CLAIM_NOT_HELD, NODE_CLOSED: the check result still stands.
             return True
 
-        add(
-            "lean_check",
-            {
-                "source": text(
-                    MAX_SOURCE, "Complete Lean file, imports first; 30,000 UTF-8 bytes."
-                ),
-                "node_id": text(ID, "Commons node this file proves, or null.", nullable=True),
-                "automate": BOOLEAN,
-            },
-            lean_check,
-            "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
-            "automation on holes (automate=true) and #print axioms. With node_id, a complete "
-            "check records a local compile, which moves a formally_stated node to "
-            "compiles_locally, and renews your claim. It counts when the file header holds "
-            "the node's lean_header lines, the file has no variable or #exit command, it "
-            "declares theorem <lean_name> <lean_statement> := ... once, outside comments, "
-            "namespaces and sections, and that theorem's axioms are only propext, "
-            "Classical.choice and Quot.sound. Only the independent verifier accepts proofs.",
-            defaults={"node_id": None, "automate": True},
-        )
+        source_property = text(MAX_SOURCE, "Complete Lean file, imports first; 30,000 UTF-8 bytes.")
+        if referee:
+            # A referee checks Lean but never records local compiles.
+            add(
+                "lean_check",
+                {"source": source_property, "automate": BOOLEAN},
+                lambda a, k: lean().check(a["source"], automate=a["automate"], operation_id=k),
+                "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
+                "automation on holes (automate=true) and #print axioms. Evidence for your "
+                "review only; only the independent verifier accepts proofs.",
+                defaults={"automate": True},
+            )
+        else:
+            add(
+                "lean_check",
+                {
+                    "source": source_property,
+                    "node_id": text(ID, "Commons node this file proves, or null.", nullable=True),
+                    "automate": BOOLEAN,
+                },
+                lean_check,
+                "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
+                "automation on holes (automate=true) and #print axioms. With node_id, a "
+                "complete check records a local compile, which moves a formally_stated node to "
+                "compiles_locally, and renews your claim. It counts when the file header holds "
+                "the node's lean_header lines, the file has no variable or #exit command, it "
+                "declares theorem <lean_name> <lean_statement> := ... once, outside comments, "
+                "namespaces and sections, and that theorem's axioms are only propext, "
+                "Classical.choice and Quot.sound. Only the independent verifier accepts proofs.",
+                defaults={"node_id": None, "automate": True},
+            )
 
         async def lean_sketch(a, k):
             # Readable by this agent (same experiment, ideas sharing) and open, so every hole
@@ -907,6 +945,11 @@ def society_tools(
     )
 
     def commons_post(a, k):
+        if referee and a["node_id"] != assignment["node_id"]:
+            raise invalid(
+                f"A referee posts only on its assigned node's thread (node "
+                f"{assignment['node_id']})."
+            )
         request = NodePostCreate(
             kind=a["kind"],
             abstract=a["abstract"],
@@ -926,8 +969,15 @@ def society_tools(
     add(
         "commons_post",
         {
-            "node_id": text(ID, "The node whose thread you post on."),
-            "kind": choice(POST_KINDS, "Post kind; closed nodes take synthesis and update."),
+            "node_id": text(
+                ID,
+                "Your assigned node (a referee posts only there)."
+                if referee
+                else "The node whose thread you post on.",
+            ),
+            "kind": choice(REFEREE_POST_KINDS, "Post kind.")
+            if referee
+            else choice(POST_KINDS, "Post kind; closed nodes take synthesis and update."),
             "abstract": text(600, "Header: claim, evidence status and what you ask."),
             "body": text(12000, "Full argument, retrieved on demand."),
             "cites": array(text(ID, "A cited node."), 20, "Nodes this post uses."),
@@ -1222,8 +1272,7 @@ def society_tools(
             "Return attributed findings to the joined parent. Proof status requires an "
             "independent receipt.",
         )
-    assignment = tool_task.get("review_assignment") if tool_task else None
-    if task_context and isinstance(assignment, dict):
+    if referee:
         add(
             "submit_review",
             {
