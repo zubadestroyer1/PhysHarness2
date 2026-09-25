@@ -6,6 +6,9 @@ from pydantic import Field, model_validator
 
 from .domain import StrictModel
 
+# Society lab names: generated as "lab-" + branch id prefix, or chosen from existing labs.
+LAB_PATTERN = r"^[a-z0-9-]{1,40}$"
+
 
 class ConfigureWorkforceRequest(StrictModel):
     max_total_tasks: int = Field(ge=1, le=100_000)
@@ -51,6 +54,9 @@ class RecruitResearcherRequest(StrictModel):
     synthesis: bool = False
     detached: bool = False
     public_summary: str | None = Field(default=None, max_length=1000)
+    # Society experiments only: None joins the parent's lab, "new" founds a lab,
+    # any other value names an existing lab. Omitted from fingerprints when None.
+    lab: str | None = Field(default=None, pattern=LAB_PATTERN)
 
     @model_validator(mode="after")
     def nonblank(self):
