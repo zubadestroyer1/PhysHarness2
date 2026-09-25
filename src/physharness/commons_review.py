@@ -11,7 +11,7 @@ import json
 from typing import Annotated, Any
 
 from pydantic import Field, StrictBool, ValidationError, model_validator
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .commons import _lean_digest
 from .commons_models import ALLOWED_TRANSITIONS, CLOSED_STATUSES, LEAN_NAME
@@ -25,6 +25,7 @@ NEGATIVE_VERDICTS = frozenset({"gaps", "wrong", "unfaithful"})
 FORMAL_STATUSES = frozenset({"formally_stated", "compiles_locally"})
 TERMINAL_TASK_STATUSES = ("completed", "failed", "blocked")
 MAX_OPEN_REVIEWS = 100  # Bounded scan of one node's open referee tasks.
+MAX_EVIDENCE_REVIEWS = 20  # Review ids cited in one status evidence record.
 MAX_OBJECTIVE = 20_000  # The task objective bound shared with recruitment and task creation.
 # Applied only when the full objective would exceed MAX_OBJECTIVE; the node keeps the exact text.
 OBJECTIVE_CLIPS = {"assumptions": 3000, "lean_header": 1000, "lean_statement": 6000}
@@ -130,6 +131,8 @@ class _CompileResult(StrictModel):
     backend: str = Field(min_length=1, max_length=200)
     statement_found: StrictBool
     axioms: dict[str, Any]
+    # _lean_digest of the header/name/statement the platform found in the compiled source.
+    lean_statement_sha256: str = Field(pattern=SHA256)
 
     @model_validator(mode="after")
     def bounded(self):
@@ -321,33 +324,61 @@ class CommonsReviewMixin:
             raise _not_assigned()
         return task
 
-    def _informal_quorum(self, session, row, quorum):
-        """Non-stale sound reviews of the current statement, when they meet the quorum.
+    def _review_tally(self, session, row, scope):
+        """Verdict counts and positive review ids among non-stale reviews of the current text.
 
-        Returns the counted review ids, or None when the quorum is unmet or a non-stale
-        ``wrong`` verdict on the same statement stands.
+        Informal reviews count for the current statement digest; fidelity reviews also for the
+        current Lean digest. Negative verdicts keep counting until that text changes.
         """
-        scope = (
+        filters = [
             RecordRow.project_id == row.project_id,
             RecordRow.kind == "commons_review",
             record_json_text("experiment_id") == row.payload["experiment_id"],
             record_json_text("node_id") == row.id,
-            record_json_text("scope") == "informal",
+            record_json_text("scope") == scope,
             record_json_text("statement_sha256") == statement_digest(row.payload),
             RecordRow.payload["stale"].as_boolean().is_(False),
+        ]
+        if scope == "fidelity":
+            filters.append(
+                record_json_text("lean_statement_sha256") == row.payload["lean_statement_sha256"]
+            )
+        verdict = record_json_text("verdict")
+        found = dict(
+            session.execute(select(verdict, func.count()).where(*filters).group_by(verdict)).all()
         )
-        wrong = session.scalar(
-            select(RecordRow.id).where(*scope, record_json_text("verdict") == "wrong").limit(1)
-        )
-        if wrong is not None:
-            return None
-        sound = session.scalars(
+        counts = {name: found.get(name, 0) for name in REVIEW_VERDICTS[scope]}
+        positive = REVIEW_VERDICTS[scope][0]
+        ids = session.scalars(
             select(RecordRow.id)
-            .where(*scope, record_json_text("verdict") == "sound")
+            .where(*filters, verdict == positive)
             .order_by(RecordRow.id)
-            .limit(quorum)
+            .limit(MAX_EVIDENCE_REVIEWS)
         ).all()
-        return list(sound) if len(sound) >= quorum else None
+        return counts, list(ids)
+
+    def _refereed_evidence(self, session, row, quorum):
+        """Evidence for refereed: a sound quorum that outnumbers every gap and no wrong verdict."""
+        counts, ids = self._review_tally(session, row, "informal")
+        sound = counts["sound"]
+        if sound < quorum or sound <= counts["gaps"] + counts["wrong"] or counts["wrong"]:
+            return None
+        return {
+            "review_ids": ids,
+            "counts": counts,
+            "statement_sha256": statement_digest(row.payload),
+        }
+
+    def _formally_stated_evidence(self, session, row):
+        """Evidence for formally_stated: faithful verdicts outnumber unfaithful ones."""
+        counts, ids = self._review_tally(session, row, "fidelity")
+        if counts["faithful"] < 1 or counts["faithful"] <= counts["unfaithful"]:
+            return None
+        return {
+            "review_ids": ids,
+            "counts": counts,
+            "lean_statement_sha256": row.payload["lean_statement_sha256"],
+        }
 
     def _review_objection(self, session, op, row, review_id, review, verdict, stale, actor):
         """Post a negative verdict as the referee's objection on the node thread."""
@@ -390,34 +421,32 @@ class CommonsReviewMixin:
             if review["verdict"] != "sound" or status != "informal":
                 return
             quorum = experiment.payload["society"]["referee_quorum"]
-            counted = self._informal_quorum(session, row, quorum)
-            if counted is not None:
+            evidence = self._refereed_evidence(session, row, quorum)
+            if evidence is not None:
                 self._set_node_status(
                     session,
                     row,
                     "refereed",
-                    reason=f"referee quorum met ({len(counted)} of {quorum} sound)",
-                    evidence={
-                        "review_ids": counted,
-                        "statement_sha256": review["statement_sha256"],
-                    },
+                    reason=f"referee quorum met ({evidence['counts']['sound']} sound, "
+                    f"{quorum} required)",
+                    evidence=evidence,
                     op=op,
                 )
             return
         if (
-            review["verdict"] == "faithful"
-            and row.payload.get("lean_elaborated")
-            and status in {"informal", "refereed"}
+            review["verdict"] != "faithful"
+            or not row.payload.get("lean_elaborated")
+            or status not in {"informal", "refereed"}
         ):
+            return
+        evidence = self._formally_stated_evidence(session, row)
+        if evidence is not None:
             self._set_node_status(
                 session,
                 row,
                 "formally_stated",
                 reason="fidelity review: faithful",
-                evidence={
-                    "review_id": review["id"],
-                    "lean_statement_sha256": review["lean_statement_sha256"],
-                },
+                evidence=evidence,
                 op=op,
             )
 
@@ -593,7 +622,7 @@ class CommonsReviewMixin:
                 self._set_node_status(
                     session,
                     row,
-                    "refereed" if self._informal_quorum(session, row, quorum) else "informal",
+                    "refereed" if self._refereed_evidence(session, row, quorum) else "informal",
                     reason="Lean statement changed"
                     if digest != previous
                     else "Lean statement no longer elaborates",
@@ -623,7 +652,7 @@ class CommonsReviewMixin:
             _LocalCompile,
             "INVALID_COMPILE_RESULT",
             "Supply a source SHA-256 and the platform compile result "
-            "{complete, backend, statement_found, axioms}.",
+            "{complete, backend, statement_found, axioms, lean_statement_sha256}.",
             source_sha256=source_sha256,
             compile_result=compile_result,
         )
@@ -633,6 +662,12 @@ class CommonsReviewMixin:
         def action(session, op):
             row, _ = self._review_node(session, node_id, actor)
             status = row.payload["status"]
+            current = row.payload.get("lean_statement_sha256")
+            if current is None:
+                return {"recorded": False, "reason": "The node has no Lean statement to compile."}
+            if compiled.lean_statement_sha256 != current:
+                # The compiled statement is no longer the node's statement.
+                return {"recorded": False, "reason": "statement_changed"}
             if status != "formally_stated":
                 reason = f"The node is {status}; a local compile counts only when formally_stated."
                 return {"recorded": False, "reason": reason}
