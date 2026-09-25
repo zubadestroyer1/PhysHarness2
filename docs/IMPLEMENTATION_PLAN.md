@@ -24,6 +24,17 @@ Independent acceptance retrieves a reviewed target and immutable trusted environ
 
 Agents may explore incomplete arguments, numerical calculations, custom tools, and proposed definitions freely inside their workspace. Only the independent acceptance service can issue receipts. A changed target or trust policy creates a new revision; old receipts remain historical and cannot silently satisfy it. Integration rebuilds combined artifacts with consistent dependencies.
 
+## Proposed research-society direction (2026-09-24, draft under review)
+
+[PLAN.md](../PLAN.md) proposes reorganizing the execution order around a persistent research society. Its main elements are:
+- a shared blueprint commons with a status ladder;
+- persistent campaigns;
+- mixed frontier and self-hosted models;
+- light scaffolding and a research toolkit;
+- Kubernetes planes for agents, inference, workspaces and verification.
+
+Its S0–S6 milestones map onto the waves below without changing their exit criteria. Until that plan is approved, the order below remains authoritative.
+
 ## Approved execution order (2026-09-22)
 
 This order prioritizes useful scientific results and measured bottlenecks. It does not renumber waves, reduce their full scopes or exit criteria, or turn an early pilot into wave qualification. Both quantum and classical programs continue in parallel. The end goal remains large, durable, heterogeneous swarms of agents and subagents advancing expert-selected root physics targets through formalization, independently accepted results, autonomous collaboration, and recovery across compaction and failure. Fleet size and learned policies must earn their place by improving useful science.
