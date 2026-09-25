@@ -1,12 +1,13 @@
 ## S1 research society — 2026-09-25
 
-**Status:** implemented, pending the final review. The society is opt-in: only
-experiments created with a `society` policy (which requires `sharing="ideas"`) behave
-differently. Legacy experiments keep their exact payloads, 63 tools, prompts, delivery
-shapes and exports; pinned digests guard each of these. The evidence is deterministic and
-mocked-provider tests only. **No live model run, VM, image build or E2B sandbox has
-exercised any society path, and no research-performance claim is made.** See the
-[S1 plan](superpowers/plans/2026-09-25-s1-research-society.md) and [PLAN.md](../PLAN.md) §7.
+**Status:** implemented; the final whole-branch review's findings are fixed. The society
+is opt-in: only experiments created with a `society` policy (which requires
+`sharing="ideas"`) behave differently. Legacy experiments keep their exact payloads, 63
+tools, prompts, delivery shapes and exports; pinned digests guard each of these. The
+evidence is deterministic and mocked-provider tests only. **No live model run, VM, image
+build or E2B sandbox has exercised any society path, and no research-performance claim is
+made.** See the [S1 plan](superpowers/plans/2026-09-25-s1-research-society.md) and
+[PLAN.md](../PLAN.md) §7.
 
 What exists (Tasks 1–10):
 - **Commons.**
@@ -57,8 +58,15 @@ What exists (Tasks 1–10):
     manifest.
   - The simulation found one integration gap: nodes did not record their author's lab.
     It is fixed, with a regression test.
-- **Tests.** The full suite passes 1,521 tests with 1 opt-in skip (1,258 before S1).
-  Ruff check and format are clean.
+- **Final review fixes.** Local compiles count only for the node's real top-level
+  theorem (comments, strings, namespaces and forged one-shot axiom lines no longer
+  count); referees get a read-and-check profile, and reviews requested from
+  platform-rooted lineages run; own and claimed node threads survive the subscription
+  cap. Minor fixes: infrastructure failures never demote a node, one withheld-source
+  reason code, batched hole elaboration, benchmark refusal of search pages, and an
+  opt-in PostgreSQL commons smoke in CI.
+- **Tests.** The full suite passes 1,560 tests with 2 opt-in skips, one of them the
+  PostgreSQL commons smoke (1,258 before S1). Ruff check and format are clean.
 
 Deferred by design:
 - node-level independent acceptance (the `accepted` status for non-root nodes);
