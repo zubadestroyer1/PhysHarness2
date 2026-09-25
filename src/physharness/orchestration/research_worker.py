@@ -2107,16 +2107,26 @@ class ResearchTeamRunner:
         scheduled_synthesis_ids = set()
         next_synthesis_tick = 0.0
 
-        def referee_task_ids(tasks):
-            """Referee tasks and the work delegated from them: platform-owned lineages."""
-            referee_branches = {
-                task["branch_id"] for task in tasks if task.get("hat") == REFEREE_HAT
+        def platform_lineage_task_ids(tasks):
+            """Tasks in lineages rooted at referee or parentless synthesis branches.
+
+            The platform creates those branches; they are no other runner's work.
+            """
+            platform_roots = {
+                task["branch_id"]
+                for task in tasks
+                if task.get("hat") == REFEREE_HAT
+                or (
+                    task.get("synthesis") is True
+                    and task["branch_id"] in branch_parents
+                    and branch_parents[task["branch_id"]] is None
+                )
             }
             return {
                 task["id"]
                 for task in tasks
                 if task["branch_id"] in branch_parents
-                and root_lineage(task["branch_id"], branch_parents) in referee_branches
+                and root_lineage(task["branch_id"], branch_parents) in platform_roots
             }
 
         def selected_tasks(tasks=None):
@@ -2212,12 +2222,12 @@ class ResearchTeamRunner:
                         for branch in self._records("branch", actor, experiment["id"])
                     }
                 now = asyncio.get_running_loop().time()
-                # Platform referee lineages never count as another runner's work.
-                referee_ids = referee_task_ids(all_tasks)
+                # Platform-created referee and synthesis lineages are no other runner's work.
+                platform_ids = platform_lineage_task_ids(all_tasks)
                 all_root_lineages = {
                     root_lineage(task["branch_id"], branch_parents)
                     for task in all_tasks
-                    if task["id"] not in referee_ids
+                    if task["id"] not in platform_ids
                 }
                 if not accepted and now >= next_synthesis_tick:
                     next_synthesis_tick = now + 5.0
@@ -2236,11 +2246,9 @@ class ResearchTeamRunner:
                                 branch["id"]: branch.get("parent_id")
                                 for branch in self._records("branch", actor, experiment["id"])
                             }
-                            if (
-                                root_lineage(synthesis["branch"]["id"], branch_parents)
-                                in own_root_lineages
-                            ):
-                                scheduled_synthesis_ids.add(synthesis["task"]["id"])
+                            # This run scheduled it, so it runs here whether or not the
+                            # synthesis branch has a parent (a society sample may have none).
+                            scheduled_synthesis_ids.add(synthesis["task"]["id"])
                             all_tasks = list(self._records("task", actor, experiment["id"]))
                 selected = selected_tasks(all_tasks)
                 if accepted:
