@@ -278,6 +278,8 @@ class CommonsMixin:
             experiment = self._commons_experiment(session, experiment_id, actor)
             for identifier in request.artifact_ids:
                 self._node_evidence(session, identifier, experiment, actor)
+            # The node belongs to its author branch's lab (None for lab-less authors).
+            author = session.get(RecordRow, actor.branch_id) if actor.branch_id else None
             record = self._insert(
                 session,
                 "commons_node",
@@ -290,6 +292,7 @@ class CommonsMixin:
                         status_reason="proposed",
                     ),
                     "branch_id": actor.branch_id,
+                    "lab": author.payload.get("lab") if author is not None else None,
                 },
             )
             self._event(
@@ -525,6 +528,36 @@ class CommonsMixin:
         if len(edges) > MAX_GRAPH_EDGES:
             raise _graph_too_large()
         return edges
+
+    @staticmethod
+    def _commons_edges(session, project_id, experiment_id, visible):
+        """Commons edges between ``visible`` node ids, for exports.
+
+        Selected through the same node subquery and edge bound as the dependency walk, so a
+        large graph raises ``COMMONS_GRAPH_TOO_LARGE`` instead of binding every node id.
+        """
+        nodes = select(RecordRow.id).where(
+            RecordRow.project_id == project_id,
+            RecordRow.kind == "commons_node",
+            record_json_text("experiment_id") == experiment_id,
+        )
+        rows = session.execute(
+            select(EdgeRow.source_id, EdgeRow.target_id, EdgeRow.relation)
+            .where(
+                EdgeRow.project_id == project_id,
+                EdgeRow.relation.in_(COMMONS_RELATIONS),
+                EdgeRow.source_id.in_(nodes),
+            )
+            .order_by(EdgeRow.source_id, EdgeRow.relation, EdgeRow.target_id)
+            .limit(MAX_GRAPH_EDGES + 1)
+        ).all()
+        if len(rows) > MAX_GRAPH_EDGES:
+            raise _graph_too_large()
+        return [
+            {"source": source, "target": target, "relation": relation.removeprefix(EDGE_PREFIX)}
+            for source, target, relation in rows
+            if source in visible and target in visible
+        ]
 
     @staticmethod
     def _node_item(node):

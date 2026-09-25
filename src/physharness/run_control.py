@@ -16,6 +16,7 @@ from .domain import (
     ProblemCreate,
     Program,
     ResourceEnvelope,
+    SocietyPolicy,
     StrictModel,
     canonical_json,
     digest_json,
@@ -28,6 +29,9 @@ from .orchestration.pricing import ModelPrice
 from .service import require_role
 from .verification import VerificationRequest
 from .verification.boundary import Environment
+
+# Marks a value in a plan skeleton that the user must choose; such a plan never validates.
+USER_DECISION = "USER DECISION REQUIRED"
 
 
 class TargetInput(StrictModel):
@@ -56,13 +60,28 @@ class RunPlan(StrictModel):
     runtime_limits: dict = Field(default_factory=dict)
     execution_profile: Literal["general", "formal-research"] = "general"
     context_profile: Literal["research", "stress8192"] = "research"
+    # The research-society arm; absent means the legacy experiment exactly as before.
+    society: SocietyPolicy | None = None
 
     @model_validator(mode="after")
     def consistent(self):
         if self.target.program not in self.campaign.programs:
             raise ValueError("Target program is not included in the campaign")
         validate_runtime_inputs(self.models, self.runtime_limits)
+        if USER_DECISION in canonical_json(self.model_dump(mode="json")):
+            raise ValueError(f"Replace every {USER_DECISION} placeholder before preparing")
+        if self.society is not None:
+            # The experiment's own checks, applied before any durable record is created.
+            if self.sharing != "ideas":
+                raise ValueError("A society plan requires ideas sharing")
+            literature = self.society.literature
+            if literature.mode == "benchmark" and not literature.masked_reference_artifact_id:
+                raise ValueError("Benchmark literature mode requires masked_reference_artifact_id")
         return self
+
+    def recorded(self) -> dict:
+        """The plan as preparation records it; a legacy plan has no society key."""
+        return self.model_dump(mode="json", exclude={"society"} if self.society is None else None)
 
 
 def validate_runtime_inputs(models, limits):
@@ -180,12 +199,13 @@ def prepare_run(service, actor, plan: RunPlan, base_directory: Path) -> dict:
             runtime_limits=plan.runtime_limits,
             execution_profile=plan.execution_profile,
             context_profile=plan.context_profile,
+            society=plan.society,
         ),
         actor,
         prefix + ":experiment",
     )
     provenance = {
-        "plan": plan.model_dump(mode="json"),
+        "plan": plan.recorded(),
         "challenge_sha256": hashlib.sha256(source).hexdigest(),
         "environment_digest": problem["environment_digest"],
         "target_digest": problem["target_digest"],
@@ -215,6 +235,16 @@ def prepare_run(service, actor, plan: RunPlan, base_directory: Path) -> dict:
         "review_status": current["semantic_review"],
         "model_calls": 0,
     }
+
+
+def _masked_reference_ready(service, actor, identifier) -> bool:
+    if not isinstance(identifier, str) or not identifier:
+        return False
+    try:
+        record = service.get_record("artifact", identifier, actor)
+    except HarnessError:
+        return False
+    return record.get("artifact_kind") == "masked_reference"
 
 
 def run_preflight(
@@ -261,6 +291,15 @@ def run_preflight(
             block("TARGET_REVIEW_MISMATCH", "Review and target identities must agree.")
     if experiment["target_digest"] != problem["target_digest"] or problem["definition_holes"]:
         block("TARGET_NOT_FIXED", "Prepare a concrete target with reviewed definitions.")
+    literature = (experiment.get("society") or {}).get("literature") or {}
+    if literature.get("mode") == "benchmark" and not _masked_reference_ready(
+        service, actor, literature.get("masked_reference_artifact_id")
+    ):
+        # The broker fails closed without it, which would silently switch literature off.
+        block(
+            "MASKED_REFERENCE_REQUIRED",
+            "Upload the target's masked_reference artifact and name it in the society policy.",
+        )
     if not environment.get("OPENAI_API_KEY"):
         block("MODEL_CREDENTIAL_REQUIRED", "Supply OPENAI_API_KEY privately to the worker process.")
     try:

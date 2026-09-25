@@ -114,3 +114,191 @@ def test_cli_export_is_private_independently_of_umask(lab, tmp_path, monkeypatch
         os.umask(previous)
     assert stat.S_IMODE(target.stat().st_mode) == 0o700
     assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in target.iterdir())
+
+
+# Society records in exports -----------------------------------------------------------------
+
+LEGACY_RECORD_KINDS = [
+    "branch",
+    "task",
+    "claim",
+    "artifact",
+    "session",
+    "continuation_link",
+    "verification",
+    "program",
+    "message",
+    "source",
+    "workspace",
+    "workspace_operation",
+    "review",
+    "discussion_topic",
+    "discussion_post",
+    "discussion_reader",
+    "discussion_subscription",
+    "discussion_delivery",
+    "discussion_withdrawal",
+    "workforce_policy",
+    "workforce_profile",
+    "workforce_team",
+    "workforce_capacity_request",
+]
+# Recorded from the pre-change export (before society records were exported).
+LEGACY_EXPORT_DIGEST = "0efaa7e4b41ee8516078a376b687996ea43d24e3655a17d576e26273d6d6317f"
+
+
+def normalized_export(manifest):
+    """Digest with ids, times and hashes masked, and each record list in a stable order."""
+    from test_society_tools import HEX64, STAMP, UUID
+
+    text = json.dumps(manifest, sort_keys=True)
+    masked = json.loads(HEX64.sub("<sha256>", STAMP.sub("<time>", UUID.sub("<id>", text))))
+    masked["records"] = {
+        kind: sorted(rows, key=lambda row: json.dumps(row, sort_keys=True))
+        for kind, rows in masked["records"].items()
+    }
+    return digest_json(masked)
+
+
+def legacy_export(lab):
+    """A legacy ideas-sharing experiment with a task, an artifact, a message and a post."""
+    from test_sharing import approaches
+
+    from physharness.discussion_models import DiscussionCreate
+    from physharness.domain import TaskCreate
+
+    service, author, exp, branches, (alpha, beta) = approaches(lab, "ideas")
+    service.create_task(TaskCreate(branch_id=branches[0]["id"], objective="Work"), author, "t")
+    service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="finding", content="Idea"), alpha, "a"
+    )
+    service.send_message(branches[0]["id"], branches[1]["id"], "Hello.", [], alpha, "m")
+    service.create_discussion(
+        exp["id"], DiscussionCreate(title="Trace", summary="Opening summary."), alpha, "d"
+    )
+    return service.export_experiment(exp["id"], author)
+
+
+def test_legacy_export_is_byte_identical(lab):
+    manifest = legacy_export(lab)
+    assert list(manifest["records"]) == LEGACY_RECORD_KINDS
+    assert list(manifest) == [
+        "format",
+        "experiment",
+        "problem",
+        "records",
+        "ledger",
+        "snapshot",
+        "qualification",
+        "manifest_sha256",
+    ]
+    assert normalized_export(manifest) == LEGACY_EXPORT_DIGEST
+
+
+SOCIETY_RECORD_KINDS = ["commons_node", "commons_claim", "commons_review", "literature_fetch"]
+
+
+def test_society_export_adds_commons_records_edges_and_fetches(lab):
+    from commons_helpers import society_lab
+
+    from physharness.commons_models import NodeCreate
+    from physharness.domain import Principal
+
+    service, author, exp, branches, (alpha, beta) = society_lab(lab, models=2)
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    lemma = service.create_node(
+        exp["id"],
+        NodeCreate(
+            node_type="lemma",
+            title="Trace lemma",
+            statement="The trace is additive.",
+            edges=[{"relation": "motivated_by", "target_id": goal["id"]}],
+        ),
+        alpha,
+        "lemma",
+    )
+    service.link_nodes(exp["id"], goal["id"], "depends_on", lemma["id"], alpha, "link")
+    service.claim_node(lemma["id"], "claim", beta, "claim")
+    requested = service.request_review(lemma["id"], "informal", alpha, "review")
+    referee = Principal(
+        id="referee",
+        role="agent",
+        project_id="lab",
+        experiment_id=exp["id"],
+        branch_id=requested["branch_id"],
+    )
+    service.submit_review(requested["review_task_id"], "sound", "Checked.", [], referee, "sound")
+    service.record_literature_fetch(
+        exp["id"],
+        {
+            "status": "withheld_contamination_risk",
+            "url": "https://arxiv.org/abs/2201.00001",
+            "sha256": "b" * 64,
+            "flag": {"reason": "reference_overlap", "shared": 9, "ratio": 0.3},
+        },
+        alpha,
+        "fetch",
+    )
+    # The operator's masked reference for this experiment (private to operators).
+    service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="masked_reference", content="Reference."),
+        author,
+        "masked-reference",
+    )
+    manifest = service.export_experiment(exp["id"], author)
+    records = manifest["records"]
+    assert list(records) == LEGACY_RECORD_KINDS + SOCIETY_RECORD_KINDS
+    assert {node["id"] for node in records["commons_node"]} == {goal["id"], lemma["id"]}
+    assert [(claim["node_id"], claim["branch_id"]) for claim in records["commons_claim"]] == [
+        (lemma["id"], branches[1]["id"])
+    ]
+    [review] = records["commons_review"]
+    assert (review["verdict"], review["cross_model"]) == ("sound", True)
+    [fetch] = records["literature_fetch"]
+    assert fetch["flagged"] is True and fetch["status"] == "withheld_contamination_risk"
+    assert sorted(manifest["edges"], key=lambda edge: edge["relation"]) == [
+        {"source": goal["id"], "target": lemma["id"], "relation": "depends_on"},
+        {"source": lemma["id"], "target": goal["id"], "relation": "motivated_by"},
+    ]
+    assert list(manifest).index("edges") == list(manifest).index("records") + 1
+    assert all(branch.get("lab") for branch in records["branch"] if branch.get("hat") is None)
+    private = {"literature_screen", "masked_reference"}
+    kinds = {artifact["artifact_kind"] for artifact in records["artifact"]}
+    assert private <= kinds  # the operator's export holds the screen and the reference
+    # An agent's export shows the commons of its ideas-sharing experiment and only edges
+    # between nodes it can see. Screens and references never appear, and a literature
+    # fetch is visible to the fetching branch only.
+    views = {
+        name: service.export_experiment(exp["id"], agent)
+        for name, agent in (("alpha", alpha), ("beta", beta))
+    }
+    for view in views.values():
+        assert {node["id"] for node in view["records"]["commons_node"]} == {
+            goal["id"],
+            lemma["id"],
+        }
+        assert len(view["edges"]) == 2
+        assert not private & {a["artifact_kind"] for a in view["records"]["artifact"]}
+    assert [f["id"] for f in views["alpha"]["records"]["literature_fetch"]] == [fetch["id"]]
+    assert views["beta"]["records"]["literature_fetch"] == []
+
+
+def test_society_export_bounds_its_commons_edges(lab, monkeypatch):
+    """Edges are read with the graph walk's subquery and bound, never an unbounded id list."""
+    from commons_helpers import society_lab
+
+    from physharness import commons
+    from physharness.commons_models import NodeCreate
+
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    for title in ("First", "Second"):
+        node = service.create_node(
+            exp["id"], NodeCreate(node_type="lemma", title=title, statement="S."), alpha, title
+        )
+        service.link_nodes(exp["id"], goal["id"], "depends_on", node["id"], alpha, f"l-{title}")
+    assert len(service.export_experiment(exp["id"], author)["edges"]) == 2
+    monkeypatch.setattr(commons, "MAX_GRAPH_EDGES", 1)
+    with pytest.raises(HarnessError) as caught:
+        service.export_experiment(exp["id"], author)
+    assert caught.value.code == "COMMONS_GRAPH_TOO_LARGE"
