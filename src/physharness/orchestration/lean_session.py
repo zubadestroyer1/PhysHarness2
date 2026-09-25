@@ -429,10 +429,11 @@ def _appended_axioms(report, source, names):
 
     ``report`` is a ``lean --json`` run: one message object per stdout line (stderr is never
     read). Each report must be an ``information`` message of the scratch file at its own
-    appended line, and must open with the name printed there; output that agent code
-    printed (``#eval``, either stream) carries other positions or paths and is ignored, and
-    so is any text after the report in the same message. A line that more than one message
-    claims reports nothing.
+    appended line, and must open with the report for the name printed there; output that
+    agent code printed (``#eval``, either stream) carries other positions or paths and is
+    ignored, and so is any text after the report in the same message. Other messages at
+    that line (``'Bar.foo'`` for an ambiguous ``foo``, say) are ignored, and a line with
+    more than one report for its name reports nothing.
     """
     output, path = report["diagnostics"], "/work/" + report["source_path"]
     first = source.count("\n") + 2  # printed = source + "\n" + one line per name
@@ -447,21 +448,26 @@ def _appended_axioms(report, source, names):
         position = message.get("pos")
         line = position.get("line") if isinstance(position, dict) else None
         if (
-            message.get("fileName") == path
-            and message.get("severity") == "information"
-            and isinstance(line, int)
-            and not isinstance(line, bool)
-            and 0 <= line - first < len(names)
+            message.get("fileName") != path
+            or message.get("severity") != "information"
+            or not isinstance(line, int)
+            or isinstance(line, bool)
+            or not 0 <= line - first < len(names)
         ):
-            claims.setdefault(line - first, []).append(message.get("data"))
+            continue
+        name, text = names[line - first], message.get("data")
+        if isinstance(text, str) and text.startswith(
+            (f"'{name}' does not depend on any axioms", f"'{name}' depends on axioms: [")
+        ):
+            claims.setdefault(name, []).append(text)
     axioms = {}
-    for index, texts in claims.items():
-        name, text = names[index], texts[0]
-        if len(texts) > 1 or not isinstance(text, str):
+    for name, texts in claims.items():
+        text = texts[0]
+        if len(texts) > 1:
             continue
         if text.startswith(f"'{name}' does not depend on any axioms"):
             entry = []
-        elif text.startswith(f"'{name}' depends on axioms: [") and "]" in text:
+        elif "]" in text:
             entry = parse_axioms(text[: text.index("]") + 1]).get(name)
         else:
             entry = None
@@ -861,10 +867,10 @@ class LeanSession:
                     lean_args=_AXIOM_PASS_ARGS,
                 )
                 axioms = _appended_axioms(report, source, names)
-                # A name without a report from its appended line (an #exit, say) is incomplete.
-                axioms_ok = report["diagnostics"].get("exit_code") == 0 and all(
-                    name in axioms for name in names
-                )
+                # A report proves the appended lines ran; none (an #exit, say) is incomplete. A
+                # name Lean prints differently (private, _root_) has no report of its own, as
+                # on the REPL backend; the society gate requires the node's own report.
+                axioms_ok = report["diagnostics"].get("exit_code") == 0 and bool(axioms)
         return {
             "backend": "one_shot",
             "ok": ok,

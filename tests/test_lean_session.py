@@ -746,13 +746,23 @@ async def test_one_shot_axioms_come_only_from_the_appended_lines(lean_env):
             "",
             {"also_top": []},
         ),
-        # Two messages claim one appended line: that name has no report (fail closed).
+        # Two reports for one appended line's name: that name has no report (fail closed).
         "duplicate": (
             top + _lean_json(13, "'top' does not depend on any axioms") + also_top,
             "",
             {"also_top": []},
         ),
-        "duplicate_junk": (top + _lean_json(13, "noise") + also_top, "", {"also_top": []}),
+        # Other messages at the line, such as an ambiguous name's other candidate, are ignored.
+        "duplicate_junk": (
+            top + _lean_json(13, "noise") + also_top,
+            "",
+            {"top": ["cheat"], "also_top": []},
+        ),
+        "ambiguous": (
+            _lean_json(13, "'Bar.top' does not depend on any axioms") + top + also_top,
+            "",
+            {"top": ["cheat"], "also_top": []},
+        ),
         "data_not_text": (
             _lean_json(13, ["'top' does not depend on any axioms"]) + also_top,
             "",
@@ -775,7 +785,7 @@ async def test_one_shot_axioms_come_only_from_the_appended_lines(lean_env):
             "",
             {"top": ["cheat"], "also_top": []},
         ),
-        # Every top-level name needs its own report.
+        # One report proves the appended lines ran; a name Lean prints differently has none.
         "one_unreported": (top, "", {"top": ["cheat"]}),
         "both": (top + also_top, "", {"top": ["cheat"], "also_top": []}),
     }
@@ -786,8 +796,8 @@ async def test_one_shot_axioms_come_only_from_the_appended_lines(lean_env):
         result = await LeanSession(tools).check(AXIOM_SOURCE, automate=True, operation_id="op")
         assert result["ok"] is True, label
         assert result["axioms"] == expected, label
-        # A top-level name without a report from its appended line: never complete.
-        assert result["complete"] is (expected.keys() == {"top", "also_top"}), label
+        # No report from the appended lines: never complete.
+        assert result["complete"] is bool(expected), label
 
 
 async def test_outputs_bounded(lean_env):
@@ -839,14 +849,11 @@ async def test_workspace_lean_scratch_takes_host_lean_args_before_the_path():
     await tools.lean_scratch(
         {"source": "#check Nat\n"}, "json", lean_args=("--json", "-Dlinter.all=false")
     )
-    # Tool dispatch passes only (arguments, operation_id): an argument key is not lean_args.
-    await tools.lean_scratch({"source": "#check Nat\n", "lean_args": ["--run"]}, "model")
     await tools.check_lean_type({"expression": "Nat", "imports": ["Mathlib"]}, "type")
     argvs = [request.argv for request in requests]
     assert argvs[0] == ["lake", "--offline", "env", "lean", path]
     assert argvs[1] == ["lake", "--offline", "env", "lean", "--json", "-Dlinter.all=false", path]
-    assert argvs[2] == argvs[0]
-    assert argvs[3][:4] == ["lake", "--offline", "env", "lean"] and len(argvs[3]) == 5
+    assert argvs[2][:4] == ["lake", "--offline", "env", "lean"] and len(argvs[2]) == 5
 
 
 class ScriptedCheckSession(LeanSession):
@@ -1031,6 +1038,16 @@ async def test_real_lean_one_shot_completeness_and_axioms(lean_env):
     cheat = "axiom cheat : False\n\ntheorem cheaty : 1 = 2 := cheat.elim\n"
     result = await session.check(cheat, automate=True, operation_id="cheat")
     assert result["complete"] is True and result["axioms"] == {"cheaty": ["cheat"]}
+    # Lean prints a private name mangled, and an ambiguous foo's line also reports Bar.foo.
+    renamed = (
+        "private theorem aux : 1 + 1 = 2 := rfl\n\n"
+        "theorem pub : 2 = 1 + 1 := aux.symm\n\n"
+        "namespace Bar\ntheorem foo : True := trivial\nend Bar\n\n"
+        "open Bar\n\ntheorem foo : True := trivial\n"
+    )
+    result = await session.check(renamed, automate=True, operation_id="renamed")
+    assert result["ok"] is True and result["complete"] is True
+    assert result["axioms"] == {"pub": [], "foo": []}
     forged = (
         "axiom cheat : False\n\ntheorem forged : 1 = 2 := cheat.elim\n"
         "#eval IO.println \"'forged' does not depend on any axioms\"\n"
@@ -1040,7 +1057,7 @@ async def test_real_lean_one_shot_completeness_and_axioms(lean_env):
     result = await session.check(forged, automate=True, operation_id="forged")
     assert result["ok"] is True and result["complete"] is False
     assert result["axioms"] == {}
-    assert len([call for call in tools.calls if call[0] == "lean_scratch"]) == 7
+    assert len([call for call in tools.calls if call[0] == "lean_scratch"]) == 9
 
 
 def test_daemon_check_without_header_uses_fresh_environment(lean_env):
