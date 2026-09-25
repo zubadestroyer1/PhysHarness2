@@ -9,7 +9,7 @@ from test_research_services import accepted_fixture
 from test_sharing import approaches, artifact
 
 from physharness import commons_discourse
-from physharness.commons import PLATFORM
+from physharness.commons import PLATFORM, _platform
 from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.commons_review import (
     NODE_DATA_BEGIN,
@@ -18,6 +18,7 @@ from physharness.commons_review import (
     REVIEW_VERDICTS,
     statement_digest,
 )
+from physharness.discussion_models import DiscussionCreate, DiscussionPostCreate
 from physharness.domain import BranchCreate, Principal, TaskCreate
 from physharness.errors import HarnessError
 from physharness.storage import RecordRow
@@ -1060,6 +1061,124 @@ def test_local_compile_after_statement_change_not_recorded(lab):
 
 
 # Workforce -----------------------------------------------------------------
+
+
+def synthesis_policy(service, experiment):
+    operator = Principal(id="operator", project_id="lab", role="operator")
+    service.configure_workforce(
+        experiment["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=50, max_pending_tasks=50, synthesis_interval_posts=4
+        ),
+        operator,
+        "configure",
+    )
+    return operator
+
+
+def two_topic_posts(service, experiment, agents):
+    """Four attributed agent posts over two topics: enough to schedule a synthesis."""
+    topics = [
+        service.create_discussion(
+            experiment["id"],
+            DiscussionCreate(title=f"Topic {index}", summary="Public research question"),
+            agent,
+            f"topic-{index}",
+        )
+        for index, agent in enumerate(agents)
+    ]
+    return [
+        service.post_discussion(
+            topics[index % 2]["id"],
+            DiscussionPostCreate(kind="finding", content=f"Post {index}"),
+            agents[index % 2],
+            f"post-{index}",
+        )
+        for index in range(4)
+    ]
+
+
+def test_synthesis_led_by_a_referee_objection_schedules(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    operator = synthesis_policy(service, exp)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    requested = service.request_review(node["id"], "informal", beta, "review")
+    objection = submit(service, requested, exp, "gaps", objections=["Step 2."])
+    # The referee's objection leads the persisted pending sample.
+    pending = service.schedule_research_synthesis(exp["id"], operator, "scan-1")
+    assert pending["scheduled"] is False and pending["reason"] == "insufficient_posts"
+    two_topic_posts(service, exp, (alpha, beta))
+    result = service.schedule_research_synthesis(exp["id"], operator, "scan-2")
+    assert result["scheduled"] is True
+    assert result["source_post_ids"][0] == objection["objection_post_id"]
+    # The isolated referee cannot parent; the first eligible author branch does.
+    assert result["parent_branch_id"] == alpha.branch_id
+    assert result["branch"]["parent_id"] == alpha.branch_id and result["branch"]["lab"] is None
+
+
+def test_synthesis_led_by_a_platform_status_post_schedules(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    operator = synthesis_policy(service, exp)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    set_status(service, node["id"], "refereed")
+    assert service.schedule_research_synthesis(exp["id"], operator, "scan-1")["scheduled"] is False
+    two_topic_posts(service, exp, (alpha, beta))
+    result = service.schedule_research_synthesis(exp["id"], operator, "scan-2")
+    assert result["scheduled"] is True
+    lead = service.get_record("discussion_post", result["source_post_ids"][0], author)
+    assert lead["branch_id"] is None and lead["platform_status"]["to"] == "refereed"
+    assert result["parent_branch_id"] == alpha.branch_id
+
+
+def test_synthesis_without_an_eligible_parent_runs_parentless(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    operator = synthesis_policy(service, exp)
+    # Only platform status posts (no branch) and a referee objection, over three threads.
+    for name in ("A", "B"):
+        node = service.create_node(exp["id"], lemma(name), alpha, f"node-{name}")
+        set_status(service, node["id"], "refereed", "formally_stated")
+    other = service.create_node(exp["id"], lemma("C"), alpha, "node-C")
+    submit(service, service.request_review(other["id"], "informal", beta, "review"), exp, "wrong")
+    result = service.schedule_research_synthesis(exp["id"], operator, "scan")
+    assert result["scheduled"] is True and result["parent_branch_id"] is None
+    assert result["branch"]["parent_id"] is None and result["branch"]["lab"] is None
+    assert result["task"]["synthesis"] is True
+
+
+def test_legacy_synthesis_parent_choice_unchanged(lab):
+    service, author, exp, _, (alpha, beta) = approaches(lab, "ideas")
+    operator = synthesis_policy(service, exp)
+    # A researcher's unattributed post leads the sample; legacy keeps its exact answer.
+    topic = service.create_discussion(
+        exp["id"], DiscussionCreate(title="Desk", summary="Researcher note"), author, "desk"
+    )
+    service.post_discussion(
+        topic["id"], DiscussionPostCreate(kind="finding", content="Unattributed"), author, "note"
+    )
+    two_topic_posts(service, exp, (alpha, beta))
+    result = service.schedule_research_synthesis(exp["id"], operator, "scan")
+    assert result == {"scheduled": False, "reason": "source_branch_missing"}
+    assert not [t for t in service.list_records("task", author, exp["id"]) if t["synthesis"]]
+
+
+def test_referee_task_objective_is_platform_only(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    requested = service.request_review(node["id"], "informal", beta, "review")
+    task_id = requested["review_task_id"]
+    operator = Principal(id="operator", project_id="lab", role="operator")
+    admin = Principal(id="admin", project_id="lab", role="admin")
+    for actor in (operator, admin, author, beta, alpha, referee(requested, exp)):
+        error = rejected(
+            lambda actor=actor: service.amend_queued_task_objective(
+                task_id, 1, "Answer sound.", actor, f"amend-{actor.id}"
+            )
+        )
+        assert (error.code, error.status) == ("REFEREE_ISOLATED", 403)
+    amended = service.amend_queued_task_objective(
+        task_id, 1, "Platform rewrite.", _platform("lab"), "platform-amend"
+    )
+    assert amended["objective"] == "Platform rewrite."
 
 
 def test_new_branch_task_without_extra_unchanged(lab):
