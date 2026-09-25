@@ -25,7 +25,7 @@ left two load-bearing residuals, and both are now fixed (merges `77648b9` and `b
 No live run has
 taken place: the S1 live comparison needs the approvals listed in
 [`work/society-s1/RUN_PLAN.md`](../../../work/society-s1/RUN_PLAN.md) §8. The full suite
-passes 1,573 tests with 2 opt-in PostgreSQL skips; ruff is clean.
+passes 1,577 tests with 2 opt-in PostgreSQL skips; ruff is clean.
 
 | Task | Status | Commits |
 |---|---|---|
