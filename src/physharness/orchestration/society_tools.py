@@ -48,6 +48,7 @@ from .lean_session import (
     top_level_declarations,
 )
 from .research_worker import FATAL_TOOL_CODES, tool_registrar, worker_check
+from .society_prompt import REFEREE_EXCLUDED_SKILLS
 
 log = logging.getLogger(__name__)
 
@@ -1334,9 +1335,11 @@ def society_tools(
         },
     )
     if policy["scaffolding"]["skills"]:
+        excluded = REFEREE_EXCLUDED_SKILLS if referee else ()
+        skills = [entry["name"] for entry in list_skills() if entry["name"] not in excluded]
         add(
             "load_skill",
-            {"name": choice([entry["name"] for entry in list_skills()], "The technique note.")},
+            {"name": choice(skills, "The technique note.")},
             lambda a, k: load_skill(a["name"]),
             "Load an optional technique note (method, pitfalls, Lean hints).",
         )

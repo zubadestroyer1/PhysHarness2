@@ -73,7 +73,7 @@ def constitution(policy: dict, *, literature_enabled: bool) -> str:
 def referee_constitution(policy: dict, *, literature_enabled: bool) -> str:
     """Norms for a platform-assigned referee task; no playbook, and only referee tools named.
 
-    ``literature_enabled`` mirrors ``constitution``; the text names no literature tool.
+    `literature_enabled` mirrors `constitution`; the text names no literature tool.
     """
     lines = [
         "Research society referee: community norms, not a method.",

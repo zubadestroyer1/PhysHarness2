@@ -1530,6 +1530,8 @@ class ResearchTaskExecutor:
                         "research_capacity": capacity,
                         "capacity_guidance": {
                             **_capacity_guidance(capacity),
+                            # A referee delegates nothing, so it has no task to wait for.
+                            "optional_wait_for_delegated_task": not referee,
                             "note": REFEREE_CAPACITY_NOTE if referee else SOCIETY_CAPACITY_NOTE,
                         },
                         **society_context(),
