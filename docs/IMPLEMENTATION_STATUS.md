@@ -1,3 +1,13 @@
+## Persistent-swarm hardening — 2026-09-25
+
+The four fix groups from the harder-target audit are implemented with deterministic regressions.
+- **Work coordination:** FIFO scheduling within round-robin roots, revision-fenced amendment of queued objectives, current objectives at lease time, a component ownership registry, honest delivery states (including `recipient_unavailable`), peer availability, durable peer waits that release capacity, and exact-target stop with bounded drain.
+- **Durable knowledge:** chunked native checkpoints. Across 96 real checkpoints from the retry, unique payload fell 93% and every checkpoint restored exactly.
+- **Execution efficiency:** direct workspace-file submission, event-based waits, and bounded wrap-up.
+- **Research resilience:** finite root replans, optional strategy descriptions, and a three-handoff evidence-status regression.
+
+The suite passes 1,258 tests (16 opt-in skips); ruff check and format are clean. The only real-VM evidence is the earlier bounded file-capture check. No live swarm, fleet or wave qualification is claimed. See the [delivery report and limits](../work/swarm-hardening-2026-09-25/DELIVERY.md). The proposed research-society direction, a draft under review, is in [PLAN.md](../PLAN.md).
+
 ## Harder nonlinear-physics qualification — 2026-09-24
 
 A fresh four-worker retry completed cleanly on a substantially longer known-type nonlinear Duffing-network energy target: one exact-target proof accepted by Comparator, Lean and Nanoda after 17m03s, two roots plus four model-requested helpers, and observed helper-source reuse in the accepted proof. All six tasks/sessions completed; 3,246 exported artifacts and native usage reconciled. Conservative retry usage was $49.102475 under the user's explicit $100 live amendment. All three attempts in this round, including an earlier faulted-but-proved run, total $92.305730; prior historical usage remains separately recorded. This is not a novelty, human expert publication or fleet qualification claim.
