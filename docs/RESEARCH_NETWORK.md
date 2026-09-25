@@ -166,7 +166,10 @@ widest catalog has 24 (all but `submit_review`), and a referee's has 17:
 | Task-specific | `return_result` (joined children), `submit_review` (referee tasks) |
 
 The prompt carries the constitution (community norms and an optional playbook), the
-frontier, the lab roster and the agent's claimed nodes. Optional check-ins and
+frontier, the lab roster and the agent's claimed nodes. A referee gets a referee
+constitution instead, with no playbook, and its notes name only the tools it has. A call
+to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection that lists
+the available tools. Optional check-ins and
 stagnation nudges are switched per campaign. The finite supervisor runs the referee
 tasks its own lineages request, and synthesis tasks that have no parent branch. A
 platform-rooted task it runs (a referee, or a parentless synthesis) adds its lineage to

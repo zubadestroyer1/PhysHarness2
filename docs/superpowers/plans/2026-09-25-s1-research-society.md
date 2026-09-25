@@ -17,10 +17,15 @@
 ## Progress (2026-09-25)
 
 **Tasks 1–10 are complete.** The final whole-branch review ("with fixes") found three
-Important and seven Minor items; all are fixed in `daf2c9a..6b96187`. No live run has
+Important and seven Minor items; all are fixed in `daf2c9a..6b96187`. Its re-review
+left two load-bearing residuals, and both are now fixed (merges `77648b9` and `be661d2`):
+- one-shot Lean completeness now uses `--json` axiom reports;
+- referees get referee texts, and unknown tool names are recoverable.
+
+No live run has
 taken place: the S1 live comparison needs the approvals listed in
 [`work/society-s1/RUN_PLAN.md`](../../../work/society-s1/RUN_PLAN.md) §8. The full suite
-passes 1,562 tests with 2 opt-in PostgreSQL skips; ruff is clean.
+passes 1,573 tests with 2 opt-in PostgreSQL skips; ruff is clean.
 
 | Task | Status | Commits |
 |---|---|---|
