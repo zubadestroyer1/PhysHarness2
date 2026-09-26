@@ -139,10 +139,12 @@ tools, the prompts and the delivery shapes.
   - Status moves are posted by the platform.
 - **Referees.** `request_review` makes the platform create an isolated referee:
   - a detached branch with no parent and no lab, marked `hat="referee"`;
-  - on a model family other than the author's when the experiment records one (for a
-    fidelity review, also other than every branch that has claimed the node, since any
-    of them may have written the Lean statement), spreading a quorum over families;
-    `cross_model` reports whether that held;
+  - on the model family the node's earlier referees (for its current text) used least,
+    preferring one other than the author's (for a fidelity review, also other than
+    every branch that has claimed the node, since any of them may have written the Lean
+    statement). The first referee is cross-model whenever a family allows it, and a
+    quorum spans distinct families when several are configured, the author's included
+    once the others are used; `cross_model` reports whether each referee avoided them;
   - unreachable by direct message or delegation from other branches.
 
   A node cannot shop for verdicts: each text version gets at most the positive verdicts
