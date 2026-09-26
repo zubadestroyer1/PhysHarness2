@@ -900,3 +900,45 @@ async def test_model_candidate_requests_independent_replay_and_missing_checker_c
     assert checked["status"] == "blocked" and checked["assurance"] == "none"
     assert service.list_records("claim", actor) == []
     assert service.search_knowledge(experiment["id"], "", agent)["items"] == []
+
+
+async def test_rate_limit_give_up_releases_the_model_reservation(lab):
+    service, actor, _ = lab
+    experiment, _, task = campaign(lab, concurrency=1)
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        refusal = {"message": "TPM", "type": "tokens", "param": None, "code": "rate_limit_exceeded"}
+        return httpx.Response(429, json={"error": refusal}, headers={"retry-after": "20"})
+
+    client = AsyncOpenAI(
+        api_key="mock-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)),
+    )
+    executor = research_worker.ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
+        limits=RuntimeLimits(max_turns=30, timeout_seconds=2),
+    )
+    try:
+        result = await research_worker.ResearchTeamRunner(service, executor=executor).run(
+            research_worker.TeamRunManifest(
+                experiment_id=experiment["id"],
+                project_id=actor.project_id,
+                mode="replay",
+                task_ids=[task["id"]],
+                max_concurrency=1,
+                max_tasks=1,
+            )
+        )
+    finally:
+        await client.close()
+    # Every send was refused, so nothing is uncertain and the reservation is released at zero.
+    assert result["outcomes"][0]["code"] == "PROVIDER_RATE_LIMITED"
+    assert result["ledger"]["uncertain_operations"] == 0
+    assert result["ledger"]["reserved_cost_usd"] == "0"
+    assert result["ledger"]["spent_cost_usd"] == "0"
+    assert service.task_model_effects_settled(task["id"], actor)

@@ -12,7 +12,7 @@
   | Single agent | 13.9 min | $31.97 |
 
 - **Society overhead:** referee tasks took 34 of the society's 40 task slots, and it was throttled by the provider's 2M tokens-per-minute limit.
-- **Change:** the Responses runtime now resends HTTP 429 `rate_limit_exceeded` refusals within the same operation. Previously each one failed its task.
+- **Change:** the Responses runtime now resends HTTP 429 `rate_limit_exceeded` refusals within the same operation. Previously each one left its task `uncertain`; giving up at the wall-clock limit now releases the reservation and fails definitely.
 - **Limits:**
   - the society arm is a single run;
   - no research-performance claim is made;

@@ -161,25 +161,25 @@ The packet identifies observations and remaining gaps. Hash agreement does not a
       "id": "transport-and-isolation",
       "status": "observed",
       "detail": "Required host regressions passed; synthetic transport tests remain distinct from real isolation.",
-      "evidence_sha256": "3727c2162b3723cb087b3081ef43ba44286c3e6298338136d03d08e87e181290"
+      "evidence_sha256": "cd29b7a6d1f989692e25556b3cc9881972f0f71a483ea2b9483b8180801b82c7"
     },
     {
       "id": "authority-and-atomicity",
       "status": "observed",
       "detail": "Required host regressions passed; synthetic transport tests remain distinct from real isolation.",
-      "evidence_sha256": "3727c2162b3723cb087b3081ef43ba44286c3e6298338136d03d08e87e181290"
+      "evidence_sha256": "cd29b7a6d1f989692e25556b3cc9881972f0f71a483ea2b9483b8180801b82c7"
     },
     {
       "id": "evidence-reporting",
       "status": "observed",
       "detail": "Required host regressions passed; synthetic transport tests remain distinct from real isolation.",
-      "evidence_sha256": "3727c2162b3723cb087b3081ef43ba44286c3e6298338136d03d08e87e181290"
+      "evidence_sha256": "cd29b7a6d1f989692e25556b3cc9881972f0f71a483ea2b9483b8180801b82c7"
     },
     {
       "id": "resource-controls",
       "status": "observed",
       "detail": "Required host regressions passed; synthetic transport tests remain distinct from real isolation.",
-      "evidence_sha256": "3727c2162b3723cb087b3081ef43ba44286c3e6298338136d03d08e87e181290"
+      "evidence_sha256": "cd29b7a6d1f989692e25556b3cc9881972f0f71a483ea2b9483b8180801b82c7"
     }
   ],
   "coverage_gaps": [
