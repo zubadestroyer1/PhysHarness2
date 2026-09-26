@@ -38,6 +38,7 @@ from ..domain import Principal
 from ..errors import HarnessError
 from ..execution import ToolDispatcher
 from ..execution.e2b import FILE_LIMIT as E2B_FILE_BYTES
+from ..knowledge.literature import run_blocking as run_literature
 from ..memory import PortableMemory
 from ..skills import list_skills, load_skill
 from ..worker_authority import current_worker_effects
@@ -873,13 +874,14 @@ def society_tools(
     if literature is not None and policy["literature"]["mode"] != "off":
 
         async def search_literature(a, k):
-            result = await asyncio.to_thread(literature.search, a["query"])
+            # The literature pool: pacing waits never starve the default executor.
+            result = await run_literature(literature.search, a["query"])
             # Only the released page: screening statistics stay with the broker's server-side
             # log, since per-query counts would let an agent probe the blocklist.
             return {key: result[key] for key in ("query", "items", "errors", "authority")}
 
         async def fetch_source(a, k):
-            result = await asyncio.to_thread(literature.fetch, a["url"])
+            result = await run_literature(literature.fetch, a["url"])
             record = service.record_literature_fetch(experiment_id, result, agent, k)
             if result["status"] == "ok":
                 return {

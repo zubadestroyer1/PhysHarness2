@@ -4,6 +4,8 @@ Everything fetched here is third-party data: it is labelled untrusted, never exe
 and in benchmark runs screened against a masked reference solution before release.
 """
 
+import asyncio
+import contextvars
 import email.utils
 import hashlib
 import html
@@ -16,6 +18,7 @@ import threading
 import time
 import unicodedata
 import zlib
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from html.parser import HTMLParser
@@ -69,6 +72,10 @@ MIN_REFERENCE_NGRAMS = OVERLAP_FLOOR
 # A title fragment needs two words and six letters or digits; anything shorter is junk.
 MIN_TITLE_WORDS = 2
 MIN_TITLE_CHARS = 6
+# ...and three letters in words of two or more letters that are neither stopwords nor
+# common title words (``_COMMON_WORDS``), or it would withhold most results. A fragment
+# with fewer than three words or two such words is accepted but flagged as broad.
+MIN_CONTENT_CHARS = 3
 MODES = frozenset({"off", "open", "benchmark"})
 # Search APIs return other works' metadata; benchmark agents reach them only via search().
 PROVIDER_API_HOSTS = frozenset({"export.arxiv.org", "api.openalex.org", "api.semanticscholar.org"})
@@ -86,9 +93,12 @@ RETRY_ATTEMPTS = 3
 # Search and listing pages on allowlisted hosts list other works outside search()'s per-item
 # screen; benchmark fetches refuse them. Each pattern must match the whole path after
 # decoding, dot-segment removal and lowercasing (``_normal_path``).
-_SE_LISTINGS = r"/|/questions|/(?:search|questions/tagged|tags|unanswered|feeds|users)(?:/.*)?"
+_SE_LISTINGS = (
+    r"/|/questions|/(?:search|questions/(?:tagged|linked|related)|tags|unanswered|feeds|users)"
+    r"(?:/.*)?"
+)
 SEARCH_PATHS = {
-    "arxiv.org": r"/(?:search|list|a|catchup|year|find|archive|multi)(?:/.*)?",
+    "arxiv.org": r"/(?:search|list|a|catchup|year|find|archive|multi|tb|prevnext)(?:/.*)?",
     "en.wikipedia.org": (
         r"/(?:w/api\.php|w/rest\.php|api)(?:/.*)?|/(?:wiki|w/index\.php)/special:.*"
     ),
@@ -105,7 +115,7 @@ _ATOM = {"a": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/
 _ARXIV_ID = r"(?:\d{4}\.\d{4,5}|[a-z]+(?:-[a-z]+)*(?:\.[a-z]+(?:-[a-z]+)*)?/\d{7})(?:v\d+)?"
 _ARXIV_DOI = re.compile(rf"10\.48550/arxiv\.({_ARXIV_ID})")
 _ARXIV_PATH = re.compile(
-    rf"/(?:abs|pdf|html|format|ps|src|e-print)/({_ARXIV_ID})(?:\.pdf)?(?:/.*)?"
+    rf"/(?:abs|pdf|html|format|ps|src|e-print|bibtex)/(?:arxiv:)?({_ARXIV_ID})(?:\.pdf)?(?:/.*)?"
 )
 _ARXIV_URL = re.compile(rf"arxiv\.org/(?:abs|pdf|html)/({_ARXIV_ID})", re.IGNORECASE)
 _OAI_ARXIV = re.compile(rf"oai:arxiv\.org:({_ARXIV_ID})(?![0-9a-z])")
@@ -114,6 +124,15 @@ _OPENALEX_PATH = re.compile(r"/(?:works/)?(w\d{4,12})")
 _DOI = re.compile(r"10\.\d{4,9}/\S+")
 _DOI_PREFIX = re.compile(r"^(?:doi\s*:?\s*|(?:https?://)?(?:dx\.|www\.)?doi\.org/)")
 _DOI_HOSTS = frozenset({"doi.org", "dx.doi.org", "www.doi.org"})
+_DOI_CLOSERS = {")": "(", "]": "[", "}": "{", ">": "<"}
+_QUOTES = "\"'`\u2018\u2019\u201c\u201d\u00ab\u00bb"
+# Identifiers embedded in other text: a blocklist entry holding one must be only that.
+_EMBEDDED_ID = re.compile(
+    rf"(?<![0-9a-z.]){_ARXIV_ID}(?![0-9])|10\.\d{{4,9}}\s*/|(?<![0-9a-z])w\d{{4,12}}(?![0-9a-z])"
+    r"|(?<!\d)\d{4}(?:\s*\.\s*\d{4,5}|\s+\d{5})(?!\d)|\b(?:arxiv|doi|openalex)\b\W*\d"
+)
+# Wikipedia selects a page by these parameters over the title; mapping them needs a lookup.
+_WIKI_OPAQUE = frozenset({"curid", "oldid", "diff", "pageid", "revid"})
 _OPENALEX_HOSTS = frozenset({"openalex.org", "api.openalex.org"})
 _SE_HOSTS = frozenset({"mathoverflow.net", "math.stackexchange.com"})
 _DOMAIN = re.compile(r"(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,63}\.?")
@@ -137,11 +156,26 @@ def _arxiv_key(raw: str) -> str:
     return f"{archive.split('.', 1)[0]}/{number}" if slash else raw
 
 
+def _trim_doi(text: str) -> str:
+    """Trailing punctuation, quotes and unbalanced closing brackets are never part of a DOI."""
+    while text:
+        last = text[-1]
+        closer = _DOI_CLOSERS.get(last)
+        if last in ".,;:" or last in _QUOTES:
+            text = text[:-1]
+        elif closer and text.count(last) > text.count(closer):
+            text = text[:-1]
+        else:
+            break
+    return text
+
+
 def _doi(value) -> str | None:
     """A lowercased DOI from a bare DOI, a ``doi:``/``DOI:`` string or a doi.org URL."""
     if not isinstance(value, str) or len(value) > MAX_URL_CHARS:
         return None
-    text = _DOI_PREFIX.sub("", unquote(value).strip().lower()).rstrip(".,;")
+    text = unquote(value).strip().lower().lstrip("([{<" + _QUOTES)
+    text = _trim_doi(_DOI_PREFIX.sub("", text))
     return text[:256] if _DOI.fullmatch(text) else None
 
 
@@ -208,22 +242,54 @@ def _url_ids(url) -> set[str]:
     return set()
 
 
-def _page_key(url) -> str | None:
-    """``host/path`` naming one page; equivalent spellings of the same page share a key."""
+def _wiki_title(raw: str) -> str:
+    """A Wikipedia title as MediaWiki reads it: no fragment, spaces as ``_``, trimmed."""
+    title = re.sub(r"[ +_]+", "_", _decoded(raw).split("#", 1)[0].strip().lower())
+    return title.strip("_").lstrip(":").strip("_")
+
+
+def _page_keys(url) -> list[str]:
+    """Every ``host/path`` key a URL may display, the one it names first.
+
+    Alternate views of one page share its key: Stack Exchange post, revision and timeline
+    views; nLab source, revision, print, history and diff views; Wikipedia ``index.php``
+    by path or ``title=`` (MediaWiki shows the last title given, even after ``/wiki/X``).
+    """
     parsed = _url_parts(url)
     if parsed is None:
-        return None
+        return []
     host, raw_path, query = parsed
     host = host.lower().removeprefix("www.")
     path = _normal_path(raw_path)
-    titles = query.get("title")
-    if host == "en.wikipedia.org" and path == "/w/index.php" and titles:
-        path = "/wiki/" + _decoded(titles[0]).strip().lower()
-    if host in _SE_HOSTS:
-        question = re.fullmatch(r"/(?:questions|q)/(\d+)(?:/.*)?", path)
-        path = f"/questions/{question.group(1)}" if question else path
-    path = re.sub(r"[ +_]+", "_", path).rstrip("/")
-    return f"{host}{path or '/'}"
+    paths = [path]
+    if host == "en.wikipedia.org":
+        article = re.fullmatch(r"/(?:wiki|w/index\.php)/(.+)", path)
+        if article:
+            paths = [f"/wiki/{_wiki_title(article.group(1))}"]
+        titles = [_wiki_title(title) for title in reversed(query.get("title", []))]
+        paths = [f"/wiki/{title}" for title in titles if title] + paths
+    elif host in _SE_HOSTS:
+        post = re.fullmatch(r"/(?:questions|q|posts|revisions|a)/(\d+)(?:/.*)?", path)
+        paths = [f"/questions/{post.group(1)}"] if post else paths
+    elif host == "ncatlab.org":
+        view = re.fullmatch(
+            r"/([^/]+)/(?:(?:show|source|print|history|published|edit|tex)(?:/diff)?/(.+)"
+            r"|revision(?:/diff)?/(.+?)(?:/\d+)?)",
+            path,
+        )
+        paths = [f"/{view.group(1)}/show/{view.group(2) or view.group(3)}"] if view else paths
+    keys = []
+    for item in paths:
+        item = re.sub(r"[ +_]+", "_", item).rstrip("/")
+        if f"{host}{item or '/'}" not in keys:
+            keys.append(f"{host}{item or '/'}")
+    return keys
+
+
+def _page_key(url) -> str | None:
+    """``host/path`` naming one page; equivalent spellings of the same page share a key."""
+    keys = _page_keys(url)
+    return keys[0] if keys else None
 
 
 def _string_ids(value) -> set[str]:
@@ -248,35 +314,147 @@ def _host_matches(host, domain: str) -> bool:
     return bool(host) and (host == domain or host.endswith(f".{domain}"))
 
 
-# Title normalization: markup, LaTeX, accents, quotes, dashes and spacing never matter.
+# Title normalization: markup, TeX, accents, quotes, dashes, spacing and invisible characters
+# never matter. A boundary that may or may not split a word (a TeX brace, an invisible
+# format character, a hyphen before a line break) is *soft*: the screen matches it joined
+# and split, and ``normalize_title`` renders it by the likelier reading.
+_SOFT_JOIN, _SOFT_SPLIT = "\x00", "\x01"
+_SOFT = _SOFT_JOIN + _SOFT_SPLIT
 _TAG = re.compile(r"</?[a-z][a-z0-9]*(?:\s[^<>]*)?/?>", re.IGNORECASE)
-_LATEX_ACCENT = re.compile(r"\\(?:[\"'`^~=.]|[uvHckbdrt](?=\s*\{))\s*\{?\s*([A-Za-z])\s*\}?")
+_SOFT_HYPHEN_BREAK = re.compile(r"\u00ad\s+")
+_LINE_BREAK_HYPHEN = re.compile(r"(?<=[^\W\d_])[-\u2010\u2011][ \t]*\r?\n\s*(?=[^\W\d_])")
+_SPACED_HYPHEN = re.compile(r"(?<=[^\W\d_])[-\u2010\u2011]\s+(?=[^\W\d_])")
+# TeX letters (\o, \ss, dotless \i ...) eat the space after them, like TeX itself.
+_TEX_LETTER = re.compile(r"\\(ss|ae|AE|oe|OE|aa|AA|o|O|l|L|i|j)(?![A-Za-z])\s*(?:\{\})?")
+_TEX_LETTERS = {"ss": "ss", "ae": "ae", "oe": "oe", "aa": "a", "o": "o", "l": "l", "i": "i"}
+_LATEX_ACCENT = re.compile(
+    r"\\(?:[\"'`^~=.]|[uvHckbdrt](?![A-Za-z]))\s*(?:\{\s*([^\W\d_])\s*\}|([^\W\d_]))"
+)
+_LATEX_VAR = re.compile(r"\\var(?=(?:epsilon|phi|theta|pi|rho|sigma|kappa)(?![A-Za-z]))")
 _LATEX_STYLE = re.compile(
     r"\\(?:math[a-z]*|text[a-z]*|emph|operatorname|boldsymbol|bm|rm|bf|it|sf|tt|cal|scr"
     r"|frak|left|right|[bB]ig+[lr]?)(?![A-Za-z])\*?"
 )
 _LATEX_COMMAND = re.compile(r"\\([A-Za-z]+)")
 _WORD = re.compile(r"[^\W\d_]+|\d+")
-_GREEK = {
+_FOLD = {
     code: f" {unicodedata.name(chr(code)).rsplit(' ', 1)[-1].lower()} "
     for code in range(0x391, 0x3CA)
     if unicodedata.name(chr(code), "").startswith("GREEK")
 }
+# Letters without a Unicode decomposition fold like their plain TeX spellings.
+_FOLD.update(str.maketrans({"ø": "o", "ł": "l", "đ": "d", "ð": "d", "æ": "ae", "œ": "oe"}))
+_FOLD.update(str.maketrans({"ħ": "h", "ı": "i", "ŀ": "l", "þ": "th"}))
+# Words that cannot make a title fragment distinctive: English function words and the most
+# common words of mathematics and physics titles. Deterministic, never fetched.
+_COMMON_WORDS = frozenset(
+    """
+    a about above across al all am among an and any are as at be been being below between
+    both but by can could de der des did die do does done du each eg either et etc every for
+    from had has have he her here hers him his how i ie if in into is it its la le les may
+    me might must my neither no nor not of on one ones onto or our ours over per s shall she
+    should so some such than that the their theirs them then there these they this those
+    through thus to under und upon us versus via von vs was we were what when where whether
+    which who whom whose why will with within without would yet you your
+    analysis applications application approach approaches aspects based behavior behaviour
+    beyond bound bounds case cases certain class classes classical classification comment
+    comments condition conditions conjecture conjectures construction dimension dimensional
+    dimensions dynamic dynamical dynamics effect effects energy equation equations estimate
+    estimates exact existence field fields finite first form forms four framework function
+    functional functions general generalized geometric geometry group groups high higher
+    infinite introduction invariant invariants large lecture lectures lemma limit limits
+    linear local low mathematical mathematics measure measures method methods model modeling
+    models new non nonlinear note notes novel number numbers operator operators order orders
+    part particle particles parts physical physics point points problem problems progress
+    proof proofs properties property quantum question questions random recent remark remarks
+    representation representations result results review revisited role second set sets
+    simple small solution solutions space spaces spacetime state states statistical structure
+    structures studies study survey system systems theorem theorems theoretical theories
+    theory third three time towards toward two type types uniqueness using value values view
+    """.split()
+)
+
+
+def _unescape(text: str) -> str:
+    """HTML entities decoded until stable (bounded), so double escaping cannot hide text."""
+    for _ in range(4):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    return text
+
+
+def _marked(text: str) -> str:
+    """Casefolded plain text with soft boundaries marked (see ``_SOFT``)."""
+    text = _unescape(text).replace(_SOFT_JOIN, " ").replace(_SOFT_SPLIT, " ")
+    text = _SOFT_HYPHEN_BREAK.sub(_SOFT_JOIN, _TAG.sub(" ", text))
+    text = _SPACED_HYPHEN.sub(_SOFT_SPLIT, _LINE_BREAK_HYPHEN.sub(_SOFT_JOIN, text))
+    text = _TEX_LETTER.sub(lambda m: _TEX_LETTERS.get(m.group(1).lower(), m.group(1)), text)
+    text = _LATEX_ACCENT.sub(lambda m: m.group(1) or m.group(2), text)
+    text = _LATEX_COMMAND.sub(r" \1 ", _LATEX_STYLE.sub(" ", _LATEX_VAR.sub(r"\\", text)))
+    text = unicodedata.normalize("NFKD", re.sub(r"[{}]", _SOFT_JOIN, text)).casefold()
+    if not text.isascii():
+        text = "".join(
+            _SOFT_JOIN if unicodedata.category(ch) == "Cf" else ch
+            for ch in text
+            if not unicodedata.combining(ch)
+        )
+    return text.translate(_FOLD)
+
+
+def _title_tokens(text: str) -> tuple[list[str], list[str]]:
+    """Words of a title or text, and the boundary after each word but the last: ``" "``
+    (hard), ``_SOFT_JOIN`` or ``_SOFT_SPLIT`` (soft, read joined or split by preference)."""
+    marked = _marked(text)
+    words, gaps, end = [], [], 0
+    for match in _WORD.finditer(marked):
+        if words:
+            gap = marked[end : match.start()]
+            soft = bool(gap) and not gap.strip(_SOFT)
+            gaps.append((_SOFT_SPLIT if _SOFT_SPLIT in gap else _SOFT_JOIN) if soft else " ")
+        words.append(match.group())
+        end = match.end()
+    return words, gaps
 
 
 def normalize_title(text: str) -> str:
     """Lowercase words and numbers of a title or text, independent of how it was typeset.
 
-    HTML entities and tags, LaTeX accents, style commands and math delimiters, Unicode
-    compatibility forms (ligatures, double-struck letters, subscripts), accents, quotes,
-    dashes and spacing are all dropped; Greek letters and ``\\alpha`` both become ``alpha``.
+    HTML entities (even double-escaped) and tags, TeX accents in every brace style
+    (``Poincar\\'e``, ``Poincar{\\'e}``, ``Erd{\\H o}s``), TeX letters (``\\o``, ``\\ss``,
+    ``\\i``), style commands and math delimiters, Unicode compatibility forms, accents,
+    invisible format characters (soft hyphens, zero-width spaces), quotes, dashes and
+    spacing are all dropped; Greek letters, ``\\alpha`` and ``\\varphi``/``\\phi`` become
+    their names. A word hyphenated across a line break is joined.
     """
-    text = _TAG.sub(" ", html.unescape(text))
-    text = _LATEX_ACCENT.sub(r"\1", text)
-    text = _LATEX_COMMAND.sub(r" \1 ", _LATEX_STYLE.sub(" ", text))
-    text = unicodedata.normalize("NFKD", text).casefold()
-    text = "".join(ch for ch in text if not unicodedata.combining(ch)).translate(_GREEK)
-    return " ".join(_WORD.findall(text))
+    words, gaps = _title_tokens(text)
+    if not words:
+        return ""
+    return "".join(
+        ("" if gap == _SOFT_JOIN else " ") + word
+        for gap, word in zip([_SOFT_JOIN, *gaps], words, strict=True)
+    )
+
+
+def _soft_pattern(title: str) -> re.Pattern:
+    """A normalized fragment as whole words of a soft haystack (``_title_hit``): a soft
+    boundary (NUL) may fall inside a word or between two."""
+    words = ("\x00?".join(map(re.escape, word)) for word in title.split())
+    return re.compile("(?<=[ \x00])" + "[ \x00]".join(words) + "(?=[ \x00])")
+
+
+def _content_words(words) -> list[str]:
+    return [w for w in words if len(w) > 1 and not w.isdigit() and w not in _COMMON_WORDS]
+
+
+def _broad_title(title: str) -> bool:
+    """A fragment short or generic enough to withhold many unrelated results."""
+    words = title.split()
+    return len(words) < 3 or len(_content_words(words)) < 2
+
+
+_PAIRS = {"(": ")", "[": "]", "{": "}", "<": ">", '"': '"', "'": "'", "“": "”", "‘": "’", "«": "»"}
 
 
 def classify_blocked_source(entry) -> tuple[str, str]:
@@ -285,11 +463,15 @@ def classify_blocked_source(entry) -> tuple[str, str]:
     ``arxiv``: an id in any spelling (``arXiv: 2101.00001v2 [math-ph]``, ``math.AP/0601001``,
     abs/pdf/html URLs with or without a scheme, ``10.48550/arXiv.<id>``). ``doi``: bare,
     ``doi:``/``DOI:`` or doi.org forms, case-insensitive. ``openalex``: ``W…`` or its URL.
-    ``url``: one page. ``domain``: a bare host. ``title``: a fragment of two or more words.
+    ``url``: one page. ``domain``: a bare host. ``title``: a fragment of two or more words
+    with a distinctive word in it. An entry that carries an identifier inside other text is
+    refused rather than read as a title, which would never block the identifier.
     """
     if not isinstance(entry, str):
         raise ValueError("a blocklist entry must be text")
     text = unicodedata.normalize("NFKC", entry).strip().strip("<>").strip()
+    while len(text) >= 2 and _PAIRS.get(text[0]) == text[-1]:
+        text = text[1:-1].strip()
     lowered = text.lower()
     if not lowered or len(lowered) > 500:
         raise ValueError("a blocklist entry must hold 1-500 characters")
@@ -326,29 +508,60 @@ def classify_blocked_source(entry) -> tuple[str, str]:
         or (not re.search(r"\s", text) and re.search(r"\d", text))
     ):
         raise ValueError("a malformed identifier")
+    if _EMBEDDED_ID.search(lowered):
+        raise ValueError(
+            "an identifier inside other text: list the arXiv id, DOI or OpenAlex id on its own"
+        )
     title = normalize_title(text)
     words = title.split()
     if len(words) < MIN_TITLE_WORDS or sum(map(len, words)) < MIN_TITLE_CHARS:
         raise ValueError("too short to serve as a title fragment")
+    if sum(map(len, _content_words(words))) < MIN_CONTENT_CHARS:
+        raise ValueError(
+            "too common to serve as a title fragment: it would withhold most results; "
+            "quote a distinctive phrase of the title"
+        )
     return "title", title
 
 
-def blocklist_problems(entries) -> list[int]:
-    """Indexes of blocklist entries that cannot be classified (see classify_blocked_source)."""
+def blocklist_errors(entries) -> list[tuple[int, str]]:
+    """``(index, reason)`` for every blocklist entry that cannot be classified."""
     problems = []
     for index, entry in enumerate(entries or []):
         try:
             classify_blocked_source(entry)
-        except ValueError:
-            problems.append(index)
+        except ValueError as exc:
+            problems.append((index, str(exc)))
     return problems
 
 
-def blocklist_notes(entries) -> list[str]:
-    """Advisory codes for a valid blocklist that names works in one form only.
+def blocklist_problems(entries) -> list[int]:
+    """Indexes of blocklist entries that cannot be classified (see classify_blocked_source)."""
+    return [index for index, _reason in blocklist_errors(entries)]
 
-    Without extra network calls the broker learns that an arXiv id and a journal DOI name
-    one work only when a provider record carries both, so operators list both forms.
+
+def broad_title_entries(entries) -> list[int]:
+    """Indexes of valid title fragments with fewer than three words or two distinctive
+    words: each may withhold many unrelated results."""
+    broad = []
+    for index, entry in enumerate(entries or []):
+        try:
+            kind, key = classify_blocked_source(entry)
+        except ValueError:
+            continue
+        if kind == "title" and _broad_title(key):
+            broad.append(index)
+    return broad
+
+
+def blocklist_notes(entries) -> list[str]:
+    """Advisory codes for a valid blocklist.
+
+    ``LITERATURE_BLOCKLIST_ONE_FORM``: works named in one form only. Without extra network
+    calls the broker learns that an arXiv id and a journal DOI name one work only when a
+    provider record carries both, so operators list both forms.
+    ``LITERATURE_BLOCKLIST_BROAD_TITLE``: a title fragment that may withhold many unrelated
+    results (see ``broad_title_entries``).
     """
     kinds = set()
     for entry in entries or []:
@@ -356,7 +569,8 @@ def blocklist_notes(entries) -> list[str]:
             kinds.add(classify_blocked_source(entry)[0])
         except ValueError:
             continue
-    return ["LITERATURE_BLOCKLIST_ONE_FORM"] if len(kinds & {"arxiv", "doi"}) == 1 else []
+    notes = ["LITERATURE_BLOCKLIST_ONE_FORM"] if len(kinds & {"arxiv", "doi"}) == 1 else []
+    return notes + (["LITERATURE_BLOCKLIST_BROAD_TITLE"] if broad_title_entries(entries) else [])
 
 
 def _key_pattern(keys) -> re.Pattern | None:
@@ -379,6 +593,16 @@ def _key_pattern(keys) -> re.Pattern | None:
         elif kind == "openalex":
             parts.append(rf"(?<![0-9a-z]){value}(?!\d)")
     return re.compile("|".join(parts)) if parts else None
+
+
+def _key_text(text: str) -> str:
+    """Text as identifiers are matched in it: HTML entities decoded (even double-escaped),
+    compatibility forms such as fullwidth digits folded, JSON ``\\/`` escapes undone and
+    invisible format characters removed."""
+    text = unicodedata.normalize("NFKC", _unescape(text)).lower().replace("\\/", "/")
+    if text.isascii():
+        return text
+    return "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
 
 
 def _identity(item: dict) -> set[str]:
@@ -449,6 +673,15 @@ def _search_endpoint(url: str, host: str) -> bool:
     # MediaWiki runs a search for any request that carries a search parameter, and every
     # Special: page (search, all pages, what links here, ...) is a listing.
     return bool(names & {"search", "fulltext"}) or any(t.startswith("special:") for t in titles)
+
+
+def _opaque_view(url: str, host: str) -> bool:
+    """A Wikipedia URL that picks its page by page id or revision, which overrides any
+    title: knowing which page it shows would take a lookup, so benchmark fetches refuse it."""
+    if host != "en.wikipedia.org":
+        return False
+    query = parse_qs(urlsplit(url).query, keep_blank_values=True)
+    return bool({name.lower() for name in query} & _WIKI_OPAQUE)
 
 
 def _header(headers, name: str) -> str:
@@ -663,11 +896,14 @@ class HostLimiter:
     @contextmanager
     def slot(self, host: str):
         bucket = self._bucket(host)
+        queued = self.clock()
         if not bucket.lock.acquire(timeout=self.max_wait):
             raise _busy()
         try:
-            wait = bucket.ready_at - self.clock()
-            if wait > self.max_wait:
+            now = self.clock()
+            wait = bucket.ready_at - now
+            # Time spent queueing for the lock counts against the same bound.
+            if wait > self.max_wait - (now - queued):
                 raise _busy()
             if wait > 0:
                 self.sleep(wait)
@@ -686,6 +922,27 @@ class HostLimiter:
 
 
 LIMITER = HostLimiter()
+# Literature calls wait on per-host pacing for up to MAX_QUEUE_SECONDS, so they run on their
+# own small pool: agents queueing for arXiv never starve the event loop's default executor,
+# which the worker shares with verification and the model runtime.
+LITERATURE_THREADS = 8
+EXECUTOR = ThreadPoolExecutor(LITERATURE_THREADS, thread_name_prefix="literature")
+
+
+async def run_blocking(function, *args):
+    """``asyncio.to_thread`` on the literature pool (context variables included). A call
+    still queued after MAX_QUEUE_SECONDS fails fast with LITERATURE_RATE_LIMITED."""
+    context = contextvars.copy_context()
+    queued = time.monotonic()
+
+    def run():
+        if time.monotonic() - queued > MAX_QUEUE_SECONDS:
+            raise _busy()
+        return context.run(function, *args)
+
+    return await asyncio.get_running_loop().run_in_executor(EXECUTOR, run)
+
+
 _REDIRECTS = frozenset({301, 302, 303, 307, 308})
 _BUSY = frozenset({429, 503})
 
@@ -705,8 +962,17 @@ def _retry_after(headers) -> float | None:
     return min(max((when - datetime.now(UTC)).total_seconds(), 0.0), MAX_BACKOFF_SECONDS)
 
 
+def _too_large() -> HarnessError:
+    return HarnessError(
+        "LITERATURE_FETCH_TOO_LARGE",
+        f"Sources larger than {MAX_FETCH_BYTES} bytes are not fetched.",
+        status=413,
+    )
+
+
 def _read_bounded(response, deadline: float) -> bytes:
-    """At most MAX_FETCH_BYTES + 1 decoded bytes: decompression output is capped as it runs."""
+    """At most MAX_FETCH_BYTES + 1 decoded bytes: decompression output is capped as it runs,
+    every gzip member is decoded under that one cap, and compressed input is capped too."""
     codings = [c.strip() for c in _header(response.headers, "content-encoding").lower().split(",")]
     codings = [c for c in codings if c and c != "identity"]
     if len(codings) > 1 or (codings and codings[0] not in ("gzip", "x-gzip", "deflate")):
@@ -720,14 +986,26 @@ def _read_bounded(response, deadline: float) -> bytes:
     if response.is_stream_consumed:
         # Only an in-memory response (a test double) arrives already read and decoded.
         return bytes(response.content[:limit])
+    members = bool(codings) and codings[0] != "deflate"
     decoder = zlib.decompressobj(zlib.MAX_WBITS | 32) if codings else None
-    first, body = True, bytearray()
+    first, body, raw = True, bytearray(), 0
     for chunk in response.iter_raw(RAW_CHUNK_BYTES):
         data = chunk
         if decoder is None:
             body += chunk[: limit - len(body)]
             data = b""
+        else:
+            raw += len(chunk)
+            if raw > limit:
+                raise _too_large()
         while data and len(body) < limit:
+            if decoder.eof:
+                # A gzip body may hold several members (zero padding between is allowed);
+                # anything after a deflate stream is ignored.
+                data = data.lstrip(b"\0") if members else b""
+                if not data:
+                    break
+                decoder = zlib.decompressobj(zlib.MAX_WBITS | 32)
             try:
                 body += decoder.decompress(data, limit - len(body))
             except zlib.error:
@@ -736,7 +1014,8 @@ def _read_bounded(response, deadline: float) -> bytes:
                 # Some servers send raw deflate data without the zlib wrapper.
                 decoder, first = zlib.decompressobj(-zlib.MAX_WBITS), False
                 continue
-            first, data = False, decoder.unconsumed_tail
+            first = False
+            data = decoder.unconsumed_tail or (decoder.unused_data if decoder.eof else b"")
         if len(body) >= limit:
             break
         if time.monotonic() > deadline:
@@ -923,12 +1202,16 @@ class LiteratureBroker:
         try:
             classified = [classify_blocked_source(item) for item in blocked]
         except ValueError as exc:
+            problems = blocklist_errors(blocked)
             raise HarnessError(
                 "LITERATURE_POLICY_INVALID",
                 "Every blocked_sources entry must be an arXiv id, DOI, OpenAlex id, URL, "
-                "domain or title fragment.",
+                "domain or distinctive title fragment.",
                 status=422,
-                details={"entries": blocklist_problems(blocked)},
+                details={
+                    "entries": [index for index, _ in problems],
+                    "reasons": [reason for _, reason in problems],
+                },
             ) from exc
         self.mode = mode
         self._benchmark = mode == "benchmark"
@@ -938,6 +1221,9 @@ class LiteratureBroker:
         self._pages = frozenset(key for kind, key in classified if kind == "url")
         self._domains = frozenset(key for kind, key in classified if kind == "domain")
         self._titles = tuple(sorted({key for kind, key in classified if kind == "title"}))
+        self._title_patterns = tuple(
+            (title.replace(" ", ""), _soft_pattern(title)) for title in self._titles
+        )
         # Identities of works the screen withheld, e.g. the arXiv copy of a blocked DOI.
         self._learned: set[str] = set()
         self._keys = _key_pattern(self._ids)
@@ -977,17 +1263,29 @@ class LiteratureBroker:
             )
 
     def _title_hit(self, text: str) -> bool:
+        """Whole-word match of a fragment; a soft boundary matches joined or split."""
         if not self._titles:
             return False
-        haystack = f" {normalize_title(text)} "
-        return any(f" {title} " in haystack for title in self._titles)
+        words, gaps = _title_tokens(text)
+        if all(gap == " " for gap in gaps):
+            haystack = f" {' '.join(words)} "
+            return any(f" {title} " in haystack for title in self._titles)
+        compact = "".join(words)
+        haystack = "".join(
+            (" " if gap == " " else "\x00") + word
+            for gap, word in zip([" ", *gaps], words, strict=True)
+        )
+        return any(
+            needle in compact and pattern.search(f"{haystack} ")
+            for needle, pattern in self._title_patterns
+        )
 
     def _contamination(self, text: str) -> dict | None:
         """The withholding flag for text released to benchmark agents, if any."""
         measured = _measure(self._reference, text, 8)
         threshold = max(OVERLAP_FLOOR, round(self._threshold * measured["reference_ngrams"], 6))
         reason = None
-        if self._keys and self._keys.search(text.lower()):
+        if self._keys and (self._keys.search(text.lower()) or self._keys.search(_key_text(text))):
             reason = "blocked_source_key"
         elif self._title_hit(text):
             reason = "blocked_source_title"
@@ -1008,12 +1306,14 @@ class LiteratureBroker:
             return True
         if not (self._pages or self._domains):
             return False
-        page = _page_key(url)
-        if page is None:
+        pages = _page_keys(url)
+        if not pages:
             return False
-        host = page.split("/", 1)[0]
+        host = pages[0].split("/", 1)[0]
         return any(_host_matches(host, domain) for domain in self._domains) or any(
-            page == blocked or page.startswith(blocked + "/") for blocked in self._pages
+            page == blocked or page.startswith(blocked + "/")
+            for page in pages
+            for blocked in self._pages
         )
 
     def _item_blocked(self, item: dict, keys: set[str]) -> bool:
@@ -1136,6 +1436,12 @@ class LiteratureBroker:
                 "LITERATURE_SOURCE_BLOCKED",
                 "Benchmark runs reach search and listing pages only through search: "
                 "use search_literature.",
+            )
+        if self._benchmark and _opaque_view(url, host):
+            raise _blocked(
+                "LITERATURE_SOURCE_BLOCKED",
+                "Benchmark runs refuse page-id and revision URLs, whose page cannot be "
+                "checked: fetch the page by its title.",
             )
         if self._benchmark and self._page_blocked(url):
             raise _blocked(
