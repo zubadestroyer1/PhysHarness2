@@ -113,8 +113,10 @@ tools, the prompts and the delivery shapes.
     claims. The score is attention, never proof.
 - **Status ladder.** `informal` → `refereed` → `formally_stated` → `compiles_locally` →
   `accepted`, with `abandoned` (the author, with a reason) and `refuted` as exits.
-  - Only platform code moves a node. A sound referee quorum makes it refereed. A
-    faithful fidelity review of a statement that elaborates makes it formally stated. A
+  - Only platform code moves a node. A sound referee quorum makes it refereed, unless a
+    standing `wrong` verdict vetoes it or gap reports match the sound verdicts. A
+    faithful fidelity review of a statement that elaborates makes it formally stated,
+    unless a standing `unfaithful` verdict vetoes that Lean statement. A
     complete compile of the node's exact Lean statement as a top-level theorem, reported
     with only standard axioms, makes it compile locally. That compile (like statement
     elaboration) runs in the agent-controlled workspace VM, so `compiles_locally` is
@@ -137,8 +139,16 @@ tools, the prompts and the delivery shapes.
   - Status moves are posted by the platform.
 - **Referees.** `request_review` makes the platform create an isolated referee:
   - a detached branch with no parent and no lab, marked `hat="referee"`;
-  - on a different model family when the experiment records one;
+  - on a model family other than the author's when the experiment records one (for a
+    fidelity review, also other than every branch that has claimed the node, since any
+    of them may have written the Lean statement), spreading a quorum over families;
+    `cross_model` reports whether that held;
   - unreachable by direct message or delegation from other branches.
+
+  A node cannot shop for verdicts: each text version gets at most the positive verdicts
+  it needs plus two referees (`REVIEW_RETRIES`), so `referee_quorum + 2` informal
+  referees in all and three per Lean statement, and at most nine fidelity referees per
+  node (`REVIEW_LIMIT`). A referee that ends without a verdict does not count.
 
   The referee submits one verdict. Negative verdicts stay on the thread as objections.
   Its tool profile only reads and checks: no `commons_node`, `commons_claim`,

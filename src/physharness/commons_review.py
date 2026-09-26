@@ -174,6 +174,35 @@ def _model_family(configuration):
     return (configuration.get("runtime"), configuration.get("model"))
 
 
+def _version_keys(scope):
+    """Assignment keys naming one text version: what makes each kind of review stale."""
+    keys = ("node_id", "scope", "statement_sha256")
+    return (*keys, "lean_statement_sha256") if scope == "fidelity" else keys
+
+
+def _referee_tasks(experiment, assignment, keys):
+    """Filters for referee tasks whose assignment matches ``keys``, and a correlated
+    subquery for the review each one submitted."""
+    review = aliased(RecordRow)
+    submitted = select(review.id).where(
+        review.project_id == experiment.project_id,
+        review.kind == "commons_review",
+        review.payload["experiment_id"].as_string() == experiment.id,
+        review.payload["task_id"].as_string() == RecordRow.id,
+    )
+    filters = [
+        RecordRow.project_id == experiment.project_id,
+        RecordRow.kind == "task",
+        record_json_text("experiment_id") == experiment.id,
+        record_json_text("hat") == REFEREE_HAT,
+        *(
+            RecordRow.payload[("review_assignment", key)].as_string() == assignment[key]
+            for key in keys
+        ),
+    ]
+    return filters, submitted
+
+
 def _referee_isolated():
     return HarnessError(
         "REFEREE_ISOLATED",
@@ -300,42 +329,14 @@ class CommonsReviewMixin:
         )
 
     @staticmethod
-    def _version_keys(scope):
-        """Assignment keys naming one text version: what makes each kind of review stale."""
-        keys = ("node_id", "scope", "statement_sha256")
-        return (*keys, "lean_statement_sha256") if scope == "fidelity" else keys
-
-    @staticmethod
-    def _referee_tasks(experiment, assignment, keys):
-        """Filters for referee tasks whose assignment matches ``keys``, and a correlated
-        subquery for the review each one submitted."""
-        review = aliased(RecordRow)
-        submitted = select(review.id).where(
-            review.project_id == experiment.project_id,
-            review.kind == "commons_review",
-            review.payload["experiment_id"].as_string() == experiment.id,
-            review.payload["task_id"].as_string() == RecordRow.id,
-        )
-        filters = [
-            RecordRow.project_id == experiment.project_id,
-            RecordRow.kind == "task",
-            record_json_text("experiment_id") == experiment.id,
-            record_json_text("hat") == REFEREE_HAT,
-            *(
-                RecordRow.payload[("review_assignment", key)].as_string() == assignment[key]
-                for key in keys
-            ),
-        ]
-        return filters, submitted
-
-    def _open_review_task(self, session, experiment, assignment):
+    def _open_review_task(session, experiment, assignment):
         """The live, not yet submitted referee task for the same review, in one query.
 
         Informal requests match on (node, scope, statement digest); fidelity requests also on
         the Lean digest, mirroring what makes each kind of review stale.
         """
-        filters, submitted = self._referee_tasks(
-            experiment, assignment, self._version_keys(assignment["scope"])
+        filters, submitted = _referee_tasks(
+            experiment, assignment, _version_keys(assignment["scope"])
         )
         return session.scalar(
             select(RecordRow)
@@ -348,7 +349,8 @@ class CommonsReviewMixin:
             .limit(1)
         )
 
-    def _review_panel(self, session, experiment, assignment):
+    @staticmethod
+    def _review_panel(session, experiment, assignment):
         """The referees this text version already has, within the review-shopping bound.
 
         A referee counts once it submitted a verdict or while its task is live; one that
@@ -357,18 +359,20 @@ class CommonsReviewMixin:
         """
         scope = assignment["scope"]
         required = experiment.payload["society"]["referee_quorum"] if scope == "informal" else 1
-        bounds = [(self._version_keys(scope), required + REVIEW_RETRIES)]
+        bounds = [(_version_keys(scope), required + REVIEW_RETRIES)]
         if scope == "fidelity":
             bounds.append((("node_id", "scope"), MAX_FIDELITY_REVIEWS))
         panel = None
         for keys, limit in bounds:
-            filters, submitted = self._referee_tasks(experiment, assignment, keys)
+            filters, submitted = _referee_tasks(experiment, assignment, keys)
             given = or_(
                 record_json_text("status").not_in(TERMINAL_TASK_STATUSES), submitted.exists()
             )
-            rows = session.scalars(
-                select(RecordRow).where(*filters, given).order_by(RecordRow.id).limit(limit)
-            ).all()
+            rows = list(
+                session.scalars(
+                    select(RecordRow).where(*filters, given).order_by(RecordRow.id).limit(limit)
+                )
+            )
             if len(rows) >= limit:
                 raise HarnessError(
                     "REVIEW_LIMIT",
