@@ -398,13 +398,20 @@ Each item needs the user. None has been started.
 - **Local compiles rest on the statement check.** `lean_check` records a local compile
   only when the platform's statement check passes (docs/RESEARCH_NETWORK.md). The kernel
   re-checks every declaration of the compiled file. The theorem's elaborated type must
-  equal the node statement's under `lean_header` alone. The axioms the check collects
-  itself must be within `propext`, `Classical.choice` and `Quot.sound` (R23).
+  equal the node statement's under `lean_header` alone, each with its own file's
+  definitions (such as `match` matchers) unfolded. The axioms the check collects itself
+  must be within `propext`, `Classical.choice` and `Quot.sound` (R23).
+  - Node headers: import, open, set_option and universe lines, no command keyword among
+    their names, and set_option only for elaboration limits, auto-bound implicits, `pp.*`
+    and `linter.*`.
   - Cost: each recorded compile runs three more Lean processes in the VM (the file, the
     reference statement, the checker), each importing the header.
   - It needs `python3` and `lake` in the VM, as the REPL daemon and the one-shot
     fallback already do, and runs the same way on v1 and v2.
-  - `compiles_locally` stays VM-attested: it resists forged Lean source, not a tampered
-    VM.
+  - `compiles_locally` stays VM-attested. The checker process loads the file only as data
+    and defeats elaboration-level tricks (instances, macros, `#print axioms` overrides,
+    skipped kernel checks). But compiling the file runs its compile-time code (`#eval`,
+    `run_cmd`) in the VM, which, like a `shell` command, can tamper with the checker,
+    the reference or the imported `.olean` files.
 - **E2B file cap.** On E2B, `write_file` is capped at 32,768 bytes per file (R23), and the
   workspace archive at 64 KiB (section 8, item 7).

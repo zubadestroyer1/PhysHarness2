@@ -123,21 +123,28 @@ tools, the prompts and the delivery shapes.
     standing `wrong` verdict vetoes it or gap reports match the sound verdicts. A
     faithful fidelity review of a statement that elaborates makes it formally stated,
     unless a standing `unfaithful` verdict vetoes that Lean statement.
-    A node's Lean header may hold only import, open, set_option and universe lines, and
-    its Lean statement must be one declaration signature (no `:=`, `where` or `| … =>`
-    outside brackets). So no text in either can end the elaborated declaration early
-    (with `#exit`, say). The commons service enforces this whoever calls it.
+    A node's Lean header may hold only import, open, set_option and universe lines, one
+    command per line and with no command keyword among their names. It may set only
+    elaboration limits, auto-bound implicits and `pp.*` or `linter.*` options: others can
+    write files (`trace.profiler.output`) or skip the kernel. Its Lean statement must be
+    one declaration signature (no `:=`, `where` or `| … =>` outside brackets). Neither may
+    end inside a comment or literal. So no text in either can end the elaborated
+    declaration early (with `#exit`, say). The commons service enforces this whoever
+    calls it.
   - A local compile makes a formally stated node compile locally only when the harness
     statement check passes; the file's own output never decides. After a complete
     `lean_check` with `node_id`, the platform compiles the file, and a reference
     `<lean_header> theorem <lean_name> <lean_statement> := sorry`, to `.olean` files.
-    A harness-authored Lean checker (`formal_tools/statement_check.lean`) then reads
-    both files as data and runs none of the file's code. It:
+    A harness-authored Lean checker (`formal_tools/statement_check.lean`) then loads
+    both `.olean` files as data: the checker process elaborates none of the file's syntax
+    and runs none of its code. It:
     - replays every declaration of the file through the kernel, so a declaration added
       with `debug.skipKernelTC` is rejected;
     - requires the theorem's elaborated type and universe parameters to equal the
       reference's, so an instance, macro or option in the file that changes what the
-      statement's text means is rejected;
+      statement's text means is rejected. Each type is compared with its own file's
+      definitions and theorems unfolded, so the matcher the elaborator makes for a
+      `match` in the statement counts by its meaning, not its name;
     - collects the theorem's axioms itself, so a redefined `#print axioms` cannot forge
       them.
 
@@ -145,11 +152,15 @@ tools, the prompts and the delivery shapes.
     enforces that rule, and that the compile names the node's current statement,
     whoever calls it. Every backend (REPL daemon, inline REPL, one-shot) runs the same
     check, and any failure to run it records nothing.
-  - The check, like statement elaboration, runs in the agent-controlled workspace VM.
-    So `compiles_locally` is VM-attested evidence, not a trusted platform compile: it
-    resists forgery through submitted Lean source, not tampering with the VM itself (its
-    files, binaries or libraries). Only independent acceptance is trusted: the
-    independent receipt on the exact target accepts the goal.
+  - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
+    compiling the file there runs the file's compile-time code (`#eval`, `run_cmd`, and
+    any elaborator, macro or tactic it defines). That code can read and write VM files
+    like any `shell` command: the checker, the reference, and the imported `.olean` files
+    the checker trusts (it replays only the file's own declarations). So the check defeats
+    elaboration-level tricks (instances, macros, `#print axioms` overrides, skipped kernel
+    checks), but a file or command that tampers with the VM can still reach
+    `compiles_locally`. It is VM-attested evidence, never acceptance. Only independent
+    acceptance is trusted: the independent receipt on the exact target accepts the goal.
   - Changing a Lean statement moves the node back down. The statement digest encodes the
     header, name and statement unambiguously (a canonical JSON array).
   - In S1 no platform path refutes a node or accepts a non-root node.
