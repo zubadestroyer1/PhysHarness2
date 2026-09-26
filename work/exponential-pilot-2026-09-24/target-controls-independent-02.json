@@ -1,0 +1,262 @@
+{
+  "status": "passed",
+  "run_id": "6b28d39a-fddd-4f68-8605-7bc2a285bc42",
+  "results": [
+    {
+      "id": "classical.damped_oscillator.exponential_energy_envelope",
+      "expected_status": "verified",
+      "expected_code": "kernel_checked",
+      "required_diagnostic_substrings": [],
+      "outcome": {
+        "status": "verified",
+        "assurance": "independent_kernel",
+        "code": "kernel_checked",
+        "message": "Pinned Comparator accepted the candidate.",
+        "remediation": "",
+        "target_digest": "b3cb69717b821e8a6c4fe2c999ee3fb74b213f560ab64c17f335d15956e7406d",
+        "challenge_sha256": "20df4f3dbfac2b36ec05ac14110df793bc84e7121a7855e9ef28ad4655023aa5",
+        "candidate_sha256": "1c3d49e069403ab61554e6430935a4531c0e2263ae54c73e65452e10f6b0ad09",
+        "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+        "axioms": [
+          "propext",
+          "Quot.sound",
+          "Classical.choice"
+        ],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 0,
+          "comparator_output": "Building Challenge\n\u26a0 [8706/8707] Built Challenge (1.9s)\nwarning: Challenge.lean:9:8: declaration uses `sorry`\nBuild completed successfully (8707 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2139 [8706/8707] Built Solution (3.7s)\ninfo: Solution.lean:117:0: 'physics_target' depends on axioms: [propext, Classical.choice, Quot.sound]\nBuild completed successfully (8707 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nRunning nanoda kernel on solution\nNanoda kernel accepts the solution\nRunning Lean default kernel on solution.\nLean default kernel accepts the solution\nYour solution is okay!\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-5062f7a41f5b4c0bb0ea9da521c570bb",
+            "exit_code": 0,
+            "output": "physharness-check-5062f7a41f5b4c0bb0ea9da521c570bb\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "classical.damped_oscillator.exponential_energy_envelope.weaker_conclusion",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "Challenge and solution theorem statement do not match: 'physics_target'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "d3a67dffe76ddaeeff3145378f577504df52d24e5071a6c56ce2b17864402e3f",
+        "challenge_sha256": "20df4f3dbfac2b36ec05ac14110df793bc84e7121a7855e9ef28ad4655023aa5",
+        "candidate_sha256": "35df3e86e4a6bb5495eb7cb69401fee2bc2b5ba57a8298d9a589645c1726e509",
+        "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "Building Challenge\n\u26a0 [8706/8707] Built Challenge (1.9s)\nwarning: Challenge.lean:9:8: declaration uses `sorry`\nBuild completed successfully (8707 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u26a0 [8706/8707] Built Solution (1.9s)\nwarning: Solution.lean:11:5: Variable name `hq` is not explicitly referenced.\n\nHint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:\n  [apply] _hq\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`\nwarning: Solution.lean:12:5: Variable name `hv` is not explicitly referenced.\n\nHint: The binding can be removed (if unused) or named `_` (if used implicitly). Alternatively, prefix the name with `_` to silence this warning:\n  [apply] _hv\n\nNote: This linter can be disabled with `set_option linter.unusedVariables false`\ninfo: Solution.lean:18:0: 'physics_target' depends on axioms: [propext, Classical.choice, Quot.sound]\nBuild completed successfully (8707 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Challenge and solution theorem statement do not match: 'physics_target'\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-4003206235754d1dbbb19aa50eb4f30f",
+            "exit_code": 0,
+            "output": "physharness-check-4003206235754d1dbbb19aa50eb4f30f\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    },
+    {
+      "id": "classical.damped_oscillator.exponential_energy_envelope.prefactor_one",
+      "expected_status": "blocked",
+      "expected_code": "comparator_failed",
+      "required_diagnostic_substrings": [
+        "Challenge and solution theorem statement do not match: 'physics_target'"
+      ],
+      "outcome": {
+        "status": "blocked",
+        "assurance": "none",
+        "code": "comparator_failed",
+        "message": "Comparator did not verify the candidate.",
+        "remediation": "Inspect checker diagnostics, fix the candidate or qualify the environment.",
+        "target_digest": "a3bf99eb804c6fb891095bb01caf460a1b1d68d2fe4d4e499fdf970ccf9c0612",
+        "challenge_sha256": "4f2590a9b985cf5d7f94a267866b83df35fe323ca27940bd1a7bcab487e08d63",
+        "candidate_sha256": "1c3d49e069403ab61554e6430935a4531c0e2263ae54c73e65452e10f6b0ad09",
+        "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+        "axioms": [],
+        "checker_versions": {
+          "comparator": "3927ad383f208ae977c340a91c48ac9b497d2097",
+          "landrun": "811cfff51ceaf3d9843708aa6d22e9b84ccac8b4",
+          "lean": "Lean (version 4.33.0, aarch64-unknown-linux-gnu, commit d8b18978322de05a8f3dba51ef03cf5461676c17, Release)",
+          "lean4export": "15f6055e299ad5b89345e533cc2192f4cc00f659",
+          "nanoda": "4c544ed4099c8227f07d5de77ad1e69fb0740a27"
+        },
+        "diagnostics": {
+          "resource_profile": {
+            "checker_slots": 1,
+            "comparator_output_limit_bytes": 256000,
+            "comparator_timeout_seconds": 600,
+            "cpus": 4,
+            "memory_bytes": 8589934592,
+            "protocol": "physharness-verifier-resources-v1"
+          },
+          "comparator_exit_code": 1,
+          "comparator_output": "Building Challenge\n\u26a0 [8706/8707] Built Challenge (1.9s)\nwarning: Challenge.lean:9:8: declaration uses `sorry`\nBuild completed successfully (8707 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Challenge\nBuilding Solution\n\u2139 [8706/8707] Built Solution (3.8s)\ninfo: Solution.lean:117:0: 'physics_target' depends on axioms: [propext, Classical.choice, Quot.sound]\nBuild completed successfully (8707 jobs).\nExporting #[Nat, String, String.mk, Char, Quot, Quot.mk, Quot.lift, Quot.ind, physics_target, propext, Quot.sound, Classical.choice, Nat.add, Nat.sub, Nat.mul, Nat.pow, Nat.gcd, Nat.div, Nat.mod, Nat.beq, Nat.ble, Nat.land, Nat.lor, Nat.xor, Nat.shiftLeft, Nat.shiftRight, String.ofList, Char.ofNat, List, eagerReduce] from Solution\nuncaught exception: Challenge and solution theorem statement do not match: 'physics_target'\n",
+          "axioms_are_policy_upper_bound": true,
+          "memory_events_before": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "memory_events_after": {
+            "status": "observed",
+            "events": {
+              "low": 0,
+              "high": 0,
+              "max": 0,
+              "oom": 0,
+              "oom_kill": 0,
+              "oom_group_kill": 0
+            }
+          },
+          "oom_confirmed": false,
+          "container_state": {
+            "status": "observed",
+            "oom_killed": false,
+            "exit_code": 0,
+            "error": ""
+          },
+          "container_cleanup": {
+            "status": "removed",
+            "container_name": "physharness-check-c34dcd62705546048df0819432202548",
+            "exit_code": 0,
+            "output": "physharness-check-c34dcd62705546048df0819432202548\n"
+          },
+          "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+          "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+        }
+      }
+    }
+  ],
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "image_digest": "sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67",
+  "image_metadata_sha256": "fe7095a9c8a4fdd864925654af0edd03dac7106314bc2bf80c81e26b2a3c9442",
+  "fixtures_sha256": "139148e92a9c959fb6ed40c6eaec0a7f5a97d9fc23179cd291532570a70a4a3f",
+  "independent_kernel_requested": true,
+  "launcher_sha256": "16f2800d8ea861adb169dbd9cdc6cf207024d231f1f64d762bef7a2837cb1572",
+  "driver_sha256": "cb1b6852f4fbd89f528fed384afcc275c27fbe7f7584c3e74927e151bff8b58f",
+  "seccomp_sha256": "23d9ee5086efd262ed745ba824380a76e5a4513fbd3617cd4fac4923a9b04710",
+  "runner_sha256": "bbb512fe4a6f61ee6ed2148c1700a7276ae3101a78ba8095c171813fc909ec22",
+  "runtime_identity_sha256": "a30404979319c71c930177117da14fce3eb9f10c936b805d1cc167b6fe82d3c4",
+  "resource_profile": {
+    "protocol": "physharness-verifier-resources-v1",
+    "memory_bytes": 8589934592,
+    "cpus": 4,
+    "comparator_timeout_seconds": 600,
+    "comparator_output_limit_bytes": 256000,
+    "checker_slots": 1
+  },
+  "resource_profile_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_profile_source_sha256": "c85c68cc4329b1c622c2909b9fd99ea5c029fe04cbed120036d15893d5afc6d4",
+  "resource_policy_sha256": "10f33fbd312fc8dbdbcdd508f88720a5ead8ec96720645178aaa8946745a02bd"
+}

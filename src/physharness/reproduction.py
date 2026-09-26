@@ -35,7 +35,7 @@ def validate_export(directory: Path) -> dict:
     if directory.is_symlink() or not directory.is_dir():
         raise HarnessError("EXPORT_DIRECTORY_INVALID", "Supply a real export directory.")
     try:
-        manifest = json.loads(_read_file(directory / "manifest.json", 20_000_000))
+        manifest = json.loads(_read_file(directory / "manifest.json", 200_000_000))
         unsigned = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
         if (
             manifest["format"] != "physharness.reproduction.v1"
@@ -51,6 +51,42 @@ def validate_export(directory: Path) -> dict:
             if hashlib.sha256(data).hexdigest() != sha:
                 raise ValueError("artifact hash mismatch")
             hashes.add(sha)
+        from .execution.checkpoint_chunks import decode, is_manifest
+
+        artifacts = {row["id"]: row for row in manifest["records"]["artifact"]}
+        if len(artifacts) != len(manifest["records"]["artifact"]):
+            raise ValueError("duplicate artifact identity")
+        for artifact in artifacts.values():
+            if artifact.get("artifact_kind") != "native_checkpoint":
+                continue
+            raw = _read_file(directory / artifact["sha256"], 20_000_000)
+            try:
+                parsed = json.loads(raw)
+            except (ValueError, UnicodeDecodeError):
+                continue
+            if not is_manifest(parsed):
+                continue
+            owner = (artifact.get("provenance") or {}).get("task_id")
+            if not owner:
+                raise ValueError("checkpoint owner is missing")
+
+            def read(ref, *, artifact=artifact, owner=owner):
+                chunk = artifacts.get(ref["artifact_id"])
+                if (
+                    chunk is None
+                    or chunk.get("artifact_kind") != "native_checkpoint_chunk"
+                    or chunk.get("experiment_id") != artifact.get("experiment_id")
+                    or (chunk.get("provenance") or {}).get("task_id") != owner
+                    or (chunk.get("provenance") or {}).get("session_id")
+                    != (artifact.get("provenance") or {}).get("session_id")
+                    or chunk.get("sha256") != ref["sha256"]
+                ):
+                    raise ValueError("checkpoint chunk scope mismatch")
+                return _read_file(directory / chunk["sha256"], 20_000_000)
+
+            restored = decode(raw, read)
+            if restored.session.id != (artifact.get("provenance") or {}).get("session_id"):
+                raise ValueError("checkpoint session mismatch")
         return {
             "status": "artifact_integrity_checked",
             "manifest_sha256": manifest["manifest_sha256"],

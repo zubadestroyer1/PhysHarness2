@@ -31,7 +31,9 @@ remaining qualification gates. The [repository README](../README.md) provides th
 | [Claude runtime](CLAUDE_RUNTIME.md) | Native Claude SDK behavior, authority, continuation, and budget limitations |
 | [OpenHands runtime](OPENHANDS_RUNTIME.md) | Remote execution, native capabilities, and pinned SDK/Temporal compatibility |
 | [VM workspaces](VM_WORKSPACES.md) | Canonical allocation, provider lifecycle, isolation requirements, artifact transfer, and recovery gaps |
+| [Failed local workspace recovery](LOCAL_WORKSPACE_RECOVERY.md) | Preserve a failed local Docker workbench, attest exact destruction, and retire its zero-cost holds |
 | [Collaboration](COLLABORATION.md) | Helpers, collaborators, competing branches, sharing policies, and resource authority |
+| [Research network](RESEARCH_NETWORK.md) | Portfolio seeding, recruitment, discussions, durable inbox delivery, voluntary teams and synthesis |
 | [Memory](MEMORY.md) | Evidence-preserving context, retained history, checkpoint validity, and handoff boundaries |
 | [Science](SCIENCE.md) | Source correspondence, lemma retrieval, exact certificates, numerical evidence, and benchmark limitations |
 | [Evaluation](EVALUATION.md) | Experiment comparisons, budgets, holdouts, datasets, learned retrieval, and promotion criteria |

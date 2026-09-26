@@ -11,6 +11,7 @@ import base64
 import hashlib
 import json
 import posixpath
+import re
 import shlex
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -19,7 +20,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from .storage import CommandJournal
-from .types import Capabilities, CommandRequest, CommandResult, ExecutionError
+from .types import GUEST_PYTHON, Capabilities, CommandRequest, CommandResult, ExecutionError
 
 # Portable archives intentionally contain regular files only. The canonical JSON
 # envelope is small enough for one bounded, shell-quoted helper invocation.
@@ -29,13 +30,16 @@ FILE_COUNT_LIMIT = 64
 
 
 def _path(value: str) -> str:
+    try:
+        size = len(value.encode()) if isinstance(value, str) else 0
+    except UnicodeEncodeError:
+        size = 0  # Lone surrogates are not portable UTF-8 names.
     if (
-        not isinstance(value, str)
-        or not value
-        or len(value.encode()) > 256
+        not size
+        or size > 256
         or "\\" in value
         or "\x00" in value
-        or any(part in ("", ".", "..") for part in value.split("/"))
+        or any(part in ("", ".", "..") or len(part.encode()) > 255 for part in value.split("/"))
     ):
         raise ExecutionError("UNSAFE_PATH", "Workspace path must be a canonical relative file path")
     return value
@@ -150,7 +154,7 @@ class NativeWorkspaceCheckpoint(BaseModel):
 # symlinks/hardlinks/devices, and replace regular files atomically by directory FD.
 # Payload is JSON data; it is never evaluated as Python or shell code.
 _WORKSPACE_HELPER = r"""
-import base64, json, os, stat, sys, uuid
+import base64, hashlib, json, os, stat, sys, uuid
 req = json.loads(base64.b64decode(sys.argv[1], validate=True))
 flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
 root = os.open('/', flags)
@@ -161,13 +165,14 @@ for part in req['root'].split('/')[1:]:
     os.close(root)
     root = nxt
 
-def parent(path):
+def parent(path, create=False):
     parts = path.split('/')
     assert all(p not in ('', '.', '..') and '\\' not in p and '\x00' not in p for p in parts)
     fd = os.dup(root)
     for part in parts[:-1]:
-        try: os.mkdir(part, mode=0o700, dir_fd=fd)
-        except FileExistsError: pass
+        if create:  # Reads never leave directories behind, so their refusals change nothing.
+            try: os.mkdir(part, mode=0o700, dir_fd=fd)
+            except FileExistsError: pass
         nxt = os.open(part, flags, dir_fd=fd)
         os.close(fd)
         fd = nxt
@@ -201,7 +206,7 @@ def walk(fd, prefix='', result=None):
     return result
 
 def write(path, data):
-    fd, name = parent(path)
+    fd, name = parent(path, True)
     temp = '.physharness-' + uuid.uuid4().hex
     try:
         try:
@@ -224,6 +229,30 @@ if req['action'] == 'read':
     fd, name = parent(req['path'])
     try: result = {'data': read(fd, name)}
     finally: os.close(fd)
+elif req['action'] == 'capture_slice':
+    limit=req['max_bytes'];offset=req['offset'];length=req['length']
+    assert type(limit) is int and 0<limit<=4000000
+    assert type(offset) is int and 0<=offset<=limit
+    assert type(length) is int and 1<=length<=32768
+    fd,name=parent(req['path'])
+    try:
+        handle=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+        try:
+            before=os.fstat(handle)
+            assert stat.S_ISREG(before.st_mode) and before.st_nlink==1
+            assert 0<before.st_size<=limit and offset<=before.st_size
+            digest=hashlib.sha256()
+            with os.fdopen(os.dup(handle),'rb') as stream:
+                while piece:=stream.read(32768):digest.update(piece)
+            with os.fdopen(os.dup(handle),'rb') as stream:
+                stream.seek(offset);data=stream.read(length)
+            after=os.fstat(handle)
+            assert (after.st_size,after.st_mtime_ns,after.st_ctime_ns)==(
+                before.st_size,before.st_mtime_ns,before.st_ctime_ns)
+            result={'size_bytes':before.st_size,'sha256':digest.hexdigest(),
+                    'data':base64.b64encode(data).decode()}
+        finally:os.close(handle)
+    finally:os.close(fd)
 elif req['action'] == 'write':
     write(req['path'], req['data'])
     result = {'written': True}
@@ -242,6 +271,11 @@ print(json.dumps(result, sort_keys=True, separators=(',', ':')))
 
 
 class E2BSandboxProvider:
+    @staticmethod
+    def validate_workspace_path(path: str) -> str:
+        """Pure provider path rule for broker validation before durable dispatch."""
+        return _path(path)
+
     def __init__(
         self,
         *,
@@ -588,7 +622,7 @@ class E2BSandboxProvider:
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 result = await self._sandbox.commands.run(
-                    shlex.join(["python3", "-I", "-c", _WORKSPACE_HELPER, request]),
+                    shlex.join([*GUEST_PYTHON, "-c", _WORKSPACE_HELPER, request]),
                     envs={},
                     timeout=self.timeout_seconds,
                 )
@@ -649,6 +683,50 @@ class E2BSandboxProvider:
             return data
         except (ValueError, TypeError, KeyError) as exc:
             raise ExecutionError("INVALID_ARCHIVE", "VM returned invalid file data") from exc
+
+    async def capture_file(self, path: str, *, expected_execution_id: str, max_bytes: int) -> bytes:
+        """Stream one bounded regular file through the existing nofollow VM helper."""
+        self._identity(expected_execution_id)
+        _path(path)
+        if type(max_bytes) is not int or not 1 <= max_bytes <= 4_000_000:
+            raise ExecutionError("WORKSPACE_LIMIT", "Invalid capture byte limit")
+        parts = []
+        offset = 0
+        size = None
+        digest = None
+        while size is None or offset < size:
+            result = await self._file_action(
+                "capture_slice",
+                path=path,
+                offset=offset,
+                length=min(32768, max_bytes - offset),
+                max_bytes=max_bytes,
+            )
+            try:
+                observed_size = result["size_bytes"]
+                observed_digest = result["sha256"]
+                data = base64.b64decode(result["data"], validate=True)
+                if (
+                    type(observed_size) is not int
+                    or not 1 <= observed_size <= max_bytes
+                    or not isinstance(observed_digest, str)
+                    or not re.fullmatch(r"[0-9a-f]{64}", observed_digest)
+                    or (size is not None and observed_size != size)
+                    or (digest is not None and observed_digest != digest)
+                    or len(data) != min(32768, observed_size - offset)
+                ):
+                    raise ValueError("Capture chunks changed or were truncated")
+            except (ValueError, TypeError, KeyError) as exc:
+                raise ExecutionError(
+                    "INVALID_ARCHIVE", "VM returned invalid capture chunk"
+                ) from exc
+            size, digest = observed_size, observed_digest
+            parts.append(data)
+            offset += len(data)
+        content = b"".join(parts)
+        if len(content) != size or hashlib.sha256(content).hexdigest() != digest:
+            raise ExecutionError("CHECKPOINT_MISMATCH", "Captured file changed during transfer")
+        return content
 
     async def export_workspace(self, *, expected_execution_id: str) -> WorkspaceArchive:
         async with self._exclusive(expected_execution_id):

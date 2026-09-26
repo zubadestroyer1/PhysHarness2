@@ -1,0 +1,49 @@
+{
+  "target": "projection",
+  "known_result": true,
+  "experiment_id": "fcacc4fd-148c-4d8f-b614-0ca5ca9b76e8",
+  "experiment_status": "queued",
+  "task_id": "43ae615e-96a9-4da1-bd11-aeaa4eb0add1",
+  "task_status": "running",
+  "receipt_statuses": [
+    {
+      "id": "0476f605-312d-4ed8-871c-9ae23912bac2",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "1121be5f-e38d-4de5-9f83-58bf15e93f81",
+      "status": "verified",
+      "assurance": "independent_kernel"
+    },
+    {
+      "id": "70332af0-6139-471f-a9fd-c035530dc8be",
+      "status": "blocked",
+      "assurance": "none"
+    },
+    {
+      "id": "82b3d67a-7806-420c-8eb9-eaadd2cb8116",
+      "status": "verified",
+      "assurance": "independent_kernel"
+    },
+    {
+      "id": "bcb8b3d7-4f45-4780-8591-7814398f4d70",
+      "status": "blocked",
+      "assurance": "none"
+    }
+  ],
+  "compaction_count": 39,
+  "handoff_count": 0,
+  "delegated_task_count": 1,
+  "ledger": {
+    "max_cost_usd": "25",
+    "reserved_cost_usd": "0.41984",
+    "spent_cost_usd": "2.872",
+    "active_workers": 1,
+    "max_concurrency": 2,
+    "uncertain_operations": 0,
+    "max_tokens": 4000000,
+    "tokens_reserved": 144384,
+    "tokens_spent": 1408636
+  }
+}

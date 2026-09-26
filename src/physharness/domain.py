@@ -103,6 +103,8 @@ class ExperimentCreate(StrictModel):
     mode: Literal["research", "discovery", "literature_assisted", "replay"] = "research"
     sharing: Literal["none", "verified", "ideas"] = "verified"
     runtime_limits: dict[str, Any] = Field(default_factory=dict)
+    execution_profile: Literal["general", "formal-research"] = "general"
+    context_profile: Literal["research", "stress8192"] = "research"
 
 
 class BranchCreate(StrictModel):
@@ -128,6 +130,9 @@ class TaskCreate(StrictModel):
     branch_id: str
     objective: str = Field(min_length=1, max_length=20000)
     dependency_ids: list[str] = Field(default_factory=list, max_length=1000)
+    detached: bool = False
+    # Optional free-form approach note for the assignee; never validated as mathematics.
+    strategy: str | None = Field(default=None, max_length=500)
 
 
 def make_record(kind: str, actor: Principal, data: dict[str, Any]) -> dict[str, Any]:

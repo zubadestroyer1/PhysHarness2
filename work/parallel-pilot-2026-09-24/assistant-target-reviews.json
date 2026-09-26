@@ -1,0 +1,30 @@
+[
+  {
+    "problem_id": "8b2102bf-19d9-425b-adb5-35305d1ef270",
+    "scope": "target",
+    "target_digest": "a5817d524f49abbea4f0fccf1abb9e1c70b0bb1fa5f8aacbfd024e5f370e51fd",
+    "decision": "approved",
+    "rationale": "Assistant-led pilot target review by root, explicitly delegated by user on 2026-09-24; not independent human expert review or publication/novelty approval. For all finite n and a normalized density matrix rho, pilotDiagonal retains exactly rho.m i i; no conclusion is hidden in its definition. The ordered off-diagonal sum correctly counts both conjugate entries without an extra factor two. Hermiticity gives trace(rho^2)=sum|rho_ij|^2; subtracting diagonal contributions yields the displayed identity and nonnegativity. Complex equality and real-part inequality agree. The fixed orthonormal basis and finite-dimensional domain are explicit. n=0 has no normalized state but nonempty dimensions give nonvacuous instances; pure balanced qubit gives loss1/2 and diagonal state gives0. No entropy, entanglement, or infinite-dimensional result is asserted. Reviewed exact formal source SHA256 c20bc2fa1bb1ef44d044b216098b0a0ea2fcfc6f28e945a7189a84b5124ab7f6. Reference compilation is feasibility evidence only; exact comparator/independent-kernel qualification remains required before launch. Difficulty is uncalibrated: multiple mathematical components, but legitimate short library proofs are permitted. This review is solely for the authorized private known-result pilot.",
+    "reviewed_by": "local-reviewer",
+    "origin_actor_id": "local-reviewer",
+    "id": "3c7735d6-0ffc-4395-80d2-a756c603092d",
+    "kind": "review",
+    "project_id": "parallel-pilot-2026-09-24",
+    "revision": 1,
+    "created_at": "2026-09-24T07:40:48.964534+00:00"
+  },
+  {
+    "problem_id": "5a166332-b96f-4f61-a424-3f131ac8d16f",
+    "scope": "target",
+    "target_digest": "4baacb7e1d42cb82dec9d2ea789132f6cec2b9d62cf3b2aa110246fcb9f6e387",
+    "decision": "approved",
+    "rationale": "Assistant-led pilot target review by root, explicitly delegated by user on 2026-09-24; not independent human expert review or publication/novelty approval. Mass and stiffness are positive constants, damping nonnegative; global HasDerivAt assumptions express the unforced viscous oscillator. Differentiating E gives -gamma*v^2, hence global nonincrease. Positivity of the complementary energy term gives both displayed component bounds for a<=b. Each term has energy units, and zero-damping and zero trajectories are included. No existence, strict decay, forcing or convergence theorem is claimed. Definitions are standard arithmetic and differentiation, with no hidden target assumption. Reviewed exact formal source SHA256 9a5884706601544fde964ab13555d2d229d121dad25db3e395b7eb7d9be5808a. Reference compilation is feasibility evidence only; exact comparator/independent-kernel qualification remains required before launch. Difficulty is uncalibrated: multiple mathematical components, but legitimate short library proofs are permitted. This review is solely for the authorized private known-result pilot.",
+    "reviewed_by": "local-reviewer",
+    "origin_actor_id": "local-reviewer",
+    "id": "5b4d9ea2-0207-43ef-a9d2-04d7bcbb5553",
+    "kind": "review",
+    "project_id": "parallel-pilot-2026-09-24",
+    "revision": 1,
+    "created_at": "2026-09-24T07:40:48.969529+00:00"
+  }
+]

@@ -1,0 +1,51 @@
+{
+  "evidence": "offline encode/decode replay of historical real checkpoints; no provider calls or database/VM throughput measurement",
+  "checkpoints_roundtripped": 96,
+  "sessions": [
+    {
+      "session_id": "00ea3537-ed8f-4a39-b01f-90cc58ce5aac",
+      "available_checkpoints": 557,
+      "sampled_checkpoints": 16
+    },
+    {
+      "session_id": "0eb74763-308f-4dca-9e99-e59e6a61082f",
+      "available_checkpoints": 298,
+      "sampled_checkpoints": 16
+    },
+    {
+      "session_id": "7aebed55-8858-4b27-9763-332a396442b8",
+      "available_checkpoints": 76,
+      "sampled_checkpoints": 16
+    },
+    {
+      "session_id": "86a09603-16af-461f-ad09-2f4455261929",
+      "available_checkpoints": 360,
+      "sampled_checkpoints": 16
+    },
+    {
+      "session_id": "cf254fc1-d573-4470-b0be-a1c1f3f44b4a",
+      "available_checkpoints": 254,
+      "sampled_checkpoints": 16
+    },
+    {
+      "session_id": "e21cff30-2b5c-4f4f-821a-8166af21d1ae",
+      "available_checkpoints": 542,
+      "sampled_checkpoints": 16
+    }
+  ],
+  "original_unique_payload_bytes": 95296193,
+  "new_unique_chunk_payload_bytes": 6737280,
+  "new_unique_manifest_bytes": 31584,
+  "new_total_unique_payload_bytes": 6768864,
+  "payload_reduction_percent": 92.897,
+  "unique_chunks": 3978,
+  "scoped_chunk_records": 4106,
+  "encoder_put_calls": 71735,
+  "elapsed_seconds": 8.343,
+  "codec_sha256": "50ab8d7592fd77ddab4a94a44f623e03b44348e82a2a41271842d3f2746cca49",
+  "limitations": [
+    "Sampled 16 checkpoints per native session, not full run migration.",
+    "Artifact metadata/database traffic not included; scoped UUIDs generated locally.",
+    "Storage reduction is not a live fleet capacity or scientific performance claim."
+  ]
+}

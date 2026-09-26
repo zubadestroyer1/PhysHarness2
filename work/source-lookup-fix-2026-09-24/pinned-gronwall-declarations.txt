@@ -1,0 +1,20 @@
+FILES ['Mathlib/Analysis/ODE/DiscreteGronwall.lean', 'Mathlib/Analysis/ODE/Gronwall.lean']
+Mathlib/Analysis/ODE/DiscreteGronwall.lean:44:theorem discrete_gronwall_prod_general {n₀ : ℕ} (hu : ∀ n ≥ n₀, u (n + 1) ≤ c n * u n + b n)
+Mathlib/Analysis/ODE/DiscreteGronwall.lean:73:theorem discrete_gronwall {n₀ : ℕ} (hun₀ : 0 ≤ u n₀)
+Mathlib/Analysis/ODE/DiscreteGronwall.lean:90:theorem discrete_gronwall_Ico {n₀ n₁ : ℕ} (hun₀ : 0 ≤ u n₀)
+Mathlib/Analysis/ODE/Gronwall.lean:46:theorem gronwallBound_K0 (δ ε : ℝ) : gronwallBound δ 0 ε = fun x => δ + ε * x :=
+Mathlib/Analysis/ODE/Gronwall.lean:49:theorem gronwallBound_of_K_ne_0 {δ K ε : ℝ} (hK : K ≠ 0) :
+Mathlib/Analysis/ODE/Gronwall.lean:53:theorem hasDerivAt_gronwallBound (δ K ε x : ℝ) :
+Mathlib/Analysis/ODE/Gronwall.lean:67:theorem hasDerivAt_gronwallBound_shift (δ K ε x a : ℝ) :
+Mathlib/Analysis/ODE/Gronwall.lean:72:theorem gronwallBound_x0 (δ K ε : ℝ) : gronwallBound δ K ε 0 = δ := by
+Mathlib/Analysis/ODE/Gronwall.lean:78:theorem gronwallBound_ε0 (δ K x : ℝ) : gronwallBound δ K 0 x = δ * exp (K * x) := by
+Mathlib/Analysis/ODE/Gronwall.lean:83:theorem gronwallBound_ε0_δ0 (K x : ℝ) : gronwallBound 0 K 0 x = 0 := by
+Mathlib/Analysis/ODE/Gronwall.lean:86:theorem gronwallBound_continuous_ε (δ K x : ℝ) : Continuous fun ε => gronwallBound δ K ε x := by
+Mathlib/Analysis/ODE/Gronwall.lean:94:lemma gronwallBound_mono {δ K ε : ℝ} (hδ : 0 ≤ δ) (hε : 0 ≤ ε) (hK : 0 ≤ K) :
+Mathlib/Analysis/ODE/Gronwall.lean:112:theorem le_gronwallBound_of_liminf_deriv_right_le {f f' : ℝ → ℝ} {δ K ε : ℝ} {a b : ℝ}
+Mathlib/Analysis/ODE/Gronwall.lean:134:theorem norm_le_gronwallBound_of_norm_deriv_right_le {f f' : ℝ → E} {δ K ε : ℝ} {a b : ℝ}
+Mathlib/Analysis/ODE/Gronwall.lean:143:theorem eq_zero_of_abs_deriv_le_mul_abs_self_of_eq_zero_right {f f' : ℝ → E} {K a b : ℝ}
+Mathlib/Analysis/ODE/Gronwall.lean:162:theorem dist_le_of_approx_trajectories_ODE_of_mem
+Mathlib/Analysis/ODE/Gronwall.lean:188:theorem dist_le_of_approx_trajectories_ODE
+Mathlib/Analysis/ODE/Gronwall.lean:208:theorem dist_le_of_trajectories_ODE_of_mem
+Mathlib/Analysis/ODE/Gronwall.lean:228:theorem dist_le_of_trajectories_ODE

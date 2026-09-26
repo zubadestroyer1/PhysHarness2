@@ -1,0 +1,9 @@
+{
+  "status": "accepted_by_input_token_endpoint",
+  "model": "gpt-6-sol",
+  "tool_count": 39,
+  "tool_schema_digest": "f8bb68ba01752721ab3e488cb2dba6f4e8592586bee0054ffd0121fadc653b75",
+  "input_tokens": 1717,
+  "generation_requests": 0,
+  "workspace_allocations": 0
+}

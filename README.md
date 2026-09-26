@@ -164,8 +164,11 @@ acceptance, trusted definitions, credentials, or result promotion require indepe
 Report security concerns through the [security policy](SECURITY.md).
 
 The [roadmap](docs/ROADMAP.md) organizes work into twelve implementation waves. The immediate
-qualification priorities are the full physics-library build, expert-reviewed scientific tasks,
-deployment-boundary review, and a real model proof followed by accepted-lemma reuse.
+priority is a bounded live pilot on expert-reviewed physics targets, using deployment qualified
+for the pilot's scope: a real model proof with independent acceptance, followed by accepted-lemma
+retrieval and reuse. Engineering for recovery and resource reconciliation proceeds in parallel.
+The next reviewable comparison is one agent versus a 2–8-agent team on meaningful solves, with
+recorded cost and elapsed time. Full wave qualification and fleet scaling remain pending.
 The [approved implementation specification](docs/IMPLEMENTATION_PLAN.md)
 preserves the full scope: heterogeneous research teams, adaptive search, certified computation,
 managed and self-hosted fleets, learning from verified experience, and sustained open-problem

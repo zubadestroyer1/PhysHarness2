@@ -1,0 +1,16 @@
+{
+  "dedicated_vm": {
+    "name": "physharness-pilot",
+    "status": "Stopped",
+    "arch": "aarch64",
+    "cpus": 6,
+    "memory": 12884901888,
+    "disk": 171798691840,
+    "runtime": "docker"
+  },
+  "temporary_database_removed": true,
+  "temporary_database_secret_deleted": true,
+  "test_database_version": "postgres (PostgreSQL) 16.15 (Debian 16.15-1.pgdg13+2)",
+  "test_database_image": "sha256:a3b7f434b2dc57ce85a67e171163eb8ab1a1ebcb39d27484661f26b1dfbe30d6",
+  "paid_model_calls": 0
+}

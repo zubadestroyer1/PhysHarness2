@@ -1,0 +1,13 @@
+{
+  "dedicated_vm": {
+    "name": "physharness-pilot",
+    "status": "Stopped",
+    "arch": "aarch64",
+    "cpus": 6,
+    "memory": 12884901888,
+    "disk": 171798691840,
+    "runtime": "docker"
+  },
+  "active_test_containers_before_stop": 0,
+  "paid_model_calls": 0
+}

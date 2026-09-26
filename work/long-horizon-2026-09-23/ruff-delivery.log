@@ -1,0 +1,8 @@
+E902 No such file or directory (os error 2)
+--> scripts:1:1
+
+Found 1 error.
+io: <repo>/scripts: No such file or directory (os error 2)
+--> scripts:1:1
+
+120 files already formatted

@@ -151,11 +151,9 @@ async def main():
         tls=settings.temporal_tls,
         api_key=settings.temporal_api_key.get_secret_value() if settings.temporal_api_key else None,
     )
-    workspace_factory = None
-    if settings.worker_workspace is not None:
-        from .orchestration.workspace_tools import e2b_workspace_factory
+    from .orchestration.workspace_selection import configured_workspace_factory
 
-        workspace_factory = e2b_workspace_factory(settings.worker_workspace)
+    workspace_factory = configured_workspace_factory(settings)
     activities = Activities(
         service,
         ResearchTaskExecutor(

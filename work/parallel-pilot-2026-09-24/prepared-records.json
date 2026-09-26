@@ -1,0 +1,50 @@
+{
+  "quantum": {
+    "preparation": {
+      "run_id": "parallel-quantum-independent-20260924",
+      "campaign_id": "53c69551-ce6d-456a-a2d3-3df9800fef57",
+      "problem_id": "8b2102bf-19d9-425b-adb5-35305d1ef270",
+      "experiment_id": "0f3b53ad-49fd-46be-874c-be8b6866de3f",
+      "preparation_artifact_id": "0705e4ce-b169-485e-93e4-ba75751e6080",
+      "target_digest": "a5817d524f49abbea4f0fccf1abb9e1c70b0bb1fa5f8aacbfd024e5f370e51fd",
+      "challenge_sha256": "c20bc2fa1bb1ef44d044b216098b0a0ea2fcfc6f28e945a7189a84b5124ab7f6",
+      "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+      "plan_digest": "e0171f2e2ff98f59ff38b6c06b2950b7bc7d94c15e7c7bd9af03f7daf48a4c86",
+      "review_status": "pending",
+      "model_calls": 0
+    },
+    "problem": {
+      "id": "8b2102bf-19d9-425b-adb5-35305d1ef270",
+      "target_digest": "a5817d524f49abbea4f0fccf1abb9e1c70b0bb1fa5f8aacbfd024e5f370e51fd",
+      "title": "Finite-dimensional dephasing: exact purity loss and nonnegativity",
+      "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f"
+    },
+    "independent": "0f3b53ad-49fd-46be-874c-be8b6866de3f",
+    "collaborating": "c81ffb5a-b944-4ec3-ba57-2639ada54c44",
+    "source_sha256": "c20bc2fa1bb1ef44d044b216098b0a0ea2fcfc6f28e945a7189a84b5124ab7f6"
+  },
+  "classical": {
+    "preparation": {
+      "run_id": "parallel-classical-independent-20260924",
+      "campaign_id": "08c8ac4e-429e-4ec5-82e2-0fa506f74db9",
+      "problem_id": "5a166332-b96f-4f61-a424-3f131ac8d16f",
+      "experiment_id": "5060c870-f081-4ab5-849b-8b273cfb8dac",
+      "preparation_artifact_id": "d462fa8e-bebe-438e-9e2a-c8429f0b6efc",
+      "target_digest": "4baacb7e1d42cb82dec9d2ea789132f6cec2b9d62cf3b2aa110246fcb9f6e387",
+      "challenge_sha256": "9a5884706601544fde964ab13555d2d229d121dad25db3e395b7eb7d9be5808a",
+      "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f",
+      "plan_digest": "565c3cbb4aaa9f045efab80be3bfd15d7ac922600339a0fa37da6fad66786ded",
+      "review_status": "pending",
+      "model_calls": 0
+    },
+    "problem": {
+      "id": "5a166332-b96f-4f61-a424-3f131ac8d16f",
+      "target_digest": "4baacb7e1d42cb82dec9d2ea789132f6cec2b9d62cf3b2aa110246fcb9f6e387",
+      "title": "Damped oscillator: decreasing energy and uniform trajectory bounds",
+      "environment_digest": "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f"
+    },
+    "independent": "5060c870-f081-4ab5-849b-8b273cfb8dac",
+    "collaborating": "d764f700-c3e3-4057-8135-7cfe8ff40bae",
+    "source_sha256": "9a5884706601544fde964ab13555d2d229d121dad25db3e395b7eb7d9be5808a"
+  }
+}

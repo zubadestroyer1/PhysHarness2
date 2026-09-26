@@ -67,7 +67,8 @@ class LemmaIndex:
         environment_digest: str,
         statuses: Iterable[Status] = ("verified",),
         revisions: Mapping[str, str] | None = None,
-        type_query: str = "",
+        type_query: str | None = None,
+        lexical_type_filter: str | None = None,
         requires: Iterable[LemmaRef] = (),
         provenance_uris: Iterable[str] | None = None,
         limit: int = 20,
@@ -81,7 +82,10 @@ class LemmaIndex:
             raise ValueError("unknown knowledge status")
         refs = {(r.id, r.revision) for r in requires}
         provenance = set(provenance_uris) if provenance_uris is not None else None
-        terms, type_terms = tokens(query), tokens(type_query)
+        if type_query and lexical_type_filter:
+            raise ValueError("Use one lexical type filter")
+        # type_query is a legacy lexical alias. New callers name this filter honestly.
+        terms, type_terms = tokens(query), tokens(lexical_type_filter or type_query or "")
         hits = []
         for lemma in self._records.values():
             if lemma.environment_digest != environment_digest or lemma.status not in statuses:
@@ -106,3 +110,20 @@ class LemmaIndex:
                 )
             )
         return sorted(hits, key=lambda h: (-h.score, h.lemma.id, h.lemma.revision))[:limit]
+
+    def search_with_diagnostics(self, query: str, **filters) -> dict:
+        hits = self.search(query, **filters)
+        return {
+            "hits": hits,
+            "reason_code": None if hits else "no_lexical_match",
+            "mechanism": "lexical_accepted_result_search",
+            "environment_digest": filters["environment_digest"],
+            "lexical_type_filter": filters.get("lexical_type_filter") or filters.get("type_query"),
+        }
+
+    def search_type(self, expression: str, *, environment_digest: str) -> list[SearchHit]:
+        """Type-directed retrieval needs Lean elaboration in the exact pinned image."""
+        raise ValueError(
+            "Lean elaboration is required for type-directed search; use check_lean_type "
+            "in the pinned workbench before interpreting lexical hits"
+        )

@@ -1,0 +1,17 @@
+{
+  "target": "purity",
+  "inspection_return_status_counts": {
+    "blocked": 46,
+    "queued": 1
+  },
+  "receipt_inspection_counts": {
+    "44ec6d5b-787f-42aa-9a55-998eaa20a0b5": 5,
+    "8b6768cb-dfad-42a2-a53a-3721e56d984a": 15,
+    "6994be17-9f4c-4508-b53f-9acd9311af87": 2,
+    "200dbce8-0fdb-4ff2-99a6-c55a6459bc5d": 2,
+    "cc952353-7c62-4e19-a9da-ef0f13b1005c": 8,
+    "fa82a2ba-0259-4187-b6ac-50bde83fd842": 3,
+    "ec32afdc-8169-499c-a4f5-0c76cf169792": 11,
+    "fc8e63d7-08a0-4c24-bd12-bb42667bf76c": 1
+  }
+}

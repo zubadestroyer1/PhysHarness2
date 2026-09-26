@@ -1,0 +1,53 @@
+unformatted: File would be reformatted
+   --> src/physharness/memory.py:801:30
+    |
+800 |             if len(_encoded(handoff_shape)) > min(max_bytes, 8192):
+    -                 raise _error(
+    -                     "CONTEXT_ENVELOPE_EXCEEDED", "Research notes exceed handoff envelope."
+    -                 )
+801 +                 raise _error("CONTEXT_ENVELOPE_EXCEEDED", "Research notes exceed handoff envelope.")
+802 |             sha256 = self.service.artifacts.put(content)
+--------------------------------------------------------------------------------
+936 |                     raise _error("CONTEXT_STALE_TARGET", "Research-notes target changed.")
+    -                 stale = (
+    -                     payload["obligation_counts"] != self._obligation_counts(session, reader)
+    -                     or payload["obligation_fingerprints"]
+    -                     != self._obligation_fingerprints(session, reader)
+937 +                 stale = payload["obligation_counts"] != self._obligation_counts(
+938 +                     session, reader
+939 +                 ) or payload["obligation_fingerprints"] != self._obligation_fingerprints(
+940 +                     session, reader
+941 |                 )
+    |
+
+unformatted: File would be reformatted
+   --> src/physharness/orchestration/research_worker.py:900:29
+    |
+899 |                 completed_task = self.service.finish_task(
+    -                     task_id, holder, lease["fence"], [artifact["id"]], "completed", actor,
+900 +                     task_id,
+901 +                     holder,
+902 +                     lease["fence"],
+903 +                     [artifact["id"]],
+904 +                     "completed",
+905 +                     actor,
+906 |                     f"task-complete:{task_id}:{completed_result.session.id}",
+907 |                 )
+908 |                 return {
+    -                     "task_id": task_id, "status": completed_task["status"],
+909 +                     "task_id": task_id,
+910 +                     "status": completed_task["status"],
+911 |                     "artifact_id": artifact["id"],
+    |
+
+unformatted: File would be reformatted
+   --> src/physharness/service.py:231:49
+    |
+230 |             row.kind == "artifact"
+    -             and row.payload.get("artifact_kind")
+    -             in self._private_artifact_kinds - {"checkpoint"}
+231 +             and row.payload.get("artifact_kind") in self._private_artifact_kinds - {"checkpoint"}
+232 |         ):
+    |
+
+3 files would be reformatted, 128 files already formatted

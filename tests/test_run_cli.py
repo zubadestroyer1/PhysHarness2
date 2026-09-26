@@ -45,6 +45,38 @@ def test_blocked_preflight_exits_nonzero_without_queuing(prepared):
     assert service.list_records("task", actor) == []
 
 
+def test_run_team_preflights_requested_concurrency_before_queuing(prepared, monkeypatch):
+    service, actor, ids = prepared
+    seen = []
+
+    def preflight(*args, **kwargs):
+        seen.append(kwargs["requested_concurrency"])
+        return {"status": "blocked", "blockers": [{"code": "WORKSPACE_CAPACITY"}]}
+
+    monkeypatch.setattr(run_control, "run_preflight", preflight)
+    result = CliRunner().invoke(cli.app, ["run-team", ids["experiment_id"], "--concurrency", "2"])
+    assert result.exit_code == 1, result.output
+    assert seen == [2]
+    assert "WORKSPACE_CAPACITY" in result.output
+    assert service.list_records("task", actor) == []
+
+
+def test_check_run_previews_requested_concurrency_without_queuing(prepared, monkeypatch):
+    service, actor, ids = prepared
+    seen = []
+
+    def preflight(*args, **kwargs):
+        seen.append(kwargs["requested_concurrency"])
+        return {"status": "blocked", "blockers": [{"code": "WORKSPACE_CAPACITY"}]}
+
+    monkeypatch.setattr(run_control, "run_preflight", preflight)
+    result = CliRunner().invoke(cli.app, ["check-run", ids["experiment_id"], "--concurrency", "2"])
+    assert result.exit_code == 1, result.output
+    assert seen == [2]
+    assert "WORKSPACE_CAPACITY" in result.output
+    assert service.list_records("task", actor) == []
+
+
 def test_task_bound_is_checked_before_transition_and_seeding(prepared, monkeypatch):
     service, actor, ids = prepared
     # Isolate dispatch ordering; this fixture is not a qualified verifier.

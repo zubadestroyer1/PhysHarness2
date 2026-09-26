@@ -7,18 +7,20 @@ an explicit synthetic test actor; its fixture approval is not real expert review
 
 import asyncio
 import json
+from uuid import UUID
 
 import httpx
 import pytest
 from openai import AsyncOpenAI
 from test_core import setup_experiment
-from test_execution_responses import message, response
+from test_execution_responses import message
+from test_execution_responses import response as base_response
 
 from physharness.domain import BranchCreate, Principal, TaskCreate
 from physharness.errors import HarnessError
 from physharness.execution import ExecutionError, ResponsesRuntime, RuntimeLimits
 from physharness.orchestration import research_worker
-from physharness.storage import LeaseRow
+from physharness.storage import BudgetRow, LeaseRow, ReservationRow
 
 PRICES = {
     "explicit-test-model": {
@@ -27,6 +29,12 @@ PRICES = {
         "source": "mock-test",
     }
 }
+
+
+def response(items, text="", response_id="resp_1"):
+    native = base_response(items, text, response_id)
+    native["model"] = "explicit-test-model"
+    return native
 
 
 def campaign(lab, concurrency=2):
@@ -62,6 +70,134 @@ def mock_executor(service, handler):
     ), client
 
 
+async def test_partial_root_uses_finite_native_replans_and_remains_unproved(lab):
+    service, actor, _ = lab
+    experiment, _, task = campaign(lab, concurrency=1)
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        calls += 1
+        return httpx.Response(
+            200, json=response([message(f"Partial {calls}")], response_id=f"partial-{calls}")
+        )
+
+    executor, client = mock_executor(service, handler)
+    report = await research_worker.ResearchTeamRunner(service, executor=executor).run(
+        research_worker.TeamRunManifest(
+            experiment_id=experiment["id"],
+            project_id=actor.project_id,
+            mode="replay",
+            task_ids=[task["id"]],
+            max_concurrency=1,
+            max_root_replans=2,
+            timeout_seconds=20,
+        )
+    )
+    assert calls == 3
+    assert service.get_record("task", task["id"], actor)["root_replans_used"] == 2
+    assert report["root_goal_status"] == "unproved"
+    assert report["status"] == "blocked" and report["stop_reason"] == "ROOT_UNPROVED"
+    await client.close()
+
+
+async def test_partial_helper_finishes_without_root_replan_policy(lab):
+    service, actor, _ = lab
+    experiment, parent, _ = campaign(lab, concurrency=1)
+    helper = service.create_branch(
+        experiment["id"],
+        BranchCreate(title="Helper", objective="Sublemma", parent_id=parent["id"]),
+        actor,
+        "helper-branch",
+    )
+    task = service.create_task(
+        TaskCreate(branch_id=helper["id"], objective="Try a sublemma"), actor, "helper-task"
+    )
+
+    async def handler(request):
+        return httpx.Response(200, json=response([message("Useful partial sublemma")]))
+
+    executor, client = mock_executor(service, handler)
+    result = await executor.execute(task["id"], actor.project_id)
+    assert result["status"] == "completed"
+    assert service.get_record("task", task["id"], actor).get("root_replans_used", 0) == 0
+    await client.close()
+
+
+async def test_exact_verified_target_stops_new_generation_after_receipt(lab):
+    from physharness.verification import VerificationOutcome
+
+    service, actor, _ = lab
+    experiment, _, task = campaign(lab)
+
+    class ExplicitSyntheticChecker:
+        def verify(self, request):
+            return VerificationOutcome(
+                status="verified",
+                assurance="independent_kernel",
+                code="mock_checker_fixture",
+                message="Synthetic test",
+                remediation="",
+                target_digest=request.target_digest,
+                challenge_sha256=request.challenge_sha256,
+                environment_digest=request.environment_digest,
+                candidate_sha256=request.candidate_sha256,
+                checker_versions={name: "mock-only" for name in ("lean", "comparator", "nanoda")},
+                axioms=[],
+            )
+
+    service.verifier = ExplicitSyntheticChecker()
+    calls = 0
+
+    async def handler(request):
+        nonlocal calls
+        payload = json.loads(request.content)
+        results = [
+            json.loads(item["output"])
+            for item in payload["input"]
+            if item.get("type") == "function_call_output"
+        ]
+        calls += 1
+        if calls == 1:
+            item = tool_call(
+                "store_artifact",
+                {"kind": "lean_source", "content": "theorem target : (1 : Nat) = 1 := by rfl"},
+                "candidate",
+            )
+        elif calls == 2:
+            item = tool_call("verify_candidate", {"artifact_id": results[-1]["id"]}, "verify")
+        elif calls == 3:
+            item = tool_call(
+                "wait_for_verification",
+                {"receipt_id": results[-1]["id"], "timeout_seconds": 2},
+                "wait",
+            )
+        else:
+            raise AssertionError("New generation after exact accepted target")
+        return httpx.Response(200, json=response([item], response_id=f"stop-step-{calls}"))
+
+    executor, client = mock_executor(service, handler)
+    report = await research_worker.ResearchTeamRunner(service, executor=executor).run(
+        research_worker.TeamRunManifest(
+            experiment_id=experiment["id"],
+            project_id=actor.project_id,
+            mode="replay",
+            task_ids=[task["id"]],
+        )
+    )
+    assert calls == 3
+    assert report["status"] == "completed" and report["root_goal_status"] == "verified", (
+        report["stop_reason"],
+        report["outcomes"],
+        report["remaining_task_ids"],
+        report["pending_verification_ids"],
+        report["ledger"],
+    )
+    assert report["stop_reason"] == "TARGET_VERIFIED"
+    assert report["ledger"]["active_workers"] == 0
+    await client.close()
+
+
 def tool_call(name, arguments, call_id):
     return {
         "id": "fc_" + call_id,
@@ -71,6 +207,63 @@ def tool_call(name, arguments, call_id):
         "call_id": call_id,
         "status": "completed",
     }
+
+
+@pytest.mark.parametrize(
+    "limit_kind, expected_code",
+    [("tokens", "TOKEN_BUDGET_EXCEEDED"), ("cost", "BUDGET_EXCEEDED")],
+)
+async def test_shared_envelope_stops_before_provider_with_specific_report(
+    lab, limit_kind, expected_code
+):
+    service, actor, _ = lab
+    experiment, _, task = campaign(lab, concurrency=1)
+    with service.db.transaction() as session:
+        budget = session.query(BudgetRow).filter_by(experiment_id=experiment["id"]).one()
+        if limit_kind == "tokens":
+            budget.max_tokens = 1
+        else:
+            budget.max_cost = 0
+    provider_calls = 0
+
+    async def handler(request):
+        nonlocal provider_calls
+        provider_calls += 1
+        return httpx.Response(200, json=response([message("Must never be generated")]))
+
+    executor, client = mock_executor(service, handler)
+    report = await research_worker.ResearchTeamRunner(service, executor=executor).run(
+        research_worker.TeamRunManifest(
+            experiment_id=experiment["id"],
+            project_id=actor.project_id,
+            mode="replay",
+            task_ids=[task["id"]],
+            max_concurrency=1,
+            max_tasks=1,
+            timeout_seconds=10,
+        )
+    )
+    assert provider_calls == 0
+    assert report["outcomes"] == [
+        {"task_id": task["id"], "status": "blocked", "code": expected_code}
+    ]
+    assert report["ledger"]["active_workers"] == 0
+    assert report["ledger"]["tokens_reserved"] == 0
+    assert report["ledger"]["reserved_cost_usd"] == "0"
+    assert service.get_record("task", task["id"], actor)["status"] == "blocked"
+    failures = [
+        row
+        for row in service.list_records("artifact", actor, experiment["id"])
+        if row["artifact_kind"] == "execution_failure"
+    ]
+    assert len(failures) == 1
+    failure = json.loads(service.artifact_content(failures[0]["id"], actor))
+    assert failure["code"] == expected_code
+    assert "envelope" in failure["message"]
+    assert str(UUID(failure["operation_id"])) == failure["operation_id"]
+    with service.db.sessions() as session:
+        assert not list(session.query(ReservationRow).filter_by(state="uncertain"))
+    await client.close()
 
 
 async def test_mock_single_worker_runs_to_canonical_output_and_replay_is_noop(lab):
@@ -445,6 +638,7 @@ async def test_mock_model_waits_for_real_service_receipt_and_reuses_fixture_lemm
             project_id=actor.project_id,
             mode="replay",
             task_ids=[task["id"]],
+            stop_on_verified_target=False,
         )
     )
     assert result["status"] == "completed"
@@ -554,8 +748,8 @@ async def test_mock_delegated_child_remains_queued_at_finite_task_limit(lab):
             max_tasks=1,
         )
     )
-    assert result["stop_reason"] == "TEAM_TASK_LIMIT" and len(calls) == 1
-    assert result["remaining_task_ids"] == [child_task["id"]]
+    assert result["status"] == "completed" and len(calls) == 1
+    assert result["remaining_task_ids"] == []
     assert service.get_record("task", child_task["id"], actor)["status"] == "queued"
     await client.close()
 
@@ -575,7 +769,7 @@ async def test_same_branch_delegation_survives_supervisor_restart_without_sweepi
         calls += 1
         if calls == 1:
             delegated = tool_call(
-                "delegate",
+                "delegate_detached",
                 {
                     "branch_id": branch["id"],
                     "objective": "Queued follow-up",

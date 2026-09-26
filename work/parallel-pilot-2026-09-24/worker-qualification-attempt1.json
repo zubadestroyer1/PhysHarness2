@@ -1,0 +1,150 @@
+{
+  "schema_version": 1,
+  "docker_host": "unix://~/.colima/physharness-pilot/docker.sock",
+  "worker_image": "sha256:48e4f60a07c289baf846c0ff6fa2624870c59547c2a00971db0510e767161be0",
+  "initial_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 0,
+    "available_slots": 2,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "two_active_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 2,
+    "available_slots": 0,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "worker_ids": [
+    "bf47fbe05f8b2feb51e2b6357e0195daa44e2b2f2a7bb7eca23d6d0c9579a867",
+    "9de1556ff1ef247f45774d013ccf34b11e372aa3e8e6973d397c6eeaa79b0968"
+  ],
+  "third_result": "WORKSPACE_CAPACITY",
+  "verifier_start_monotonic": 1365010.551498958,
+  "commands": [
+    {
+      "exit_code": 0,
+      "stdout_tail": "0 Nat.add_comm (n m : \u2115) : n + m = m + n\n ependency '\u00abdoc-gen4\u00bb' changed; use `lake update \u00abdoc-gen4\u00bb` to update it\nwarning: manifest out of date: source kind (git/path) of dependency 'mathlib' changed; use `lake update mathlib` to update it\n\n-2\n",
+      "stderr_tail": "",
+      "start_monotonic": 1365010.551560916,
+      "end_monotonic": 1365027.242007833,
+      "diagnostics": {
+        "phase": "completed",
+        "memory_before": {
+          "current_bytes": 8605696,
+          "peak_bytes": 8798208,
+          "events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          }
+        },
+        "memory_after": {
+          "current_bytes": 881364992,
+          "peak_bytes": 1687674880,
+          "events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          }
+        },
+        "oom_delta": 0,
+        "limit_reason": null
+      }
+    },
+    {
+      "exit_code": 0,
+      "stdout_tail": "0 Nat.add_comm (n m : \u2115) : n + m = m + n\n ependency '\u00abdoc-gen4\u00bb' changed; use `lake update \u00abdoc-gen4\u00bb` to update it\nwarning: manifest out of date: source kind (git/path) of dependency 'mathlib' changed; use `lake update mathlib` to update it\n\n-2\n",
+      "stderr_tail": "",
+      "start_monotonic": 1365010.552941875,
+      "end_monotonic": 1365027.242027375,
+      "diagnostics": {
+        "phase": "completed",
+        "memory_before": {
+          "current_bytes": 8663040,
+          "peak_bytes": 8896512,
+          "events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          }
+        },
+        "memory_after": {
+          "current_bytes": 958832640,
+          "peak_bytes": 1763164160,
+          "events": {
+            "low": 0,
+            "high": 0,
+            "max": 0,
+            "oom": 0,
+            "oom_kill": 0,
+            "oom_group_kill": 0
+          }
+        },
+        "oom_delta": 0,
+        "limit_reason": null
+      }
+    }
+  ],
+  "verifier_end_monotonic": 1365027.242064875,
+  "verifier": {
+    "exit_code": 0,
+    "stdout_tail": "",
+    "stderr_tail": "",
+    "output": ".state/parallel-pilot-2026-09-24/concurrent-targets-kernel.json"
+  },
+  "after_first_close_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 1,
+    "available_slots": 1,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "replacement_id": "8bf8ceb5654e1bd03527de74e6e395e39fa43cf50450dd637f48ab447ba4b6d6",
+  "replacement_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 2,
+    "available_slots": 0,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "cancel_result": "CancelledError",
+  "after_cancel_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 1,
+    "available_slots": 1,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "final_probe_before_cleanup": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 1,
+    "available_slots": 1,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  },
+  "final_probe": {
+    "max_active_workspaces": 2,
+    "active_workspaces": 0,
+    "available_slots": 2,
+    "capacity_policy_conflict": false,
+    "memory_per_workspace_bytes": 2147483648,
+    "cpus_per_workspace": 2
+  }
+}

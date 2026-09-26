@@ -1,0 +1,139 @@
+{
+  "registry_used": "isolated_draft_preflight_only_not_activated",
+  "price_status": "historical_operator_input_not_revalidated",
+  "credential_check": "presence_in_current_process_only; no external request",
+  "reports": [
+    {
+      "program": "quantum",
+      "arm": "independent",
+      "status": "blocked",
+      "experiment_id": "f204eaf4-6949-4c1d-abef-995ae49c6e82",
+      "problem_id": "333dc961-edaa-4c39-aed9-36672dd5b4ff",
+      "target_digest": "2351da4df3dc2431e4b8c2d055c0f22e20b546e02503955de371ee557257a756",
+      "review_id": null,
+      "blockers": [
+        {
+          "code": "TARGET_REVIEW_REQUIRED",
+          "remediation": "Have a reviewer record a decision on this exact target."
+        },
+        {
+          "code": "MODEL_CREDENTIAL_REQUIRED",
+          "remediation": "Supply OPENAI_API_KEY privately to the worker process."
+        },
+        {
+          "code": "semantic_review_required",
+          "remediation": "Obtain and record expert review of the immutable target revision."
+        }
+      ],
+      "observations": [
+        {
+          "component": "verifier",
+          "code": "semantic_review_required",
+          "executed": false
+        }
+      ],
+      "model_calls": 0,
+      "assurance": "none",
+      "qualification": "preflight_only"
+    },
+    {
+      "program": "quantum",
+      "arm": "collaborating",
+      "status": "blocked",
+      "experiment_id": "f58fb652-8c93-404a-9823-42092e29bacc",
+      "problem_id": "333dc961-edaa-4c39-aed9-36672dd5b4ff",
+      "target_digest": "2351da4df3dc2431e4b8c2d055c0f22e20b546e02503955de371ee557257a756",
+      "review_id": null,
+      "blockers": [
+        {
+          "code": "TARGET_REVIEW_REQUIRED",
+          "remediation": "Have a reviewer record a decision on this exact target."
+        },
+        {
+          "code": "MODEL_CREDENTIAL_REQUIRED",
+          "remediation": "Supply OPENAI_API_KEY privately to the worker process."
+        },
+        {
+          "code": "semantic_review_required",
+          "remediation": "Obtain and record expert review of the immutable target revision."
+        }
+      ],
+      "observations": [
+        {
+          "component": "verifier",
+          "code": "semantic_review_required",
+          "executed": false
+        }
+      ],
+      "model_calls": 0,
+      "assurance": "none",
+      "qualification": "preflight_only"
+    },
+    {
+      "program": "classical",
+      "arm": "independent",
+      "status": "blocked",
+      "experiment_id": "6ca37d0a-66f9-4741-b284-b12f38141ca1",
+      "problem_id": "1eeb1a8e-3687-4d83-8339-63e924a30669",
+      "target_digest": "302959ccfb930fccab3d7df43e254266b3a2f1d8ef9fd86a7d4c983c7ef68f1d",
+      "review_id": null,
+      "blockers": [
+        {
+          "code": "TARGET_REVIEW_REQUIRED",
+          "remediation": "Have a reviewer record a decision on this exact target."
+        },
+        {
+          "code": "MODEL_CREDENTIAL_REQUIRED",
+          "remediation": "Supply OPENAI_API_KEY privately to the worker process."
+        },
+        {
+          "code": "semantic_review_required",
+          "remediation": "Obtain and record expert review of the immutable target revision."
+        }
+      ],
+      "observations": [
+        {
+          "component": "verifier",
+          "code": "semantic_review_required",
+          "executed": false
+        }
+      ],
+      "model_calls": 0,
+      "assurance": "none",
+      "qualification": "preflight_only"
+    },
+    {
+      "program": "classical",
+      "arm": "collaborating",
+      "status": "blocked",
+      "experiment_id": "0b9e8432-1c36-49d4-bf98-7973baf7a466",
+      "problem_id": "1eeb1a8e-3687-4d83-8339-63e924a30669",
+      "target_digest": "302959ccfb930fccab3d7df43e254266b3a2f1d8ef9fd86a7d4c983c7ef68f1d",
+      "review_id": null,
+      "blockers": [
+        {
+          "code": "TARGET_REVIEW_REQUIRED",
+          "remediation": "Have a reviewer record a decision on this exact target."
+        },
+        {
+          "code": "MODEL_CREDENTIAL_REQUIRED",
+          "remediation": "Supply OPENAI_API_KEY privately to the worker process."
+        },
+        {
+          "code": "semantic_review_required",
+          "remediation": "Obtain and record expert review of the immutable target revision."
+        }
+      ],
+      "observations": [
+        {
+          "component": "verifier",
+          "code": "semantic_review_required",
+          "executed": false
+        }
+      ],
+      "model_calls": 0,
+      "assurance": "none",
+      "qualification": "preflight_only"
+    }
+  ]
+}

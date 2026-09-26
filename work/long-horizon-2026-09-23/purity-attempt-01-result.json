@@ -1,0 +1,18 @@
+{
+  "status": "blocked",
+  "stop_reason": null,
+  "experiment_id": "041d11ee-e488-45f5-863f-41cc58c5a67d",
+  "report_artifact_id": "0f2a82c4-4292-46a6-b205-dd4b6cc68878",
+  "attempted_tasks": 3,
+  "ledger": {
+    "max_cost_usd": "25",
+    "reserved_cost_usd": "0",
+    "spent_cost_usd": "7.878868",
+    "active_workers": 0,
+    "max_concurrency": 2,
+    "uncertain_operations": 0,
+    "max_tokens": 4000000,
+    "tokens_reserved": 0,
+    "tokens_spent": 3876074
+  }
+}

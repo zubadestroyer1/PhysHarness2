@@ -1,0 +1,117 @@
+{
+  "cases": [
+    {
+      "acknowledged_deliveries": 0,
+      "active_workers_after": 0,
+      "completed_tasks": 2,
+      "delivery_count": 0,
+      "duplicate_delivery_ids": 0,
+      "evidence_level": "mock_provider",
+      "exact_source_retrievals": 0,
+      "mock_tokens_spent": 30,
+      "mode": "replay",
+      "pending_deliveries_after": 0,
+      "proof_status": "unverified",
+      "provider_context_repetitions": 0,
+      "provider_requests": 2,
+      "provider_visible_update_kinds": [],
+      "resource_manifest": {
+        "max_concurrency": 2,
+        "max_cost_usd": "1.000000",
+        "max_pending_tasks": 2,
+        "max_runtime_seconds": 600,
+        "max_total_tasks": 2,
+        "root_count": 2,
+        "runner_max_tasks": 2
+      },
+      "runner_status": "completed",
+      "scenario": "independent",
+      "wall_elapsed_ms": 344.098
+    },
+    {
+      "acknowledged_deliveries": 1,
+      "active_workers_after": 0,
+      "completed_tasks": 2,
+      "delivery_count": 1,
+      "duplicate_delivery_ids": 0,
+      "evidence_level": "mock_provider",
+      "exact_source_retrievals": 1,
+      "mock_tokens_spent": 45,
+      "mode": "replay",
+      "pending_deliveries_after": 0,
+      "proof_status": "unverified",
+      "provider_context_repetitions": 1,
+      "provider_requests": 3,
+      "provider_visible_update_kinds": [
+        "message"
+      ],
+      "resource_manifest": {
+        "max_concurrency": 2,
+        "max_cost_usd": "1.000000",
+        "max_pending_tasks": 2,
+        "max_runtime_seconds": 600,
+        "max_total_tasks": 2,
+        "root_count": 2,
+        "runner_max_tasks": 2
+      },
+      "runner_status": "completed",
+      "scenario": "addressed",
+      "wall_elapsed_ms": 215.295
+    },
+    {
+      "acknowledged_deliveries": 1,
+      "active_workers_after": 0,
+      "completed_tasks": 2,
+      "delivery_count": 1,
+      "duplicate_delivery_ids": 0,
+      "evidence_level": "mock_provider",
+      "exact_source_retrievals": 1,
+      "mock_tokens_spent": 45,
+      "mode": "replay",
+      "pending_deliveries_after": 0,
+      "proof_status": "unverified",
+      "provider_context_repetitions": 1,
+      "provider_requests": 3,
+      "provider_visible_update_kinds": [
+        "discussion_post"
+      ],
+      "resource_manifest": {
+        "max_concurrency": 2,
+        "max_cost_usd": "1.000000",
+        "max_pending_tasks": 2,
+        "max_runtime_seconds": 600,
+        "max_total_tasks": 2,
+        "root_count": 2,
+        "runner_max_tasks": 2
+      },
+      "runner_status": "completed",
+      "scenario": "subscribed",
+      "wall_elapsed_ms": 249.018
+    }
+  ],
+  "format": "physharness.research-network-replay.v1",
+  "load_probe": {
+    "active_workers_after": 0,
+    "attempted_tasks": 8,
+    "completed_tasks": 8,
+    "label": "synthetic_logical_queue_load",
+    "logical_root_tasks_admitted": 128,
+    "peak_mock_workers": 2,
+    "provider_requests": 8,
+    "provider_start_order": [
+      "Explore 1 independently",
+      "Explore 5 independently",
+      "Explore 7 independently",
+      "Explore 4 independently",
+      "Explore 0 independently",
+      "Explore 3 independently",
+      "Explore 2 independently",
+      "Explore 6 independently"
+    ],
+    "qualification": "not_live_scale_or_mathematical_effectiveness",
+    "queued_tasks_after": 120,
+    "wall_elapsed_ms": 733.797
+  },
+  "scientific_effectiveness": "not_measured",
+  "token_accounting": "mock fixed usage, not a context-efficiency measurement"
+}

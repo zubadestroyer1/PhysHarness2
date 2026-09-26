@@ -17,6 +17,11 @@ class SQLiteRuntimeStore:
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS runtime_sessions (id TEXT PRIMARY KEY, data TEXT NOT NULL)"
         )
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS runtime_archives ("
+            "session_id TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, "
+            "PRIMARY KEY(session_id, id))"
+        )
         self.db.commit()
 
     async def save(self, checkpoint: RuntimeCheckpoint) -> None:
@@ -37,6 +42,28 @@ class SQLiteRuntimeStore:
         checkpoint = RuntimeCheckpoint.model_validate_json(row[0])
         checkpoint.verify()
         return checkpoint
+
+    async def archive(self, session_id: str, content: dict[str, Any]) -> str:
+        archive_id = digest(content)
+        encoded = json.dumps(content, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        self.db.execute(
+            "INSERT OR IGNORE INTO runtime_archives VALUES (?, ?, ?)",
+            (session_id, archive_id, encoded),
+        )
+        self.db.commit()
+        return archive_id
+
+    async def load_archive(self, session_id: str, archive_id: str) -> dict[str, Any]:
+        row = self.db.execute(
+            "SELECT data FROM runtime_archives WHERE session_id=? AND id=?",
+            (session_id, archive_id),
+        ).fetchone()
+        if row is None:
+            raise ExecutionError("ARCHIVE_NOT_FOUND", "Native archive is missing")
+        content = json.loads(row[0])
+        if digest(content) != archive_id:
+            raise ExecutionError("ARCHIVE_MISMATCH", "Native archive integrity mismatch")
+        return content
 
     def close(self) -> None:
         self.db.close()

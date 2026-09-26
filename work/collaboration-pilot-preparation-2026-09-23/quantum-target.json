@@ -1,0 +1,12 @@
+{
+  "id": "quantum.bell.entangled_with_mixed_marginal",
+  "title": "The Bell state is entangled while its local density is maximally mixed",
+  "statement": "The canonical two-qubit Bell ket is entangled and its left marginal is I/2.",
+  "assumptions": [
+    "Ket.MES Qubit is the normalized all-positive maximally entangled ket."
+  ],
+  "physical_scope": "The Bell state (|00>+|11>)/sqrt(2); partial trace removes the right factor and yields the left qubit state.",
+  "target_theorem": "physics_target",
+  "target_source": "import QuantumInfo.States.Pure.Qubit\n\nopen scoped Matrix\nopen ComplexConjugate\nopen BigOperators\n\ntheorem physics_target  : (Ket.MES Qubit).IsEntangled ∧\n    (MState.pure (Ket.MES Qubit)).traceRight.m =\n      (1 / 2 : ℂ) • (1 : Matrix Qubit Qubit ℂ) := by\n  sorry\n",
+  "program": "quantum"
+}

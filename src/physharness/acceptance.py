@@ -2,7 +2,10 @@
 
 import logging
 
+from sqlalchemy import select
+
 from .errors import HarnessError
+from .storage import RecordRow, record_json_text
 from .verification import UnavailableVerifier, VerificationOutcome, VerificationRequest
 from .verification.boundary import MAX_CANDIDATE_CHARACTERS, digest, preflight
 
@@ -10,6 +13,32 @@ log = logging.getLogger(__name__)
 
 
 class AcceptanceMixin:
+    def verified_target_receipt(self, experiment_id, actor):
+        """Find exact current-target evidence using the canonical acceptance predicate."""
+        with self.db.sessions() as session:
+            experiment = self._get(session, "experiment", experiment_id, actor)
+            # Prefilter to exact current-target independent receipts; the canonical
+            # predicate below still decides. Old or unrelated receipts are never loaded.
+            receipts = session.scalars(
+                select(RecordRow)
+                .where(
+                    RecordRow.project_id == actor.project_id,
+                    RecordRow.kind == "verification",
+                    record_json_text("experiment_id") == experiment_id,
+                    record_json_text("status") == "verified",
+                    record_json_text("assurance") == "independent_kernel",
+                    record_json_text("target_digest") == experiment.payload["target_digest"],
+                )
+                .order_by(RecordRow.id)
+            )
+            for receipt in receipts:
+                if self._accepted_evidence(session, receipt, experiment, {"independent_kernel"}):
+                    return {
+                        "receipt_id": receipt.id,
+                        "target_digest": experiment.payload["target_digest"],
+                    }
+            return None
+
     def verify_candidate(self, experiment_id, artifact_id, publication, actor, key):
         self._research_role(actor)
 
