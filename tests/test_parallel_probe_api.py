@@ -106,9 +106,10 @@ def test_widest_legacy_catalog_is_byte_identical():
 
     definitions = probe.definitions()
     assert len(definitions) == 63
-    # Recorded before the society profile (Task 9); the legacy catalog must not drift.
+    # Recorded at the final PR #28 head, whose audit fixes reworded workspace tools; the
+    # society profile must not drift the legacy catalog.
     assert digest_json(definitions) == (
-        "82d0b2b75885e3526d637d0c1025a90793577547c7b0735db44d928d11a5e70a"
+        "a680d9bb897a71c3f13ac7d4ac9d809b631c633bca0678f44d40e04a4d15c431"
     )
 
 
