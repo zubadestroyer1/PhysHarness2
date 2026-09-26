@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from physharness.errors import HarnessError
+from physharness.execution.types import GUEST_PYTHON
 from physharness.formal_tools import lean_session_daemon as daemon
 from physharness.orchestration.lean_session import (
     AUTOMATION,
@@ -164,6 +165,9 @@ class FakeWorkspaceTools:
             ("/opt/sources/physlib", str(self.root)),
             ("/tmp/physharness-lean.sock", state.socket),
             ("/tmp/physharness", str(state.runtime)),
+            # The daemon and statement-check driver launch as GUEST_PYTHON (isolated
+            # /usr/bin/python3, keeping the -I flag); run them with the test interpreter.
+            (GUEST_PYTHON[0], sys.executable),
         ]
 
     def allows_background_processes(self):
@@ -544,7 +548,8 @@ async def test_check_repl_backend_holes_and_automation(lean_env):
     probe, request = tools.runs()
     assert probe[1] == ["sh", "-c", f"test -x {tools.marker} && echo yes || echo no"]
     runtime = lean_env.runtime / "lean_session.py"
-    expected = f"python3 {runtime} request --socket {lean_env.socket} --timeout 120 "
+    # GUEST_PYTHON[0] is substituted for the test interpreter; -I (isolated mode) is kept.
+    expected = f"{sys.executable} -I {runtime} request --socket {lean_env.socket} --timeout 120 "
     assert expected in request[1][2]
     assert request[3] <= tools.policy.timeout_seconds
     assert not (tools.root / ".physharness").exists()  # neither daemon nor request file
@@ -560,7 +565,7 @@ async def test_check_repl_inline_when_background_disallowed(lean_env):
     result = await LeanSession(tools).check(THREE_HOLES, automate=True, operation_id="op")
     assert result["backend"] == "repl_inline" and result["automation_available"] is True
     assert result["holes"][0]["automation"]["closed_by"] == "linarith"
-    assert f"python3 {DAEMON_PATH} inline --timeout " in tools.runs()[-1][1][2]
+    assert f"{sys.executable} -I {DAEMON_PATH} inline --timeout " in tools.runs()[-1][1][2]
     # Without background processes the daemon stays in /work (local_docker has no writable /tmp).
     assert (tools.root / DAEMON_PATH).read_bytes() == DAEMON_FILE.read_bytes()
     assert not lean_env.runtime.exists()

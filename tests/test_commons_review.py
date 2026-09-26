@@ -1655,10 +1655,18 @@ def test_a_restated_node_inherits_its_statements_reviews(lab):
         "copy",
     )
     formalize(service, copy, alpha, key="copy-lean")
-    for scope in ("informal", "fidelity"):
-        error = rejected(lambda s=scope: service.request_review(copy["id"], s, beta, s))
-        assert (error.code, error.status) == ("DUPLICATE_STATEMENT", 409)
-        assert error.details == {"node_id": first["id"]}
+    # Informal review still follows the shared statement text: the copy draws no new panel.
+    informal = rejected(
+        lambda: service.request_review(copy["id"], "informal", beta, "copy-informal")
+    )
+    assert (informal.code, informal.status) == ("DUPLICATE_STATEMENT", 409)
+    assert informal.details == {"node_id": first["id"]}
+    # Fidelity keys on the Lean statement digest too: the copy's Lean text is its own (first
+    # never had one), so it draws its own fidelity panel instead of colliding.
+    assert (
+        service.request_review(copy["id"], "fidelity", beta, "copy-fidelity")["deduplicated"]
+        is False
+    )
     # A different claim is a different text with its own panel.
     revised = service.create_node(
         exp["id"], lemma(statement="The trace is additive on finite sums."), alpha, "revised"
@@ -1675,6 +1683,56 @@ def test_a_restated_node_inherits_its_statements_reviews(lab):
     service.abandon_node(dropped["id"], "Wrong direction.", alpha, "drop")
     again = service.create_node(exp["id"], lemma(statement="Dropped claim."), alpha, "again")
     assert verdicts(service, exp, again, beta, "informal", "sound") == ["refereed"]
+
+
+def _hole(title, goal, lean_statement):
+    """What lean_sketch's hole_node builds: the informal text is only the pretty-printed goal,
+    which elides numeral types, so different Lean goals can share one informal statement."""
+    return NodeCreate(
+        node_type="lemma",
+        title=title,
+        statement="Lean hole goal: " + goal,
+        lean_header="import Mathlib",
+        lean_name="p_hole_0",
+        lean_statement=lean_statement,
+    )
+
+
+def test_fidelity_review_keys_on_lean_statement_not_only_informal_text(lab):
+    """Two hole nodes share an informal text (`⊢ 2 + 2 = 4`) but state different Lean
+    statements (over ℕ and over ℝ). The later still shares the informal panel (anti-shopping),
+    but draws its own fidelity panel; an identical informal+Lean re-post still collides."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    first = service.create_node(
+        exp["id"], _hole("Hole 0 of A", "⊢ 2 + 2 = 4", ": (2 : ℕ) + 2 = 4"), alpha, "a"
+    )
+    second = service.create_node(
+        exp["id"], _hole("Hole 0 of B", "⊢ 2 + 2 = 4", ": (2 : ℝ) + 2 = 4"), beta, "b"
+    )
+    for node, actor, key in ((first, alpha, "la"), (second, beta, "lb")):
+        statement = service.get_record("commons_node", node["id"], actor)["lean_statement"]
+        service.set_lean_statement(
+            node["id"], "import Mathlib", "p_hole_0", statement, dict(ELABORATED), actor, key
+        )
+
+    # Informal review still collides: identical informal text shares one informal panel.
+    informal = rejected(lambda: service.request_review(second["id"], "informal", beta, "ri"))
+    assert (informal.code, informal.details) == ("DUPLICATE_STATEMENT", {"node_id": first["id"]})
+    # Fidelity review is allowed: the Lean statement differs, so it is a distinct formal object.
+    requested = service.request_review(second["id"], "fidelity", beta, "rf")
+    assert requested["review_task_id"] and requested["deduplicated"] is False
+
+    # Anti-shopping: a later node with the same informal AND Lean statement still collides,
+    # onto the earliest such node that drew a fidelity referee (second, not the ℕ node).
+    third = service.create_node(
+        exp["id"], _hole("Hole 0 of C", "⊢ 2 + 2 = 4", ": (2 : ℝ) + 2 = 4"), alpha, "c"
+    )
+    statement = service.get_record("commons_node", third["id"], alpha)["lean_statement"]
+    service.set_lean_statement(
+        third["id"], "import Mathlib", "p_hole_0", statement, dict(ELABORATED), alpha, "lc"
+    )
+    dup = rejected(lambda: service.request_review(third["id"], "fidelity", alpha, "rf3"))
+    assert (dup.code, dup.details) == ("DUPLICATE_STATEMENT", {"node_id": second["id"]})
 
 
 def test_gap_reports_do_not_use_the_retry_budget(lab):
