@@ -417,3 +417,82 @@ async def test_explicit_resume_can_continue_interruption_before_billable_request
     assert result.output_text == "continued" and result.session.turns == 1
     await client.close()
     await restored.client.close()
+
+
+def rate_limited_client(replies, requests):
+    """Replies are (status, body, headers); input-token counts always succeed."""
+
+    def handler(request):
+        requests.append((str(request.url), request.headers.get("X-Client-Request-Id")))
+        if str(request.url).endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        status, body, headers = replies.pop(0)
+        return httpx.Response(status, json=body, headers=headers)
+
+    return AsyncOpenAI(
+        api_key="test-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+def refusal(code):
+    return {"error": {"message": "limit", "type": "tokens", "param": None, "code": code}}
+
+
+async def test_rate_limit_refusal_resends_the_same_generation(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    client = rate_limited_client(
+        [
+            (429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"}),
+            (429, refusal("rate_limit_exceeded"), {}),
+            (200, response([message("done")]), {}),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=emit
+    )
+    started = time.monotonic()
+    result = await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert result.output_text == "done"
+    assert result.session.status == "completed"
+    assert result.session.input_tokens == 10
+    creates = [ident for url, ident in requests if not url.endswith("/input_tokens")]
+    # One generation: three sends under one operation, one start, one usage.
+    assert len(creates) == 3 and len(set(creates)) == 1
+    assert len([e for e in events if e.kind == "generation_started"]) == 1
+    assert len([e for e in events if e.kind == "usage"]) == 1
+    # The second refusal has no hint, so the 1 s fallback applies.
+    assert time.monotonic() - started >= 1.0
+    await client.close()
+
+
+async def test_quota_exhaustion_is_not_resent(tmp_path):
+    requests = []
+    client = rate_limited_client(
+        [(429, refusal("insufficient_quota"), {"retry-after-ms": "5"})], requests
+    )
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client)
+    with pytest.raises(ExecutionError):
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert len([url for url, _ in requests if not url.endswith("/input_tokens")]) == 1
+    await client.close()
+
+
+async def test_rate_limit_wait_never_passes_the_deadline(tmp_path):
+    requests = []
+    client = rate_limited_client(
+        [(429, refusal("rate_limit_exceeded"), {"retry-after": "20"})], requests
+    )
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client)
+    started = time.monotonic()
+    with pytest.raises(ExecutionError):
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=2))
+    assert time.monotonic() - started < 2.0
+    assert len([url for url, _ in requests if not url.endswith("/input_tokens")]) == 1
+    await client.close()
