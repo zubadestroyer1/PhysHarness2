@@ -1,5 +1,7 @@
 """Branch readers learn nothing about records outside their scope, not even identifiers."""
 
+import base64
+
 import pytest
 from test_core import setup_experiment
 from test_sharing import approaches
@@ -20,9 +22,18 @@ def page_all(memory, branch_id, reader, *, limit):
         if cursor is None:
             assert page["complete"] is True
             return nodes, cursors
-        assert not cursors or cursor > cursors[-1]  # Cursors still only move forward.
         cursors.append(cursor)
     pytest.fail("Graph pagination did not terminate")
+
+
+def assert_opaque(cursors, identifiers):
+    """Cursors carry no record ID and no hidden-row count, in any encoding, at any length."""
+    assert cursors and len({len(cursor) for cursor in cursors}) == 1
+    for cursor in cursors:
+        assert "+" not in cursor
+        raw = base64.urlsafe_b64decode(cursor.partition(".")[2] + "==")
+        for identifier in identifiers:
+            assert identifier not in cursor and identifier.encode() not in raw
 
 
 @pytest.mark.parametrize("sharing", ["none", "verified"])
@@ -55,9 +66,10 @@ def test_graph_cursor_never_names_hidden_records_and_pages_exactly(lab, monkeypa
 
     expected, _ = page_all(memory, alpha.branch_id, alpha, limit=100)
     assert set(visible) <= set(expected) and not set(expected) & hidden
+    assert len(expected) == len(set(expected))
     nodes, cursors = page_all(memory, alpha.branch_id, alpha, limit=1)
     assert nodes == expected  # No record is skipped or repeated across cursors.
-    assert cursors and not any(identifier in cursor for cursor in cursors for identifier in hidden)
+    assert_opaque(cursors, hidden | set(expected))
 
 
 def test_record_and_history_page_cursors_never_name_hidden_records(lab, monkeypatch):
@@ -86,7 +98,6 @@ def test_record_and_history_page_cursors_never_name_hidden_records(lab, monkeypa
             cursor = page["next_cursor"]
             if cursor is None:
                 return items, cursors
-            assert not cursors or cursor > cursors[-1]
             cursors.append(cursor)
         pytest.fail("Pagination did not terminate")
 
@@ -98,10 +109,95 @@ def test_record_and_history_page_cursors_never_name_hidden_records(lab, monkeypa
     ):
         items, cursors = pages(read)
         assert items == visible
-        assert not any(identifier in cursor for cursor in cursors for identifier in hidden)
+        assert_opaque(cursors, hidden | set(visible))
     with pytest.raises(HarnessError) as error:
         service.page_records("task", alpha, experiment["id"], 1, "anchor+000000000")
     assert error.value.code == "INVALID_CURSOR"
+
+
+def _cursor_case(lab, monkeypatch):
+    service, _, experiment, _, (alpha, beta) = approaches(lab, "none")
+    sequence = iter(range(10_000))
+    monkeypatch.setattr(domain, "new_id", lambda: f"zz-{next(sequence):08d}")
+    visible = [
+        service.create_task(TaskCreate(branch_id=alpha.branch_id, objective="v"), alpha, f"v{i}")[
+            "id"
+        ]
+        for i in range(2)
+    ]
+    hidden = [
+        service.create_task(TaskCreate(branch_id=beta.branch_id, objective="s"), beta, f"h{i}")[
+            "id"
+        ]
+        for i in range(120)
+    ]
+    visible.append(
+        service.create_task(TaskCreate(branch_id=alpha.branch_id, objective="v"), alpha, "v2")["id"]
+    )
+    return service, experiment, alpha, beta, visible, hidden
+
+
+def test_crafted_or_foreign_cursors_are_rejected_before_any_scan(lab, monkeypatch):
+    service, experiment, alpha, beta, visible, hidden = _cursor_case(lab, monkeypatch)
+    memory = PortableMemory(service)
+    records = service.page_records("task", alpha, experiment["id"], 1)
+    history = memory.history_page(alpha.branch_id, alpha, kind="task", limit=1)
+    graph = memory.research_graph_page(alpha.branch_id, alpha, limit=1)
+    issued = records["next_cursor"]
+    tampered = issued[:-2] + ("AA" if issued[-2:] != "AA" else "BB")
+    crafted = [
+        "+000000001",  # the re-review's offset probe from the start
+        visible[0],
+        visible[0] + "+000000001",
+        hidden[0],
+        hidden[0][:-1],
+        hidden[0][:-1] + "\U0010ffff",
+        "pc1." + "A" * len(issued[4:]),
+        tampered,
+        graph["next_cursor"],  # issued for another query
+        service.page_records("task", beta, experiment["id"], 1)["next_cursor"],  # another reader
+        service.page_records("claim", alpha, experiment["id"], 1)["next_cursor"] or "pc1.x",
+    ]
+    for cursor in crafted:
+        with pytest.raises(HarnessError) as error:
+            service.page_records("task", alpha, experiment["id"], 1, cursor)
+        assert error.value.code == "INVALID_CURSOR", cursor
+        with pytest.raises(HarnessError) as error:
+            memory.history_page(alpha.branch_id, alpha, kind="task", limit=1, after=cursor)
+        assert error.value.code == "INVALID_CURSOR", cursor
+    for cursor in [*crafted[:8], records["next_cursor"], history["next_cursor"]]:
+        with pytest.raises(HarnessError) as error:
+            memory.research_graph_page(alpha.branch_id, alpha, limit=1, after=cursor)
+        assert error.value.code == "CONTEXT_INPUT_INVALID", cursor
+    # An issued cursor still works for its own reader and query, and replays exactly.
+    first = service.page_records("task", alpha, experiment["id"], 1, issued)
+    again = service.page_records("task", alpha, experiment["id"], 1, issued)
+    assert first["items"] == again["items"] and first["next_cursor"] != again["next_cursor"]
+    assert (
+        service.page_records("task", alpha, experiment["id"], 5, first["next_cursor"])["items"]
+        == service.page_records("task", alpha, experiment["id"], 5, again["next_cursor"])["items"]
+    )
+    assert history["next_cursor"]
+
+
+def test_operator_pages_keep_exact_order_with_opaque_cursors(lab, monkeypatch):
+    service, experiment, alpha, beta, visible, hidden = _cursor_case(lab, monkeypatch)
+    operator = alpha.model_copy(
+        update={"role": "operator", "experiment_id": None, "branch_id": None}
+    )
+    everything = sorted(visible + hidden)
+    items, cursor = [], None
+    while True:
+        page = service.page_records("task", operator, experiment["id"], 7, cursor)
+        items.extend(item["id"] for item in page["items"])
+        cursor = page["next_cursor"]
+        if cursor is None:
+            break
+        assert cursor.startswith("pc1.")
+    assert items == everything
+    assert [row["id"] for row in service.list_records("task", operator, experiment["id"], 7)] == (
+        everything
+    )
 
 
 def test_hidden_and_missing_evidence_ids_are_indistinguishable(lab):

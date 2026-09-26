@@ -44,7 +44,7 @@ await destination.restore_workspace(verified, expected_execution_id=destination.
 
 Version 1 limits are **65,536 archive bytes, 32,768 bytes per file, and 64 files**. Paths are at most 256 UTF-8 bytes. Larger workspaces fail explicitly. A future streamed artifact transport should introduce a versioned contract instead of silently truncating this one. `upload_file` returns the SHA-256 of the canonical single-file archive.
 
-Transfers invoke adapter-authored Python via the genuine SDK `commands.run` interface. Input is bounded, shell-quoted JSON/base64 data; guest output is parsed as data. The helper runs `python3 -I`, opens root and path components with directory descriptors and `O_NOFOLLOW`, rejects hardlinks and nonregular files, and atomically replaces individual files. It does not use unrestricted tar/zip extraction or host-side execution of guest code. SDK `files.read/write` offer convenience transfer interfaces but do not provide the directory-descriptor confinement needed here.
+Transfers invoke adapter-authored Python via the genuine SDK `commands.run` interface. Input is bounded, shell-quoted JSON/base64 data; guest output is parsed as data. The helper runs `/usr/bin/python3 -I`, opens root and path components with directory descriptors and `O_NOFOLLOW`, rejects hardlinks and nonregular files, and atomically replaces individual files. It does not use unrestricted tar/zip extraction or host-side execution of guest code. SDK `files.read/write` offer convenience transfer interfaces but do not provide the directory-descriptor confinement needed here.
 
 A restore requires an empty workspace or exactly the same file contents. An identical completed restore is replayable; a conflicting workspace is rejected. Restore is **not transactional across multiple files**: interruption can leave partial files, which need reconciliation before retry. Export requires a quiescent guest; background processes can change files during traversal. The adapter serializes its own operations but does not claim an adversarial guest kernel or root user cannot tamper with its filesystem or helper. Run this only in a qualified credentialless VM; the VM boundary protects the host.
 
@@ -194,6 +194,18 @@ absolute path selects that guest directory. This is a guest convenience contract
 isolation within the VM; generated programs can access their authorized guest environment.
 Checkpoints capture regular files under the configured root only. Outputs deliberately written
 elsewhere must be copied or published explicitly before cleanup.
+
+On the local Docker workbench every name of a hard-linked regular file under `/work` is saved as
+an ordinary file (the link itself is not restored). Symlinks, special files, secret or cache
+names, unreadable entries, and names no archive can hold (a backslash, a component over 255
+bytes, a path over 1,024 bytes, or undecodable bytes) are excluded without refusing the
+checkpoint. The manifest lists them in `excluded_paths`; the checkpoint result reports
+`excluded_count` and a bounded `excluded_paths` sample, with U+FFFD for backslashes and
+undecodable bytes and a trailing ellipsis on over-long paths. Automatic cleanup takes a final
+checkpoint and records it on the destroy operation as `final_checkpoint`. It destroys the VM only
+after that checkpoint completed or was dispatched and recorded as a definite transfer refusal;
+an authority refusal before dispatch (paused or cancelled experiment, deadline, lost lease)
+leaves the VM ready for reconciliation.
 
 Qualified templates must precreate the configured workspace directory for command-first use.
 The upload helper creates it when uploading the first file. Commands do not inject hidden

@@ -13,6 +13,7 @@ from pydantic import Field
 from ..domain import Digest, StrictModel, digest_json
 from ..errors import HarnessError
 from ..execution import CommandRequest
+from ..execution.types import GUEST_PYTHON
 
 
 def validated_lean_imports(imports: list[str]) -> list[str]:
@@ -277,7 +278,7 @@ print(json.dumps({'hits': hits, 'available_roots': available}, ensure_ascii=Fals
             expected_execution_id=workspace["execution_id"],
             request=CommandRequest(
                 operation_id=operation_id,
-                argv=["python3", "-c", code, query],
+                argv=[*GUEST_PYTHON, "-c", code, query],
                 cwd=".",
                 timeout_seconds=min(self.policy.timeout_seconds, 60),
                 max_output_bytes=65536,
@@ -333,7 +334,7 @@ print(json.dumps({
             expected_execution_id=workspace["execution_id"],
             request=CommandRequest(
                 operation_id=operation_id,
-                argv=["python3", "-c", code, guest],
+                argv=[*GUEST_PYTHON, "-c", code, guest],
                 cwd=".",
                 timeout_seconds=min(self.policy.timeout_seconds, 15),
                 max_output_bytes=65536,
@@ -460,20 +461,37 @@ print(json.dumps({
                         "WORKSPACE_RECONCILIATION_REQUIRED",
                         "Uncertain workspace cannot be destroyed during automatic cleanup.",
                     )
+                final_checkpoint = None
                 if self.broker.provider_spec["provider"] == "local_docker":
+                    operation_id = f"final-checkpoint:{self.broker.holder}"
                     try:
-                        await self.broker.export_workspace(
+                        exported = await self.broker.export_workspace(
                             observed["id"],
                             expected_execution_id=observed["execution_id"],
-                            operation_id=f"final-checkpoint:{self.broker.holder}",
+                            operation_id=operation_id,
                         )
                     except HarnessError:
-                        # A definite refusal (for example an unportable agent-made name)
-                        # is durably recorded as the rejected final checkpoint and leaves
-                        # the VM ready; it must not keep the workbench alive. Uncertain
-                        # outcomes are no longer ready and still block automatic cleanup.
-                        if self.broker.inspect(observed["id"])["status"] != "ready":
+                        # Teardown without an archive needs a dispatched final checkpoint
+                        # durably recorded as a definite refusal of the transfer itself.
+                        # Guard refusals (paused or cancelled experiment, deadline, lost
+                        # lease) record nothing and keep the VM, as do uncertain outcomes.
+                        rejected = self.broker.rejected_transfer(observed["id"], operation_id)
+                        current = self.broker.inspect(observed["id"])["status"]
+                        if rejected is None or current != "ready":
                             raise
+                        final_checkpoint = {
+                            "status": "rejected",
+                            "operation_id": rejected["id"],
+                            "code": rejected["result"]["code"],
+                        }
+                    else:
+                        final_checkpoint = {
+                            "status": "completed",
+                            "artifact_id": exported["artifact"]["id"],
+                            "archive_sha256": exported["archive_sha256"],
+                            "excluded_count": exported.get("excluded_count"),
+                            "excluded_paths": exported.get("excluded_paths"),
+                        }
                 await self.broker.destroy(
                     observed["id"],
                     expected_execution_id=observed["execution_id"],
@@ -481,6 +499,7 @@ print(json.dumps({
                     actual_cost_usd="0"
                     if self.broker.provider_spec["provider"] == "local_docker"
                     else None,
+                    final_checkpoint=final_checkpoint,
                 )
         if self.unresolved():
             raise HarnessError(
@@ -523,7 +542,10 @@ print(json.dumps({
             {},
             self.checkpoint,
             "Archive bounded regular workspace files as an immutable artifact. "
-            "This is not a full VM memory snapshot.",
+            "Symlinks, special files, secret or cache names and names a checkpoint cannot "
+            "hold (such as a backslash or undecodable bytes) are not saved and do not survive "
+            "a handoff; the result counts them in excluded_count and lists them in "
+            "excluded_paths. This is not a full VM memory snapshot.",
         )
         register(
             "read_workspace_file",

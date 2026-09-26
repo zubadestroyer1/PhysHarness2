@@ -392,12 +392,15 @@ def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
     print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
     assert len(queries) <= 110
     assert page["items"] == [] and page["next_cursor"] is not None
-    seen = []
+    seen, pages = [], 1
     while page["next_cursor"] is not None:
-        previous = page["next_cursor"]
-        page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
-        assert page["next_cursor"] is None or page["next_cursor"] > previous
+        page = service.page_records(
+            "artifact", alpha, exp["id"], limit=1, after=page["next_cursor"]
+        )
         seen.extend(item["id"] for item in page["items"])
+        pages += 1
+        # Opaque cursors are not ordered strings; each still advances one bounded scan.
+        assert pages <= inventory // 100 + 2
     assert seen == [visible_id]
     assert [item["id"] for item in service.list_records("artifact", alpha, exp["id"], limit=1)] == [
         visible_id

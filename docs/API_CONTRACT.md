@@ -32,10 +32,14 @@ does not grant access. Do not assume a first page is a complete export.
 Each collection request examines at most `max(100, limit)` metadata records in its indexed scope,
 plus one unexamined lookahead record. It stops sooner when it has `limit` authorized items.
 Invisible records consume the scan budget, so `items` can be empty while `next_cursor` is non-null.
-The cursor is the last examined record ID, including when that record was invisible. Continue until
-the cursor is null; internal full readers follow the same rule. Authorization still applies to every
-returned item, and cursors never reveal record content or grant read authority. These pages are
-keyset reads of current state, not a transactionally frozen export across multiple requests.
+The cursor is opaque: an authenticated encryption of the last examined record ID (possibly an
+invisible one), bound to the reader identity and query. It names no record and counts no hidden
+rows. A cursor that was crafted, altered, or issued to another reader or query fails with
+`INVALID_CURSOR`, so cursors cannot probe hidden records; start again without `after` if a cursor
+is refused. Continue until the cursor is null; internal full readers follow the same rule.
+Authorization still applies to every returned item, and cursors never reveal record content or
+grant read authority. These pages are keyset reads of current state, not a transactionally frozen
+export across multiple requests.
 
 Ordered indexes cover project/kind/ID, experiment scope, and agent review-target scope. Accepted
 cross-branch artifacts use an indexed artifact/current-review/status/assurance receipt lookup with the
