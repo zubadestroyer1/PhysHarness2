@@ -305,6 +305,35 @@ async def test_elaboration_rejects_a_signature_that_ends_the_declaration(real_le
     assert raised.value.code == "INVALID_ARGUMENTS"
 
 
+@pytest.mark.lean
+async def test_elaboration_refuses_an_interpolation_shaped_injection(real_lean, tmp_path):
+    """Regression for the signature shape-check bypass: an identifier ending in ``!``
+    followed by a plain string whose ``{`` was mistaken for a ``s!`` interpolation. Lean
+    4.33 runs whatever command follows the resulting parse error, so the shape check must
+    refuse the signature before Lean sees it."""
+    marker = "PWNED_FROM_INJECTION"
+    header = "set_option autoImplicit true\nset_option relaxedAutoImplicit true"
+    signature = f': x!"{{" := sorry\n#eval IO.println "{marker}"\n#exit\n"}}"'
+
+    # The shape check refuses it, so the injected command never reaches Lean.
+    assert signature_problem(signature) is not None
+    session = LeanSession(_tools(real_lean, "one_shot"))
+    with pytest.raises(HarnessError) as raised:
+        await session.elaborate_statement(header, "n", signature, operation_id="inject")
+    assert raised.value.code == "INVALID_ARGUMENTS"
+    assert not [c for c in session._tools.calls if c[0] in ("lean_scratch", "run")]
+
+    # Positive control: the exact source elaborate_statement would build does run the
+    # injected command under real Lean 4.33, proving the refusal above is load-bearing.
+    source = f"{header}\n\ntheorem n {signature} := by\n  sorry\n"
+    path = tmp_path / "inject.lean"
+    path.write_text(source, encoding="utf-8")
+    completed = subprocess.run(
+        [real_lean.lean, str(path)], capture_output=True, text=True, timeout=120, cwd=tmp_path
+    )
+    assert marker in completed.stdout
+
+
 # Statement shape ---------------------------------------------------------------------
 
 
@@ -322,6 +351,13 @@ async def test_elaboration_rejects_a_signature_that_ends_the_declaration(real_le
         ': "a := b" = "a := b" -- a note := here',
         "(x : Nat := 5) : x = x",
         ": somewhere = somewhere",
+        # A signature may span lines; a continuation at column 0 whose first token is not a
+        # command (a type name, a binder, a proposition) is fine.
+        "(x : Nat)\n  (y : Nat) : x = y",
+        "(x : Nat) :\nNat.succ x = x",
+        "(p : Prop) :\np ∨ ¬ p",
+        # `s!`/`m!`/`f!` interpolations are still read as interpolations, braces and all.
+        ': s!"a{1}b" = s!"a{1}b"',
     ],
 )
 def test_signature_shape_accepts_plain_signatures(signature):
@@ -345,6 +381,19 @@ def test_signature_shape_accepts_plain_signatures(signature):
         (": True /- := sorry", "unterminated"),
         (': "a" = "b', "unterminated"),
         (": «x", "unterminated"),
+        # ``x!"..."`` is an identifier ending in ``!`` then a *plain* string (only ``s!``/
+        # ``m!``/``f!`` interpolate): Lean 4.33 reads ``{`` as a literal, so the ``:= sorry``
+        # after it becomes visible and ends the declaration -- it must not be swallowed.
+        (': x!"{" := sorry\n#eval IO.println "x"\n#exit\n"}"', "declaration_value"),
+        ('(f : String) : f = f!"{f}" := rfl\n#eval IO.println "x"', "declaration_value"),
+        # Belt-and-braces: a command at column 0 on a continuation line, whatever the lexer
+        # made the preceding text look like. Lean recovers from a parse error there and runs
+        # the command.
+        (": foo\n#eval bar", "command_line"),
+        (": foo\n#exit", "command_line"),
+        (": foo\nset_option maxHeartbeats 0 in", "command_line"),
+        (": foo\ntheorem evil : True", "command_line"),
+        (": foo\n@[simp] theorem evil : True", "command_line"),
     ],
 )
 def test_signature_shape_rejects_text_that_ends_the_declaration(signature, problem):
