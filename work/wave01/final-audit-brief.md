@@ -1,6 +1,6 @@
 # Final Wave 0/1 integration audit
 
-Worktree: `/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop`.
+Worktree: `<repo>`.
 Review current HEAD `3e507e4`, based on research-loop `470a286`.
 Read `.state/wave01/final-wave01-review.diff` and prior reports
 `resource-independent-audit.md`, `benchmark-audit.md`, `qualification-audit.md` in

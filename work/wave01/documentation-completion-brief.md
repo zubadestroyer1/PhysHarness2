@@ -1,6 +1,6 @@
 # Task: align operator documentation with current Wave0/1 engineering
 
-Use only /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop.
+Use only <repo>
 Root plans and owns actual execution; you are a GPT-5.6 Sol documentation implementer.
 Do not spawn agents, run Docker/Lean, change implementation, commit, or use GitHub.
 

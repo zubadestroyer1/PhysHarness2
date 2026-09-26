@@ -1,0 +1,240 @@
+--- a/src/physharness/continuation.py
++++ b/src/physharness/continuation.py
+@@ -4,7 +4,8 @@
+ 
+ from .domain import digest_json, utcnow
+ from .errors import HarnessError
+-from .execution.types import RuntimeCheckpoint
++from .execution.types import ExecutionError, RuntimeCheckpoint
++from .execution.workspace_archive import checked_path
+ from .storage import BudgetRow, LeaseRow, RecordRow, ReservationRow, record_json_text
+ from .worker_authority import current_worker_effects
+ 
+@@ -152,9 +153,38 @@
+                 operation.payload.get("workspace_id") != workspace_id
+                 or operation.payload.get("task_id") != task.id
+                 or operation.payload.get("status") != "reconciliation_required"
+-                or operation.payload.get("command") not in {"run", "export"}
++                or operation.payload.get("command") not in {"run", "export", "read_range"}
+             ):
+                 raise HarnessError("RECOVERY_SCOPE", "Uncertain operation binding changed.")
++            if operation.payload["command"] == "read_range":
++                inputs = operation.payload.get("inputs") or {}
++                path = inputs.get("path")
++                if (
++                    operation.payload.get("experiment_id") != experiment.id
++                    or operation.payload.get("branch_id") != data["branch_id"]
++                    or operation.payload.get("result") is not None
++                    or inputs.get("execution_id") != expected_execution_id
++                    or inputs.get("command") != "read_range"
++                    or not isinstance(path, str)
++                    or not path.startswith("/work/")
++                    or type(inputs.get("offset")) is not int
++                    or inputs["offset"] < 0
++                    or type(inputs.get("length")) is not int
++                    or not 1 <= inputs["length"] <= 65536
++                    or provenance.get("predispatch_rejected_path") != path
++                ):
++                    raise HarnessError("RECOVERY_SCOPE", "Uncertain operation binding changed.")
++                try:
++                    checked_path(path)
++                except ExecutionError as error:
++                    if error.code != "UNSAFE_PATH":
++                        raise HarnessError(
++                            "RECOVERY_SCOPE", "Read path rejection was not a pure unsafe path."
++                        ) from error
++                else:
++                    raise HarnessError(
++                        "RECOVERY_SCOPE", "Read path is valid; dispatch outcome is uncertain."
++                    )
+             slot_id = data.get("shared_worker_slot_id")
+             resource_ids = (
+                 [data["reservation_id"], slot_id] if slot_id else [data["reservation_id"]]
+@@ -294,6 +324,8 @@
+                     "evidence_artifact_id": evidence_artifact_id,
+                     "archive_sha256": archive_hash,
+                     "attestation": "operator",
++                    "command": operation.payload["command"],
++                    "predispatch_path_rejection": operation.payload["command"] == "read_range",
+                 },
+             )
+             self._event(
+--- a/src/physharness/execution/e2b.py
++++ b/src/physharness/execution/e2b.py
+@@ -242,6 +242,11 @@
+ 
+ 
+ class E2BSandboxProvider:
++    @staticmethod
++    def validate_workspace_path(path: str) -> str:
++        """Pure provider path rule for broker validation before durable dispatch."""
++        return _path(path)
++
+     def __init__(
+         self,
+         *,
+--- a/src/physharness/execution/local_docker.py
++++ b/src/physharness/execution/local_docker.py
+@@ -519,6 +519,11 @@
+             raise ExecutionError("TIMEOUT_LIMIT", "Command exceeds workspace timeout")
+         return cwd
+ 
++    @staticmethod
++    def validate_workspace_path(path: str) -> str:
++        """Pure file-path validation shared with the broker's pre-dispatch gate."""
++        return checked_path(path)
++
+     async def _run_once(self, request: CommandRequest) -> CommandResult:
+         if self._quarantined:
+             raise ExecutionError("OPERATION_UNCERTAIN", "Docker workbench needs reconciliation")
+--- a/src/physharness/orchestration/workspace_tools.py
++++ b/src/physharness/orchestration/workspace_tools.py
+@@ -458,7 +458,8 @@
+             },
+             self.run,
+             "Execute scientific code or Lean inside the pinned isolated VM. "
+-            "Use cwd='.' for uploaded files under /work or a relative subdirectory. "
++            "Use cwd='.' for the workspace root or a workspace-relative subdirectory; "
++            "absolute cwd='/work' is invalid. "
+             "For Lean, cwd='/opt/sources/physlib' is the prepared Lake project and can import "
+             "both Physlib and Mathlib; pass uploaded files by their /work paths. "
+             "The standalone /opt/sources/mathlib Lake configuration is read-only. "
+@@ -470,7 +471,8 @@
+             "write_workspace_file",
+             {"path": {"type": "string"}, "content": {"type": "string"}},
+             self.write,
+-            "Write a bounded file in the isolated scientific workspace.",
++            "Write a bounded file using a workspace-relative path, such as scratch/Check.lean; "
++            "omit the /work/ prefix.",
+         )
+         register(
+             "checkpoint_workspace",
+@@ -487,7 +489,9 @@
+                 "length": {"type": "integer", "minimum": 1, "maximum": 65536},
+             },
+             self.read,
+-            "Read an exact bounded byte range with UTF-8 rendering and whole-file digest.",
++            "Read an exact bounded byte range using a workspace-relative path, such as "
++            "scratch/Check.lean; omit the /work/ prefix. Returns UTF-8 rendering and "
++            "whole-file digest.",
+         )
+         register(
+             "run_lean_scratch",
+--- a/src/physharness/orchestration/workspaces.py
++++ b/src/physharness/orchestration/workspaces.py
+@@ -24,12 +24,15 @@
+ from ..errors import HarnessError
+ from ..execution.e2b import WorkspaceArchive as LegacyWorkspaceArchive
+ from ..execution.types import CommandRequest, CommandResult, ExecutionError
+-from ..execution.workspace_archive import StreamedWorkspaceArchive, WorkspaceArchive
++from ..execution.workspace_archive import StreamedWorkspaceArchive, WorkspaceArchive, checked_path
+ from ..service import HarnessService, money_string, money_units, require_role
+ from ..storage import BudgetRow, RecordRow, ReservationRow
+ 
+ _MIN_LOCAL_WORKSPACE_SECONDS = 30
+ _LOCAL_DEADLINE_MARGIN_SECONDS = 2
++_PURE_REQUEST_REJECTIONS = frozenset(
++    {"UNSAFE_PATH", "WORKSPACE_EXCLUDED", "WORKSPACE_LIMIT", "UNSAFE_RUNTIME", "TIMEOUT_LIMIT"}
++)
+ 
+ 
+ def _identifier(*parts: str) -> str:
+@@ -43,6 +46,15 @@
+         remediation="Reconcile recorded VM identity and provider charges; "
+         "do not retry allocation or release its reservation automatically.",
+     )
++
++
++def _validate_file_request(provider, path: str) -> None:
++    """Use the attached provider's pure file rules before any durable operation."""
++    validate = getattr(provider, "validate_workspace_path", None)
++    if validate is not None:
++        validate(path)
++    else:
++        checked_path(path)
+ 
+ 
+ class CanonicalWorkspaceJournal:
+@@ -657,7 +669,16 @@
+             if predispatch_validate is not None:
+                 # Pure request validation must precede the durable pending marker.
+                 # Provider calls and uncertain outcomes remain outside this transaction.
+-                predispatch_validate(provider)
++                try:
++                    predispatch_validate(provider)
++                except ExecutionError as error:
++                    if error.code not in _PURE_REQUEST_REJECTIONS:
++                        raise
++                    raise HarnessError(
++                        error.code,
++                        str(error),
++                        operation_id=identity,
++                    ) from error
+             self._operation(session, identity, row.payload, command, inputs)
+             self.service._replace(session, row, {"active_operation_id": identity})
+         return identity, None
+@@ -1022,7 +1043,15 @@
+         archive_type = (
+             LegacyWorkspaceArchive if self.provider_spec["provider"] == "e2b" else WorkspaceArchive
+         )
+-        validated = archive_type.build({path: data})
++        validated = None
++
++        def predispatch_validate(provider):
++            nonlocal validated
++            _validate_file_request(provider, path)
++            quota = getattr(provider, "workspace_quota_bytes", None)
++            validated = archive_type.build(
++                {path: data}, **({"quota_bytes": quota} if quota is not None else {})
++            )
+ 
+         async def call(provider):
+             digest = await provider.upload_file(
+@@ -1046,6 +1075,7 @@
+             "upload",
+             {"path": path, "sha256": hashlib.sha256(data).hexdigest()},
+             call,
++            predispatch_validate=predispatch_validate,
+         )
+ 
+     async def download_file(
+@@ -1063,7 +1093,13 @@
+             }
+ 
+         return await self._perform(
+-            workspace_id, expected_execution_id, operation_id, "download", {"path": path}, call
++            workspace_id,
++            expected_execution_id,
++            operation_id,
++            "download",
++            {"path": path},
++            call,
++            predispatch_validate=lambda provider: _validate_file_request(provider, path),
+         )
+ 
+     async def read_workspace_range(
+@@ -1093,6 +1129,16 @@
+                 expected_execution_id=expected_execution_id,
+             )
+ 
++        def predispatch_validate(provider):
++            _validate_file_request(provider, path)
++            if (
++                type(offset) is not int
++                or offset < 0
++                or type(length) is not int
++                or not 1 <= length <= 65536
++            ):
++                raise ExecutionError("WORKSPACE_LIMIT", "Read range must be at most 65536 bytes")
++
+         return await self._perform(
+             workspace_id,
+             expected_execution_id,
+@@ -1100,6 +1146,7 @@
+             "read_range",
+             {"path": path, "offset": offset, "length": length},
+             call,
++            predispatch_validate=predispatch_validate,
+         )
+ 
+     async def export_workspace(

@@ -1,0 +1,32 @@
+{
+  "utc": "2026-09-24T09:45:38.317330+00:00",
+  "stage": "root_terminal_audit",
+  "label": "exponential-calibration-3-retry-1",
+  "experiment_id": "9fd45fc4-e2c0-4586-b99a-8e909d42f1ac",
+  "experiment_status": "queued",
+  "reconciliation_required": false,
+  "task_status_counts": {
+    "completed": 1
+  },
+  "session_status_counts": {
+    "completed": 1
+  },
+  "receipts": [
+    {
+      "id": "7b6687f4-6fe6-496b-91e8-5c327099398d",
+      "status": "verified",
+      "assurance": "independent_kernel"
+    }
+  ],
+  "ledger": {
+    "max_cost_usd": "12",
+    "reserved_cost_usd": "0",
+    "spent_cost_usd": "1.736618",
+    "active_workers": 0,
+    "max_concurrency": 1,
+    "uncertain_operations": 0,
+    "max_tokens": null,
+    "tokens_reserved": 0,
+    "tokens_spent": 652660
+  }
+}

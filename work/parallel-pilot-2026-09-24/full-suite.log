@@ -1,0 +1,121 @@
+...........................................s............................ [  6%]
+........................................................................ [ 13%]
+........................................................................ [ 20%]
+........................................................................ [ 26%]
+........................................................................ [ 33%]
+.....................s.................................................. [ 40%]
+..................................ss.................................... [ 47%]
+.................................................................s...... [ 53%]
+........................................................................ [ 60%]
+........................................................................ [ 67%]
+........................................................................ [ 73%]
+........................................................................ [ 80%]
+........................................................................ [ 87%]
+...........................................................F..s......... [ 94%]
+.................s.............................................          [100%]
+=================================== FAILURES ===================================
+____ test_public_factory_clamps_local_timeout_and_restores_with_same_policy ____
+
+lab = (<physharness.service.HarnessService object at 0x12a894da0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x12a9ad2b0>
+
+    async def test_public_factory_clamps_local_timeout_and_restores_with_same_policy(lab, monkeypatch):
+        import physharness.execution.local_docker as docker
+    
+        original, service, experiment, _, _, args = setup(lab, concurrency=1)
+        task_id = args["task_id"]
+        policy = _policy(service, experiment, original.actor)
+        made = []
+    
+        class FakeDocker(StreamVM):
+            def __init__(
+                self, *, docker_host, image_digest, timeout_seconds, workspace_quota_bytes, journal=None
+            ):
+                super().__init__(journal, {"notes/source.txt": b"saved work"} if not made else {})
+                self.template_id = image_digest
+                self.timeout_seconds = timeout_seconds
+                self.workspace_quota_bytes = workspace_quota_bytes
+                if journal is not None:
+                    made.append(self)
+    
+        monkeypatch.setattr(docker, "LocalDockerWorkspaceProvider", FakeDocker)
+>       factory = _factory(policy)
+                  ^^^^^^^^^^^^^^^^
+
+tests/test_workbench_timeout.py:79: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_workbench_timeout.py:34: in _factory
+    return configured_workspace_factory(
+src/physharness/orchestration/workspace_selection.py:25: in configured_workspace_factory
+    return local_docker_workspace_factory(
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+policy = WorkspacePolicy(template_id='sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', environment_dig...ccccccccccccccccccccccccc', timeout_seconds=7200, cost_bound_usd=Decimal('0'), cost_source='local_no_external_invoice')
+docker_host = 'unix:///tmp/physharness-dedicated.sock'
+image_digest = 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+workspace_quota_bytes = 268435456, max_workspaces = 1
+
+    def local_docker_workspace_factory(
+        policy: WorkspacePolicy,
+        *,
+        docker_host: str,
+        image_digest: str,
+        workspace_quota_bytes: int = 256 * 1024 * 1024,
+        max_workspaces: int = 1,
+    ):
+        """Return a workspace factory bound to one dedicated Linux Docker endpoint."""
+        from ..execution.local_docker import LocalDockerWorkspaceProvider
+        from .workspaces import WorkspaceBroker
+    
+        # Validate the configuration without dispatching Docker or allocating a VM.
+>       LocalDockerWorkspaceProvider(
+            docker_host=docker_host,
+            image_digest=image_digest,
+            timeout_seconds=policy.timeout_seconds,
+            workspace_quota_bytes=workspace_quota_bytes,
+            max_active_workspaces=max_workspaces,
+        )
+E       TypeError: test_public_factory_clamps_local_timeout_and_restores_with_same_policy.<locals>.FakeDocker.__init__() got an unexpected keyword argument 'max_active_workspaces'
+
+src/physharness/orchestration/workspace_tools.py:595: TypeError
+----------------------------- Captured stderr call -----------------------------
+{"timestamp": "2026-09-24T07:40:17.082697+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d278b2ed-efb0-4460-b2e0-b86bcbd4f490", "operation": "campaign.create"}
+{"timestamp": "2026-09-24T07:40:17.083752+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "583259ca-14f5-422c-b4ac-be0b67e375d0", "operation": "problem.create"}
+{"timestamp": "2026-09-24T07:40:17.084899+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f5efca72-3463-45bb-b3b6-2ac99c4b61bb", "operation": "problem.review"}
+{"timestamp": "2026-09-24T07:40:17.086247+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4c207eec-c090-4a67-a4f2-f2d16eb1c491", "operation": "experiment.create"}
+{"timestamp": "2026-09-24T07:40:17.087412+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "51fd20eb-573e-4822-ba93-17f4fafbe5e6", "operation": "experiment.transition"}
+{"timestamp": "2026-09-24T07:40:17.088306+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "161fab86-df50-471d-92c9-25b70dd89325", "operation": "branch.create"}
+{"timestamp": "2026-09-24T07:40:17.090529+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "09e1b285-6730-4da4-bcc5-b194b1a1943b", "operation": "task.create"}
+{"timestamp": "2026-09-24T07:40:17.091982+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7e270490-a1bb-4e19-b4de-25d14078affd", "operation": "task.acquire"}
+------------------------------ Captured log call -------------------------------
+INFO     physharness.service:service.py:659 command_completed
+INFO     physharness.service:service.py:659 command_completed
+INFO     physharness.service:service.py:659 command_completed
+INFO     physharness.service:service.py:659 command_completed
+INFO     physharness.service:service.py:659 command_completed
+INFO     physharness.service:service.py:659 command_completed
+INFO     physharness.service:service.py:659 command_completed
+INFO     physharness.service:service.py:659 command_completed
+=============================== warnings summary ===============================
+.venv/lib/python3.12/site-packages/fastapi/testclient.py:1
+  <repo>/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+    from starlette.testclient import TestClient as TestClient  # noqa
+
+.venv/lib/python3.12/site-packages/starlette/testclient.py:53
+  <repo>/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+    _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
+
+tests/test_execution_openhands.py: 16 warnings
+  <repo>/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+    val = getattr(obj, name)
+
+tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
+tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
+tests/test_execution_openhands.py::test_native_checkpoint_can_import_into_new_journal_for_same_vm
+  <repo>/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+    llm = handler(data)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_workbench_timeout.py::test_public_factory_clamps_local_timeout_and_restores_with_same_policy
+1 failed, 1063 passed, 7 skipped, 21 warnings in 61.12s (0:01:01)

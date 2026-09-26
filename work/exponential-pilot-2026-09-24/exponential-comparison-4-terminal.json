@@ -1,0 +1,37 @@
+{
+  "utc": "2026-09-24T09:55:15.051151+00:00",
+  "stage": "root_terminal_audit",
+  "label": "exponential-comparison-4",
+  "experiment_id": "c07f01b4-ec07-40c5-8432-919e20cbc453",
+  "experiment_status": "queued",
+  "reconciliation_required": false,
+  "task_status_counts": {
+    "completed": 3
+  },
+  "session_status_counts": {
+    "completed": 3
+  },
+  "receipts": [
+    {
+      "id": "91d4c05d-2148-445b-8cbb-58cb8ffb85d7",
+      "status": "verified",
+      "assurance": "independent_kernel"
+    },
+    {
+      "id": "def92e3d-421e-4665-8d00-bf595b71300a",
+      "status": "verified",
+      "assurance": "independent_kernel"
+    }
+  ],
+  "ledger": {
+    "max_cost_usd": "14",
+    "reserved_cost_usd": "0",
+    "spent_cost_usd": "5.279923",
+    "active_workers": 0,
+    "max_concurrency": 2,
+    "uncertain_operations": 0,
+    "max_tokens": null,
+    "tokens_reserved": 0,
+    "tokens_spent": 2018269
+  }
+}

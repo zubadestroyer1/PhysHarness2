@@ -36,7 +36,7 @@ class ComputationResult(Record):
 class NumericalRecord(Record):
     quantity: str = Field(min_length=1, max_length=1000)
     value: str = Field(min_length=1, max_length=1024)
-    absolute_error: str = Field(min_length=1, max_length=1024)
+    absolute_error: str | None = Field(default=None, min_length=1, max_length=1024)
     precision_bits: int = Field(ge=1, le=1_000_000)
     method: str = Field(min_length=1, max_length=10000)
     seed: int | None
@@ -45,17 +45,20 @@ class NumericalRecord(Record):
     tool_versions: dict[str, str]
     assumptions: list[str]
     units: str = "dimensionless"
-    error_interpretation: Literal["reported_bound", "estimate"] = "estimate"
+    error_interpretation: Literal["reported_bound", "estimate", "unknown"] = "estimate"
     evidence_kind: Literal["numerical_observation"] = "numerical_observation"
 
     @model_validator(mode="after")
     def finite_values(self):
         try:
-            value, error = Decimal(self.value), Decimal(self.absolute_error)
+            value = Decimal(self.value)
+            error = Decimal(self.absolute_error) if self.absolute_error is not None else None
         except InvalidOperation as exc:
             raise ValueError("numerical values must be decimal strings") from exc
-        if not value.is_finite() or not error.is_finite() or error < 0:
+        if not value.is_finite() or (error is not None and (not error.is_finite() or error < 0)):
             raise ValueError("numerical value must be finite and its error nonnegative")
+        if (error is None) != (self.error_interpretation == "unknown"):
+            raise ValueError("unknown error must be explicit; bounds and estimates need a value")
         if not self.tool_versions or any(not k or not v for k, v in self.tool_versions.items()):
             raise ValueError("reproduction requires nonempty tool version provenance")
         return self

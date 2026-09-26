@@ -1,0 +1,8 @@
+{
+  "utc": "2026-09-24T10:53:24.130247+00:00",
+  "profile": "physharness-pilot",
+  "containers_before_shutdown": 0,
+  "stop_exit_code": 0,
+  "status_exit_code": 1,
+  "status_output": "time=\"2026-09-24T03:53:24-07:00\" level=fatal msg=\"colima [profile=physharness-pilot] is not running\"\n"
+}

@@ -1,0 +1,31 @@
+{
+  "status": "completed",
+  "scope": "private four-arm local pilot; no fleet qualification",
+  "tests": {
+    "full_suite_passed": 1080,
+    "full_suite_opt_in_skipped": 7,
+    "database_followup_passed": 30,
+    "real_vm_followup_passed": 14,
+    "worker_qualification_passed": true,
+    "verifier_mechanical_checks": 10,
+    "new_targets_controls": 8
+  },
+  "source_manifest": "source-manifest.json",
+  "launch_preflight": "final-preflights.json",
+  "assistant_reviews": "assistant-target-reviews.json",
+  "resource_envelope_usd": "100.00",
+  "arm_envelope_usd": "24.95",
+  "probe_actual_upper_usd": "0.006090",
+  "live_results": "four of four arms accepted; nine verified candidates",
+  "vm": "Stopped",
+  "monitor": "PAUSED",
+  "model_cost_ceiling_usd": "3.658018",
+  "experiment_state": "all four paused; no outstanding resources",
+  "evaluation": "output.json",
+  "report": "REPORT.md",
+  "remaining_findings": [
+    "source-search/read path mismatch",
+    "targets too short for collaboration or compaction qualification"
+  ],
+  "qualification": "private two-worker pilot only; no production/fleet/long-horizon qualification"
+}

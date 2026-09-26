@@ -1,0 +1,14 @@
+{
+  "changed_preexisting_frozen_files": [
+    "work/exponential-pilot-2026-09-24/launch_frozen.py",
+    "work/exponential-pilot-2026-09-24/runner.py"
+  ],
+  "newly_frozen_operator_files": [
+    "work/exponential-pilot-2026-09-24/operator_handoffs.py",
+    "work/exponential-pilot-2026-09-24/audit_export.py"
+  ],
+  "runtime_source_unchanged": true,
+  "reason": "Recognize hash-checked consumed handoff followed by a settled terminal successor; no model-facing behavior change. One handoff per task is covered; repeated same-task handoffs still require explicit operator lineage review.",
+  "tests": "35 passed",
+  "comp5_artifacts_checked": 584
+}

@@ -1,0 +1,18 @@
+{
+  "status": "ready_for_live_attempt",
+  "experiment_id": "ff884e1f-6600-40c2-a704-4072c2c163f4",
+  "problem_id": "b3817784-8d0e-4961-9903-c3c0feef1b58",
+  "target_digest": "789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4",
+  "review_id": "260afe3a-b90b-4d9c-b6a8-6276028c6977",
+  "blockers": [],
+  "observations": [
+    {
+      "component": "verifier",
+      "code": "configured_unprobed",
+      "executed": false
+    }
+  ],
+  "model_calls": 0,
+  "assurance": "none",
+  "qualification": "preflight_only"
+}

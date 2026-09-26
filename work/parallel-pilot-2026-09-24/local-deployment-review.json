@@ -1,0 +1,9 @@
+{
+  "decision": "activate_for_authorized_private_pilot_only",
+  "reviewer": "root assistant acting on explicit user launch authorization",
+  "scope_sha256": "85ffd6207b508907e3ac8ad8a4b7099a501dc0f544b13f46e3eeccf977e2951b",
+  "registry_sha256": "0fff7c66ef344bddac1c1f1e03bbf773cb5860246ef10406d3ae359531629c3c",
+  "mechanical_status": "satisfied",
+  "production_qualified": false,
+  "limits": "Local dedicated VM; assistant-led scientific review; no fleet, human expert review, or publication approval."
+}

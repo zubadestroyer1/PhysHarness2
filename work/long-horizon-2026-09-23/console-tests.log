@@ -1,0 +1,9 @@
+
+ RUN  v5.0.0 <repo>/console
+
+
+ Test Files  5 passed (5)
+      Tests  36 passed (36)
+   Start at  01:54:51
+   Duration  1.05s (environment 58%, tests 24%, setup 9%, transform 6%, import 3%)
+

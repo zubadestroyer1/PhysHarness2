@@ -1,0 +1,118 @@
+{
+  "captured_at": "2026-09-23T08:26:49.443448+00:00",
+  "experiment_id": "ff884e1f-6600-40c2-a704-4072c2c163f4",
+  "receipts": [
+    {
+      "id": "9ae42943-d516-4713-979f-27c1a86e5941",
+      "artifact_id": "3fbeca83-89f7-4755-a65e-db951a29c27e",
+      "candidate_sha256": "cab73d29a694805997b889fe44d366b598536199bab9eca51f8ae839e0d2d05e",
+      "problem_revision_id": "b3817784-8d0e-4961-9903-c3c0feef1b58",
+      "target_digest": "789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4",
+      "challenge_sha256": "b9a6382b1ebe426f4c580d11c743a6a89968fcf5ea756ccc329ba975497a2667",
+      "review_id": "260afe3a-b90b-4d9c-b6a8-6276028c6977",
+      "status": "blocked",
+      "assurance": "none",
+      "code": "comparator_failed",
+      "comparator_exit_code": 1,
+      "oom_confirmed": false,
+      "container_state": {
+        "status": "observed",
+        "oom_killed": false,
+        "exit_code": 0,
+        "error": ""
+      },
+      "container_cleanup_status": "removed",
+      "memory_events_after": {
+        "status": "observed",
+        "events": {
+          "low": 0,
+          "high": 0,
+          "max": 1882,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        }
+      }
+    },
+    {
+      "id": "894ea36f-bc00-4151-870c-0ed2909bd725",
+      "artifact_id": "c779517e-2efd-4cd1-9e93-a827df132f8a",
+      "candidate_sha256": "a7824ecc92e64bab517cde9ed25f52ae4fe0d943e13e8053364e9f1edfccfee4",
+      "problem_revision_id": "b3817784-8d0e-4961-9903-c3c0feef1b58",
+      "target_digest": "789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4",
+      "challenge_sha256": "b9a6382b1ebe426f4c580d11c743a6a89968fcf5ea756ccc329ba975497a2667",
+      "review_id": "260afe3a-b90b-4d9c-b6a8-6276028c6977",
+      "status": "blocked",
+      "assurance": "none",
+      "code": "comparator_failed",
+      "comparator_exit_code": 1,
+      "oom_confirmed": false,
+      "container_state": {
+        "status": "observed",
+        "oom_killed": false,
+        "exit_code": 0,
+        "error": ""
+      },
+      "container_cleanup_status": "removed",
+      "memory_events_after": {
+        "status": "observed",
+        "events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        }
+      }
+    },
+    {
+      "id": "cbe4ff7b-84cf-4d8f-8951-0d0879385fe8",
+      "artifact_id": "aab249a8-8f04-4777-a2f9-a93bf3f0d620",
+      "candidate_sha256": "03b57517e69c532eb1ab25fe03e8624d9e428adaea11176bda82b4959a425db2",
+      "problem_revision_id": "b3817784-8d0e-4961-9903-c3c0feef1b58",
+      "target_digest": "789a2c8a03a2028338200e44c97a8e337b0e57ed21971467f0a308db6d7946b4",
+      "challenge_sha256": "b9a6382b1ebe426f4c580d11c743a6a89968fcf5ea756ccc329ba975497a2667",
+      "review_id": "260afe3a-b90b-4d9c-b6a8-6276028c6977",
+      "status": "blocked",
+      "assurance": "none",
+      "code": "comparator_failed",
+      "comparator_exit_code": 1,
+      "oom_confirmed": false,
+      "container_state": {
+        "status": "observed",
+        "oom_killed": false,
+        "exit_code": 0,
+        "error": ""
+      },
+      "container_cleanup_status": "removed",
+      "memory_events_after": {
+        "status": "observed",
+        "events": {
+          "low": 0,
+          "high": 0,
+          "max": 0,
+          "oom": 0,
+          "oom_kill": 0,
+          "oom_group_kill": 0
+        }
+      }
+    }
+  ],
+  "artifacts_checked": 114,
+  "all_artifact_hashes_match": true,
+  "artifact_created_times": {
+    "first": "2026-09-23T08:22:21.086012+00:00",
+    "last": "2026-09-23T08:24:16.404234+00:00"
+  },
+  "vm": {
+    "profile": "physharness-pilot",
+    "stop_exit_code": 0,
+    "colima_reports_not_running": true,
+    "docker_endpoint_unavailable": true,
+    "available_memory_mib_before_shutdown": 11480,
+    "total_memory_mib": 11933,
+    "swap_mib": 0
+  },
+  "monitor_status": "PAUSED"
+}

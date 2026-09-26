@@ -1,0 +1,10 @@
+{
+  "status": "blocked",
+  "run_id": "ef7104c7-e8b9-4457-b679-c939ce24d407",
+  "results": [],
+  "purpose": "engineering_smoke",
+  "expert_review": "not_provided",
+  "production_qualified": false,
+  "error_type": "ValueError",
+  "reason": "Suite requires kernel success and comparator nonacceptance cases"
+}

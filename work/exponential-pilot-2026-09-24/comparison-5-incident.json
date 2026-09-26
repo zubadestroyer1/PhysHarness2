@@ -1,0 +1,81 @@
+{
+  "status": "historical_failed_attempt_recovered_and_cancelled",
+  "scope": "Content-free operational incident record for the original comparison-5 attempt; not a proof transcript or policy result.",
+  "experiment_id": "c0fa63bd-3216-41a3-97bd-20633b5b2e07",
+  "project": "exponential-comparison-5",
+  "runner_result": {
+    "status": "blocked",
+    "error_code": "ATTEMPT_NOT_COMPLETED",
+    "attempted_tasks": 3,
+    "spent_cost_usd_at_failure": "5.131777",
+    "reserved_cost_usd_at_failure": "0",
+    "active_workers_at_failure": 1,
+    "uncertain_operations_at_failure": 2,
+    "tokens_spent": 1945898
+  },
+  "cause": {
+    "category": "workspace_archive_canonical_order",
+    "observation": "The guest listing enumerated root solution.lean before nested scratch/Check.lean; the streamed archive requires globally sorted paths. Per-directory os.walk sorting did not supply that order.",
+    "basis": "Operator's archived-workspace diagnosis and source-level review of the guest listing/export path; no proof body was inspected.",
+    "not_oom": "Operator observed container Running, OOMKilled false, 2 GiB memory, and zero memory.events counters before archival.",
+    "failed_export_operation_id": "c12d28ab-e47e-5dc3-959e-ca8ca01e8350",
+    "export_queued_at_utc": "2026-09-24T10:00:29.369144+00:00",
+    "task_blocked_at_utc": "2026-09-24T10:00:29.998372+00:00"
+  },
+  "proof_verification": {
+    "root_receipts": [
+      {
+        "receipt_id": "65e34d18-5f24-47fe-bc85-5aaa2f4548f7",
+        "branch_id": "55241e06-0ec5-49aa-9c0e-2cd7c56fddc0",
+        "verified_at_utc": "2026-09-24T10:00:19.884409+00:00"
+      },
+      {
+        "receipt_id": "34659fb1-f1be-4168-9141-3c6e56f53286",
+        "branch_id": "3c01a86f-5f3d-4979-9105-eca5b50095cc",
+        "verified_at_utc": "2026-09-24T10:01:24.772306+00:00"
+      }
+    ],
+    "both_status": "verified",
+    "both_code": "kernel_checked",
+    "both_assurance": "independent_kernel",
+    "binding": "Both receipts match the experiment/problem target, challenge hash, and environment digest in canonical records.",
+    "interpretation": "Both root proofs verified, but the whole original comparison-5 attempt did not complete. A verified proof receipt does not imply a completed attempt."
+  },
+  "tasks_and_communication": {
+    "root_a": "13f76b86-3595-458b-8aab-c944cee94c45: proof verified; task later failed during export/recovery",
+    "root_b": "7c47b47c-d348-434c-bae1-4f14f69f6acc: proof verified; task completed",
+    "detached_helper": "99054bc9-39d2-4983-8071-30d9708967bb: created at 2026-09-24T09:55:51.744848+00:00, never had a model session, operator-aborted in recovery",
+    "private_messages": "Two messages from root-b branch to detached-helper branch at 2026-09-24T09:58:52.135236+00:00 and 2026-09-24T10:01:29.871297+00:00; message content was not read.",
+    "discussion": "Two discussion readers; no discussion posts or deliveries in canonical records."
+  },
+  "preserved_evidence": {
+    "failed_workspace_archive": ".state/exponential-pilot-2026-09-24/attempts/exponential-comparison-5/failed-workspace.tar",
+    "failed_workspace_archive_sha256": "364c5cd4c20e8e0c3b1e12205efb9558d71b2b9045054b15773f8e0c0f4fffd9",
+    "container_id": "fd71221a537d980ad1e9a91d73864c1052fdd0f01ad4e566acda0053a8bd81bd",
+    "archive_hash_checked": true,
+    "archive_contents_read": false
+  },
+  "recovery": {
+    "experiment_status": "cancelled",
+    "cancelled_at_utc": "2026-09-24T10:10:03.076551+00:00",
+    "failed_workspace_status": "destroyed",
+    "failed_root_task_status": "failed",
+    "failed_root_task_error_code": "WORKSPACE_RECOVERY_ABORTED",
+    "helper_task_status": "failed",
+    "reservations": "59 settled; no uncertain or live reservations",
+    "budget_spent_cost_usd": "5.131777",
+    "budget_reserved_cost_usd": "0",
+    "active_workers": 0,
+    "tokens_spent": 1945898,
+    "tokens_reserved": 0,
+    "cost_interpretation": "Conservative settled ledger spend retained; this is not a final provider invoice."
+  },
+  "fix_audit": {
+    "source": "src/physharness/execution/local_docker.py:210 globally sorts result by relative path for list and list3 before JSON emission.",
+    "consumer": "export_workspace_stream uses list3 order for files; StreamedWorkspaceArchive requires global canonical order.",
+    "regression": "tests/test_workspace_cas.py::test_guest_listing_globally_sorts_root_file_and_nested_scratch runs the actual guest listing script on a host temporary directory and checks sorted output, archive round-trip, and rejection of reversed order.",
+    "focused_test": "1 passed, 9 deselected in 0.15s",
+    "finding": "The fix addresses the observed ordering cause. The focused test is host-side; this audit did not run a live VM export."
+  },
+  "trial_context": "The original comparison-5 result is historical and excluded from matched final policy conclusions. The replacement comparison-5 retry and other final trials require their own completed evidence."
+}

@@ -1,0 +1,17 @@
+Traceback (most recent call last):
+  File "<repo>/infra/run_qualified_lean.py", line 405, in <module>
+    run_engineering(
+  File "<repo>/infra/run_qualified_lean.py", line 381, in run_engineering
+    _record_run(
+  File "<repo>/infra/run_qualified_lean.py", line 357, in _record_run
+    action(output, report)
+  File "<repo>/infra/run_qualified_lean.py", line 383, in <lambda>
+    lambda path, report: _run_engineering(
+                         ^^^^^^^^^^^^^^^^^
+  File "<repo>/infra/run_qualified_lean.py", line 316, in _run_engineering
+    _append_result(
+  File "<repo>/infra/run_qualified_lean.py", line 135, in _append_result
+    check_case_outcome(case, result, publication=publication)
+  File "<repo>/infra/run_qualified_lean.py", line 76, in check_case_outcome
+    raise RuntimeError(
+RuntimeError: Verification case classical-positive did not match its exact expected outcome

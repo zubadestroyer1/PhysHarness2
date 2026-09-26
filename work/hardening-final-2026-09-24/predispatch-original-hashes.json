@@ -1,0 +1,10 @@
+{
+  "files": {
+    "src/physharness/continuation.py": "5e647c3b79ed1d8cbf67b2d7bc5695b63e50c13546e5871da8e7efb173991d47",
+    "src/physharness/execution/e2b.py": "3079ff8ef27269dd8539d0b45d420588c9250138b71e3ccf7bf6b0a658cb7f0a",
+    "src/physharness/execution/local_docker.py": "91b5c25ec1567a70e0b627aec2b6bd5e62dcfee4a3b00b70a43eeeeff4007afc",
+    "src/physharness/orchestration/workspace_tools.py": "9fe8310564ce61c25203ccbda993bd3d3b29cc49101f0af5b104dda81c040e30",
+    "src/physharness/orchestration/workspaces.py": "0098bacebf32c7b3d02fe043b9cb061d6537b318646ed96a585f30b77b6d1f45"
+  },
+  "protocol": "hardening-predispatch-original-hashes-v1"
+}

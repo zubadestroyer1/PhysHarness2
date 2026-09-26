@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     model_prices: dict[str, dict] = Field(default_factory=dict)
     e2b_template_id: str | None = None
     worker_workspace: WorkspacePolicy | None = Field(default=None, repr=False)
+    worker_workspace_provider: Literal["e2b", "local_docker"] | None = None
+    worker_docker_host: str | None = None
+    worker_image_digest: str | None = None
+    worker_workspace_quota_bytes: int = Field(default=256 * 1024 * 1024, ge=1)
+    worker_max_active_workspaces: int = Field(default=1, ge=1, le=100)
     temporal_task_queue: str = "physharness-research-v1"
     verification_registry: Path | None = None
     verification_bundle: Path | None = None
@@ -84,6 +89,13 @@ class Settings(BaseSettings):
     @classmethod
     def validate_authentication(cls, value):
         return _authentication(value)
+
+    @field_validator("worker_max_active_workspaces", mode="before")
+    @classmethod
+    def validate_worker_capacity(cls, value):
+        if isinstance(value, bool):
+            raise ValueError("Worker capacity must be an integer")
+        return value
 
     @model_validator(mode="after")
     def validate_deployment(self):

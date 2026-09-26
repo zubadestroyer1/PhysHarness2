@@ -1,5 +1,7 @@
 """Source and knowledge services connected to the canonical scientific authority."""
 
+import hashlib
+
 from sqlalchemy import select
 
 from .domain import ArtifactCreate, Principal, canonical_json, digest_json
@@ -173,25 +175,63 @@ class ResearchMixin:
                     "ARTIFACT_PATH_UNSAFE",
                 }:
                     raise
-                # Report only candidates that passed visibility and all acceptance bindings.
-                rejected_candidates.append({"claim_id": claim["id"], "code": error.code})
+                # A broken cross-experiment source is not releasable evidence. Its
+                # existence must not change a peer agent's search diagnostics.
+                if claim["experiment_id"] == experiment_id or actor.role != "agent":
+                    rejected_candidates.append({"claim_id": claim["id"], "code": error.code})
                 continue
             yield claim, problem, receipt, candidate, review, source
 
-    def search_knowledge(self, experiment_id, query, actor, type_query="", limit=20):
+    def search_knowledge(
+        self, experiment_id, query, actor, type_query=None, limit=20, *, lexical_type_filter=None
+    ):
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("limit must be from 1 to 1000")
         experiment = self.get_record("experiment", experiment_id, actor)
         target = self.get_record("problem", experiment["problem_id"], actor)
-        terms, type_terms = tokens(query), tokens(type_query)
+        if type_query and lexical_type_filter:
+            raise ValueError("Use one lexical type filter")
+        lexical_filter = lexical_type_filter or type_query or ""
+        terms, type_terms = tokens(query), tokens(lexical_filter)
         ranked = []
+        diagnostic_visible_ranked = 0
+        claim_count = 0
         for claim in self._knowledge_claims(experiment, actor):
+            claim_count += 1
             statement_terms = tokens(claim["statement"])
             matches = terms & statement_terms
-            if type_terms <= statement_terms and (not terms or matches):
-                # Service lemmas use the statement as their type signature, so this is
-                # the same ordering as LemmaIndex's lexical-plus-type score.
-                ranked.append((-3 * len(matches), claim["id"], str(claim["revision"]), claim))
+            if not (type_terms <= statement_terms and (not terms or matches)):
+                continue
+            # Do not let another experiment's private claim affect diagnostics.
+            if claim["experiment_id"] == experiment_id:
+                try:
+                    self.get_record("claim", claim["id"], actor)
+                except HarnessError as error:
+                    if error.code == "NOT_FOUND":
+                        continue
+                    raise
+                diagnostic_visible_ranked += 1
+            else:
+                try:
+                    origin = self.get_record(
+                        "experiment",
+                        claim["experiment_id"],
+                        Principal(
+                            id="knowledge-broker", project_id=actor.project_id, role="operator"
+                        ),
+                    )
+                except HarnessError as error:
+                    # A dangling origin is not releasable and must not alter diagnostics.
+                    if error.code == "NOT_FOUND":
+                        continue
+                    raise
+                if origin.get("sharing", "none") == "none":
+                    continue
+                if actor.role != "agent":
+                    diagnostic_visible_ranked += 1
+            # Service lemmas use the statement as their type signature, so this is
+            # the same ordering as LemmaIndex's lexical-plus-type score.
+            ranked.append((-3 * len(matches), claim["id"], str(claim["revision"]), claim))
         ranked.sort(key=lambda item: item[:3])
         hits, rejected_candidates = [], []
         eligible = self._applicable_knowledge(
@@ -218,19 +258,68 @@ class ResearchMixin:
                 LemmaIndex([record]).search(
                     query,
                     environment_digest=target["environment_digest"],
-                    type_query=type_query,
+                    lexical_type_filter=lexical_filter,
                     limit=1,
                 )
             )
             if len(hits) == limit:
                 break
+        has_accessible_corpus = claim_count > 0
+        if not hits and actor.role == "agent":
+            # A raw project claim count can disclose a hidden peer or experiment.
+            # This slower miss path checks the actual disclosure boundary.
+            has_accessible_corpus = any(
+                self._applicable_knowledge(experiment_id, actor, rejected_candidates=[])
+            )
         return {
             "items": [hit.model_dump(mode="json") for hit in hits],
             "rejected_candidates": rejected_candidates,
-            "retrieval": "lexical_and_type_tokens",
+            "retrieval": "lexical_accepted_result_search",
+            "reason_code": None
+            if hits
+            else (
+                "ineligible_or_unavailable_candidate"
+                if rejected_candidates or diagnostic_visible_ranked
+                else "empty_accessible_corpus"
+                if not has_accessible_corpus
+                else "no_lexical_match"
+            ),
+            "lexical_type_filter": lexical_filter or None,
             "environment_digest": target["environment_digest"],
             "information_policy": experiment["mode"],
             "source": "canonical_verified_claims",
+        }
+
+    def accepted_proof_summary(self, experiment_id, claim_id, actor):
+        """Release only a compact, evidence-checked accepted-result reference."""
+        matches = list(self._applicable_knowledge(experiment_id, actor, claim_id))
+        if len(matches) != 1:
+            raise HarnessError(
+                "KNOWLEDGE_NOT_APPLICABLE",
+                "No accessible accepted dependency matches this claim and environment.",
+                status=404,
+            )
+        claim, problem, receipt, candidate, _, _ = matches[0]
+        return {
+            "format": "physharness-accepted-summary-v1",
+            "status": "verified",
+            "claim_id": claim["id"],
+            "receipt_id": receipt["id"],
+            "statement": claim["statement"][:4096],
+            "statement_truncated": len(claim["statement"]) > 4096,
+            "statement_sha256": hashlib.sha256(claim["statement"].encode()).hexdigest(),
+            "assumptions": [item[:512] for item in claim["assumptions"][:32]],
+            "assumptions_truncated": len(claim["assumptions"]) > 32
+            or any(len(item) > 512 for item in claim["assumptions"][:32]),
+            "assumptions_sha256": digest_json(claim["assumptions"]),
+            "target_digest": claim["target_digest"],
+            "environment_digest": problem["environment_digest"],
+            "candidate_sha256": candidate["sha256"],
+            "assurance": receipt["assurance"],
+            "recomposition_required": True,
+            "limitation": (
+                "Lexical discovery is not proof of applicability; verify the consuming proof."
+            ),
         }
 
     def knowledge_bundle(self, experiment_id, claim_id, actor):

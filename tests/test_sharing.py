@@ -105,7 +105,7 @@ def test_cross_branch_free_text_messages_are_blocked_even_with_verified_looking_
 
 
 def test_ideas_attribution_does_not_expose_native_history_or_allow_sender_forgery(lab):
-    service, _, exp, branches, (alpha, beta) = approaches(lab, "ideas")
+    service, author, exp, branches, (alpha, beta) = approaches(lab, "ideas")
     item = artifact(service, alpha, "attributed idea")
     message = service.send_message(
         branches[0]["id"], branches[1]["id"], "try symmetry", [item["id"]], alpha, "message"
@@ -114,9 +114,12 @@ def test_ideas_attribution_does_not_expose_native_history_or_allow_sender_forger
     assert service.get_record("artifact", item["id"], beta)["origin_actor_id"] == alpha.id
     private = service.create_artifact(
         ArtifactCreate(
-            experiment_id=exp["id"], kind="native_checkpoint", content="private context"
+            experiment_id=exp["id"],
+            branch_id=alpha.branch_id,
+            kind="native_checkpoint",
+            content="private context",
         ),
-        alpha,
+        author.model_copy(update={"role": "operator"}),
         "private",
     )
     with pytest.raises(HarnessError):
@@ -294,10 +297,16 @@ async def test_worker_prompt_tools_sessions_and_outputs_obey_same_branch(lab):
     )
     result = await executor.execute(task["id"], author.project_id)
     output = service.get_record("artifact", result["artifact_id"], alpha)
-    session = service.list_records("session", alpha)[0]
+    # Scientific output is branch-visible; the native session is controller-only.
+    session = service.list_records("session", author)[0]
     assert output["branch_id"] == session["branch_id"] == alpha.branch_id
     assert session["native_record_id"] == seen[0]
+    assert service.list_records("session", alpha) == []
     assert service.list_records("session", beta) == []
+    with pytest.raises(HarnessError):
+        service.get_record("session", session["id"], alpha)
+    with pytest.raises(HarnessError):
+        service.artifact_content(session["checkpoint_artifact_id"], alpha)
     with pytest.raises(HarnessError):
         service.artifact_content(session["checkpoint_artifact_id"], beta)
     from physharness.orchestration.research_worker import CanonicalRuntimeStore
@@ -338,7 +347,11 @@ def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
 
     service, _, exp, _, (alpha, beta) = approaches(lab, sharing)
     visible_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    visible_science = artifact(service, alpha, "terminal visible science")
     with service.db.transaction() as session:
+        visible_row = session.get(RecordRow, visible_science["id"])
+        visible_payload = {**visible_row.payload, "id": visible_id}
+        session.delete(visible_row)
         for number in range(inventory):
             identifier = f"00000000-0000-0000-0000-{number:012d}"
             session.add(
@@ -363,13 +376,7 @@ def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
                 project_id=alpha.project_id,
                 kind="artifact",
                 revision=1,
-                payload={
-                    "id": visible_id,
-                    "kind": "artifact",
-                    "experiment_id": exp["id"],
-                    "branch_id": alpha.branch_id,
-                    "artifact_kind": "native_checkpoint",
-                },
+                payload=visible_payload,
             )
         )
     queries = []
@@ -385,12 +392,15 @@ def test_hidden_record_pages_bound_queries_and_continue_to_authorized_records(
     print(f"hidden_inventory={inventory} sharing={sharing} sql_statements={len(queries)}")
     assert len(queries) <= 110
     assert page["items"] == [] and page["next_cursor"] is not None
-    seen = []
+    seen, pages = [], 1
     while page["next_cursor"] is not None:
-        previous = page["next_cursor"]
-        page = service.page_records("artifact", alpha, exp["id"], limit=1, after=previous)
-        assert page["next_cursor"] is None or page["next_cursor"] > previous
+        page = service.page_records(
+            "artifact", alpha, exp["id"], limit=1, after=page["next_cursor"]
+        )
         seen.extend(item["id"] for item in page["items"])
+        pages += 1
+        # Opaque cursors are not ordered strings; each still advances one bounded scan.
+        assert pages <= inventory // 100 + 2
     assert seen == [visible_id]
     assert [item["id"] for item in service.list_records("artifact", alpha, exp["id"], limit=1)] == [
         visible_id
@@ -609,7 +619,7 @@ def test_receipt_state_index_bounds_actual_sqlite_work(lab, status, assurance):
         "execution_failure",
     ],
 )
-def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
+def test_paged_private_records_keep_native_opaque_and_portable_checkpoint_scoped(
     lab, sharing, private_kind
 ):
     service, author, exp, _, (alpha, beta) = approaches(lab, sharing)
@@ -642,12 +652,71 @@ def test_paged_private_records_preserve_branch_legacy_and_orchestrator_policy(
                     },
                 )
             )
+    native = private_kind != "checkpoint"
     for actor, expected in [
-        (alpha, {"own", "trusted"}),
-        (legacy, {"legacy", "trusted"}),
-        (controller, {"trusted"}),
+        (alpha, set() if native else {"own", "trusted"}),
+        (legacy, set() if native else {"legacy", "trusted"}),
+        (controller, set() if native else {"trusted"}),
         (author, {"own", "hidden", "legacy", "trusted"}),
     ]:
         assert {
             row["id"] for row in service.list_records(kind, actor, exp["id"], limit=1)
         } == expected
+        for identifier in {"own", "hidden", "legacy", "trusted"} - expected:
+            with pytest.raises(HarnessError):
+                service.get_record(kind, identifier, actor)
+
+
+def test_parent_worker_pivots_queued_child_without_result_access_under_none_sharing(lab):
+    from physharness.worker_authority import worker_effects
+
+    service, author, experiment, _, _ = approaches(lab, "none")
+    operator = Principal(id="operator", project_id=author.project_id, role="operator")
+    parent = service.create_branch(
+        experiment["id"], BranchCreate(title="Parent", objective="Root"), author, "c1-parent"
+    )
+    parent_task = service.create_task(
+        TaskCreate(branch_id=parent["id"], objective="Root"), author, "c1-parent-task"
+    )
+    child = service.create_branch(
+        experiment["id"],
+        BranchCreate(title="Child", objective="Old", parent_id=parent["id"]),
+        author,
+        "c1-child",
+    )
+    lease = service.acquire_task(parent_task["id"], "holder", 60, operator, "c1-lease")
+    agent = Principal(
+        id="holder",
+        project_id=author.project_id,
+        role="agent",
+        experiment_id=experiment["id"],
+        branch_id=parent["id"],
+    )
+    child_agent = Principal(
+        id="child-worker",
+        project_id=author.project_id,
+        role="agent",
+        experiment_id=experiment["id"],
+        branch_id=child["id"],
+    )
+    result = artifact(service, child_agent, "private child result")
+    with worker_effects(agent, parent_task["id"], "holder", lease["fence"]):
+        child_task = service.create_task(
+            TaskCreate(branch_id=child["id"], objective="Old"), agent, "c1-child-task"
+        )
+        changed = service.amend_queued_task_objective(
+            child_task["id"], child_task["revision"], "Fresh", agent, "c1-pivot"
+        )
+        for kind, identifier in (("task", child_task["id"]), ("artifact", result["id"])):
+            with pytest.raises(HarnessError):
+                service.get_record(kind, identifier, agent)
+    assert changed["objective"] == "Fresh"
+    assert set(changed) <= {
+        "id",
+        "revision",
+        "objective",
+        "superseded_objectives",
+        "superseded_objectives_dropped",
+        "status",
+    }
+    assert service.get_record("task", child_task["id"], operator)["objective"] == "Fresh"

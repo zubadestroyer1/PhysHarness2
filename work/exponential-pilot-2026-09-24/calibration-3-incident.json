@@ -1,0 +1,40 @@
+{
+  "experiment_id": "9d0c372d-7eb3-4def-8822-1408a71088d2",
+  "classification": "harness_predispatch_validation_failure",
+  "trigger": {
+    "cwd": "/opt/sources/mathlib",
+    "argv": [
+      "/opt/lean/bin/lake",
+      "env",
+      "lean",
+      "/work/Main.lean"
+    ]
+  },
+  "vm_state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 11912,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-09-24T09:21:21.319853775Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "memory_events": {
+    "low": "0",
+    "high": "0",
+    "max": "0",
+    "oom": "0",
+    "oom_kill": "0",
+    "oom_group_kill": "0"
+  },
+  "archive_sha256": "c0d0c908922c74f3d66e489d2c768a1a73cadb20119b6ebe4cdfdaa71167a603",
+  "cleanup_observation": "Exact container rm -f exited0; subsequent docker ps -a filtered by full ID returned no rows. Operator observation; not kernel-verified evidence.",
+  "known_settled_cost_usd": "0.86024",
+  "model_reservations_unsettled": 0,
+  "canonical_retirement": "pending audited operator method",
+  "mathematical_outcome": "not_evaluated_no_candidate_submitted"
+}

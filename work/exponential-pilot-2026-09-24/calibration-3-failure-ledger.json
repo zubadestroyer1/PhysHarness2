@@ -1,0 +1,11 @@
+{
+  "max_cost_usd": "12",
+  "reserved_cost_usd": "0",
+  "spent_cost_usd": "0.86024",
+  "active_workers": 1,
+  "max_concurrency": 1,
+  "uncertain_operations": 2,
+  "max_tokens": null,
+  "tokens_reserved": 0,
+  "tokens_spent": 326704
+}

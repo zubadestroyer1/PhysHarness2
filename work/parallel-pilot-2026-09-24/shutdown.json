@@ -1,0 +1,10 @@
+{
+  "dedicated_profile": "physharness-pilot",
+  "verified_state": "Stopped",
+  "verification_command": "colima list --json",
+  "containers_before_shutdown": 0,
+  "stop_exit_code": 0,
+  "monitor": "physharness-pilot-watch",
+  "monitor_status": "PAUSED",
+  "experiments_paused": 4
+}

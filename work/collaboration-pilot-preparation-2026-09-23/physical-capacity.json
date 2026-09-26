@@ -1,0 +1,9 @@
+{
+  "status": "confirmed_parallel_launch_blocker",
+  "observed_code": "WORKSPACE_CAPACITY",
+  "active_workbench_limit": 1,
+  "requested_worker_count": 2,
+  "model_calls": 0,
+  "cleanup_required": true,
+  "cleanup_completed": true
+}

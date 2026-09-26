@@ -1,0 +1,65 @@
+{
+  "protocol": "physharness-collaboration-pilot-proposal-v1",
+  "status": "prepared_blocked_before_live_launch",
+  "targets": [
+    "quantum.bell.entangled_with_mixed_marginal",
+    "classical.work_energy.damped_energy_antitone"
+  ],
+  "comparison": "bundled independent-attempt vs communicating-team comparison, not isolated causal attribution",
+  "arms": [
+    "independent",
+    "collaborating"
+  ],
+  "runs": 4,
+  "repetitions_per_cell": 1,
+  "budget_per_run_usd": "25",
+  "proposed_aggregate_ceiling_usd": "100",
+  "launch_authorized_by_preparation": false,
+  "model": "gpt-6-sol",
+  "reasoning_effort": "high",
+  "roots_per_run": 2,
+  "max_active_workers_requested": 2,
+  "max_total_tasks": 16,
+  "max_pending_tasks": 16,
+  "max_session_turns": 128,
+  "max_runtime_seconds_per_experiment": 7200,
+  "supervisor_timeout_seconds": 7200,
+  "max_context_tokens": 128000,
+  "compaction_profile": "research",
+  "max_output_tokens": 16384,
+  "max_cumulative_tokens": null,
+  "synthesis_interval_posts": 0,
+  "runtime": "Responses",
+  "worker_image": "sha256:48e4f60a07c289baf846c0ff6fa2624870c59547c2a00971db0510e767161be0",
+  "verifier_image": "sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67",
+  "information_policy": {
+    "worker_targets_only": true,
+    "reference_proofs": "operator evaluator storage only",
+    "prior_attempts": "excluded",
+    "cross_experiment_results": "excluded",
+    "installed_library_reuse": "allowed",
+    "network": "disabled in workbench",
+    "pretraining_contamination": "cannot be ruled out"
+  },
+  "run_order": [
+    "quantum-independent",
+    "classical-collaborating",
+    "quantum-collaborating",
+    "classical-independent"
+  ],
+  "parallel_experiments": false,
+  "primary_measure": "independent exact-target accepted proof; time and cumulative cost to first accepted receipt",
+  "diagnostics": [
+    "delegation",
+    "messages",
+    "exact-source retrieval",
+    "lemma reuse",
+    "compactions",
+    "handoffs",
+    "memory peaks/OOM",
+    "errors",
+    "uncertain resource charges"
+  ],
+  "failure_policy": "retain all evidence; diagnose before retry; no replay of uncertain paid calls; repairs/retries must preserve experiment spending and original deadline",
+  "interpretation": "one run per cell is calibration, not a statistically established effectiveness ranking"
+}

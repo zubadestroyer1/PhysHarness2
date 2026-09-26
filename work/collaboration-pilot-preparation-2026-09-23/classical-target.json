@@ -1,0 +1,13 @@
+{
+  "id": "classical.work_energy.damped_energy_antitone",
+  "title": "Damped oscillator energy never increases",
+  "statement": "Every global differentiable solution of q̇ = v and m v̇ = −kq − γv has antitone mechanical energy.",
+  "assumptions": [
+    "m > 0, k > 0, γ ≥ 0.",
+    "The two HasDerivAt equations hold at every real time."
+  ],
+  "physical_scope": "Unforced scalar viscously damped harmonic oscillator on all ℝ. The theorem is conditional on a global solution.",
+  "target_theorem": "classical_target",
+  "target_source": "import Mathlib\n\nopen scoped BigOperators\n\ntheorem classical_target (q v : ℝ → ℝ) (m k γ : ℝ) (hm : 0 < m) (hk : 0 < k) (hγ : 0 ≤ γ)\n    (hq : ∀ t, HasDerivAt q (v t) t)\n    (hv : ∀ t, HasDerivAt v ((-k * q t - γ * v t) / m) t) :\n    Antitone (fun t => m / 2 * (v t)^2 + k / 2 * (q t)^2) := by\n  sorry\n",
+  "program": "classical"
+}

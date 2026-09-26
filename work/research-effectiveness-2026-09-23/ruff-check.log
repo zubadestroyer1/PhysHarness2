@@ -1,0 +1,12 @@
+E501 Line too long (115 > 100)
+   --> src/physharness/execution/local_docker.py:197:101
+    |
+195 |                     while part:=stream.read(1048576):sha.update(part)
+196 |                 after=os.lstat(full)
+197 |                 assert (s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(after.st_size,after.st_mtime_ns,after.st_ctime_ns)
+    |                                                                                                     ^^^^^^^^^^^^^^^
+198 |                 result.append([relative,s.st_size,sha.hexdigest(),s.st_mtime_ns,s.st_ctime_ns])
+199 |             else:result.append([relative,s.st_size])
+    |
+
+Found 1 error.

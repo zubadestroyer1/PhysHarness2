@@ -91,10 +91,10 @@ Its complete executed argument list is archived at `.state/wave01/classical-comp
 docker --host unix:///private/tmp/physharness-colima/default/docker.sock run --rm \
   --name physharness-classical-elaboration-3 --network none --read-only \
   --user 65532:65532 --cap-drop ALL --security-opt no-new-privileges \
-  --security-opt seccomp=/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.state/wave01/classical-compile-3/seccomp.json \
+  --security-opt seccomp=<repo>/.state/wave01/classical-compile-3/seccomp.json \
   --cpus 1 --memory 2g --pids-limit 128 \
   --tmpfs /tmp:rw,noexec,nosuid,nodev,size=256m \
-  --mount type=bind,source=/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.state/wave01/classical-compile-3,target=/input,readonly \
+  --mount type=bind,source=<repo>/.state/wave01/classical-compile-3,target=/input,readonly \
   --workdir /opt/sources/physlib --entrypoint python3 \
   physharness-formal:physics433-final /input/compile_references.py
 ```

@@ -40,16 +40,17 @@ class ExperimentWorkflow:
 class TaskWorkflow:
     @workflow.run
     async def run(self, item: dict):
-        # Only a declared preflight wait may repeat. Uncertain provider effects do not retry.
+        # Activity loss retries through the canonical executor's checkpoint and
+        # reservation guards; ambiguous provider effects remain blocked there.
         while True:
             result = await workflow.execute_activity(
                 "run_research_task",
                 item,
                 start_to_close_timeout=timedelta(hours=24),
                 heartbeat_timeout=timedelta(seconds=40),
-                retry_policy=RetryPolicy(maximum_attempts=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
             )
-            if result.get("status") != "waiting":
+            if result.get("status") not in {"waiting", "continuation"}:
                 return result
             await workflow.sleep(5)
             if workflow.info().is_continue_as_new_suggested():
