@@ -23,6 +23,31 @@ provider turns, output tokens per generation, cumulative input+output tokens, an
 Capabilities identify which limits an adapter can enforce. They are qualification/configuration
 statements, not live service health checks.
 
+The limits have different scopes when a research task hands off to a successor session:
+
+- `max_turns` bounds one native session. Every continuation, native or portable, starts a
+  fresh session with its own turn count, so a long task can take many more turns in total.
+- A numeric `max_total_tokens` caps the task's whole continuation lineage. Successors start
+  from the cumulative input+output usage of every predecessor, so a handoff never replenishes
+  the guard. When the lineage reaches it, the runtime stops with `BUDGET_EXHAUSTED` and the task
+  blocks instead of handing off again. `max_total_tokens: null` removes this guard and leaves
+  the ceiling to the experiment's shared dollar, time and optional token budget.
+- A portable successor carries the lineage count only when the runtime's `start` accepts a
+  keyword `predecessor` (the handed-off source `RuntimeCheckpoint`) or `**kwargs`.
+  `ResponsesRuntime` does. The protocol `start(prompt, model, limits)` above, and the Claude,
+  Codex and OpenHands adapters, do not. With such a runtime the research executor starts a
+  portable successor without `predecessor` when `max_total_tokens` is null. When it is numeric,
+  the executor refuses with `CONTINUATION_TOKEN_GUARD_UNSUPPORTED` rather than silently
+  resetting the guard. It checks this, and that the source checkpoint still matches the ticket
+  digest (`CONTINUATION_STALE`), before consuming the continuation ticket. The task ends
+  `blocked` with `execution_failure` evidence, the ticket and its link stay `issued`, and the
+  worker slot is released.
+
+`examples/research_runs/plan.template.json` sets `max_total_tokens: 32768`. Tasks launched from
+that template stop after about 32K tokens in total across all their continuations. Every turn
+re-sends its input context, and each of those input tokens counts toward the cap. For
+long-horizon runs, raise the value or set it to null and rely on the experiment budget.
+
 `RuntimeSession` contains its own ID, runtime, exact model configuration, limits, status,
 native provider/session ID, turn count, and cumulative input/output usage.
 `RuntimeResult` contains that session, output text, SHA-256-addressed output artifacts with
@@ -86,6 +111,8 @@ transactional outbox or monetary pricing; those belong to the controller/ledger.
 The session is checkpointed before each external request and host tool. A crash or tool failure
 with a pending marker prohibits automatic resume. Provider usage absent from a response also
 requires reconciliation. A session's total token budget persists across `continue_session`.
+`start_from_handoff` and `start(..., predecessor=checkpoint)` seed a successor with its
+lineage's cumulative usage, so the budget also persists across a task's continuations.
 `interrupt` cancels the active local coroutine; provider completion/billing may remain uncertain.
 
 ## Official Codex SDK
