@@ -1,6 +1,6 @@
 # Registry resource-source repair
 
-Work only in `/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop`.
+Work only in `<repo>`.
 User requires GPT-6 Sol implementation; root plans and controls all execution/evidence.
 Base HEAD is `3e507e4`. Read `final-integration-audit.md` for the exact P2 finding.
 

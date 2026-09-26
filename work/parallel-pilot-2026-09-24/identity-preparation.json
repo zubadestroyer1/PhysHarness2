@@ -1,6 +1,6 @@
 {
   "status": "development_initialized",
-  "directory": "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.state/parallel-pilot-2026-09-24/private",
+  "directory": "<repo>/.state/parallel-pilot-2026-09-24/private",
   "identity_files": [
     "researcher.token",
     "reviewer.token",

@@ -8,7 +8,7 @@ This directory is reserved for fresh engineering evidence for the current source
 
 The operator runs `.state/pilot-qualification/collect.py` from the repository worktree with `PYTHONPATH=src`; a byte-identical durable copy is retained as `collect.py` in this directory. The script requires the restored image under the default tag `physharness-formal:wave01-resources` or an explicit `--image-tag`. It reads the actual local image ID and the image's embedded build metadata, source lock, driver and resource policy, then records the current Docker runtime identity. It uses `capture_scope` to freeze the input snapshot before any checker run. A different image ID, changed embedded source, or changed scoped input stops the attempt.
 
-For this pilot, the operator created the explicit Colima profile `physharness-pilot` under `~/.colima`, with its Docker socket at `~/.colima/physharness-pilot/docker.sock`. From `/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop`, after that VM and Docker daemon are ready:
+For this pilot, the operator created the explicit Colima profile `physharness-pilot` under `~/.colima`, with its Docker socket at `~/.colima/physharness-pilot/docker.sock`. From `<repo>`, after that VM and Docker daemon are ready:
 
 ```console
 unset COLIMA_HOME

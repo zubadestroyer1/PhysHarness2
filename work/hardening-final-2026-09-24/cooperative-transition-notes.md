@@ -5,7 +5,7 @@ This is a read-only preparation note. Root operates the live records and makes t
 Use these local paths in a fresh shell (the pilot scripts and files are pinned by the calibration freeze):
 
 ```sh
-cd /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop
+cd <repo>
 export PILOT_STATE="$PWD/.state/hardening-final-2026-09-24"
 export PILOT_MANIFEST="$PILOT_STATE/manifest-calibration.json"
 export PILOT_QUAL="$PWD/work/pilot-qualification-2026-09-23/attempt-hardening-20260924-01/qualification-review.json"

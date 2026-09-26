@@ -12,7 +12,7 @@ from uuid import uuid4
 from physharness.execution.local_docker import LocalDockerWorkspaceProvider
 
 ROOT = Path(__file__).resolve().parents[2]
-HOST = "unix:///Users/kieranpi/.colima/physharness-pilot/docker.sock"
+HOST = "unix://" + os.path.expanduser("~/.colima/physharness-pilot/docker.sock")
 IMAGE = "sha256:48e4f60a07c289baf846c0ff6fa2624870c59547c2a00971db0510e767161be0"
 OUT = ROOT / "work/parallel-pilot-2026-09-24/worker-qualification.json"
 

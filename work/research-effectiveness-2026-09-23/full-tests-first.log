@@ -889,7 +889,7 @@ src/physharness/orchestration/research_worker.py:1346: ExecutionError
 {"timestamp": "2026-09-23T21:45:42.706974+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b7c8a691-7b1e-4497-956d-a3ab7e64e1f4", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:42.708778+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2c2da4b8-4632-4bca-ab06-27f24a4af480", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:42.709980+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b59df3ee-10cc-4559-939f-7527e31253f4", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:42.710088+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "99a55c54-3c2a-4bc5-88aa-a9f13cd0ddca", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:42.710088+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "99a55c54-3c2a-4bc5-88aa-a9f13cd0ddca", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:42.712025+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "05d642bd-8ea1-4d11-aada-f2aabe3bd7f6", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:42.713577+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3a1a26ff-a072-471d-84d0-634a1ac281e4", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:42.714248+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "4ace8461-2ca2-41e4-8986-9a8085758929", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -921,7 +921,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -1027,7 +1027,7 @@ tests/test_controller_continuation.py:87: KeyError
 {"timestamp": "2026-09-23T21:45:42.861385+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "fc52851b-5fca-4de7-88a6-21a737202c7a", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:42.863190+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bd6b43fc-7252-41c7-84eb-4e9972a77c25", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:42.864416+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "33c5b669-0c3e-4743-b4d8-e66a12fb8e11", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:42.864526+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "e7cc1cbe-ff53-4ad1-9f25-7a54e8f93fcc", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:42.864526+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "e7cc1cbe-ff53-4ad1-9f25-7a54e8f93fcc", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:42.866321+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f5cf80d8-3834-4d15-94a5-aa416b8d5bd5", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:42.867991+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a60b15b9-adbd-490e-8d19-1297257bfcf2", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:42.868739+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "5baa86a6-953f-4e22-bd7e-b3500ba26079", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -1058,7 +1058,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -1907,7 +1907,7 @@ src/physharness/orchestration/research_worker.py:1346: ExecutionError
 {"timestamp": "2026-09-23T21:45:42.933740+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d368ec1b-21a2-441a-99b3-100eca85df74", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:42.935500+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8c350cbc-52ea-42ed-9579-091ab6af20fd", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:42.936909+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c1347480-6a2d-4660-ab4a-8857c56dda45", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:42.937011+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "81492cca-79cb-4aac-9370-2e08c6419d8d", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:42.937011+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "81492cca-79cb-4aac-9370-2e08c6419d8d", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:42.938801+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4fe8c83f-4f24-4869-901d-ff7e33345335", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:42.940210+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b5d9220c-e73c-4cf8-96c6-70b27ad3eed3", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:42.940915+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "0307c4e7-be5e-4816-b53b-be37742c6d5a", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -1939,7 +1939,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -2081,7 +2081,7 @@ tests/test_controller_continuation.py:252: AssertionError
 {"timestamp": "2026-09-23T21:45:43.020683+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "09998579-6793-484c-91b2-dadcbcd0a56e", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:43.022404+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "44704c9a-e76c-418c-bc1d-ad1a9b2874d0", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:43.023621+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "738b306e-a7e2-48c5-94ae-aade04a67932", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:43.023720+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "de0c2b13-9ca8-4213-98ba-9b3745ee9794", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:43.023720+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "de0c2b13-9ca8-4213-98ba-9b3745ee9794", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:43.025567+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1f08a532-51a4-47a8-9183-994b807cad7b", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:43.026924+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "da932cd4-af96-4d63-b1aa-66c8ca1797a0", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:43.027531+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "6146855b-c589-4175-ae66-c9fd5ce5754f", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -2115,7 +2115,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -3014,7 +3014,7 @@ src/physharness/orchestration/research_worker.py:1346: ExecutionError
 {"timestamp": "2026-09-23T21:45:43.110722+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c436ee63-e258-4477-9393-5dd0aa0765b9", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:43.112880+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "79e1e134-a2f9-45a7-8ada-892333209dfe", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:43.114238+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "29c09ee2-bc11-4712-ae41-9a76fa588029", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:43.114357+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "2137cf3d-2398-43c5-8159-aade273f6ef1", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:43.114357+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "2137cf3d-2398-43c5-8159-aade273f6ef1", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:43.116155+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "60e22b2e-4c36-4232-ac7e-330d3fb6a55e", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:43.117824+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c66312d8-6473-448f-a16a-e7c86cbec30b", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:43.118324+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "464d47d8-f99d-4460-9430-655b53b2f4a5", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -3053,7 +3053,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -3951,7 +3951,7 @@ src/physharness/orchestration/research_worker.py:1346: ExecutionError
 {"timestamp": "2026-09-23T21:45:43.240320+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "37083e8c-4c66-4f08-837f-7c8fd790258a", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:43.242472+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4264d89d-d627-47aa-bca8-1a1d6d8da207", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:43.243817+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "623fc53c-aa97-400a-ae78-dc8cf8524a31", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:43.243937+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "d6c7f085-969b-4287-b3e7-ad31f8a71ecf", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:43.243937+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "d6c7f085-969b-4287-b3e7-ad31f8a71ecf", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:43.245824+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bc39f9ca-4535-4004-a2f6-069022cb0060", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:43.247662+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3d70619b-799f-4bed-b3a5-6ae63eea815e", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:43.248168+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "0cb8d2e6-fe24-4d94-a867-276c4ba6c425", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -3990,7 +3990,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -4126,7 +4126,7 @@ tests/test_joined_delegation.py:120: AssertionError
 {"timestamp": "2026-09-23T21:45:53.866391+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bc736743-9dbb-48ec-8a90-bc697df52601", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:53.868293+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a4046e7f-4791-4cfa-9c3f-3ab189ebdcc6", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:53.869481+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "96673b07-446a-4dc8-9005-3c70cf70910a", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:53.869583+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "67b87fc3-958d-43fd-84fe-251fd6deffa3", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:53.869583+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "67b87fc3-958d-43fd-84fe-251fd6deffa3", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:53.871311+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c00c742c-1ded-4c39-9e92-374d9b0ffc1a", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:53.872669+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "9a38057c-a68b-4617-b299-9623b136b42b", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:53.873329+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "2197f1c4-c65c-4ebc-94d2-ed3e25c6232c", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -4160,7 +4160,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -4279,7 +4279,7 @@ tests/test_joined_delegation.py:207: AssertionError
 {"timestamp": "2026-09-23T21:45:53.945849+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "22e01190-466e-463e-844d-89f7e7f45678", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:53.947543+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "01240e3f-5839-4b03-8b4b-e66e2d5b4295", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:53.948775+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "f932adc0-a5e5-4577-ae87-79e4ace0cf29", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:53.948858+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "dd44df81-e64d-40a9-9439-f5526ae94d4c", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:53.948858+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "dd44df81-e64d-40a9-9439-f5526ae94d4c", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:53.950445+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c852b8a4-3e49-4ae5-ae30-e196b5cb5f28", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:53.951734+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ab5a7017-41de-446b-a3d6-7adaaae563f9", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:53.952311+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "8a485fac-64a0-403e-8f22-a2cbc7f42336", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -4313,7 +4313,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -5218,7 +5218,7 @@ src/physharness/orchestration/research_worker.py:1346: ExecutionError
 {"timestamp": "2026-09-23T21:45:54.168334+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8eac4868-718e-4da6-81e1-a97907fe335b", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:54.170130+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "cd36d10f-91b3-4e17-ad1b-fe21a8731590", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:54.171431+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5231e573-c3ff-4742-8308-aa08054c316f", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:54.171519+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "5255fba2-599e-4cad-b3d4-1010864a7a2f", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:54.171519+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "5255fba2-599e-4cad-b3d4-1010864a7a2f", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:54.173207+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "6234040f-0703-4bde-ae06-3262a94619e2", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:54.174795+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2221cff6-165c-4e33-a0d0-8afc1a129ac3", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:54.175399+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "e05a1b55-a895-419f-8bdd-fa5196f11582", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -5252,7 +5252,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -5382,7 +5382,7 @@ tests/test_joined_delegation.py:737: AssertionError
 {"timestamp": "2026-09-23T21:45:54.444961+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "96495690-de4f-48bb-bebc-3b4326ea683f", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:54.446722+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "807d7367-f435-4f8f-a6a6-4d855b457cb3", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:54.447968+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "73c760f8-b5e0-4b46-b00a-e83baec0098e", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:54.448050+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "a278eb44-03b6-4a82-b15e-3ad3f804d9b5", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:54.448050+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "a278eb44-03b6-4a82-b15e-3ad3f804d9b5", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:54.449568+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "98191d6a-a555-43bd-908e-2a6fd31cc194", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:54.451205+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "5363241f-7707-440a-b588-edcc5703191c", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:54.451844+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "76f21013-71ae-4adc-99c7-bb999b21e40f", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -5416,7 +5416,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -5481,7 +5481,7 @@ tests/test_research_loop_integration.py:154: AssertionError
 {"timestamp": "2026-09-23T21:45:57.159125+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8503a372-e6b4-4182-b213-fcca7b25c7e3", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:57.160824+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "d37ab364-8b08-4807-994b-9504f4c88b68", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.162035+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "701cbebe-928a-43f0-b017-f4dc3086e707", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:57.162120+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "03abb000-03d1-448e-9f07-c206880aee99", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:57.162120+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "03abb000-03d1-448e-9f07-c206880aee99", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:57.163690+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c3b67e1c-e75b-4b14-ad70-1a5a09838ce8", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:57.165012+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "3664025e-d59a-4f6a-9afb-38c8456c491c", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.165592+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "3db4b56f-58e7-4a79-ad27-3ec98d4a190b", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -5516,7 +5516,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -5621,13 +5621,13 @@ tests/test_research_loop_integration.py:207: AssertionError
 {"timestamp": "2026-09-23T21:45:57.294177+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "eda83c8a-857f-4420-bc2d-689d02a47e3b", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:57.295955+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2a9b9576-b784-4a37-97c9-7ffb4dbe2391", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.297169+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "2dfec8c9-4e64-418f-99b7-84175ec23a78", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:57.297245+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "da39e1a2-8629-4732-b928-18f5db2d19d0", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:57.297245+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "da39e1a2-8629-4732-b928-18f5db2d19d0", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:57.298870+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7fe9c8a2-07ac-47d7-aa75-0e773ce7ab27", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:57.300328+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7cbeac62-5a7c-49b5-81b0-6b146270e043", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.300925+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "0064ab7e-0b18-42dc-a552-34c11ebdab94", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
 {"timestamp": "2026-09-23T21:45:57.300959+00:00", "severity": "INFO", "logger": "physharness.orchestration.research_worker", "message": "Terminal result is not recoverable under this fence: RECOVERY_RECONCILIATION_REQUIRED", "task_id": "da39e1a2-8629-4732-b928-18f5db2d19d0"}
 {"timestamp": "2026-09-23T21:45:57.302592+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "cb84892b-f565-41c5-b79b-8200fecae33f", "operation": "task.finish"}
-{"timestamp": "2026-09-23T21:45:57.302656+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "c4f69091-2a50-4ee3-9e12-201df236a12c", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:57.302656+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "c4f69091-2a50-4ee3-9e12-201df236a12c", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:57.304014+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "1e1d5a37-aa90-43b9-b75c-701d90adeafd", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:57.305491+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b05887eb-f7eb-42b7-b1fc-ec588968403f", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.305917+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "8598e910-56ca-47ed-ad62-cab31c7704a3", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -5679,7 +5679,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -5689,7 +5689,7 @@ INFO     physharness.orchestration.research_worker:research_worker.py:1399 Termi
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -5815,7 +5815,7 @@ tests/test_research_loop_integration.py:329: AssertionError
 {"timestamp": "2026-09-23T21:45:57.436018+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ac7d4685-13e2-48f0-ad6e-f39c3666b43b", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:57.437773+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "67586499-46f5-43cd-8f12-5925559219ee", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.439041+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bdccacc7-2d6a-42fc-9d30-2851c15a6066", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:57.439129+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "cd4796b8-a01c-48dc-828b-7cf10ea2ace3", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:57.439129+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "cd4796b8-a01c-48dc-828b-7cf10ea2ace3", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:57.440707+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "163b6973-d9b6-4e23-84a6-af776a20f082", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:57.442231+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4503c8bd-7212-482e-9fbf-50588ab8559d", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.442815+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "104a87c9-22f9-4446-b5d5-38fb4681433c", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -5849,7 +5849,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -5968,7 +5968,7 @@ tests/test_research_loop_integration.py:508: AssertionError
 {"timestamp": "2026-09-23T21:45:57.989678+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "fb56a348-d727-4795-9492-cab7557015ee", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:57.991661+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e816d6fe-1488-452c-8584-6f07f04c250f", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.992810+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "a9efb27f-60ab-41c4-88ac-4efbb3f8eec8", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:57.992894+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "ae2c159d-0695-4a90-bd81-d6f610e9e013", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:57.992894+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "ae2c159d-0695-4a90-bd81-d6f610e9e013", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:57.994459+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8f5d8b9d-b95f-4f4d-ba85-444e63d4ffb3", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:57.995738+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "7141dd96-4e1b-4481-907a-99ea79b56989", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:57.996335+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "d005cab9-6247-48c8-bedd-1d615c2cc87b", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -6002,7 +6002,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -6084,7 +6084,7 @@ tests/test_research_loop_integration.py:615: AssertionError
 {"timestamp": "2026-09-23T21:45:58.337859+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "8b9011f2-2181-424d-9fd6-0dc4d2d43fa7", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:58.339662+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "92e02c40-1bad-429f-8899-658aad739147", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:58.340913+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4369534a-d9ce-4dfa-b7b7-4c0690e61569", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:58.340996+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "b2bd234d-15b4-4683-a4a7-c58bdc897b30", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:58.340996+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "b2bd234d-15b4-4683-a4a7-c58bdc897b30", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:58.342605+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bf01c799-a4fe-4fae-adf2-8c9e009a8221", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:58.346276+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "31ae149e-45f1-4821-b24f-7896d45df751", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:58.346869+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "22bdd56a-1cc0-4ab4-b545-760fb39d1ed6", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -6120,7 +6120,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -6206,7 +6206,7 @@ tests/test_research_loop_integration.py:663: AssertionError
 {"timestamp": "2026-09-23T21:45:58.434174+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "4780d20e-bbcd-4e31-9709-72af30ea9056", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:58.550463+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "ed167db1-8afd-4b7b-8d75-0b7d24fded01", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:58.605898+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "9879289c-5170-4c4a-891e-df77fdb6607d", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:58.606281+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "97ab3d3e-eada-4e28-ab54-c37c21df03e8", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:58.606281+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "97ab3d3e-eada-4e28-ab54-c37c21df03e8", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:58.608842+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "bcdbfa3b-7f9d-4f57-a863-188bd0f8db9f", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:58.610910+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "c44d43bd-a64c-4360-8dc3-7e716a9f3cca", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:58.611767+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "5ff54b4d-755c-4c68-9389-54424e2a1009", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -6241,7 +6241,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -7086,7 +7086,7 @@ src/physharness/orchestration/research_worker.py:1346: ExecutionError
 {"timestamp": "2026-09-23T21:45:58.700852+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "99ee3e36-3a19-48b7-a5a1-c2806df9ea51", "operation": "runtime.save"}
 {"timestamp": "2026-09-23T21:45:58.702571+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "22c47a93-275c-4c4d-8e74-a11b3e25ceb6", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:58.703841+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "e607bc77-d31e-4b81-a44b-d0ab3c871953", "operation": "runtime.save"}
-{"timestamp": "2026-09-23T21:45:58.703924+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "36ea390e-31ed-40d4-9172-c9acf87b5a7f", "traceback": "Traceback (most recent call last):\n  File \"/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
+{"timestamp": "2026-09-23T21:45:58.703924+00:00", "severity": "ERROR", "logger": "physharness.orchestration.research_worker", "message": "Research task failed", "task_id": "36ea390e-31ed-40d4-9172-c9acf87b5a7f", "traceback": "Traceback (most recent call last):\n  File \"<repo>/src/physharness/orchestration/research_worker.py\", line 1346, in execute\n    await running\nphysharness.execution.types.ExecutionError: Provider response model differs from the requested model"}
 {"timestamp": "2026-09-23T21:45:58.705610+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b04fd6be-c842-4864-abcb-078beaec7579", "operation": "resources.settle"}
 {"timestamp": "2026-09-23T21:45:58.707002+00:00", "severity": "INFO", "logger": "physharness.service", "message": "command_completed", "operation_id": "b978a8b6-1174-4e52-9ee7-3cbd2ad4450e", "operation": "artifact.create"}
 {"timestamp": "2026-09-23T21:45:58.707639+00:00", "severity": "WARNING", "logger": "physharness.service", "message": "command_rejected", "operation_id": "ed62d7df-3cf4-4e52-bc8b-1e0c0d473516", "operation": "task.requeue-settled-terminal", "error_code": "RECOVERY_RECONCILIATION_REQUIRED"}
@@ -7119,7 +7119,7 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 INFO     physharness.service:service.py:550 command_completed
@@ -7130,21 +7130,21 @@ INFO     physharness.service:service.py:550 command_completed
 INFO     physharness.service:service.py:550 command_completed
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/fastapi/testclient.py:1
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  <repo>/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
     from starlette.testclient import TestClient as TestClient  # noqa
 
 .venv/lib/python3.12/site-packages/starlette/testclient.py:53
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+  <repo>/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
     _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
 
 tests/test_execution_openhands.py: 16 warnings
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+  <repo>/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
     val = getattr(obj, name)
 
 tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
 tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
 tests/test_execution_openhands.py::test_native_checkpoint_can_import_into_new_journal_for_same_vm
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+  <repo>/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
     llm = handler(data)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

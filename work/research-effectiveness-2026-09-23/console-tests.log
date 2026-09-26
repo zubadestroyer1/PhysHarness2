@@ -3,7 +3,7 @@
 > vitest run
 
 
- RUN  v5.0.0 /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/console
+ RUN  v5.0.0 <repo>/console
 
 
  Test Files  5 passed (5)

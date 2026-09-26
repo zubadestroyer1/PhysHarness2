@@ -131,7 +131,7 @@ Temporary reproduction sources, retained locally at review time:
 - `/tmp/physharness-acceptance-repro.py`
 - `/tmp/physharness_execution_review_repro.py`
 - `/tmp/physharness_child_identity_repro.py`
-- `/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/physharness-console-review-scrwrhcu/tests/review.test.tsx`
+- `$TMPDIR/physharness-console-review-scrwrhcu/tests/review.test.tsx`
 
 Run the Python scripts with the repository's `.venv/bin/python` from the repository root. Run the isolated UI test from its temporary console directory with `./node_modules/.bin/vitest run tests/review.test.tsx`. The UI tests assert corrected behavior and intentionally fail on the reviewed code. Source files, index and PR branch were not modified by these reproductions.
 

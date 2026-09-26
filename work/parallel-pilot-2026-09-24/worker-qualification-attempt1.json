@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "docker_host": "unix:///Users/kieranpi/.colima/physharness-pilot/docker.sock",
+  "docker_host": "unix://~/.colima/physharness-pilot/docker.sock",
   "worker_image": "sha256:48e4f60a07c289baf846c0ff6fa2624870c59547c2a00971db0510e767161be0",
   "initial_probe": {
     "max_active_workspaces": 2,

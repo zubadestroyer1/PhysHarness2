@@ -8,7 +8,7 @@ The retained qualification packet is mechanically consistent with the current sc
 
 ## Scope and method
 
-Repository: `/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop`; inspected HEAD `9f05c71eff3626967a10c2af5dd6095606532a8d`.
+Repository: `<repo>`; inspected HEAD `9f05c71eff3626967a10c2af5dd6095606532a8d`.
 
 Evidence directory: `work/wave01/evidence/`. The audited scope has canonical digest `de7476c9d13aab9bd3654a613fd63d147e42efe24926ce48a0577604a0ddec40` and image digest `sha256:82497fa412f10a76e515ddc8590f1c387a8383c8b99b1cd215261f6a11151246`. The canonical scope digest differs from the byte hash of the formatted `scope.json`, as expected.
 
@@ -74,7 +74,7 @@ The five stated coverage gaps remain material: the security-filtered optional pr
 | `library-independent.json` | `cd9124b6f7de592fd2fcfdc5ef21d21f4733636f956677f1914781bf5c3fd58d` |
 | `fixed-boundary.json` | `db3915dd583c527f10c67a40fd8c30ee474094fcd1c484b121df5f5ef72afbe6` |
 | `regressions.json` | `89e2dc04e98a4fa8ae95788009c174c5c17672444cdb36ec90823f039d77cacc` |
-| `regressions.xml` | `5a3d2b14e3b7f1fb40f8b625304f8fbdc1516262ed44737fd23f937661219707` |
+| `regressions.xml` | `5e4736bb90ae9862565fb50da8133914044914d7ea7f827ff5b42f61607588aa` |
 | `declarations-kernel.txt` | `a1b350d2820424bdc368dfaa2c4bdceef122394b9a67767c8e36b097c3a91ae8` |
 | `image-metadata.json` | `75be3be77a1ca65a153fb594d7e71ec72a5ec27b3aabe1e5e75323c580b9f573` |
 | `runtime-identity.json` | `6d45b4cc785e74c75883e6c2bdb42ef3ba50639b7c89bb0614c990d0142474e5` |

@@ -1,6 +1,6 @@
 # Independent final control evidence audit
 
-Worktree: `/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop`.
+Worktree: `<repo>`.
 Read `work/wave01/evidence-8g/scope-final.json`, image/runtime metadata, build-inputs,
 the four core/library `*-final.json` reports, fixed-boundary-final.json, and
 regressions-final.json/XML. Root has completed these real Linux runs. They are

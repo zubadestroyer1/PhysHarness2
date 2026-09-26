@@ -1,6 +1,6 @@
 # Formal environment implementation evidence — 2026-09-15
 
-Worktree: `/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop`.
+Worktree: `<repo>`.
 All Lean compilation occurred in the dedicated aarch64 Linux Colima VM, using
 `DOCKER_HOST=unix:///private/tmp/physharness-colima/default/docker.sock`.
 No candidate Lean executed on the Mac, no fake Landrun was used, and no production
