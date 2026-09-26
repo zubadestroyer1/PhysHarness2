@@ -1,10 +1,11 @@
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
-from physharness.domain import Principal
+from physharness.domain import Principal, digest_json
 from physharness.errors import HarnessError
 
 
@@ -204,3 +205,210 @@ def test_configured_preflight_forwards_nondefault_reviewed_theorem(lab, tmp_path
     assert calls[0].challenge_sha256 == hashlib.sha256(source.encode()).hexdigest()
     assert report["model_calls"] == 0
     assert service.list_records("task", operator) == []
+
+
+# Society arm plans ---------------------------------------------------------------------------
+
+# Recorded from the pre-change RunPlan (before the optional society field existed): the
+# digest of the plan as prepare_run stores it in the run_preparation artifact.
+LEGACY_PLAN_DIGEST = "1d4067e906d7b5a06d8ad907c384976bef596cedd95e0e9e7eaa4b90266c4ba5"
+
+
+def test_legacy_plan_prepares_exactly_as_before(lab, tmp_path):
+    from physharness.run_control import RunPlan, prepare_run
+
+    service, actor, _ = lab
+    source_files(tmp_path)
+    prepared = prepare_run(service, actor, RunPlan.model_validate(plan_input()), tmp_path)
+    experiment = service.get_record("experiment", prepared["experiment_id"], actor)
+    assert "society" not in experiment
+    content = service.artifact_content(prepared["preparation_artifact_id"], actor)
+    assert digest_json(json.loads(content)["plan"]) == LEGACY_PLAN_DIGEST
+
+
+SOCIETY = {
+    "claim_ttl_seconds": 900,
+    "lab_size_max": 6,
+    "referee_quorum": 1,
+    "literature": {"mode": "open"},
+}
+
+
+def society_plan(**update):
+    return {
+        **plan_input(),
+        "models": [
+            {"runtime": "responses", "model": "family-a-test-model"},
+            {"runtime": "responses", "model": "family-b-test-model"},
+        ],
+        "sharing": "ideas",
+        "society": SOCIETY,
+        **update,
+    }
+
+
+def test_society_plan_prepares_a_society_experiment(lab, tmp_path):
+    from physharness.domain import SocietyPolicy
+    from physharness.run_control import RunPlan, prepare_run
+
+    service, actor, _ = lab
+    source_files(tmp_path)
+    prepared = prepare_run(service, actor, RunPlan.model_validate(society_plan()), tmp_path)
+    experiment = service.get_record("experiment", prepared["experiment_id"], actor)
+    assert experiment["society"] == SocietyPolicy(**SOCIETY).model_dump(mode="json")
+    assert experiment["sharing"] == "ideas" and len(experiment["models"]) == 2
+    content = json.loads(service.artifact_content(prepared["preparation_artifact_id"], actor))
+    assert content["plan"]["society"] == experiment["society"]
+    assert prepared["model_calls"] == 0 and experiment["status"] == "created"
+
+
+@pytest.mark.parametrize(
+    ("update", "fragment"),
+    [
+        ({"sharing": "verified"}, "requires ideas sharing"),
+        ({"society": {**SOCIETY, "literature": {"mode": "benchmark"}}}, "masked_reference"),
+        ({"society": {**SOCIETY, "unknown": True}}, "society.unknown"),
+    ],
+)
+def test_society_plan_is_checked_before_any_record(lab, update, fragment):
+    from physharness.run_control import RunPlan
+
+    service, actor, _ = lab
+    with pytest.raises(ValidationError, match=fragment):
+        RunPlan.model_validate(society_plan(**update))
+    assert service.list_records("campaign", actor) == []
+
+
+def guard_only(error):
+    """The rejection is the placeholder guard alone, not a field-type error on the input."""
+    messages = [item["msg"] for item in error.value.errors()]
+    assert messages == [
+        "Value error, Replace every USER DECISION REQUIRED placeholder before preparing"
+    ]
+
+
+def test_run_plan_rejects_unfilled_user_decisions():
+    from physharness.run_control import RunPlan
+
+    data = society_plan()
+    data["target"]["title"] = "USER DECISION REQUIRED: choose the target"
+    with pytest.raises(ValidationError) as error:
+        RunPlan.model_validate(data)
+    guard_only(error)
+
+
+def test_legacy_plan_validates_placeholder_text_as_before():
+    """The skeleton guard belongs to society plans; legacy plans behave exactly as before."""
+    from physharness.run_control import RunPlan
+
+    data = plan_input()
+    data["target"]["title"] = "USER DECISION REQUIRED: choose the target"
+    assert RunPlan.model_validate(data).target.title == data["target"]["title"]
+
+
+EXAMPLE = Path(__file__).resolve().parents[1] / "work/society-s1/run-plan.example.json"
+PLACEHOLDER = "USER DECISION REQUIRED"
+
+
+def fill(value, choices, path="", *, keep_unchosen=False):
+    """Replace every placeholder with the test value chosen for its JSON path."""
+    if isinstance(value, dict):
+        return {
+            key: fill(item, choices, f"{path}.{key}", keep_unchosen=keep_unchosen)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            fill(item, choices, f"{path}[{index}]", keep_unchosen=keep_unchosen)
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, str) and PLACEHOLDER in value:
+        return choices.get(path, value) if keep_unchosen else choices.pop(path)
+    return value
+
+
+def placeholders(value, path=""):
+    if isinstance(value, dict):
+        return [p for key, item in value.items() for p in placeholders(item, f"{path}.{key}")]
+    if isinstance(value, list):
+        return [p for i, item in enumerate(value) for p in placeholders(item, f"{path}[{i}]")]
+    return [path] if isinstance(value, str) and PLACEHOLDER in value else []
+
+
+# Placeholders in fields a string cannot satisfy (a literal and numbers).
+TYPED_PLACEHOLDERS = (
+    ".target.program",
+    ".budget.max_cost_usd",
+    ".budget.max_runtime_seconds",
+    ".budget.max_tokens",
+)
+EXAMPLE_CHOICES = {
+    ".target.title": "Test target",
+    ".target.program": "classical",
+    ".target.informal_statement": "A statement chosen for the test.",
+    ".target.formal_source_file": "Challenge.lean",
+    ".target.environment_file": "environment.json",
+    ".target.target_theorem": "target",
+    # Eight seeded roots, four per model family.
+    **{f".models[{i}].model": f"family-{'ab'[i // 4]}-test-model" for i in range(8)},
+    ".budget.max_cost_usd": "480",
+    ".budget.max_runtime_seconds": 14400,
+    ".budget.max_tokens": 40000000,
+    ".society.literature.blocked_sources[0]": "arXiv:2101.00001",
+    ".society.literature.masked_reference_artifact_id": "masked-reference-test-id",
+}
+
+
+def test_society_example_plan_validates_once_user_decisions_are_filled(lab, tmp_path):
+    from physharness.run_control import RunPlan, prepare_run
+
+    example = json.loads(EXAMPLE.read_text())
+    assert sorted(placeholders(example)) == sorted(EXAMPLE_CHOICES)
+    # As shipped, the skeleton cannot be prepared.
+    with pytest.raises(ValidationError):
+        RunPlan.model_validate(example)
+    # With only the typed fields (program, budget numbers) filled, every remaining
+    # placeholder fits its field, so the rejection is the placeholder guard itself.
+    typed = {path: EXAMPLE_CHOICES[path] for path in TYPED_PLACEHOLDERS}
+    partly = fill(example, typed, keep_unchosen=True)
+    assert sorted(placeholders(partly)) == sorted(set(EXAMPLE_CHOICES) - set(TYPED_PLACEHOLDERS))
+    with pytest.raises(ValidationError) as error:
+        RunPlan.model_validate(partly)
+    guard_only(error)
+    plan = RunPlan.model_validate(fill(example, dict(EXAMPLE_CHOICES)))
+    assert plan.society is not None and plan.sharing == "ideas"
+    assert plan.society.literature.mode == "benchmark"
+    assert [model.model for model in plan.models] == ["family-a-test-model"] * 4 + [
+        "family-b-test-model"
+    ] * 4
+    assert plan.budget.max_concurrency == 12
+    service, actor, _ = lab
+    source_files(tmp_path)
+    prepared = prepare_run(service, actor, plan.model_copy(update={"project_id": "lab"}), tmp_path)
+    experiment = service.get_record("experiment", prepared["experiment_id"], actor)
+    assert experiment["society"]["literature"]["mode"] == "benchmark"
+
+
+@pytest.mark.parametrize("kind", [None, "note", "masked_reference"])
+def test_preflight_requires_the_benchmark_masked_reference(lab, tmp_path, kind):
+    """Without its reference the broker fails closed, so literature would silently be off."""
+    from physharness.domain import ArtifactCreate
+    from physharness.run_control import RunPlan, prepare_run, run_preflight
+
+    service, actor, _ = lab
+    source_files(tmp_path)
+    reference = "missing-reference"
+    if kind is not None:
+        # Long enough for the broker's overlap screen (see usable_reference).
+        content = " ".join(f"reference{i}" for i in range(40))
+        reference = service.create_artifact(
+            ArtifactCreate(kind=kind, content=content), actor, "reference"
+        )["id"]
+    literature = {"mode": "benchmark", "masked_reference_artifact_id": reference}
+    plan = society_plan(society={**SOCIETY, "literature": literature})
+    prepared = prepare_run(service, actor, RunPlan.model_validate(plan), tmp_path)
+    operator = Principal(id="controller", project_id="lab", role="operator")
+    report = run_preflight(service, operator, prepared["experiment_id"], prices={}, environment={})
+    codes = {blocker["code"] for blocker in report["blockers"]}
+    assert ("MASKED_REFERENCE_REQUIRED" in codes) is (kind != "masked_reference")
+    assert report["model_calls"] == 0

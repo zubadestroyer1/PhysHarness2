@@ -1,3 +1,117 @@
+## S1 research society — 2026-09-25
+
+**Status:** implemented; the final whole-branch review's findings are fixed. The society
+is opt-in: only experiments created with a `society` policy (which requires
+`sharing="ideas"`) behave differently. Legacy experiments keep their exact payloads, 63
+tools, prompts, delivery shapes and exports; pinned digests guard each of these. The
+evidence is deterministic and mocked-provider tests only. **No live model run, VM, image
+build or E2B sandbox has exercised any society path, and no research-performance claim is
+made.** See the [S1 plan](superpowers/plans/2026-09-25-s1-research-society.md) and
+[PLAN.md](../PLAN.md) §7.
+
+What exists (Tasks 1–10):
+- **Commons.**
+  - Attributed nodes: a platform-created goal mirroring the reviewed target, plus lemma,
+    definition, conjecture, approach, tangent, obstacle, counterexample and computation
+    nodes, each in its author's lab.
+  - Typed edges with cycle checks, bounded query and read, and a transparent frontier
+    score.
+  - A status ladder that only platform code moves, apart from abandonment by the author.
+- **Discourse.**
+  - Expiring work claims; several branches may hold one node.
+  - A thread per node, with best-effort auto-subscriptions and bounded digests that put
+    urgent items first (objections to your node, and followed nodes becoming accepted or
+    refuted).
+- **Checks.**
+  - Referees are platform-created, parentless, lab-less branches, isolated from other
+    branches. The first referee runs a model family other than the author's (for
+    fidelity, also other than every claimant's) when one exists, and a quorum spreads
+    over the configured families.
+    A standing `wrong` vetoes every promotion above informal and a standing
+    `unfaithful` vetoes formally stated; either ends its panel. Each text version gets a
+    bounded referee panel (`REVIEW_LIMIT`) that gap reports do not use up, each Lean
+    statement writer a bounded fidelity budget, and reviews follow the normalized
+    statement text, so a restated node draws no fresh panel. Only the author replaces
+    another writer's elaborated Lean statement or a formal node's.
+  - Informal verdicts are sound, gaps or wrong; fidelity verdicts are faithful or
+    unfaithful. Ladder moves are bound to evidence: the review quorum, Lean elaboration,
+    and a local compile that passes the harness statement check. That check replays the
+    compiled file through the kernel, requires the theorem's elaborated type to equal the
+    node statement's, and collects its axioms itself; only standard axioms count.
+    Elaboration and local compiles run in the agent-controlled workspace VM, so they are
+    VM-attested evidence, not trusted platform checks; only independent acceptance is
+    trusted.
+  - Goal acceptance is persisted from the independent target receipt.
+- **Labs.** Membership is capped, lab broadcast exists, and direct messages across labs
+  are blocked by default.
+- **Toolkit.**
+  - A Lean session: a REPL daemon, an inline REPL on local_docker, or a one-shot fallback,
+    with automation on holes and sketch-goal extraction.
+  - `run_computation` with reproducibility records.
+  - A literature broker: arXiv, OpenAlex and allowlisted fetch, with a benchmark
+    blocklist and an overlap screen against the masked reference.
+  - Ten technique skills, a constitution, check-ins and stagnation nudges.
+  - The `workbench-v2` image **definition** (numerics and a pinned REPL). It is not built.
+- **Society tool profile.** Twenty-six tools in all: 25 for a worker at most, and a
+  read-and-check profile of 18 for a referee. `read_artifact` opens cited evidence in
+  bounded chunks through the scoped portable-memory read; a referee opens only its own
+  artifacts and those its assigned node or the node's thread cites. The legacy tools remain as adapters. The
+  finite runner runs referee tasks, synthesis tasks without a parent branch, and the
+  reviews those platform-rooted tasks request.
+- **Task 10.**
+  - A no-model end-to-end simulation (three agents plus referees, through the tool
+    dispatchers).
+  - `tools/society_metrics.py` for the PLAN §9 metrics.
+  - Society exports now carry commons nodes, claims, reviews, literature fetches and
+    edges.
+  - `RunPlan` has an optional society policy, and the preflight blocks benchmark mode
+    without its masked reference.
+  - The [S1 live-run plan](../work/society-s1/RUN_PLAN.md) and an example society-arm
+    manifest.
+  - The simulation found one integration gap: nodes did not record their author's lab.
+    It is fixed, with a regression test.
+- **Final review fixes.** Local compiles count only for the node's real top-level
+  theorem (comments, strings, namespaces and forged one-shot axiom lines no longer
+  count); referees get a read-and-check profile, and reviews requested from
+  platform-rooted lineages run; own and claimed node threads survive the subscription
+  cap. Minor fixes: infrastructure failures never demote a node, one withheld-source
+  reason code, batched hole elaboration, benchmark refusal of search pages, and an
+  opt-in PostgreSQL commons smoke in CI.
+- **Residual fixes after the final review.**
+  - The one-shot Lean fallback reads `#print axioms` from `lean --json`, because plain
+    `lean` prints those reports without a position. A complete proof is now reported
+    complete, so `compiles_locally` is reachable on images without the REPL. This was
+    checked against real Lean 4.32 and 4.33. On both backends, axiom reports now parse
+    Lean names that contain `'`.
+  - Referees get referee-specific norms, check-ins, nudges and skill lists, which name
+    only the tools they have.
+  - In society profiles, a call to an unregistered tool name is a recoverable rejection
+    rather than a fatal error. Every such rejection counts toward stagnation for the rest
+    of the native session, whatever the name: the fourth warns, the eighth requests the
+    stagnation handoff, and eight more in the recovery session exhaust it.
+- **Tests.** The full suite passes 1,577 tests with 2 opt-in PostgreSQL skips (1,258
+  before S1). Ruff check and format are clean.
+
+Deferred by design:
+- node-level independent acceptance (the `accepted` status for non-root nodes);
+- the root fidelity ensemble before launch;
+- background computation jobs and Ray;
+- general web search, which needs a paid search API key;
+- the attention allocator with reserves, fresh-eyes reseeding, synthesizer and maintainer
+  agents, and an automated stagnation stop;
+- hierarchical budgets and model tiers.
+
+In S1, `refuted` has no platform path.
+
+Needs user approval before the live 8–16 agent comparison ([RUN_PLAN §8](../work/society-s1/RUN_PLAN.md#8-prerequisites-and-approvals)):
+- the budget;
+- the choice of target (candidates are proposed) and its masked reference;
+- the tool-matching design;
+- the two model families (both on the Responses runtime);
+- the workbench v2 rebuild and qualification (every `TODO(pin-at-rebuild)` resolved);
+- verifier bundle registration for the chosen target;
+- the choice between E2B and local_docker, and a larger VM for concurrency 12.
+
 ## Persistent-swarm hardening — 2026-09-25
 
 The four fix groups from the harder-target audit are implemented with deterministic regressions.

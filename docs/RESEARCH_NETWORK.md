@@ -101,6 +101,183 @@ it does not claim to have read the entire discussion or settle disagreement by v
 Automatic synthesis only runs when the finite supervisor owns all experiment roots.
 Operators can also call `schedule_research_synthesis` explicitly.
 
+## Research-society commons (S1)
+
+An experiment created with a `society` policy replaces free-form discussion with a
+shared blueprint (PLAN §2). The policy requires `sharing="ideas"`, and it is immutable
+after creation. Experiments without it keep everything above unchanged: the 63 legacy
+tools, the prompts and the delivery shapes.
+
+- **Nodes and edges.**
+  - The platform creates one `goal` node that mirrors the reviewed target. Agents
+    propose lemma, definition, conjecture, approach, tangent, obstacle, counterexample
+    and computation nodes. A tangent must be `motivated_by` another node.
+  - A node records its author branch and that branch's lab.
+  - Edges are `depends_on` (cycle-checked), `motivated_by`, `refutes`, `generalizes`,
+    `specializes` and `duplicates`.
+  - The frontier ranks open nodes by root path, waiting dependents, neglect and live
+    claims. The score is attention, never proof.
+- **Status ladder.** `informal` → `refereed` → `formally_stated` → `compiles_locally` →
+  `accepted`, with `abandoned` (the author, with a reason) and `refuted` as exits.
+  - Only platform code moves a node. A sound referee quorum makes it refereed, unless a
+    standing `wrong` verdict vetoes it or gap reports match the sound verdicts. A
+    faithful fidelity review of a statement that elaborates makes it formally stated,
+    unless a standing `unfaithful` verdict vetoes that Lean statement. A standing
+    `wrong` vetoes every promotion above informal: refereed, formally stated and a local
+    compile alike.
+    A node's Lean header may hold only import, open, set_option and universe lines, one
+    command per line and with no command keyword among their names. It may set only
+    elaboration limits, auto-bound implicits and `pp.*` or `linter.*` options: others can
+    write files (`trace.profiler.output`) or skip the kernel. Its Lean statement must be
+    one declaration signature (no `:=`, `where` or `| … =>` outside brackets). Neither may
+    end inside a comment or literal. So no text in either can end the elaborated
+    declaration early (with `#exit`, say). The commons service enforces this whoever
+    calls it.
+  - A local compile makes a formally stated node compile locally only when the harness
+    statement check passes; the file's own output never decides. After a complete
+    `lean_check` with `node_id`, the platform compiles the file, and a reference
+    `<lean_header> theorem <lean_name> <lean_statement> := sorry`, to `.olean` files.
+    A harness-authored Lean checker (`formal_tools/statement_check.lean`) then loads
+    both `.olean` files as data: the checker process elaborates none of the file's syntax
+    and runs none of its code. It:
+    - replays every declaration of the file through the kernel, so a declaration added
+      with `debug.skipKernelTC` is rejected;
+    - requires the theorem's elaborated type and universe parameters to equal the
+      reference's, so an instance, macro or option in the file that changes what the
+      statement's text means is rejected. Each type is compared with its own file's
+      definitions and theorems unfolded, so the matcher the elaborator makes for a
+      `match` in the statement counts by its meaning, not its name;
+    - collects the theorem's axioms itself, so a redefined `#print axioms` cannot forge
+      them.
+
+    Only `propext`, `Classical.choice` and `Quot.sound` count. The commons service
+    enforces that rule, and that the compile names the node's current statement,
+    whoever calls it. Every backend (REPL daemon, inline REPL, one-shot) runs the same
+    check, and any failure to run it records nothing.
+  - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
+    compiling the file there runs the file's compile-time code (`#eval`, `run_cmd`, and
+    any elaborator, macro or tactic it defines). That code can read and write VM files
+    like any `shell` command: the checker, the reference, and the imported `.olean` files
+    the checker trusts (it replays only the file's own declarations). So the check defeats
+    elaboration-level tricks (instances, macros, `#print axioms` overrides, skipped kernel
+    checks), but a file or command that tampers with the VM can still reach
+    `compiles_locally`. It is VM-attested evidence, never acceptance. Only independent
+    acceptance is trusted: the independent receipt on the exact target accepts the goal.
+  - Changing a Lean statement moves the node back down. The statement digest encodes the
+    header, name and statement unambiguously (a canonical JSON array).
+  - The author sets or replaces a node's Lean statement. A branch holding a live claim
+    sets one only on a node below formally stated whose statement is missing, does not
+    elaborate, or is its own (the node records its `lean_writer`). So no claimant voids
+    another writer's fidelity reviews or demotes a formal node; it proposes a change on
+    the thread instead.
+  - In S1 no platform path refutes a node or accepts a non-root node.
+- **Claims.** A claim says "I am working on this". It expires after the policy TTL
+  (default 900 s) unless renewed by activity. Several branches may hold one claim, and
+  the frontier shows the count.
+- **Threads and digests.**
+  - Every node has a discussion thread. Authors, claimants, citers and dependents are
+    subscribed automatically, best-effort under the 100-subscription reader cap. At the
+    cap, the oldest closed-node thread makes room first, then the oldest follow of a node
+    the reader neither wrote nor claims. Threads of the reader's own and claimed nodes,
+    and ordinary topics, are never evicted, so objections to the reader's work arrive.
+  - Posts carry an abstract and a body that is retrieved on demand.
+  - The existing durable inbox delivers them, urgent items first: an objection to your
+    node, or a followed node becoming accepted or refuted.
+  - Status moves are posted by the platform.
+- **Referees.** `request_review` makes the platform create an isolated referee:
+  - a detached branch with no parent and no lab, marked `hat="referee"`;
+  - on the model family the node's earlier referees (for its current text) used least,
+    preferring one other than the author's (for a fidelity review, also other than
+    every branch that has claimed the node, since any of them may have written the Lean
+    statement). The first referee is cross-model whenever a family allows it, and a
+    quorum spans distinct families when several are configured, the author's included
+    once the others are used; `cross_model` reports whether each referee avoided them;
+  - unreachable by direct message or delegation from other branches.
+
+  A node cannot shop for verdicts:
+  - Each text version gets at most the positive verdicts it needs plus two referees
+    (`REVIEW_RETRIES`): `referee_quorum + 2` informal referees and three per Lean
+    statement. Each branch that writes a node's Lean statements gets at most nine
+    fidelity referees for them (`REVIEW_LIMIT`), so a claimant never spends the author's.
+    A referee that ends without a verdict does not count.
+  - A gap report is not a veto and uses no retry budget: the author answers it on the
+    thread and asks again, and a sound majority outvotes it. Only when the gap reports
+    alone reach `referee_quorum + 2`, so no sound majority fits the budget, is the panel
+    closed; a revised claim is then a new node.
+  - A standing verdict ends the panel (`REVIEW_VETOED`): a `wrong` one refuses further
+    referees of either scope, an `unfaithful` one further fidelity referees for that Lean
+    statement.
+  - Reviews follow the normalized statement text (statement and assumptions, NFKC,
+    case-folded, whitespace collapsed, assumptions in any order). The earliest-created
+    node with a text that is open or has drawn a referee holds its reviews; a later
+    node restating it draws none (`DUPLICATE_STATEMENT`, naming that node). So a
+    re-post after a veto inherits it, and a later copy never takes an earlier node's
+    reviews. A node closed before any review leaves the text to the next one.
+
+  The referee submits one verdict. Negative verdicts stay on the thread as objections.
+  Its tool profile only reads and checks: no `commons_node`, `commons_claim`,
+  `lean_sketch`, `recruit`, `message`, `wait` or `submit_for_verification`. Its
+  `lean_check` records no local compiles, and it posts questions, findings and
+  objections only on the assigned node's thread.
+- **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
+  (`lab="new"`), up to `lab_size_max`. An agent cannot recruit into another lab, so no
+  outsider fills a lab or plants a child in it to relay messages across labs. Forks
+  (`create_branch`) follow the same rule, so a branchless orchestrator agent cannot fork
+  another branch into that branch's lab. `message(to="lab")` fans out to the lab. Direct
+  messages across labs are refused unless the policy allows them, so cross-lab
+  discourse goes through the commons.
+
+Society workers get the consolidated profile in
+`src/physharness/orchestration/society_tools.py`. It has 26 tools in all; a worker's
+widest catalog has 25 (all but `submit_review`), and a referee's has 18:
+
+| Group | Tools |
+|---|---|
+| Workspace and computation | `shell`, `read_file`, `write_file`, `run_computation` |
+| Lean | `lean_check`, `lean_sketch` |
+| Library and literature | `search_library`, `read_source`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
+| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `inbox` |
+| Society | `recruit`, `message`, `wait` |
+| Evidence | `read_artifact`, `submit_for_verification`, `verification_status` |
+| Memory and skills | `notebook`, `load_skill` |
+| Task-specific | `return_result` (joined children), `submit_review` (referee tasks) |
+
+The prompt carries the constitution (community norms and an optional playbook), the
+frontier, the lab roster and the agent's claimed nodes. A referee gets a referee
+constitution instead, with no playbook, and its notes name only referee-profile tools.
+Its frontier's node titles and statements arrive fenced as untrusted author data, like
+its review packet, since they may come from the author of the node it reviews. So does
+everything its `commons_read`, `commons_query`, `inbox` and `read_artifact` return,
+except platform-written cursors, offsets and delivery ids. `read_artifact` opens the
+referee's own artifacts and those that the node, or another branch's post on its thread,
+cites: the referee's own posts never widen that scope, and the thread search reads the
+earliest posts first and fails closed past its bound.
+A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
+that lists the available tools. Rejections count per native session whatever the name,
+so a model that keeps inventing names reaches the stagnation warning after four and the
+stagnation handoff after eight. That warning is separate from the repeated-read warning,
+so neither silences the other. Optional check-ins and stagnation nudges are switched
+per campaign. The finite supervisor runs the referee tasks its own lineages request,
+and synthesis tasks that have no parent branch. A platform-rooted task it runs (a
+referee, or a parentless synthesis) adds its lineage to the run's own, so a review
+that such a task requests runs in the same run. Every society run adopts a queued
+parentless synthesis, so two concurrent runs may pick the same one; the run that finds
+it already leased skips it without recording an outcome. A lease conflict on a synthesis
+the run scheduled itself is still recorded as its outcome.
+
+Operators prepare a society arm from a run plan with a `society` block. See
+`work/society-s1/run-plan.example.json` and the
+[S1 live-run plan](../work/society-s1/RUN_PLAN.md).
+- A benchmark-mode plan needs a private `masked_reference` artifact.
+- The preflight blocks a benchmark run without it.
+- Society exports add `commons_node`, `commons_claim`, `commons_review` and
+  `literature_fetch` records and an `edges` list.
+- `python tools/society_metrics.py <export>` reports the PLAN §9 metrics from an export.
+
+No live run has used the society profile yet. Its evidence is deterministic and
+mocked-provider tests, including a no-model end-to-end simulation
+(`tests/test_society_simulation.py`).
+
 ## Qualification boundary
 
 Protocol tests and mocked-provider replays test delivery, recovery, admission and
