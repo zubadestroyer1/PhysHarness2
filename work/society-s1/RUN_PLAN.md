@@ -352,7 +352,16 @@ Each item needs the user. None has been started.
   simulation shows it.
 - **Goal hole names.** Hole nodes sketched from the goal are named `node_hole_<i>`,
   because the goal node has no Lean name.
-- **Standard axioms only.** `lean_check` records a local compile only when the proof
-  uses nothing beyond `propext`, `Classical.choice` and `Quot.sound` (R23).
+- **Local compiles rest on the statement check.** `lean_check` records a local compile
+  only when the platform's statement check passes (docs/RESEARCH_NETWORK.md). The kernel
+  re-checks every declaration of the compiled file. The theorem's elaborated type must
+  equal the node statement's under `lean_header` alone. The axioms the check collects
+  itself must be within `propext`, `Classical.choice` and `Quot.sound` (R23).
+  - Cost: each recorded compile runs three more Lean processes in the VM (the file, the
+    reference statement, the checker), each importing the header.
+  - It needs `python3` and `lake` in the VM, as the REPL daemon and the one-shot
+    fallback already do, and runs the same way on v1 and v2.
+  - `compiles_locally` stays VM-attested: it resists forged Lean source, not a tampered
+    VM.
 - **E2B file cap.** On E2B, `write_file` is capped at 32,768 bytes per file (R23), and the
   workspace archive at 64 KiB (section 8, item 7).

@@ -213,11 +213,16 @@ def clock(monkeypatch):
 
 
 class FakeLean:
-    """A LeanSession stand-in with scripted results; no Lean or workspace is involved."""
+    """A LeanSession stand-in with scripted results; no Lean or workspace is involved.
+
+    ``axioms`` is the session's own report (the file's ``#print axioms`` output);
+    ``checked_axioms`` is what the statement check finds, and ``verdict`` overrides it.
+    """
 
     def __init__(self, *, complete=True, sketch=None, elaborates=None):
         self.complete, self.sketch = complete, sketch
         self.axioms = {"trace_add": ["propext"], "other": ["Classical.choice"]}
+        self.checked_axioms, self.verdict = ["propext"], None
         self.elaborates = elaborates or (lambda header, name, signature: True)
         self.calls = []
 
@@ -239,6 +244,18 @@ class FakeLean:
     async def sketch_goals(self, source, *, operation_id):
         self.calls.append(("sketch", source))
         return self.sketch
+
+    async def verify_statement(self, source, header, name, signature, *, operation_id):
+        self.calls.append(("verify", header, name, signature))
+        if self.verdict is not None:
+            return self.verdict
+        return {
+            "ok": True,
+            "reason": None,
+            "axioms": self.checked_axioms,
+            "detail": None,
+            "backend": "lean_statement_check",
+        }
 
     async def elaborate_statement(self, header, name, signature, *, operation_id):
         self.calls.append(("elaborate", header, name, signature))
@@ -840,10 +857,12 @@ async def test_lean_check_records_local_compile_for_node(lab, clock):
         "status": "compiles_locally",
         "status_evidence": {
             "source_sha256": sha(PROOF),
-            "backend": "repl",
+            "backend": "lean_statement_check",
             "axioms": {"trace_add": ["propext"]},
         },
     }
+    # The statement check judged the node's own statement, not the file's text.
+    assert ("verify", *LEAN.values()) in workspace.lean.calls
     assert checked["claim_renewed"] is True
     claimants = service.read_node(node["id"], alpha)["claimants"]
     assert claimants[0]["expires_at"] == clock.now + 900
@@ -1608,31 +1627,84 @@ async def test_local_compile_requires_standard_axioms(lab):
         tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
     )
     set_status(service, node["id"], "formally_stated")
-    workspace.lean.axioms = {"trace_add": ["propext", "Lean.ofReduceBool", "sorryAx"]}
+    # The statement check collects the axioms; the file's own report (the session's
+    # axioms, which an elaborator in the file can forge) does not count either way.
+    workspace.lean.axioms = {"trace_add": []}
+    workspace.lean.checked_axioms = ["propext", "Lean.ofReduceBool", "sorryAx"]
     checked = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
-    assert checked["complete"] is True
+    assert checked["complete"] is True and checked["axioms"] == {"trace_add": []}
     assert checked["local_compile"] == {
         "recorded": False,
         "reason": "nonstandard_axioms",
         "axioms": ["Lean.ofReduceBool", "sorryAx"],
     }
     assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
-    # The report comes from the workspace: without the node's own entry it fails closed,
-    # and other declarations' entries never stand in for it.
-    for report in ({}, {"unrelated": ["propext"]}, {"trace_add": "propext"}):
-        workspace.lean.axioms = report
-        unreported = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
-        assert unreported["local_compile"] == {"recorded": False, "reason": "axioms_unreported"}
+    # A failed check records nothing, whatever the session reported, and says why.
+    for verdict in (
+        {"ok": False, "reason": "statement_mismatch", "detail": None},
+        {"ok": False, "reason": "kernel_rejected", "detail": "(kernel) type mismatch"},
+        {"ok": False, "reason": "statement_check_unavailable", "detail": None},
+    ):
+        workspace.lean.verdict = {**verdict, "axioms": None, "backend": "lean_statement_check"}
+        refused = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+        expected = {"recorded": False, "reason": verdict["reason"]}
+        if verdict["detail"]:
+            expected["detail"] = verdict["detail"]
+        assert refused["local_compile"] == expected
     assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
-    workspace.lean.axioms = {
-        "trace_add": ["propext", "Classical.choice", "Quot.sound"],
-        "helper": ["sorryAx"],  # another declaration's report does not count either way
-    }
+    workspace.lean.verdict = None
+    workspace.lean.axioms = {"trace_add": ["sorryAx"], "helper": ["sorryAx"]}
+    workspace.lean.checked_axioms = ["propext", "Classical.choice", "Quot.sound"]
     standard = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
     assert standard["local_compile"]["recorded"] is True
     assert standard["local_compile"]["status_evidence"]["axioms"] == {
         "trace_add": ["propext", "Classical.choice", "Quot.sound"]
     }
+
+
+async def test_local_compile_runs_the_statement_check_only_after_the_textual_gates(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    workspace = FakeWorkspace()
+    tools = profile(service, alpha, context, workspace=workspace)
+    node = await call(tools, "commons_node", lemma_args(**LEAN))
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    set_status(service, node["id"], "formally_stated")
+    exited = await call(tools, "lean_check", {"source": PROOF + "#exit\n", "node_id": node["id"]})
+    assert exited["local_compile"] == {"recorded": False, "reason": "exit_command"}
+    workspace.lean.complete = False
+    partial = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert partial["local_compile"] == {"recorded": False, "reason": "The compile was incomplete."}
+    assert not [c for c in workspace.lean.calls if c[0] == "verify"]
+    # A statement recorded before statements were checked for shape never compiles locally.
+    with service.db.transaction() as session:
+        row = session.get(RecordRow, node["id"])
+        service._replace(session, row, {"lean_statement": ": True := trivial\n#exit"})
+    workspace.lean.complete = True
+    legacy = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert legacy["local_compile"] == {"recorded": False, "reason": "invalid_lean_statement"}
+    assert not [c for c in workspace.lean.calls if c[0] == "verify"]
+
+
+async def test_set_lean_statement_refuses_statements_that_end_the_declaration(lab):
+    """Whatever the elaboration reports, the platform records only plain statements."""
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    workspace = FakeWorkspace()
+    tools = profile(service, alpha, context, workspace=workspace)
+    node = await call(tools, "commons_node", lemma_args())
+    for fields in (
+        {**LEAN, "lean_statement": ": True := trivial\n#exit\ntheorem junk : (1 : Nat) = 2"},
+        {**LEAN, "lean_header": "import Mathlib\n#exit"},
+    ):
+        refused = await call(
+            tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **fields}
+        )
+        assert refused["error"]["code"] == "INVALID_LEAN_STATEMENT"
+    stored = service.get_record("commons_node", node["id"], alpha)
+    assert stored["lean_statement"] is None and stored["lean_elaborated"] is False
 
 
 async def test_every_society_tool_dispatches_without_tool_failure(lab):

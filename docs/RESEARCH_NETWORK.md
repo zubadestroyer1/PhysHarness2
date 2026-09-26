@@ -114,13 +114,36 @@ tools, the prompts and the delivery shapes.
 - **Status ladder.** `informal` → `refereed` → `formally_stated` → `compiles_locally` →
   `accepted`, with `abandoned` (the author, with a reason) and `refuted` as exits.
   - Only platform code moves a node. A sound referee quorum makes it refereed. A
-    faithful fidelity review of a statement that elaborates makes it formally stated. A
-    complete compile of the node's exact Lean statement as a top-level theorem, reported
-    with only standard axioms, makes it compile locally. That compile (like statement
-    elaboration) runs in the agent-controlled workspace VM, so `compiles_locally` is
-    VM-attested evidence, not a trusted platform compile. Only independent acceptance is
-    trusted: the independent receipt on the exact target accepts the goal.
-  - Changing a Lean statement moves the node back down.
+    faithful fidelity review of a statement that elaborates makes it formally stated.
+    A node's Lean header may hold only import, open, set_option and universe lines, and
+    its Lean statement must be one declaration signature (no `:=`, `where` or `| … =>`
+    outside brackets). So no text in either can end the elaborated declaration early
+    (with `#exit`, say). The commons service enforces this whoever calls it.
+  - A local compile makes a formally stated node compile locally only when the harness
+    statement check passes; the file's own output never decides. After a complete
+    `lean_check` with `node_id`, the platform compiles the file, and a reference
+    `<lean_header> theorem <lean_name> <lean_statement> := sorry`, to `.olean` files.
+    A harness-authored Lean checker (`formal_tools/statement_check.lean`) then reads
+    both files as data and runs none of the file's code. It:
+    - replays every declaration of the file through the kernel, so a declaration added
+      with `debug.skipKernelTC` is rejected;
+    - requires the theorem's elaborated type and universe parameters to equal the
+      reference's, so an instance, macro or option in the file that changes what the
+      statement's text means is rejected;
+    - collects the theorem's axioms itself, so a redefined `#print axioms` cannot forge
+      them.
+
+    Only `propext`, `Classical.choice` and `Quot.sound` count. The commons service
+    enforces that rule, and that the compile names the node's current statement,
+    whoever calls it. Every backend (REPL daemon, inline REPL, one-shot) runs the same
+    check, and any failure to run it records nothing.
+  - The check, like statement elaboration, runs in the agent-controlled workspace VM.
+    So `compiles_locally` is VM-attested evidence, not a trusted platform compile: it
+    resists forgery through submitted Lean source, not tampering with the VM itself (its
+    files, binaries or libraries). Only independent acceptance is trusted: the
+    independent receipt on the exact target accepts the goal.
+  - Changing a Lean statement moves the node back down. The statement digest encodes the
+    header, name and statement unambiguously (a canonical JSON array).
   - In S1 no platform path refutes a node or accepts a non-root node.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL
   (default 900 s) unless renewed by activity. Several branches may hold one claim, and
