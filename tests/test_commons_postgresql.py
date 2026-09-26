@@ -208,10 +208,22 @@ def test_commons_queries_compile_for_postgresql():
     row = SimpleNamespace(
         project_id="p",
         id="n",
-        payload={"experiment_id": "e", "statement_key": "k", "statement": "S", "assumptions": []},
+        payload={
+            "experiment_id": "e",
+            "statement_key": "k",
+            "statement": "S",
+            "assumptions": [],
+            "lean_statement_sha256": "f" * 64,
+        },
     )
-    assert CommonsReviewMixin._statement_owner(owner, row) is None
+    assert CommonsReviewMixin._statement_owner(owner, row, "informal") is None
     compiled = [
         str(statement.compile(dialect=postgresql.dialect())) for statement in owner.statements
     ]
     assert len(compiled) == 2 and all("min(events.sequence)" in text for text in compiled)
+    # The fidelity search adds one Lean-digest filter; it must also compile for PostgreSQL.
+    owner.statements.clear()
+    assert CommonsReviewMixin._statement_owner(owner, row, "fidelity") is None
+    fidelity = str(owner.statements[-1].compile(dialect=postgresql.dialect()))
+    assert "min(events.sequence)" in fidelity
+    assert fidelity.count(" AND ") == compiled[1].count(" AND ") + 1
