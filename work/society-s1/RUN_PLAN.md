@@ -151,19 +151,38 @@ pinned libraries or given a reference proof.
     its arXiv id **and** its journal DOI, plus a distinctive title fragment of two or
     more words. Other accepted entries are OpenAlex ids (`W…` or its URL), single page
     URLs and bare domains.
+  - **Title fragments must be distinctive.** A fragment withholds every result whose
+    title, abstract, journal reference or fetched text contains it. One made only of
+    stopwords and the most common title words (`of the model`, `in the case`,
+    `quantum field theory`), or with fewer than three letters outside them
+    (`the XY model`), is rejected. One with fewer than three words or fewer than two
+    distinctive words (`the Ising model`, `Yang-Mills`) is accepted, but preflight warns
+    `LITERATURE_BLOCKLIST_BROAD_TITLE` and names the entry indexes. The word list is
+    built in and deterministic. Quote a longer phrase of the actual title.
   - Identifiers may be written in any common form: `arXiv: 2101.00001v2 [math-ph]`,
     `math.AP/0601001`, abs, pdf or html URLs with or without a scheme,
     `10.48550/arXiv.<id>` (read as the arXiv id), and bare, `doi:`, `DOI:` or doi.org
-    DOIs in any case. An entry that is none of these is rejected when the plan is
-    validated, by preflight (`LITERATURE_BLOCKLIST_INVALID`) and by the broker; it is
-    never accepted silently.
+    DOIs in any case. Brackets or quotes around an entry, and unbalanced trailing
+    brackets and quotes after a DOI (`doi:10.1103/PhysRevLett.1.1)`), are ignored. An
+    entry that is none of these is rejected when the plan is validated (the error names
+    the entry and the reason), by preflight (`LITERATURE_BLOCKLIST_INVALID`) and by the
+    broker; it is never accepted silently. An entry with an identifier inside other text
+    (`Smith et al., arXiv:2101.00001`, `2101.00001 [math-ph] (v3)`, `arXiv 2101 00001`)
+    is rejected rather than read as a title fragment, which would never block the
+    identifier: list the identifier on its own.
   - Identifiers are matched against every identity of a search result (its DOI, all
     OpenAlex locations and `ids`, arXiv's own DOI and links). They also refuse fetches
     of the named arXiv, doi.org and OpenAlex pages, and withhold fetched text that
-    cites them. Title fragments are normalized (case, accents, LaTeX markup and math
-    delimiters, quotes, dashes, spacing) and screen titles, abstracts, journal
-    references and fetched text, as whole words. They are never compared with a URL an
-    agent chose, so a fetch cannot probe them.
+    cites them, after HTML entities (even double-escaped), fullwidth digits, JSON `\/`
+    escapes and invisible characters are undone. Title fragments are normalized (case,
+    accents, TeX accents in every brace style such as `Poincar\'e` or `Erd{\H o}s`, TeX
+    letters such as `\o` and `\i`, `\varphi`-style variants, LaTeX markup and math
+    delimiters, HTML entities, soft hyphens and zero-width characters, quotes, dashes,
+    spacing) and screen titles, abstracts, journal references and fetched text, as whole
+    words. Where a boundary is ambiguous (a word hyphenated across a line break, a TeX
+    brace, an invisible character) the screen matches both the joined and the split
+    reading. Fragments are never compared with a URL an agent chose, so a fetch cannot
+    probe them.
   - **List both forms.** The broker makes no extra network calls to map an arXiv id to
     its journal DOI or back. It links the two only when a provider record carries both
     (an arXiv entry with its journal DOI, or an OpenAlex work with an arXiv location),
@@ -193,13 +212,27 @@ pinned libraries or given a reference proof.
     arXiv `/search`, `/list`, `/a/`, `/catchup`, `/year`, `/find`, `/archive` and
     `/multi`; Wikipedia `api.php`, `rest.php`, `/api/`, every `Special:` page (by path
     or `title=`) and any `search=` or `fulltext=` query; the MathOverflow and Math
-    StackExchange home page, `/questions` listing, `/questions/tagged`, `/search`,
-    `/tags`, `/unanswered`, `/feeds` and `/users`; and nLab search, `all_pages`, `list`,
-    `recently_revised`, feeds and exports. Those pages list other works outside
+    StackExchange home page, `/questions` listing, `/questions/tagged`,
+    `/questions/linked`, `/questions/related`, `/search`, `/tags`, `/unanswered`,
+    `/feeds` and `/users`; arXiv `/tb/` and `/prevnext`; and nLab search, `all_pages`,
+    `list`, `recently_revised`, feeds and exports. Those pages list other works outside
     `search_literature`'s per-item screen.
+  - A blocked page URL also refuses its alternate views: Stack Exchange
+    `/posts/<id>/revisions` and `/timeline` and `/revisions/<id>/<n>`; nLab `source`,
+    `revision`, `print`, `history` and diff views; Wikipedia `index.php` by path or by
+    any `title=` (MediaWiki shows the last one given, even after `/wiki/X`), with any
+    `action`. Wikipedia URLs that pick their page by `oldid`, `curid`, `diff`, `pageid` or
+    `revid` are refused outright in benchmark mode, because telling which page they show
+    would take a lookup. Not covered: views keyed by an answer id (`/a/<id>` redirects
+    to its question and the final URL is checked, but `/posts/<answer-id>/revisions` is
+    not tied to the question), and a Wikipedia redirect page, which MediaWiki serves
+    under the redirect's own title. The text screens still apply to both.
   - Only verbatim reuse is detected: eight-word overlap with the reference, cited
     identifiers and normalized title fragments. Paraphrase, translation or a proof
-    restated in other notation passes the screen; the post-run audit is the check.
+    restated in other notation passes the screen; the post-run audit is the check. So do
+    ASCII transliterations (`Schroedinger` for `Schrödinger`) and compounds written
+    without their hyphen (`YangMills`); list such spellings as extra fragments if the
+    target's literature uses them.
   - A flag means text was withheld, not leaked. An arm is **contaminated** only if a
     post-run audit finds reference text in released sources, posts or the accepted
     proof. A contaminated arm is reported but excluded from the benchmark comparison.
@@ -216,7 +249,10 @@ pinned libraries or given a reference proof.
   seconds apart, as its API terms ask; OpenAlex 0.2 s; other hosts one second. A 429 or
   503 holds the host back for everyone for its `Retry-After` (or an exponential
   backoff), with up to three attempts when the wait is at most 30 s. A request that
-  would queue longer than 60 s fails with the retryable `LITERATURE_RATE_LIMITED`. Set
+  would queue longer than 60 s, for the host and its spacing together, fails with the
+  retryable `LITERATURE_RATE_LIMITED`. Literature calls run on their own pool of eight
+  threads, so agents queueing for arXiv never starve the worker's default executor
+  (which verification uses); a call still queued there after 60 s fails the same way. Set
   `PHYSHARNESS_LITERATURE_CONTACT` to an operator email to send it as OpenAlex's
   `mailto` and in the User-Agent; unset, none is sent. The limiter does not span
   processes, so run literature-enabled workers in one process.
