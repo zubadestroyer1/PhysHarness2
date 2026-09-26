@@ -37,6 +37,7 @@ MAX_EVIDENCE_REVIEWS = 20  # Review ids cited in one status evidence record.
 # judge and gets a fresh fidelity panel, up to MAX_FIDELITY_REVIEWS for the node in all.
 REVIEW_RETRIES = 2
 MAX_FIDELITY_REVIEWS = 9
+MAX_THREAD_EVIDENCE_POSTS = 5000  # Node-thread posts searched for evidence a referee opens.
 MAX_OBJECTIVE = 20_000  # The task objective bound shared with recruitment and task creation.
 # Encoded-size budgets for author fields, applied only when the full objective would exceed
 # MAX_OBJECTIVE (the node keeps the exact text). Sized so the worst case fits with margin.
@@ -544,6 +545,39 @@ class CommonsReviewMixin:
         return self._execute(
             actor, key, "commons.review_request", {"node_id": node_id, "scope": scope}, action
         )
+
+    def referee_may_read_artifact(self, node_id, artifact_id, actor) -> bool:
+        """Whether a referee of this node may open an artifact: one its own branch stored,
+        or one the node or a post on the node's thread cites as evidence.
+
+        Only the scope a referee adds; the read itself applies the usual visibility rules.
+        """
+        self._research_role(actor)
+        with self.db.sessions() as session:
+            node = self._get(session, "commons_node", node_id, actor)
+            if artifact_id in node.payload.get("artifact_ids", []):
+                return True
+            artifact = session.get(RecordRow, artifact_id) if isinstance(artifact_id, str) else None
+            if (
+                artifact is not None
+                and artifact.kind == "artifact"
+                and artifact.project_id == actor.project_id
+                and actor.branch_id
+                and artifact.payload.get("branch_id") == actor.branch_id
+            ):
+                return True
+            cited = session.scalars(
+                select(RecordRow.payload["artifact_ids"])
+                .where(
+                    RecordRow.project_id == node.project_id,
+                    RecordRow.kind == "discussion_post",
+                    record_json_text("experiment_id") == node.payload["experiment_id"],
+                    record_json_text("node_id") == node.id,
+                )
+                .order_by(RecordRow.id)
+                .limit(MAX_THREAD_EVIDENCE_POSTS)
+            )
+            return any(artifact_id in (identifiers or []) for identifiers in cited)
 
     # Submissions ---------------------------------------------------------------
 

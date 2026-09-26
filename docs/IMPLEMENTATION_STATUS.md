@@ -42,8 +42,10 @@ What exists (Tasks 1–10):
     blocklist and an overlap screen against the masked reference.
   - Ten technique skills, a constitution, check-ins and stagnation nudges.
   - The `workbench-v2` image **definition** (numerics and a pinned REPL). It is not built.
-- **Society tool profile.** Twenty-five tools in all: 24 for a worker at most, and a
-  read-and-check profile of 17 for a referee. The legacy tools remain as adapters. The
+- **Society tool profile.** Twenty-six tools in all: 25 for a worker at most, and a
+  read-and-check profile of 18 for a referee. `read_artifact` opens cited evidence in
+  bounded chunks through the scoped portable-memory read; a referee opens only its own
+  artifacts and those its assigned node or the node's thread cites. The legacy tools remain as adapters. The
   finite runner runs referee tasks, synthesis tasks without a parent branch, and the
   reviews those platform-rooted tasks request.
 - **Task 10.**
