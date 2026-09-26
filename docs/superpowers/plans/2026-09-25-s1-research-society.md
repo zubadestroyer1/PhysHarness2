@@ -463,7 +463,7 @@ def send_lab_message(self, branch_id, content, artifact_ids, actor, key) -> dict
 **Behaviour** (society experiments only; everything is unchanged when `society` is absent):
 - **Branch `lab`:**
   - Root branches (no parent) get `lab = "lab-" + branch_id[:8]` at creation.
-  - Recruited branches get their lab from `RecruitResearcherRequest.lab`: None → the parent's lab; `"new"` → `"lab-" + new_branch_id[:8]`; a name → it must match an existing lab in the experiment (`LAB_NOT_FOUND`).
+  - Recruited branches get their lab from `RecruitResearcherRequest.lab`: None → the parent's lab; `"new"` → `"lab-" + new_branch_id[:8]`; a name → it must match an existing lab in the experiment (`LAB_NOT_FOUND`), and an agent may name only its own lab, its recruiting branch's (`LAB_MEMBERSHIP` 403); operators and researchers place branches in any lab.
   - Referee branches (Task 3) inherit the requester's lab.
   - Cap: the member count must stay < `policy.lab_size_max` before adding (`LAB_FULL` 409).
   - Lab names match `^[a-z0-9-]{1,40}$`.

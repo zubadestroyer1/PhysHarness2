@@ -55,7 +55,8 @@ class RecruitResearcherRequest(StrictModel):
     detached: bool = False
     public_summary: str | None = Field(default=None, max_length=1000)
     # Society experiments only: None joins the parent's lab, "new" founds a lab,
-    # any other value names an existing lab. Omitted from fingerprints when None.
+    # any other value names an existing lab (an agent may name only its own).
+    # Omitted from fingerprints when None.
     lab: str | None = Field(default=None, pattern=LAB_PATTERN)
 
     @model_validator(mode="after")

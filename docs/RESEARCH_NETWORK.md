@@ -146,7 +146,8 @@ tools, the prompts and the delivery shapes.
   `lean_check` records no local compiles, and it posts questions, findings and
   objections only on the assigned node's thread.
 - **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
-  (`lab="new"`), up to `lab_size_max`. `message(to="lab")` fans out to the lab. Direct
+  (`lab="new"`), up to `lab_size_max`. An agent cannot recruit into another lab, so no
+  outsider fills a lab or plants a child in it to relay messages across labs. `message(to="lab")` fans out to the lab. Direct
   messages across labs are refused unless the policy allows them, so cross-lab
   discourse goes through the commons.
 
