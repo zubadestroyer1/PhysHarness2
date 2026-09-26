@@ -24,7 +24,7 @@ from .commons import PLATFORM, _lean_digest, _platform, _writer, statement_key
 from .commons_models import ALLOWED_TRANSITIONS, CLOSED_STATUSES, LEAN_NAME, axiom_refusal
 from .domain import StrictModel, digest_json, new_id
 from .errors import HarnessError
-from .orchestration.lean_session import header_problem, signature_problem
+from .orchestration.lean_session import HEADER_RULES, header_problem, signature_problem
 from .storage import EventRow, RecordRow, record_json_text
 from .worker_authority import current_worker_effects
 
@@ -1047,8 +1047,8 @@ class CommonsReviewMixin:
                 "INVALID_LEAN_STATEMENT",
                 f"The Lean {'header' if header_issue else 'statement'} is not plain ({problem}).",
                 status=422,
-                remediation="A header holds only import, open, set_option and universe lines; "
-                "a statement is binders then ': type', with no ':=' or 'where' outside brackets.",
+                remediation=HEADER_RULES + " A statement is binders then ': type', with no "
+                "':=' or 'where' outside brackets.",
             )
         data = request.model_dump(mode="json")
 

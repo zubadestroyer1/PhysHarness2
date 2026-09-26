@@ -1130,8 +1130,8 @@ def society_tools(
         "<lean_statement> under lean_header in your workspace's Lean session and records the "
         "statement with that result (the author; or a live claimant, below formally_stated, "
         "when the statement is missing, does not elaborate or is its own): lean_header holds "
-        "only import, open, set_option and universe lines, and lean_statement is binders "
-        "then ': type', with no ':=' or 'where' outside brackets; abandon closes your own "
+        "only import, open, universe and allowlisted set_option lines, and lean_statement is "
+        "binders then ': type', with no ':=' or 'where' outside brackets; abandon closes your own "
         "node with a reason; request_review asks the platform to assign an independent "
         "referee (informal, or fidelity for an elaborated Lean statement). Agents never set "
         "status.",
