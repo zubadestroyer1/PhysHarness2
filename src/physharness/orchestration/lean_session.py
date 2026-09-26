@@ -22,6 +22,7 @@ from importlib import resources
 
 from ..commons_models import LEAN_NAME
 from ..errors import HarnessError
+from ..execution.types import GUEST_PYTHON
 from ..formal_tools.lean_session_daemon import (
     SORRY_WARNING,
     parse_axioms,
@@ -990,7 +991,7 @@ class LeanSession:
             f"if test -f {uploaded[0]}; then mkdir -p {DAEMON_RUNTIME_DIR} && "
             f"mv -f {shlex.join(uploaded)} {DAEMON_RUNTIME_DIR}/; fi; "
         )
-        argv = ["python3", runtime[0], "--timeout", f"{check_timeout:g}", "--cwd", LAKE_PROJECT]
+        argv = [*GUEST_PYTHON, runtime[0], "--timeout", f"{check_timeout:g}", "--cwd", LAKE_PROJECT]
         argv += ["--checker", runtime[1], workdir, name]
         for attempt in range(2):
             tidy = f"rm -rf {workdir}; " if attempt else ""  # the driver removes it otherwise
@@ -1112,7 +1113,7 @@ class LeanSession:
             )
         else:
             daemon, mode, place = DAEMON_PATH, ["inline"], ""
-        argv = ["python3", daemon, *mode, "--timeout", f"{daemon_timeout:g}"]
+        argv = [*GUEST_PYTHON, daemon, *mode, "--timeout", f"{daemon_timeout:g}"]
         argv += ["--cwd", LAKE_PROJECT, "--repl", "lake", "env", self._repl]
         tidy = f"rm -f {path}; rmdir .physharness 2>/dev/null"
         script = (

@@ -12,6 +12,7 @@ from time import monotonic
 
 from ..domain import ArtifactCreate, canonical_json
 from ..errors import HarnessError
+from ..execution.types import GUEST_PYTHON
 
 PACKAGES = ("numpy", "scipy", "sympy", "mpmath", "flint", "cvxpy", "z3", "networkx", "matplotlib")
 EVIDENCE_STATUS = "numerical_evidence_not_proof"
@@ -206,7 +207,9 @@ class ComputationRunner:
 
         probe = await self.workspace_tools.run(
             {
-                "argv": ["python3", "-c", PROBE, path],
+                # The harness-owned digest probe runs isolated so agent files cannot shadow
+                # the interpreter or its imports; the agent's own script (below) is not.
+                "argv": [*GUEST_PYTHON, "-c", PROBE, path],
                 "cwd": ".",
                 "timeout_seconds": min(policy.timeout_seconds, PROBE_TIMEOUT_SECONDS),
             },
