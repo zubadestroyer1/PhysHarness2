@@ -209,6 +209,7 @@ async def sample_host_memory(args, worker_id: str) -> dict:
 async def observe(args):
     capacity = args.capacity
     providers = [make_provider(args) for _ in range(capacity + 1)]
+    root = ROOT.resolve()
     report = {
         "protocol": "s1-capacity-workbench-observation-v1",
         "capacity": capacity,
@@ -219,8 +220,9 @@ async def observe(args):
         ).hexdigest(),
         "runtime_identity_sha256": hashlib.sha256(args.runtime_identity.read_bytes()).hexdigest(),
         "fixture_sha256": hashlib.sha256(args.fixtures.read_bytes()).hexdigest(),
-        "verifier_log": str(args.private_output.with_suffix(".log")),
-        "verifier_output": str(args.private_output),
+        # Repo-relative, so a committed report never carries a local absolute path.
+        "verifier_log": str(args.private_output.resolve().with_suffix(".log").relative_to(root)),
+        "verifier_output": str(args.private_output.resolve().relative_to(root)),
     }
     verifier = None
     try:

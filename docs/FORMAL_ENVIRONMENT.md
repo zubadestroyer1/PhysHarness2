@@ -144,8 +144,15 @@ numerics packages for `run_computation` and a persistent Lean REPL for `lean_che
 Its pins were resolved on 2026-09-25. It was then built on the `physharness-pilot`
 builder as
 `sha256:1830c99e8c5abc0ade48d98860d541f7f50eb6f1cdfefde2395315e1290debc5`, and the
-opt-in real-image workbench tests passed against it. **Capacity requalification is
-still pending.** Until it passes, no workspace template or worker image digest uses v2.
+opt-in real-image workbench tests passed against it.
+
+An engineering capacity observation at N=8 with this digest passed on 2026-09-26 UTC
+(`production_qualified=false`):
+- 8 workbenches were admitted and the 9th was refused;
+- 8 concurrent Mathlib commands ran with no OOM, overlapping a verifier run.
+
+The S1 workspace policy names that report in `qualification_report_sha256`. Production
+qualification and deployment approval remain pending.
 
 `formal/workbench.Dockerfile` (v1) is unchanged. It remains the qualified workbench
 definition until v2 is rebuilt and qualified, and pilot freeze manifests reference it.
