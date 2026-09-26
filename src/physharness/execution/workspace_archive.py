@@ -26,7 +26,15 @@ def checked_path(path: str) -> str:
     if not isinstance(path, str) or not path or len(path.encode("utf-8")) > 1024:
         raise ExecutionError("UNSAFE_PATH", "Workspace path must be a bounded relative path")
     parts = path.split("/")
-    if any(not part or part in {".", ".."} or "\\" in part or "\x00" in part for part in parts):
+    # Guest file systems reject longer names (NAME_MAX); refuse them before dispatch.
+    if any(
+        not part
+        or part in {".", ".."}
+        or "\\" in part
+        or "\x00" in part
+        or len(part.encode("utf-8")) > 255
+        for part in parts
+    ):
         raise ExecutionError("UNSAFE_PATH", "Workspace path is not canonical")
     if any(part in _EXCLUDED or part.startswith(".env") or part.endswith(".pyc") for part in parts):
         raise ExecutionError(

@@ -16,6 +16,7 @@ from sqlalchemy import func, select
 
 from .domain import Principal, canonical_json, digest_json
 from .errors import HarnessError
+from .service import next_cursor, scan_cursor
 from .storage import RecordRow, record_json_text
 
 FORMAT = "physharness.portable-context.v1"
@@ -93,7 +94,20 @@ class PortableMemory:
         )
         return [row for row in rows if self.service._in_scope(session, row, reader)]
 
+    def _evidence(self, session, identifier, reader):
+        """Resolve a caller-chosen ID; hidden and missing records fail identically."""
+        row = session.get(RecordRow, identifier)
+        if (
+            not row
+            or row.project_id != reader.project_id
+            or not self.service._in_scope(session, row, reader)
+        ):
+            raise _error("NOT_FOUND", "Evidence was not found in the assigned scope.")
+        return row
+
     def _reference(self, session, row, reader):
+        # Authorize before classifying, so the kind of an unreadable record is never revealed.
+        row = self.service._get(session, row.kind, row.id, reader)
         if row.kind not in HISTORY_KINDS or (
             row.kind == "artifact"
             and row.payload.get("artifact_kind") in self.service._private_artifact_kinds
@@ -101,7 +115,6 @@ class PortableMemory:
             raise _error(
                 "CONTEXT_EVIDENCE_KIND", "Native/private checkpoints are not portable evidence."
             )
-        row = self.service._get(session, row.kind, row.id, reader)
         data = row.payload
         if data.get("proof_status") == "verified" or (
             row.kind == "verification" and data.get("status") == "verified"
@@ -460,9 +473,7 @@ class PortableMemory:
                 )
 
             for identifier in selected_ids:
-                row = session.get(RecordRow, identifier)
-                if not row or row.project_id != reader.project_id:
-                    raise _error("NOT_FOUND", "Evidence was not found in the assigned scope.")
+                row = self._evidence(session, identifier, reader)
                 candidate = self._reference(session, row, reader)
                 trial = {
                     **context,
@@ -622,8 +633,12 @@ class PortableMemory:
         """Page explicit canonical research links visible to one branch."""
         if type(limit) is not int or not 1 <= limit <= 100:
             raise _error("CONTEXT_INPUT_INVALID", "Graph page size must be 1–100.")
-        if after is not None and (not isinstance(after, str) or not after):
-            raise _error("CONTEXT_INPUT_INVALID", "Graph cursor must be a record ID.")
+        position = (None, 0)
+        if after is not None:
+            position = scan_cursor(after) if isinstance(after, str) and after else None
+            if position is None:
+                raise _error("CONTEXT_INPUT_INVALID", "Graph cursor must be a page cursor.")
+        anchor, skipped = position
         if (
             type(max_bytes) is not int
             or not 1 <= max_bytes <= MAX_BYTES
@@ -659,21 +674,22 @@ class PortableMemory:
                 RecordRow.kind.in_(kinds),
                 record_json_text("experiment_id") == reader.experiment_id,
             )
-            if after:
-                query = query.where(RecordRow.id > after)
+            if anchor:
+                query = query.where(RecordRow.id > anchor)
             scan_limit = max(100, limit * 4)
-            rows = list(session.scalars(query.order_by(RecordRow.id).limit(scan_limit + 1)))
-            nodes, edges, scanned, cursor, stopped = [], [], 0, after, False
+            rows = list(
+                session.scalars(
+                    query.order_by(RecordRow.id).offset(skipped or None).limit(scan_limit + 1)
+                )
+            )
+            nodes, edges, scanned, stopped = [], [], 0, False
             for row in rows[:scan_limit]:
                 scanned += 1
-                if not self.service._in_scope(session, row, reader):
-                    cursor = row.id
-                    continue
-                if (
+                if not self.service._in_scope(session, row, reader) or (
                     row.kind == "artifact"
                     and row.payload.get("artifact_kind") in self.service._private_artifact_kinds
                 ):
-                    cursor = row.id
+                    skipped += 1
                     continue
                 if row.kind == "branch":
                     reference = {
@@ -736,14 +752,14 @@ class PortableMemory:
                     break
                 nodes.append(reference)
                 edges.extend(row_edges)
-                cursor = row.id
+                anchor, skipped = row.id, 0
                 if len(nodes) >= limit:
                     break
             has_more = stopped or scanned < len(rows)
             result = {
                 "items": nodes,
                 "edges": edges,
-                "next_cursor": cursor if has_more else None,
+                "next_cursor": next_cursor(anchor, skipped) if has_more else None,
                 "complete": not has_more,
                 "scan_limited": scanned >= scan_limit,
                 "authority": "canonical_records",
@@ -890,9 +906,7 @@ class PortableMemory:
             binding = self._notes_binding(session, branch, reader)
             references = []
             for identifier in evidence_ids:
-                row = session.get(RecordRow, identifier)
-                if not row or row.project_id != reader.project_id:
-                    raise _error("NOT_FOUND", "Evidence was not found in the assigned scope.")
+                row = self._evidence(session, identifier, reader)
                 references.append(self._reference(session, row, reader))
 
             def annotation(value):
@@ -1460,9 +1474,7 @@ class PortableMemory:
                 }
             references = []
             for identifier in evidence_ids:
-                row = session.get(RecordRow, identifier)
-                if not row or row.project_id != reader.project_id:
-                    raise _error("NOT_FOUND", "Evidence was not found in the assigned scope.")
+                row = self._evidence(session, identifier, reader)
                 references.append(self._reference(session, row, reader))
 
             def annotate(text):

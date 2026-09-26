@@ -35,6 +35,21 @@ _PROMOTION_MAX_BYTES = 4_000_000
 _PURE_REQUEST_REJECTIONS = frozenset(
     {"UNSAFE_PATH", "WORKSPACE_EXCLUDED", "WORKSPACE_LIMIT", "UNSAFE_RUNTIME", "TIMEOUT_LIMIT"}
 )
+_READ_ONLY_COMMANDS = frozenset({"download", "read_range", "export"})
+
+
+def _definite_refusal(provider: str, command: str, exc: BaseException) -> bool:
+    """Provider failures proven to leave the VM unchanged, so it stays usable."""
+    if not isinstance(exc, ExecutionError):
+        return False
+    if command in _READ_ONLY_COMMANDS:
+        # A helper refusal or a complete over-limit response cannot have written files.
+        return exc.code in {"WORKSPACE_TRANSFER_REJECTED", "WORKSPACE_LIMIT"}
+    # A nonzero E2B helper exit may follow a partial write, so uploads stay uncertain
+    # there; the local helper reports a write refusal only after undoing its effects.
+    return exc.code == "WORKSPACE_TRANSFER_REJECTED" and (
+        command == "promote_file" or (command == "upload" and provider == "local_docker")
+    )
 
 
 def _identifier(*parts: str) -> str:
@@ -900,18 +915,7 @@ class WorkspaceBroker:
             )
             raise
         except BaseException as exc:
-            confirmed_capture_refusal = command == "promote_file"
-            # A nonzero E2B helper exit may follow a partial write, so only
-            # read-only transfers are definite; upload/restore stay uncertain.
-            confirmed_e2b_helper_refusal = self.provider_spec["provider"] == "e2b" and command in {
-                "download",
-                "export",
-            }
-            if (
-                isinstance(exc, ExecutionError)
-                and exc.code == "WORKSPACE_TRANSFER_REJECTED"
-                and (confirmed_capture_refusal or confirmed_e2b_helper_refusal)
-            ):
+            if _definite_refusal(self.provider_spec["provider"], command, exc):
                 try:
                     with self.service.db.transaction() as session:
                         self._lock(session)
@@ -922,7 +926,11 @@ class WorkspaceBroker:
                         op = self.service._get(session, "workspace_operation", identity, self.actor)
                         failure = {
                             "code": exc.code,
-                            "message": "Workspace helper refused the operation; VM is available.",
+                            "message": (
+                                "Workspace helper refused the operation; VM is available."
+                                if exc.code == "WORKSPACE_TRANSFER_REJECTED"
+                                else f"{exc}; VM is available."
+                            ),
                         }
                         self.service._replace(
                             session, op, {"status": "rejected", "result": failure}
@@ -1157,7 +1165,13 @@ class WorkspaceBroker:
             )
         provider = self._providers.get(workspace_id)
         if provider is not None:
-            _validate_file_request(provider, path)
+            try:
+                _validate_file_request(provider, path)
+            except ExecutionError as error:
+                # Pure path rules are model-visible tool rejections, as for other file tools.
+                if error.code not in _PURE_REQUEST_REJECTIONS:
+                    raise
+                raise HarnessError(error.code, str(error)) from error
             if not callable(getattr(provider, "capture_file", None)):
                 raise HarnessError(
                     "CAPABILITY_UNAVAILABLE", "Provider lacks bounded safe file capture."
