@@ -16,9 +16,10 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
 
 from .commons import PLATFORM, _lean_digest, _platform
-from .commons_models import ALLOWED_TRANSITIONS, CLOSED_STATUSES, LEAN_NAME
+from .commons_models import ALLOWED_TRANSITIONS, CLOSED_STATUSES, LEAN_NAME, axiom_refusal
 from .domain import StrictModel, digest_json, new_id
 from .errors import HarnessError
+from .orchestration.lean_session import header_problem, signature_problem
 from .storage import RecordRow, record_json_text
 from .worker_authority import current_worker_effects
 
@@ -690,7 +691,12 @@ class CommonsReviewMixin:
     def set_lean_statement(
         self, node_id, lean_header, lean_name, lean_statement, elaboration, actor, key
     ) -> dict:
-        """Record a node's Lean statement with the platform's elaboration result."""
+        """Record a node's Lean statement with the platform's elaboration result.
+
+        The header must be only import, open, set_option and universe lines and the statement
+        one declaration signature, whoever the caller: otherwise text in either could end the
+        elaborated declaration early (``#exit``, say) and make any statement "elaborate".
+        """
         self._research_role(actor)
         request = _validated(
             _LeanStatement,
@@ -702,6 +708,16 @@ class CommonsReviewMixin:
             lean_statement=lean_statement,
             elaboration=elaboration,
         )
+        header_issue = header_problem(request.lean_header)
+        problem = header_issue or signature_problem(request.lean_statement)
+        if problem is not None:
+            raise HarnessError(
+                "INVALID_LEAN_STATEMENT",
+                f"The Lean {'header' if header_issue else 'statement'} is not plain ({problem}).",
+                status=422,
+                remediation="A header holds only import, open, set_option and universe lines; "
+                "a statement is binders then ': type', with no ':=' or 'where' outside brackets.",
+            )
         data = request.model_dump(mode="json")
 
         def action(session, op):
@@ -720,7 +736,18 @@ class CommonsReviewMixin:
                     remediation="Claim the node first; claims lapse after the policy TTL.",
                 )
             previous = row.payload["lean_statement_sha256"]
-            digest = _lean_digest(request.lean_header, request.lean_name, request.lean_statement)
+            # Compare the fields, not digests: a digest recorded under an older encoding still
+            # names an unchanged statement, and any change gets the canonical digest.
+            changed = (
+                row.payload.get("lean_header") or "",
+                row.payload.get("lean_name"),
+                row.payload.get("lean_statement"),
+            ) != (request.lean_header or "", request.lean_name, request.lean_statement)
+            digest = (
+                _lean_digest(request.lean_header, request.lean_name, request.lean_statement)
+                if changed or previous is None
+                else previous
+            )
             elaborated = request.elaboration.ok
             self._replace(
                 session,
@@ -748,14 +775,14 @@ class CommonsReviewMixin:
                     "diagnostics_sha256": request.elaboration.diagnostics_sha256,
                 },
             )
-            if row.payload["status"] in FORMAL_STATUSES and (digest != previous or not elaborated):
+            if row.payload["status"] in FORMAL_STATUSES and (changed or not elaborated):
                 quorum = experiment.payload["society"]["referee_quorum"]
                 self._set_node_status(
                     session,
                     row,
                     "refereed" if self._refereed_evidence(session, row, quorum) else "informal",
                     reason="Lean statement changed"
-                    if digest != previous
+                    if changed
                     else "Lean statement no longer elaborates",
                     evidence={
                         "lean_statement_sha256": digest,
@@ -776,7 +803,10 @@ class CommonsReviewMixin:
         """Move a formally stated node to compiles_locally on a complete workspace compile.
 
         The compile ran in the agent-controlled workspace VM: this is attested evidence,
-        never acceptance, which only the independent verifier grants.
+        never acceptance, which only the independent verifier grants. Whoever the caller,
+        the result must name the node's current statement (its canonical digest, recomputed
+        here from the node's fields) and report the node theorem's own axioms, all of them
+        standard (propext, Classical.choice, Quot.sound).
         """
         self._research_role(actor)
         if actor.role == "agent" and not actor.branch_id:
@@ -797,9 +827,12 @@ class CommonsReviewMixin:
         def action(session, op):
             row, _ = self._review_node(session, node_id, actor)
             status = row.payload["status"]
-            current = row.payload.get("lean_statement_sha256")
-            if current is None:
+            name = row.payload.get("lean_name")
+            if row.payload.get("lean_statement") is None or not name:
                 return {"recorded": False, "reason": "no_lean_statement"}
+            current = _lean_digest(
+                row.payload.get("lean_header"), name, row.payload["lean_statement"]
+            )
             if compiled.lean_statement_sha256 != current:
                 # The compiled statement is no longer the node's statement.
                 return {"recorded": False, "reason": "statement_changed"}
@@ -813,6 +846,9 @@ class CommonsReviewMixin:
                     "recorded": False,
                     "reason": "The node's Lean statement was not found in the compiled source.",
                 }
+            refusal = axiom_refusal(compiled.axioms, name)
+            if refusal is not None:
+                return refusal
             record = self._set_node_status(
                 session,
                 row,
@@ -821,7 +857,7 @@ class CommonsReviewMixin:
                 evidence={
                     "source_sha256": request.source_sha256,
                     "backend": compiled.backend,
-                    "axioms": data["compile_result"]["axioms"],
+                    "axioms": {name: data["compile_result"]["axioms"][name]},
                 },
                 op=op,
             )

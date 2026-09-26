@@ -9,7 +9,7 @@ from test_research_services import accepted_fixture
 from test_sharing import approaches, artifact
 
 from physharness import commons_discourse
-from physharness.commons import PLATFORM, _platform
+from physharness.commons import PLATFORM, _lean_digest, _platform
 from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.commons_review import (
     NODE_DATA_BEGIN,
@@ -490,7 +490,7 @@ def test_referee_objective_stays_within_the_task_bound(lab):
         "node",
     )
     service.set_lean_statement(
-        node["id"], "H" * 2000, "big", "L" * 20000, ELABORATED, alpha, "lean"
+        node["id"], "-- " + "H" * 1997, "big", "L" * 20000, ELABORATED, alpha, "lean"
     )
     for scope, clipped in (
         ("informal", "clipped assumptions to fit"),
@@ -563,8 +563,10 @@ def test_referee_objective_worst_case_fits(lab):
         alpha,
         "node",
     )
+    # A header may hold only import, open, set_option and universe lines, so its worst
+    # case is a comment.
     service.set_lean_statement(
-        node["id"], "\x01" * 2000, "a" * 200, "<<<" * 6666, ELABORATED, alpha, "lean"
+        node["id"], "-- " + "\x01" * 1997, "a" * 200, "<<<" * 6666, ELABORATED, alpha, "lean"
     )
     for scope in ("informal", "fidelity"):
         requested = service.request_review(node["id"], scope, beta, scope)
@@ -1058,6 +1060,102 @@ def test_local_compile_after_statement_change_not_recorded(lab):
     assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
     fresh = {**COMPILED, "lean_statement_sha256": current["lean_statement_sha256"]}
     assert service.record_local_compile(node["id"], "c" * 64, fresh, beta, "fresh")["recorded"]
+
+
+def test_lean_digest_is_injective_so_a_changed_statement_loses_its_reviews(lab):
+    """``header\\nname\\nstatement`` joined these two into one text and one digest."""
+    first = ("import Mathlib\n/-\nv", "x", ": (x : Nat) + 0 = x")
+    second = ("import Mathlib\n/-", "v", "x\n: (x : Nat) + 0 = x")
+    assert "\n".join(first) == "\n".join(second)
+    assert _lean_digest(*first) != _lean_digest(*second)
+    assert _lean_digest(None, "x", ": True") == _lean_digest("", "x", ": True")
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    service.set_lean_statement(node["id"], *first, ELABORATED, alpha, "lean-first")
+    review = submit(
+        service, service.request_review(node["id"], "fidelity", beta, "f"), exp, "faithful"
+    )
+    assert review["node_status"] == "formally_stated"
+    changed = service.set_lean_statement(node["id"], *second, ELABORATED, alpha, "lean-second")
+    assert changed["status"] == "informal"
+    assert changed["lean_statement_sha256"] == _lean_digest(*second)
+    with service.db.sessions() as session:
+        row = session.get(RecordRow, node["id"])
+        counts, _ = service._review_tally(session, row, "fidelity")
+    assert counts["faithful"] == 0
+
+
+def test_statement_recorded_under_the_old_digest_keeps_its_standing(lab):
+    """A node digested ``header\\nname\\nstatement`` before the canonical encoding keeps its
+    status and digest while its fields stay the same, and still compiles locally."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    formalize(service, node, alpha)
+    legacy = "f" * 64
+    with service.db.transaction() as session:
+        row = session.get(RecordRow, node["id"])
+        service._replace(session, row, {"lean_statement_sha256": legacy})
+    set_status(service, node["id"], "formally_stated")
+    again = formalize(service, node, alpha, key="again")
+    assert again["status"] == "formally_stated" and again["lean_statement_sha256"] == legacy
+    canonical = _lean_digest("import Mathlib", "trace_add", "∀ n : Nat, n + 0 = n")
+    stale = {**COMPILED, "lean_statement_sha256": legacy}
+    outcome = service.record_local_compile(node["id"], "c" * 64, stale, beta, "stale")
+    assert outcome == {"recorded": False, "reason": "statement_changed"}
+    built = {**COMPILED, "lean_statement_sha256": canonical}
+    assert service.record_local_compile(node["id"], "c" * 64, built, beta, "built")["recorded"]
+
+
+def test_record_local_compile_enforces_the_standard_axiom_rule_itself(lab):
+    """No caller can record a local compile on a nonstandard or missing axiom report."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    lean = formalize(service, node, alpha)
+    set_status(service, node["id"], "formally_stated")
+    built = {**COMPILED, "lean_statement_sha256": lean["lean_statement_sha256"]}
+    for key, axioms, expected in (
+        ("sorry", {"trace_add": ["propext", "sorryAx"]}, ["sorryAx"]),
+        ("added", {"trace_add": ["cheat", "Lean.ofReduceBool"]}, ["Lean.ofReduceBool", "cheat"]),
+    ):
+        outcome = service.record_local_compile(
+            node["id"], "c" * 64, {**built, "axioms": axioms}, beta, key
+        )
+        assert outcome == {"recorded": False, "reason": "nonstandard_axioms", "axioms": expected}
+    for key, axioms in (
+        ("empty", {}),
+        ("other", {"helper": []}),
+        ("text", {"trace_add": "propext"}),
+        ("items", {"trace_add": [1]}),
+    ):
+        outcome = service.record_local_compile(
+            node["id"], "c" * 64, {**built, "axioms": axioms}, beta, key
+        )
+        assert outcome == {"recorded": False, "reason": "axioms_unreported"}
+    assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
+    # Only the node theorem's entry is evidence; another declaration's never is.
+    extra = {"trace_add": [], "helper": ["sorryAx"]}
+    recorded = service.record_local_compile(
+        node["id"], "c" * 64, {**built, "axioms": extra}, beta, "extra"
+    )
+    assert recorded["status_evidence"]["axioms"] == {"trace_add": []}
+
+
+def test_set_lean_statement_refuses_text_that_ends_the_declaration(lab):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    for header, statement in (
+        ("import Mathlib", ": True := trivial\n#exit\ntheorem junk : (1 : Nat) = 2"),
+        ("import Mathlib", ": Nat → True\n| _ => trivial\n#exit"),
+        ("import Mathlib\n#exit", ": (1 : Nat) = 2"),
+        ("import Lean\ninstance evil : HAdd Nat Nat Nat := ⟨fun _ _ => 5⟩", ": 2 + 2 = 5"),
+    ):
+        error = rejected(
+            lambda h=header, s=statement: service.set_lean_statement(
+                node["id"], h, "t", s, ELABORATED, alpha, "injected"
+            )
+        )
+        assert (error.code, error.status) == ("INVALID_LEAN_STATEMENT", 422)
+    assert service.get_record("commons_node", node["id"], alpha)["lean_statement"] is None
 
 
 # Workforce -----------------------------------------------------------------
