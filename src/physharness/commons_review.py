@@ -1,12 +1,13 @@
 """Platform-assigned referee reviews and evidence-bound commons ladder transitions.
 
 A referee is an isolated branch the platform creates for one review: it has no parent and no
-lab, no other branch may message it or delegate work into it, and when the experiment records
-several models it runs one distinct from the author's (and, for a fidelity review, from every
-branch that may have written the Lean statement), spreading a quorum over model families. Each
-referee task submits exactly one verdict, and a node gets a bounded panel of referees per text
-version, so it cannot shop for verdicts. Verdicts, Lean elaboration results, local compiles and
-independent kernel receipts become ladder moves only here, through ``_set_node_status``.
+lab, and no other branch may message it or delegate work into it. When the experiment records
+several models, the first referee runs one distinct from the author's (and, for a fidelity
+review, from every branch that may have written the Lean statement), and a panel spreads over
+the model families. Each referee task submits exactly one verdict, and a node gets a bounded
+panel of referees per text version, so it cannot shop for verdicts. Verdicts, Lean elaboration
+results, local compiles and independent kernel receipts become ladder moves only here, through
+``_set_node_status``.
 """
 
 import copy
@@ -426,20 +427,22 @@ class CommonsReviewMixin:
     def _referee_model(models, author_index, avoided, author, used):
         """Pick the referee's model index; returns ``(model_index, cross_model)``.
 
-        Candidates after the author's index rank by: a family outside ``avoided`` first; then
-        any family but the author's; then the family this text version's earlier referees
-        (``used``) ran least, so a quorum spreads over families; then rotation order.
-        ``cross_model`` is True only for a family outside ``avoided``. A single model gives
-        ``(None, False)``.
+        A panel spreads over the configured families: each referee takes the family this
+        text version's earlier referees (``used``) ran least. Among those, a family outside
+        ``avoided`` comes first, then any family but the author's, then rotation order after
+        the author's index. So the first referee is cross-model whenever a family allows it,
+        and a quorum spans distinct families when more than one is configured, the author's
+        included once the others are used. ``cross_model`` is True only for a family outside
+        ``avoided``. A single model gives ``(None, False)``.
         """
         if len(models) == 1:
             return None, False
 
         def rank(step):
             family = _model_family(models[(author_index + step) % len(models)])
-            return (family in avoided, family == author, used[family], step)
+            return (used[family], family in avoided, family == author, step)
 
-        index = (author_index + min(range(1, len(models)), key=rank)) % len(models)
+        index = (author_index + min(range(1, len(models) + 1), key=rank)) % len(models)
         return index, _model_family(models[index]) not in avoided
 
     @staticmethod

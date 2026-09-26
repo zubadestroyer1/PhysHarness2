@@ -24,8 +24,9 @@ What exists (Tasks 1–10):
     refuted).
 - **Checks.**
   - Referees are platform-created, parentless, lab-less branches, isolated from other
-    branches and assigned a model family other than the author's (for fidelity, also
-    other than every claimant's) when one exists, with a quorum spread over families.
+    branches. The first referee runs a model family other than the author's (for
+    fidelity, also other than every claimant's) when one exists, and a quorum spreads
+    over the configured families.
     A standing `wrong` vetoes refereed and a standing `unfaithful` vetoes formally
     stated; each text version gets a bounded referee panel (`REVIEW_LIMIT`).
   - Informal verdicts are sound, gaps or wrong; fidelity verdicts are faithful or

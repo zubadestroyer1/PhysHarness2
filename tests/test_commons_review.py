@@ -862,14 +862,24 @@ def test_quorum_referees_spread_over_model_families(lab):
     # Both referees avoid the author's family, and the quorum spans two families.
     assert {first["model_index"], second["model_index"]} == {1, 2}
     assert first["cross_model"] is second["cross_model"] is True
-    # With one family besides the author's, cross-model review wins over quorum spread.
+    # With two families the first referee is cross-model and the quorum spans both: the
+    # second referee runs the author's family and says so.
     service, _, exp, _, (alpha, _beta) = society_lab(lab, models=2, referee_quorum=2, prefix="two")
     node = service.create_node(exp["id"], lemma(), alpha, "node")
     first = service.request_review(node["id"], "informal", alpha, "two-first")
     submit(service, first, exp, "sound")
     second = service.request_review(node["id"], "informal", alpha, "two-second")
-    assert (first["model_index"], second["model_index"]) == (1, 1)
-    assert first["cross_model"] is second["cross_model"] is True
+    assert (first["model_index"], first["cross_model"]) == (1, True)
+    assert (second["model_index"], second["cross_model"]) == (0, False)
+    assert submit(service, second, exp, "sound")["node_status"] == "refereed"
+    # A third referee (a retry after a gap report) returns to the least-used family.
+    other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
+    panel = []
+    for verdict in ("gaps", "sound", "sound"):
+        key = f"other-{len(panel)}"
+        panel.append(service.request_review(other["id"], "informal", alpha, key))
+        submit(service, panel[-1], exp, verdict)
+    assert [item["model_index"] for item in panel] == [1, 0, 1]
 
 
 def test_fidelity_referee_avoids_every_possible_lean_statement_writer(lab):
