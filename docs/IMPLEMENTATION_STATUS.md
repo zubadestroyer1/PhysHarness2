@@ -51,7 +51,9 @@ What exists (Tasks 1–10):
   - A literature broker: arXiv, OpenAlex and allowlisted fetch, with a benchmark
     blocklist and an overlap screen against the masked reference.
   - Ten technique skills, a constitution, check-ins and stagnation nudges.
-  - The `workbench-v2` image **definition** (numerics and a pinned REPL). It is not built.
+  - The `workbench-v2` image (numerics and a pinned REPL). It is pinned and built. An
+    engineering capacity observation at N=8 passed (`production_qualified=false`), and
+    production qualification is pending ([FORMAL_ENVIRONMENT](FORMAL_ENVIRONMENT.md#workbench-v2)).
 - **Society tool profile.** Twenty-six tools in all: 25 for a worker at most, and a
   read-and-check profile of 18 for a referee. `read_artifact` opens cited evidence in
   bounded chunks through the scoped portable-memory read; a referee opens only its own
@@ -108,7 +110,8 @@ Needs user approval before the live 8–16 agent comparison ([RUN_PLAN §8](../w
 - the choice of target (candidates are proposed) and its masked reference;
 - the tool-matching design;
 - the two model families (both on the Responses runtime);
-- the workbench v2 rebuild and qualification (every `TODO(pin-at-rebuild)` resolved);
+- production qualification of workbench v2 (pinned, built, and observed at capacity 8 as
+  engineering evidence);
 - verifier bundle registration for the chosen target;
 - the choice between E2B and local_docker, and a larger VM for concurrency 12.
 
