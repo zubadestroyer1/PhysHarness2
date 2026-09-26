@@ -81,8 +81,10 @@ STATE_KEYS = frozenset(
         "recovery_requested",
         "recovery_attempted",
         "exhausted",
-        # Society profiles only: rejected unregistered tool names in this native session.
+        # Society profiles only: rejected unregistered tool names in this native session,
+        # and whether that count has warned (apart from the repeated-read warning).
         "unavailable_calls",
+        "unavailable_warned",
     }
 )
 MAX_FINGERPRINTS = 64
@@ -160,7 +162,13 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
         not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in seen
     ):
         raise ValueError("invalid stagnation fingerprint")
-    for field in ("warned", "recovery_requested", "recovery_attempted", "exhausted"):
+    for field in (
+        "warned",
+        "recovery_requested",
+        "recovery_attempted",
+        "exhausted",
+        "unavailable_warned",
+    ):
         if type(state.get(field, False)) is not bool:
             raise ValueError("invalid stagnation flag")
     unavailable = state.get("unavailable_calls", 0)
@@ -220,7 +228,7 @@ def observe(
         # so every rejected name counts, for the whole native session: new work in between
         # does not reset the count.
         state["unavailable_calls"] = state.get("unavailable_calls", 0) + 1
-        return _escalate(state, state["unavailable_calls"])
+        return _escalate(state, state["unavailable_calls"], warned="unavailable_warned")
     if not _terminal_read(name, arguments, result):
         if (
             name not in NON_PROGRESS_TOOLS
@@ -257,8 +265,11 @@ def observe(
     return _escalate(state, counts[fingerprint])
 
 
-def _escalate(state: dict[str, Any], repeats: int) -> str | None:
-    """Warn at 4 repeats, request one recovery at 8, then report exhaustion at 8 more."""
+def _escalate(state: dict[str, Any], repeats: int, warned: str = "warned") -> str | None:
+    """Warn at 4 repeats, request one recovery at 8, then report exhaustion at 8 more.
+
+    Each counter warns under its own ``warned`` flag; the recovery flags are shared.
+    """
     if state.get("recovery_attempted") and repeats >= 8:
         if not state.get("exhausted"):
             state["exhausted"] = True
@@ -267,8 +278,8 @@ def _escalate(state: dict[str, Any], repeats: int) -> str | None:
     if repeats >= 8 and not state.get("recovery_requested") and not state.get("recovery_attempted"):
         state["recovery_requested"] = True
         return "recovery_requested"
-    if repeats >= 4 and not state.get("warned"):
-        state["warned"] = True
+    if repeats >= 4 and not state.get(warned):
+        state[warned] = True
         return "stagnation_warning"
     return None
 
@@ -276,8 +287,9 @@ def _escalate(state: dict[str, Any], repeats: int) -> str | None:
 def successor_state(state: dict[str, Any]) -> dict[str, Any]:
     """Consume the single recovery request when a new native session starts."""
     result = validate_state(state)
-    # Unavailable-tool calls are counted per native session.
+    # Unavailable-tool calls are counted (and warned about) per native session.
     result.pop("unavailable_calls", None)
+    result.pop("unavailable_warned", None)
     if result.get("recovery_requested"):
         result["recovery_requested"] = False
         result["recovery_attempted"] = True

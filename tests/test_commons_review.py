@@ -120,7 +120,11 @@ def clock(monkeypatch):
     return fixed
 
 
-def lemma(title="Trace lemma", statement="The trace is additive.", **extra):
+def lemma(title="Trace lemma", statement=None, **extra):
+    """A lemma node; differently titled lemmas state different claims (reviews follow the
+    statement text, so a restated claim would share its reviews)."""
+    if statement is None:
+        statement = "The trace is additive." + ("" if title == "Trace lemma" else f" ({title})")
     return NodeCreate(node_type="lemma", title=title, statement=statement, **extra)
 
 
@@ -502,7 +506,8 @@ def test_referee_objective_stays_within_the_task_bound(lab):
         requested = service.request_review(node["id"], scope, beta, scope)
         objective = service.get_record("task", requested["review_task_id"], author)["objective"]
         assert len(objective) <= 20000 and clipped in objective
-        assert f"read node {node['id']} for the exact text" in objective
+        assert f"read node {node['id']} with commons_read for the exact text" in objective
+        assert "arrives fenced as untrusted data" in objective
         assert objective.endswith(CLOSING_LINE)
         data = node_data(objective)
         # Clipped fields keep a prefix of the exact text; the informal statement fits whole.
@@ -739,11 +744,13 @@ def test_quorum_two_requires_two_sound_reviews(lab):
     assert submit(service, second, exp, "sound")["node_status"] == "refereed"
     evidence = service.get_record("commons_node", node["id"], alpha)["status_evidence"]
     assert len(evidence["review_ids"]) == 2
-    # A standing "wrong" verdict blocks the quorum.
+    # A standing "wrong" verdict blocks the quorum, and no further referee is assigned.
     other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
-    for index, verdict in enumerate(("wrong", "sound", "sound")):
+    for index, verdict in enumerate(("sound", "wrong")):
         requested = service.request_review(other["id"], "informal", beta, f"o-{index}")
         assert submit(service, requested, exp, verdict)["node_status"] == "informal"
+    error = rejected(lambda: service.request_review(other["id"], "informal", beta, "o-2"))
+    assert error.code == "REVIEW_VETOED"
 
 
 def rewrite_statement(service, node_id, statement):
@@ -776,10 +783,12 @@ def test_sound_reviews_must_outnumber_gap_reports(lab):
     evidence = service.get_record("commons_node", node["id"], alpha)["status_evidence"]
     assert evidence["counts"] == {"sound": 2, "gaps": 1, "wrong": 0}
     assert len(evidence["review_ids"]) == 2
-    # Two gap reports fill the panel: the node cannot shop for a third sound verdict.
+    # Gap reports use no retry budget, but three (quorum + REVIEW_RETRIES) fill the panel:
+    # no sound majority could outvote them, so the node cannot shop for more referees.
     other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
     assert (
-        verdicts(service, exp, other, beta, "informal", "gaps", "gaps", "sound") == ["informal"] * 3
+        verdicts(service, exp, other, beta, "informal", "gaps", "sound", "gaps", "gaps")
+        == ["informal"] * 4
     )
     error = rejected(lambda: service.request_review(other["id"], "informal", alpha, "shop"))
     assert (error.code, error.status) == ("REVIEW_LIMIT", 409)
@@ -788,23 +797,21 @@ def test_sound_reviews_must_outnumber_gap_reports(lab):
 def test_wrong_verdict_vetoes_refereed_whatever_the_sound_count(lab):
     service, _, exp, _, (alpha, _beta) = society_lab(lab)  # referee_quorum = 1
     node = service.create_node(exp["id"], lemma(), alpha, "node")
-    assert (
-        verdicts(service, exp, node, alpha, "informal", "wrong", "sound", "sound")
-        == ["informal"] * 3
-    )
+    assert verdicts(service, exp, node, alpha, "informal", "wrong") == ["informal"]
+    # The veto ends the panel: the author cannot draw sound verdicts to outnumber it.
+    error = rejected(lambda: service.request_review(node["id"], "informal", alpha, "shop"))
+    assert (error.code, error.status) == ("REVIEW_VETOED", 409)
+    assert error.details == {"scope": "informal", "verdict": "wrong"}
 
 
 def test_unfaithful_verdict_vetoes_formally_stated_until_the_lean_statement_changes(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
     formalize(service, node, alpha, key="lean-1")
-    # The author asks again and again: faithful verdicts cannot outvote an unfaithful one.
-    assert (
-        verdicts(service, exp, node, alpha, "fidelity", "unfaithful", "faithful", "faithful")
-        == ["informal"] * 3
-    )
+    # The author cannot ask again for faithful verdicts to outvote an unfaithful one.
+    assert verdicts(service, exp, node, alpha, "fidelity", "unfaithful") == ["informal"]
     error = rejected(lambda: service.request_review(node["id"], "fidelity", alpha, "shop"))
-    assert error.code == "REVIEW_LIMIT"
+    assert error.code == "REVIEW_VETOED"
     # A new Lean statement is a new object to judge: the old verdicts are stale.
     formalize(service, node, alpha, statement="∀ n : Nat, 0 + n = n", key="lean-2")
     assert verdicts(service, exp, node, alpha, "fidelity", "faithful", tag="v2") == [
@@ -816,23 +823,22 @@ def test_unfaithful_verdict_vetoes_formally_stated_until_the_lean_statement_chan
     other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
     refereed_quorum(service, exp, other, beta)
     formalize(service, other, alpha, key="lean-other")
-    assert verdicts(service, exp, other, beta, "fidelity", "unfaithful", "faithful") == [
-        "refereed",
-        "refereed",
-    ]
+    fidelity = service.request_review(other["id"], "fidelity", beta, "other-fidelity")
+    assert submit(service, fidelity, exp, "unfaithful")["node_status"] == "refereed"
 
 
 def test_review_requests_are_bounded_per_text_version_and_node(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab, referee_quorum=2)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
-    # quorum (2) + REVIEW_RETRIES (2) informal referees for the immutable informal statement.
+    # quorum (2) + REVIEW_RETRIES (2) informal referees for the immutable informal statement;
+    # gap reports use none of them, but as many gap reports close the panel.
     assert REVIEW_RETRIES == 2
-    verdicts(service, exp, node, alpha, "informal", "gaps", "gaps", "sound", "sound")
+    verdicts(service, exp, node, alpha, "informal", "gaps", "gaps", "gaps", "gaps")
     error = rejected(lambda: service.request_review(node["id"], "informal", beta, "fifth"))
     assert (error.code, error.status) == ("REVIEW_LIMIT", 409)
-    assert error.details == {"scope": "informal", "referees": 4, "limit": 4}
-    # An open request still deduplicates at the bound; a referee that ended without a
-    # verdict does not use up the panel.
+    assert error.details == {"scope": "informal", "gap_reports": 4, "limit": 4}
+    # An open request still deduplicates; a referee that ended without a verdict does not
+    # use up the panel.
     other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
     verdicts(service, exp, other, alpha, "informal", "gaps", "gaps", "sound")
     crashed = service.request_review(other["id"], "informal", beta, "crashed")
@@ -840,15 +846,23 @@ def test_review_requests_are_bounded_per_text_version_and_node(lab):
     finish(service, crashed["review_task_id"], "failed")
     last = service.request_review(other["id"], "informal", alpha, "last")
     assert last["deduplicated"] is False
-    # Fidelity: 1 + REVIEW_RETRIES per Lean statement, MAX_FIDELITY_REVIEWS per node.
+    # Fidelity: 1 + REVIEW_RETRIES per Lean statement, stale verdicts included, so flipping
+    # back to a statement does not reopen its panel ...
     formal = service.create_node(exp["id"], lemma("Formal"), alpha, "formal")
-    for version in range(MAX_FIDELITY_REVIEWS // 3):
+    for attempt in range(3):
+        formalize(service, formal, alpha, key=f"a{attempt}")
+        requested = service.request_review(formal["id"], "fidelity", beta, f"fa{attempt}")
+        formalize(service, formal, alpha, statement="∀ n : Nat, 0 + n = n", key=f"b{attempt}")
+        assert submit(service, requested, exp, "faithful")["stale"] is True
+    formalize(service, formal, alpha, key="a-final")
+    error = rejected(lambda: service.request_review(formal["id"], "fidelity", beta, "a-more"))
+    assert error.details == {"scope": "fidelity", "referees": 3, "limit": 3}
+    # ... and MAX_FIDELITY_REVIEWS per writer of the node's Lean statements.
+    for version in range(3, MAX_FIDELITY_REVIEWS):
         statement = f"∀ n : Nat, n + {version} = n"
         formalize(service, formal, alpha, statement=statement, key=str(version))
-        verdicts(service, exp, formal, beta, "fidelity", *["unfaithful"] * 3, tag=f"v{version}")
-        error = rejected(lambda: service.request_review(formal["id"], "fidelity", beta, "more"))
-        assert error.code == "REVIEW_LIMIT"
-    formalize(service, formal, alpha, statement="∀ n : Nat, 0 + n = n", key="final")
+        service.request_review(formal["id"], "fidelity", beta, f"v{version}")
+    formalize(service, formal, alpha, statement="∀ n : Nat, n = n", key="final")
     error = rejected(lambda: service.request_review(formal["id"], "fidelity", beta, "final"))
     assert error.code == "REVIEW_LIMIT"
     assert error.details == {"scope": "fidelity", "referees": 9, "limit": 9}
@@ -1523,3 +1537,205 @@ def test_legacy_verification_commit_unchanged(lab, monkeypatch):
     ]
     assert same_operation == ["verification.verified"]
     assert service.list_records("commons_node", author, exp["id"]) == []
+
+
+# Re-review fixes: review griefing, shopping and referee read scope ---------------------
+
+
+def test_claimant_never_replaces_another_writers_statement_or_demotes_a_formal_node(lab):
+    """A live claimant sets a Lean statement when the node has none (or one that does not
+    elaborate) and revises its own; only the author replaces another writer's statement,
+    and only the author moves a formal node's statement."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    formalize(service, node, alpha, statement="True", key="author")
+    assert service.get_record("commons_node", node["id"], alpha)["lean_writer"] == alpha.branch_id
+    service.claim_node(node["id"], "claim", beta, "grab")
+    for statement, ok in (("False", True), ("True", False), ("True", True)):
+        error = rejected(lambda s=statement, o=ok: formalize(service, node, beta, s, o, "beta"))
+        assert (error.code, error.status) == ("NODE_AUTHORITY", 403)
+    # A formal node keeps the author's statement against any claimant.
+    set_status(service, node["id"], "formally_stated", "compiles_locally")
+    error = rejected(lambda: formalize(service, node, beta, statement="False", key="demote"))
+    assert error.code == "NODE_AUTHORITY"
+    stored = service.get_record("commons_node", node["id"], alpha)
+    assert (stored["status"], stored["lean_statement"]) == ("compiles_locally", "True")
+    # A claimant formalizes a node without a statement and revises its own ...
+    other = service.create_node(exp["id"], lemma("Other", "Other claim."), alpha, "other")
+    service.claim_node(other["id"], "claim", beta, "grab-other")
+    assert formalize(service, other, beta, key="b1")["lean_writer"] == beta.branch_id
+    assert formalize(service, other, beta, statement="True", key="b2")["lean_statement"] == "True"
+    # ... re-recording it unchanged keeps the writer, and the author may replace it.
+    assert formalize(service, other, alpha, statement="True", key="a0")["lean_writer"] == (
+        beta.branch_id
+    )
+    assert formalize(service, other, alpha, statement="False", key="a1")["lean_writer"] == (
+        alpha.branch_id
+    )
+    # A statement that does not elaborate has no standing to protect.
+    formalize(service, other, alpha, statement="Broken", ok=False, key="a2")
+    assert formalize(service, other, beta, statement="Fixed", key="b3")["lean_writer"] == (
+        beta.branch_id
+    )
+    # Once formal, even the claimant's own statement moves only with the author.
+    set_status(service, other["id"], "formally_stated")
+    error = rejected(lambda: formalize(service, other, beta, statement="Again", key="b4"))
+    assert error.code == "NODE_AUTHORITY"
+
+
+def test_fidelity_budget_is_per_statement_writer(lab):
+    """A claimant spending its own fidelity budget never exhausts the author's."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab, models=2)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    service.claim_node(node["id"], "claim", beta, "grab")
+    for version in range(MAX_FIDELITY_REVIEWS):
+        formalize(service, node, beta, statement=f"True ∨ {version} = {version}", key=f"g{version}")
+        assert (
+            service.request_review(node["id"], "fidelity", beta, f"gf{version}")["deduplicated"]
+            is False
+        )
+    formalize(service, node, beta, statement="True ∨ False", key="g-last")
+    error = rejected(lambda: service.request_review(node["id"], "fidelity", beta, "g-more"))
+    assert error.code == "REVIEW_LIMIT"
+    assert error.details == {"scope": "fidelity", "referees": 9, "limit": 9}
+    # The author writes the real statement: its own panel is untouched.
+    formalize(service, node, alpha, key="author")
+    requested = service.request_review(node["id"], "fidelity", alpha, "author-fid")
+    task = service.get_record("task", requested["review_task_id"], author)
+    assert task["review_assignment"]["lean_writer"] == alpha.branch_id
+    assert submit(service, requested, exp, "faithful")["node_status"] == "formally_stated"
+
+
+def test_standing_wrong_blocks_every_promotion_above_informal(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    formalize(service, node, alpha)
+    # A fidelity referee already at work when the wrong verdict lands promotes nothing.
+    fidelity = service.request_review(node["id"], "fidelity", beta, "fid")
+    assert verdicts(service, exp, node, beta, "informal", "wrong") == ["informal"]
+    assert submit(service, fidelity, exp, "faithful")["node_status"] == "informal"
+    # No further referee is assigned in either scope while the verdict stands.
+    for scope in ("informal", "fidelity"):
+        error = rejected(lambda s=scope: service.request_review(node["id"], s, alpha, f"{s}-2"))
+        assert (error.code, error.status) == ("REVIEW_VETOED", 409)
+        assert error.details["verdict"] == "wrong"
+    # Nor does a local compile move a formally stated node that carries the veto.
+    set_status(service, node["id"], "formally_stated")
+    lean = service.get_record("commons_node", node["id"], alpha)
+    compiled = {**COMPILED, "lean_statement_sha256": lean["lean_statement_sha256"]}
+    result = service.record_local_compile(node["id"], "c" * 64, compiled, alpha, "compile")
+    assert result == {"recorded": False, "reason": "wrong_verdict"}
+    assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
+
+
+def test_standing_unfaithful_ends_the_lean_statements_panel(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    formalize(service, node, alpha, key="lean-1")
+    assert verdicts(service, exp, node, beta, "fidelity", "unfaithful") == ["informal"]
+    error = rejected(lambda: service.request_review(node["id"], "fidelity", beta, "again"))
+    assert (error.code, error.details["verdict"]) == ("REVIEW_VETOED", "unfaithful")
+    # An informal review judges the informal statement, which the verdict does not touch.
+    assert verdicts(service, exp, node, beta, "informal", "sound") == ["refereed"]
+    formalize(service, node, alpha, statement="∀ n : Nat, 0 + n = n", key="lean-2")
+    assert verdicts(service, exp, node, beta, "fidelity", "faithful") == ["formally_stated"]
+
+
+def test_a_restated_node_inherits_its_statements_reviews(lab):
+    """Reviews follow the normalized statement text: a later node restating an earlier one
+    (open, or reviewed) draws no referees of its own."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    first = service.create_node(exp["id"], lemma(assumptions=["Finite", "Real"]), alpha, "first")
+    assert verdicts(service, exp, first, alpha, "informal", "wrong") == ["informal"]
+    service.abandon_node(first["id"], "Refuted by a referee.", alpha, "abandon")
+    copy = service.create_node(
+        exp["id"],
+        lemma("Trace lemma, again", "  the TRACE is\nadditive. ", assumptions=["real", "finite"]),
+        alpha,
+        "copy",
+    )
+    formalize(service, copy, alpha, key="copy-lean")
+    for scope in ("informal", "fidelity"):
+        error = rejected(lambda s=scope: service.request_review(copy["id"], s, beta, s))
+        assert (error.code, error.status) == ("DUPLICATE_STATEMENT", 409)
+        assert error.details == {"node_id": first["id"]}
+    # A different claim is a different text with its own panel.
+    revised = service.create_node(
+        exp["id"], lemma(statement="The trace is additive on finite sums."), alpha, "revised"
+    )
+    assert verdicts(service, exp, revised, beta, "informal", "sound") == ["refereed"]
+    # A later copy never takes an earlier node's reviews (no front-running) ...
+    original = service.create_node(exp["id"], lemma(statement="Original claim."), alpha, "orig")
+    squat = service.create_node(exp["id"], lemma(statement="original  claim."), beta, "squat")
+    error = rejected(lambda: service.request_review(squat["id"], "informal", beta, "squat-r"))
+    assert error.details == {"node_id": original["id"]}
+    assert verdicts(service, exp, original, beta, "informal", "sound") == ["refereed"]
+    # ... and a node closed before any review leaves the text to the next one.
+    dropped = service.create_node(exp["id"], lemma(statement="Dropped claim."), alpha, "dropped")
+    service.abandon_node(dropped["id"], "Wrong direction.", alpha, "drop")
+    again = service.create_node(exp["id"], lemma(statement="Dropped claim."), alpha, "again")
+    assert verdicts(service, exp, again, beta, "informal", "sound") == ["refereed"]
+
+
+def test_gap_reports_do_not_use_the_retry_budget(lab):
+    """S1 plan: gaps is not a veto. A gap report never uses the retry budget, so the author
+    answers it on the thread and asks again; only a gap majority that no sound majority can
+    outvote within the budget closes the panel."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)  # quorum 1: 1 + 2 retries
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    assert (
+        verdicts(service, exp, node, beta, "informal", "gaps", "gaps", "sound", "sound")
+        == ["informal"] * 4
+    )
+    assert verdicts(service, exp, node, beta, "informal", "sound", tag="third") == ["refereed"]
+    evidence = service.get_record("commons_node", node["id"], alpha)["status_evidence"]
+    assert evidence["counts"] == {"sound": 3, "gaps": 2, "wrong": 0}
+    other = service.create_node(exp["id"], lemma(statement="Another claim."), alpha, "other")
+    verdicts(service, exp, other, beta, "informal", "gaps", "gaps", "gaps")
+    error = rejected(lambda: service.request_review(other["id"], "informal", alpha, "hopeless"))
+    assert (error.code, error.status) == ("REVIEW_LIMIT", 409)
+    assert error.details == {"scope": "informal", "gap_reports": 3, "limit": 3}
+
+
+def test_referee_own_posts_never_widen_its_read_scope(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    uncited = artifact(service, alpha, "alpha scratch work, never cited")
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    requested = service.request_review(node["id"], "informal", beta, "review")
+    ref = referee(requested, exp)
+    service.post_on_node(
+        node["id"],
+        NodePostCreate(kind="question", abstract="Looking.", artifact_ids=[uncited["id"]]),
+        ref,
+        "self-cite",
+    )
+    assert service.referee_may_read_artifact(node["id"], uncited["id"], ref) is False
+    # Another agent's citation on the thread is evidence the referee may open.
+    service.post_on_node(
+        node["id"],
+        NodePostCreate(kind="finding", abstract="See this.", artifact_ids=[uncited["id"]]),
+        beta,
+        "cite",
+    )
+    assert service.referee_may_read_artifact(node["id"], uncited["id"], ref) is True
+
+
+def test_thread_evidence_scan_keeps_the_earliest_posts(lab, monkeypatch):
+    from physharness import commons_review
+
+    monkeypatch.setattr(commons_review, "MAX_THREAD_EVIDENCE_POSTS", 2)
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    cited = []
+    for index in range(6):
+        evidence = artifact(service, beta, f"evidence {index}")
+        service.post_on_node(
+            node["id"],
+            NodePostCreate(kind="finding", abstract=f"run {index}", artifact_ids=[evidence["id"]]),
+            beta,
+            f"post-{index}",
+        )
+        cited.append(evidence["id"])
+    ref = referee(service.request_review(node["id"], "informal", alpha, "r"), exp)
+    readable = [service.referee_may_read_artifact(node["id"], item, ref) for item in cited]
+    assert readable == [True, True, False, False, False, False]

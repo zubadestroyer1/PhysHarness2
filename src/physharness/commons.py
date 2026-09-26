@@ -7,6 +7,7 @@ which platform code calls; the single author-initiated move is abandonment with 
 import copy
 import hashlib
 import json
+import unicodedata
 from collections import Counter, defaultdict, deque
 from datetime import datetime
 
@@ -20,7 +21,7 @@ from .commons_models import (
     STATUSES,
     NodeCreate,
 )
-from .domain import Principal, new_id, utcnow
+from .domain import Principal, digest_json, new_id, utcnow
 from .errors import HarnessError
 from .knowledge.index import tokens
 from .storage import EdgeRow, RecordRow, record_json_text
@@ -56,6 +57,27 @@ def _lean_digest(header, name, statement):
         return None
     encoded = json.dumps([header or "", name, statement], ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def statement_key(statement, assumptions):
+    """The digest of a node's normalized informal statement and assumptions (NFKC, case-
+    folded, whitespace collapsed; assumptions in any order). Reviews follow this text, so a
+    node restating another draws no referees of its own (``_statement_owner``)."""
+
+    def normalized(text):
+        return " ".join(unicodedata.normalize("NFKC", text).casefold().split())
+
+    return digest_json(
+        {
+            "statement": normalized(statement),
+            "assumptions": sorted(normalized(item) for item in assumptions),
+        }
+    )
+
+
+def _writer(actor):
+    """Who wrote a Lean statement: the actor's branch, or the actor for branchless callers."""
+    return actor.branch_id or f"actor:{actor.id}"
 
 
 def _not_found():
@@ -125,17 +147,20 @@ class CommonsMixin:
             fields.get("lean_name"),
             fields.get("lean_statement"),
         )
+        assumptions = list(fields.get("assumptions", []))
         return {
             "experiment_id": experiment.id,
             "node_type": fields["node_type"],
             "title": fields["title"],
             "statement": fields["statement"],
-            "assumptions": list(fields.get("assumptions", [])),
+            "assumptions": assumptions,
+            "statement_key": statement_key(fields["statement"], assumptions),
             "lean_header": header,
             "lean_statement": statement,
             "lean_name": name,
             "lean_statement_sha256": _lean_digest(header, name, statement),
             "lean_elaborated": False,
+            "lean_writer": fields.get("lean_writer"),
             "status": fields["status"],
             "status_reason": fields["status_reason"],
             "status_evidence": dict(fields.get("status_evidence") or {}),
@@ -298,6 +323,7 @@ class CommonsMixin:
                         **{k: data[k] for k in data if k != "edges"},
                         status="informal",
                         status_reason="proposed",
+                        lean_writer=_writer(actor) if request.lean_statement else None,
                     ),
                     "branch_id": actor.branch_id,
                     "lab": author.payload.get("lab") if author is not None else None,

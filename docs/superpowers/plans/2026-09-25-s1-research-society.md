@@ -392,6 +392,7 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
     - `objective` is the platform template below.
     - `model_index` = `(author_index + 1) % len(models)` when `len(models) > 1`, else `None`. `author_index` is the author branch's `model_index or 0`. `cross_model` = `len(models) > 1`.
     - *Revised after the final review:* the referee takes the family this text version's earlier referees used least, preferring a family other than the author's and, for a fidelity review, other than every branch that has claimed the node (any of them may have written the Lean statement). The first referee is therefore cross-model whenever possible, and a quorum spans distinct families when several are configured. `cross_model` is fixed in the review assignment and is true only when the chosen family avoids all of those. Each text version gets at most `referee_quorum` (informal) or 1 (fidelity) plus `REVIEW_RETRIES = 2` referees that submitted or are live, and a node at most `MAX_FIDELITY_REVIEWS = 9` fidelity referees (`REVIEW_LIMIT` 409).
+    - *Revised after the re-review:* the fidelity budget of 9 is per writer of the node's Lean statements (`review_assignment.lean_writer`), so no claimant spends the author's. A gap report uses no retry budget; the panel closes only when the gap reports alone reach `referee_quorum + REVIEW_RETRIES`. A standing `wrong` (any scope) or `unfaithful` (fidelity) refuses further requests (`REVIEW_VETOED` 409). Reviews follow the normalized statement text: a node whose normalized statement and assumptions match an earlier node that is open or has drawn a referee is refused (`DUPLICATE_STATEMENT` 409, naming that node).
     - `task_extra = {"review_assignment": {"node_id", "scope", "statement_sha256", "lean_statement_sha256"}, "hat": "referee"}`.
   - It is admitted like recruitment: call `self._admit_research_tasks` as `recruit_researcher` does.
 - **Objective template:** exact text lives in a module constant `REFEREE_OBJECTIVE`.
@@ -407,12 +408,13 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
   - It inserts a `commons_review` record `{experiment_id, node_id, scope, verdict, summary, objections, task_id, referee_branch_id, model_index, cross_model, statement_sha256, lean_statement_sha256, stale}`.
   - `stale = True` if the node's current statement sha or `lean_statement_sha256` differs from the assignment. A stale review never transitions.
   - Transitions:
-    - informal + `sound`: once the count of non-stale `sound` reviews for this statement sha is ≥ `policy.referee_quorum` and there is no non-stale `wrong`, move to `refereed`. (The implementation also requires more `sound` than `gaps`; `gaps` is not a veto.)
+    - informal + `sound`: once the count of non-stale `sound` reviews for this statement sha is ≥ `policy.referee_quorum` and there is no non-stale `wrong`, move to `refereed`. (The implementation also requires more `sound` than `gaps`; `gaps` is not a veto, and a gap report uses none of the retry budget.) A non-stale `wrong` also blocks `formally_stated` and `compiles_locally`.
     - fidelity + `faithful` with `lean_elaborated`: move to `formally_stated`, unless a non-stale `unfaithful` review of the same Lean statement exists (a veto until the statement changes).
     - Any negative verdict: insert an `objection` post (attributed to the referee's actor) on the node thread, with the abstract `f"Referee ({scope}): {verdict}: {summary}"[:600]` and the body listing the objections.
   - Event `commons.review_submitted`.
 - **`set_lean_statement`:**
   - Only the author or a live claimant may call it (`NODE_AUTHORITY`). It is rejected on closed nodes.
+    - *Revised after the re-review:* the node records its `lean_writer`. A claimant may set a statement only on a node below `formally_stated` whose statement is missing, does not elaborate, or is the claimant's own; only the author replaces another writer's elaborated statement or a formal node's.
   - It validates `LEAN_NAME` and caps.
   - It stores the header, name and statement, the sha, and `lean_elaborated = elaboration["ok"]`.
   - If the status is `formally_stated` or `compiles_locally`, the status moves down to `refereed` (when a non-stale sound quorum exists for the informal statement) or `informal`, with reason "Lean statement changed".

@@ -537,10 +537,11 @@ class WorkforceMixin:
         payloads carry no lab key) and ``{"lab": name_or_None}`` for society experiments.
         ``"inherit"`` joins the parent's lab (a root founds one), ``"new"`` founds
         ``"lab-" + branch_id[:8]``, a name joins that existing lab, and ``None`` records an
-        unaffiliated branch (e.g. an independent referee) that no lab counts. An agent names
-        only its own lab (its recruiting branch's); operators and researchers place a branch
-        in any lab. Otherwise an outsider could fill a lab against its members, or plant a
-        child there to relay around the cross-lab message block.
+        unaffiliated branch (e.g. an independent referee) that no lab counts. An agent joins a
+        branch only to its own branch's lab, whether it names the lab or inherits it from the
+        parent (so a branchless orchestrator forking another branch joins none); operators and
+        researchers place a branch in any lab. Otherwise an outsider could fill a lab against
+        its members, or plant a child there to relay around the cross-lab message block.
         """
         policy = experiment.payload.get("society")
         if not policy:
@@ -559,10 +560,16 @@ class WorkforceMixin:
             return {"lab": "lab-" + branch_id[:8]}
         if not isinstance(lab, str) or not LAB_NAME.fullmatch(lab):
             raise HarnessError("INVALID_LAB", "Lab names match ^[a-z0-9-]{1,40}$.", status=422)
+        own = (
+            session.get(RecordRow, actor.branch_id)
+            if actor is not None and actor.role == "agent" and actor.branch_id
+            else None
+        )
         if (
             actor is not None
             and actor.role == "agent"
-            and (parent and parent.payload.get("lab")) != lab
+            and (own.payload.get("lab") if own is not None and own.kind == "branch" else None)
+            != lab
         ):
             raise HarnessError(
                 "LAB_MEMBERSHIP",
