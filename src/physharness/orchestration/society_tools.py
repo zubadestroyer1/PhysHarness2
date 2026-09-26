@@ -1376,6 +1376,16 @@ def society_tools(
             await asyncio.sleep(min(0.1, deadline - loop.time()))
             check_worker()
             receipt = service.get_record("verification", a["receipt_id"], agent)
+        if referee and isinstance(receipt.get("diagnostics"), dict):
+            # The receipt's diagnostics carry comparator_output: the checker's log of
+            # compiling the candidate, i.e. author-controlled text. A referee reads it only
+            # fenced, like its review packet; the platform's own status/assurance/digests
+            # stay readable. Worker output is unchanged.
+            receipt = {
+                **receipt,
+                "diagnostics": fence_author_data(receipt["diagnostics"]),
+                "note": REFEREE_DATA_NOTE,
+            }
         return receipt
 
     add(
