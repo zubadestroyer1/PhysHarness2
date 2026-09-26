@@ -658,3 +658,57 @@ async def test_helper_final_response_alone_leaves_root_unproved(lab):
     assert report["root_goal_status"] == "unproved"
     assert service.verified_target_receipt(experiment["id"], author) is None
     await client.close()
+
+
+async def test_runner_launches_oldest_queued_root_task_despite_long_settled_history(lab):
+    service, author, _, experiment, (alpha, beta) = ideas_lab(lab, concurrency=1)
+    ids = []
+    for index in range(10):
+        done = service.create_task(
+            TaskCreate(branch_id=alpha.branch_id, objective=f"a-done-{index}"), author, f"a{index}"
+        )
+        set_payload(service, done["id"], {"status": "completed"})
+        ids.append(done["id"])
+    oldest = service.create_task(
+        TaskCreate(branch_id=alpha.branch_id, objective="A-QUEUED"), author, "a-queued"
+    )
+    ids.append(oldest["id"])
+    done = service.create_task(
+        TaskCreate(branch_id=beta.branch_id, objective="b-done"), author, "bd"
+    )
+    set_payload(service, done["id"], {"status": "completed"})
+    ids.append(done["id"])
+    for index in range(5):
+        queued = service.create_task(
+            TaskCreate(branch_id=beta.branch_id, objective=f"B-QUEUED-{index}"), author, f"b{index}"
+        )
+        ids.append(queued["id"])
+    launched = []
+
+    async def route(request, payload):
+        objective = objective_of(payload)
+        if not launched or launched[-1] != objective:
+            launched.append(objective)
+        return httpx.Response(
+            200, json=response([message("done")], response_id=f"r{len(launched)}")
+        )
+
+    client = mock_client(route)
+    report = await research_worker.ResearchTeamRunner(
+        service, executor=executor_for(service, client)
+    ).run(
+        research_worker.TeamRunManifest(
+            experiment_id=experiment["id"],
+            project_id=author.project_id,
+            mode="replay",
+            task_ids=ids,
+            max_concurrency=1,
+            max_tasks=len(ids),
+            timeout_seconds=60,
+            process_verifications=False,
+        )
+    )
+    await client.close()
+    assert report["status"] == "completed", report
+    assert launched.index("A-QUEUED") <= 1, launched
+    assert sorted(launched) == sorted(["A-QUEUED", *[f"B-QUEUED-{n}" for n in range(5)]])

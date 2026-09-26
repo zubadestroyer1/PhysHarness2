@@ -153,6 +153,35 @@ async def test_real_unified_inbox_reaches_next_provider_request_with_retrieval_i
     store.close()
 
 
+async def test_escaped_peer_message_does_not_stop_recipient_before_generation(lab, tmp_path):
+    service, _, experiment, _, (alpha, beta) = approaches(lab, "ideas")
+    escaped = service.send_message(alpha.branch_id, beta.branch_id, "\\" * 1024, [], alpha, "m")
+    requests = []
+    client = client_for([response([message("considered")])], requests)
+    store = SQLiteRuntimeStore(tmp_path / "escaped-delivery.db")
+
+    async def source(checkpoint):
+        return service.discussion_updates(experiment["id"], beta, limit=10)
+
+    async def acknowledge(delivery_id):
+        service.acknowledge_discussion_updates(experiment["id"], delivery_id, beta, "ack-1")
+
+    runtime = ResponsesRuntime(
+        store=store, client=client, update_source=source, update_ack=acknowledge
+    )
+    result = await runtime.start("Inspect ideas", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert result.output_text == "considered"
+    provider_request = next(
+        payload for url, payload in requests if not url.endswith("/input_tokens")
+    )
+    [item] = json.loads(provider_request["input"][1]["content"])["items"]
+    assert item["retrieval_id"] == escaped["id"]
+    assert item["truncated"] is True
+    assert service.discussion_updates(experiment["id"], beta)["items"] == []
+    await client.close()
+    store.close()
+
+
 def test_empty_peer_poll_and_membership_are_not_scientific_progress():
     state = {}
     assert observe(state, "discussion_updates", {"after": None}, {"items": []}) is None
@@ -240,6 +269,59 @@ def test_ready_dispatch_uses_creation_age_inside_each_lineage_not_pagination_ord
         "b-old",
         "0-new",
     ]
+
+
+def test_ready_dispatch_rotates_only_ready_tasks_not_settled_history():
+    def task(identifier, branch, status, second, **extra):
+        return {
+            "id": identifier,
+            "branch_id": branch,
+            "status": status,
+            "created_at": f"2026-09-24T00:{second // 60:02d}:{second % 60:02d}Z",
+            **extra,
+        }
+
+    tasks = [
+        *[task(f"a-done-{n}", "a", "completed", n) for n in range(10)],
+        task("a-queued", "a", "queued", 60),
+        task("a-after", "a", "queued", 30, dependency_ids=["b-queued-0"]),
+        task("b-done", "b", "failed", 90),
+        *[task(f"b-queued-{n}", "b", "queued", 120 + n) for n in range(3)],
+    ]
+    settled = [f"a-done-{n}" for n in range(10)] + ["b-done"]
+    order = [item["id"] for item in fair_ready_order(tasks, {"a": None, "b": None})]
+    assert order == [
+        *settled,
+        "a-queued",
+        "b-queued-0",
+        "b-queued-1",
+        "b-queued-2",
+        "a-after",
+    ]
+    rotated = fair_ready_order(tasks, {"a": None, "b": None}, last_lineage="a")
+    assert [item["id"] for item in rotated][len(settled) : len(settled) + 2] == [
+        "b-queued-0",
+        "a-queued",
+    ]
+
+
+def test_ready_dispatch_keeps_rotation_after_a_root_with_no_ready_task():
+    tasks = [
+        {"id": "a1", "branch_id": "a", "status": "queued"},
+        {"id": "b-done", "branch_id": "b", "status": "completed"},
+        {"id": "c1", "branch_id": "c", "status": "queued"},
+    ]
+    parents = {"a": None, "b": None, "c": None}
+    order = fair_ready_order(tasks, parents, last_lineage="b")
+    assert [task["id"] for task in order] == ["b-done", "c1", "a1"]
+
+
+def test_ready_dispatch_breaks_equal_creation_times_by_task_id():
+    tasks = [
+        {"id": "z", "branch_id": "a", "status": "queued", "created_at": "2026-09-24T00:00:00Z"},
+        {"id": "m", "branch_id": "a", "status": "queued", "created_at": "2026-09-24T00:00:00Z"},
+    ]
+    assert [task["id"] for task in fair_ready_order(tasks, {"a": None})] == ["m", "z"]
 
 
 def test_peer_wait_is_scoped_to_exact_sender_and_has_finite_timeout(lab):
@@ -497,3 +579,59 @@ async def test_ack_race_rereads_changed_delivery_once_before_provider_request(tm
     assert any("withdrawal" in item.get("content", "") for item in provider_request["input"])
     await client.close()
     store.close()
+
+
+async def test_invalid_network_tool_arguments_are_recoverable_model_visible_rejections(lab):
+    service, _, experiment, _, (alpha, beta) = approaches(lab, "ideas")
+    topic = service.create_discussion(
+        experiment["id"], DiscussionCreate(title="Bounds", summary="Open"), alpha, "topic"
+    )
+    dispatcher = research_tools(service, beta, beta.branch_id)
+    post = {
+        "topic_id": topic["id"],
+        "kind": "finding",
+        "reply_to_post_id": None,
+        "artifact_ids": [],
+        "reference_post_ids": [],
+    }
+    recruit = {
+        "parent_branch_id": beta.branch_id,
+        "title": "Helper",
+        "objective": "Explore",
+        "relation": "helper",
+        "model_index": None,
+        "discussion_refs": [],
+        "synthesis": False,
+        "detached": True,
+        "public_summary": None,
+    }
+    cases = [
+        ("post_discussion", {**post, "content": "x" * 12001}),
+        ("post_discussion", {**post, "content": "   "}),
+        ("create_discussion", {"title": "t" * 201, "summary": "s", "branch_id": None}),
+        ("recruit_researcher", {**recruit, "title": " "}),
+        (
+            "publish_research_profile",
+            {
+                "branch_id": beta.branch_id,
+                "published": True,
+                "summary": " ",
+                "interests": [],
+                "assignment": "",
+            },
+        ),
+        ("join_research_team", {"branch_id": beta.branch_id, "team": "x" * 101, "joined": True}),
+        (
+            "request_research_capacity",
+            {"branch_id": beta.branch_id, "requested_workers": 1001, "rationale": "r"},
+        ),
+    ]
+    for index, (name, args) in enumerate(cases):
+        result = await dispatcher.dispatch(name, args, f"invalid-{index}")
+        assert result["error"]["code"] == "VALIDATION_ERROR", name
+        assert result["error"]["details"]["fields"], name
+        assert "x" * 100 not in json.dumps(result)
+    accepted = await dispatcher.dispatch(
+        "post_discussion", {**post, "content": "Valid after rejection"}, "valid"
+    )
+    assert accepted["content"] == "Valid after rejection"

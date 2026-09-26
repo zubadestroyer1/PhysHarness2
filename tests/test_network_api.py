@@ -7,6 +7,7 @@ from test_sharing import approaches
 from physharness.api import create_app
 from physharness.client import HarnessClient
 from physharness.config import Settings
+from physharness.discussion_models import DiscussionCreate
 from physharness.workforce_models import SeedPortfolioRequest
 
 
@@ -101,3 +102,46 @@ def test_http_discussion_delivery_ack_and_exact_source_share_service(lab, tmp_pa
             ).json()["items"]
             == []
         )
+
+
+def test_client_omits_absent_page_cursors_from_queries():
+    seen = []
+
+    def handle(request):
+        seen.append(request.url)
+        return httpx.Response(200, json={"items": [], "next_cursor": None})
+
+    client = HarnessClient("https://test", "token", transport=httpx.MockTransport(handle))
+    client.discussion_page("exp")
+    client.discussion_posts("topic")
+    client.discussion_updates("exp")
+    client.research_directory("exp")
+    client.index_page("branch", "claims")
+    client.history_page("branch", "claim")
+    client.research_graph_page("branch")
+    assert len(seen) == 7
+    assert all("after" not in url.params for url in seen), [str(url) for url in seen]
+    client.discussion_updates("exp", after=7)
+    assert seen[-1].params["after"] == "7"
+    client.close()
+
+
+def test_client_first_pages_are_accepted_by_the_service(lab, tmp_path):
+    service, _, experiment, _, (alpha, beta) = approaches(lab, "ideas")
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'unused.db'}",
+        artifact_root=tmp_path / "unused-artifacts",
+        auth_tokens={"beta": beta.model_dump(mode="json")},
+        auto_create_schema=True,
+    )
+    topic = service.create_discussion(
+        experiment["id"], DiscussionCreate(title="Paging", summary="First page"), alpha, "topic"
+    )
+    with TestClient(create_app(settings, service=service)) as api:
+        client = HarnessClient("http://testserver", "beta", transport=api._transport)
+        assert client.discussion_page(experiment["id"])["items"][0]["id"] == topic["id"]
+        assert client.discussion_posts(topic["id"])["items"] == []
+        assert client.discussion_updates(experiment["id"])["items"] == []
+        assert client.research_directory(experiment["id"])["items"] == []
+        assert "items" in client.research_graph_page(beta.branch_id)
+        client.close()
