@@ -42,6 +42,15 @@ def _safe_provider_field(value: Any, *, maximum: int) -> str | None:
     return value if re.fullmatch(r"[A-Za-z0-9_.\[\]-]+", value) else None
 
 
+def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
+    """Input and output tokens used by a session and every predecessor in its lineage."""
+    state = checkpoint.native_state
+    return (
+        state.get("cumulative_input_offset", 0) + checkpoint.session.input_tokens,
+        state.get("cumulative_output_offset", 0) + checkpoint.session.output_tokens,
+    )
+
+
 class ToolDispatcher:
     """Only explicitly registered, schema-checked host functions are exposed.
 
@@ -263,7 +272,15 @@ class ResponsesRuntime:
             # source with a withdrawal notice. Save that exact new view before ack.
             await self._receive_updates(session, state, changed_retry=True)
 
-    async def start(self, prompt: str, model: ModelConfig, limits: RuntimeLimits) -> RuntimeResult:
+    async def start(
+        self,
+        prompt: str,
+        model: ModelConfig,
+        limits: RuntimeLimits,
+        *,
+        predecessor: RuntimeCheckpoint | None = None,
+    ) -> RuntimeResult:
+        """Start fresh context; a portable successor still inherits its lineage's token use."""
         model = model.model_copy(
             update={"parameters": validate_responses_parameters(model.parameters)}
         )
@@ -277,6 +294,13 @@ class ResponsesRuntime:
             "compaction_recovery_protocol": 1,
             "stagnation": dict(self.stagnation_state),
         }
+        if predecessor is not None:
+            predecessor.verify()
+            if predecessor.session.status != "handed_off":
+                raise ExecutionError("HANDOFF_MISMATCH", "Predecessor session is not handed off")
+            state["cumulative_input_offset"], state["cumulative_output_offset"] = (
+                lineage_token_usage(predecessor)
+            )
         await self._save(session, state)
         return await self._run(session, state, prompt)
 
@@ -504,6 +528,7 @@ class ResponsesRuntime:
             {"session_id": source.id, "archive_id": archive_id}
             for archive_id in prior.get("archives", [])
         )
+        cumulative_input, cumulative_output = lineage_token_usage(source_checkpoint)
         state: dict[str, Any] = {
             "input": deepcopy(prior["input"]),
             "responses": deepcopy(prior["responses"]),
@@ -516,10 +541,8 @@ class ResponsesRuntime:
             "initial_anchor": prior.get("initial_anchor", prompt),
             "active_input_epoch": prior.get("active_input_epoch", 0),
             "stagnation": successor_state(prior.get("stagnation", {})),
-            "cumulative_input_offset": prior.get("cumulative_input_offset", 0)
-            + source.input_tokens,
-            "cumulative_output_offset": prior.get("cumulative_output_offset", 0)
-            + source.output_tokens,
+            "cumulative_input_offset": cumulative_input,
+            "cumulative_output_offset": cumulative_output,
         }
         await self._save(session, state)
         return await self._run(session, state, prompt)
