@@ -711,6 +711,25 @@ async def test_varied_unknown_tool_names_are_counted_per_session():
     assert "unavailable_calls" not in legacy
 
 
+async def test_unknown_tool_and_repeated_read_warnings_are_independent():
+    """Each counter warns on its own: one warning never silences the other's."""
+    dispatcher = widest()
+    read = ({"artifact_id": "a"}, {"reference": {}, "content_utf8": "x"})
+    for first in ("read", "unknown"):
+        state, signals = {}, []
+        order = ("read", "unknown") if first == "read" else ("unknown", "read")
+        for kind in order:
+            for index in range(4):
+                if kind == "read":
+                    signals.append(observe(state, "read_artifact", *read))
+                else:
+                    name = f"bogus_{index}"
+                    signals.append(observe(state, name, {}, await call(dispatcher, name, {})))
+        assert signals == ([None] * 3 + ["stagnation_warning"]) * 2, first
+    # The unknown-tool warning is per native session, like its count.
+    assert "unavailable_warned" not in successor_state(state)
+
+
 async def test_worker_varying_unknown_tool_names_hands_off(lab):
     service, author, exp, branches, _ = society_lab(lab)
     task = service.create_task(
@@ -2088,6 +2107,51 @@ async def test_runner_that_loses_an_adopted_synthesis_skips_it_quietly(lab, monk
     if race == "before_launch":
         # The fresh check before launch skips it: this run never even tries the lease.
         assert orphan_id not in launched
+
+
+async def test_runner_reports_losing_the_lease_on_a_synthesis_it_scheduled(lab, monkeypatch):
+    """Only an adopted synthesis is quietly left to another runner: a lease conflict on one
+    this run scheduled itself is an outcome of this run."""
+    service, author, exp, branches, (alpha, _beta) = society_lab(lab)
+    service.configure_workforce(
+        exp["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=100, max_pending_tasks=50, synthesis_interval_posts=4
+        ),
+        OPERATOR,
+        "workforce",
+    )
+    for title in ("Trace lemma", "Gap lemma"):
+        node = service.create_node(
+            exp["id"], NodeCreate(node_type="lemma", title=title, statement="S."), alpha, title
+        )
+        set_status(service, node["id"], "refereed", "formally_stated")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    acquire = service.acquire_task
+    raced = []
+
+    def racing_acquire(task_id, holder, ttl_seconds, actor, key):
+        if service.get_record("task", task_id, OPERATOR).get("synthesis") and not raced:
+            raced.append(task_id)
+            acquire(task_id, "other-holder", 300, actor, f"other:{key}")
+        return acquire(task_id, holder, ttl_seconds, actor, key)
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        return httpx.Response(200, json=response([message("done")], response_id="r"))
+
+    runner, client = society_runner(service, route)
+    monkeypatch.setattr(service, "acquire_task", racing_acquire)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    (synthesis_id,) = raced
+    outcome = next(item for item in report["outcomes"] if item["task_id"] == synthesis_id)
+    assert (outcome["status"], outcome["code"]) == ("blocked", "LEASE_HELD")
 
 
 # Final review fixes (I1: local compiles only for the node's real top-level declaration) ------

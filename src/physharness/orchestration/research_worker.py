@@ -2161,6 +2161,7 @@ class ResearchTeamRunner:
         own_root_lineages = {root_lineage(task["branch_id"], branch_parents) for task in roots}
         last_lineage = None
         scheduled_synthesis_ids = set()
+        own_synthesis_ids = set()  # Scheduled by this run, not adopted from another.
         next_synthesis_tick = 0.0
 
         def platform_lineage_task_ids(tasks):
@@ -2329,6 +2330,7 @@ class ResearchTeamRunner:
                             # This run scheduled it, so it runs here whether or not the
                             # synthesis branch has a parent (a society sample may have none).
                             scheduled_synthesis_ids.add(synthesis["task"]["id"])
+                            own_synthesis_ids.add(synthesis["task"]["id"])
                             all_tasks = list(self._records("task", actor, experiment["id"]))
                 if experiment.get("society"):
                     # Adopt queued parentless synthesis left by a crashed or timed-out run:
@@ -2487,10 +2489,12 @@ class ResearchTeamRunner:
                         if (
                             experiment.get("society")
                             and task_id in scheduled_synthesis_ids
+                            and task_id not in own_synthesis_ids
                             and code in LEASE_CONFLICT_CODES
                         ):
-                            # Another society runner won the lease (or already finished
-                            # it): its work, not an outcome of this run.
+                            # Another society runner won the lease on an adopted synthesis
+                            # (or already finished it): its work, not an outcome of this run.
+                            # A conflict on one this run scheduled is this run's outcome.
                             yield_synthesis(task_id)
                             continue
                         outcomes[task_id] = {

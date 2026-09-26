@@ -210,7 +210,9 @@ tools, the prompts and the delivery shapes.
   objections only on the assigned node's thread.
 - **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
   (`lab="new"`), up to `lab_size_max`. An agent cannot recruit into another lab, so no
-  outsider fills a lab or plants a child in it to relay messages across labs. `message(to="lab")` fans out to the lab. Direct
+  outsider fills a lab or plants a child in it to relay messages across labs. Forks
+  (`create_branch`) follow the same rule, so a branchless orchestrator agent cannot fork
+  another branch into that branch's lab. `message(to="lab")` fans out to the lab. Direct
   messages across labs are refused unless the policy allows them, so cross-lab
   discourse goes through the commons.
 
@@ -242,13 +244,15 @@ earliest posts first and fails closed past its bound.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
 that lists the available tools. Rejections count per native session whatever the name,
 so a model that keeps inventing names reaches the stagnation warning after four and the
-stagnation handoff after eight. Optional check-ins and stagnation nudges are switched
+stagnation handoff after eight. That warning is separate from the repeated-read warning,
+so neither silences the other. Optional check-ins and stagnation nudges are switched
 per campaign. The finite supervisor runs the referee tasks its own lineages request,
 and synthesis tasks that have no parent branch. A platform-rooted task it runs (a
 referee, or a parentless synthesis) adds its lineage to the run's own, so a review
 that such a task requests runs in the same run. Every society run adopts a queued
 parentless synthesis, so two concurrent runs may pick the same one; the run that finds
-it already leased skips it without recording an outcome.
+it already leased skips it without recording an outcome. A lease conflict on a synthesis
+the run scheduled itself is still recorded as its outcome.
 
 Operators prepare a society arm from a run plan with a `society` block. See
 `work/society-s1/run-plan.example.json` and the
