@@ -1149,3 +1149,105 @@ async def test_task_token_guard_is_cumulative_across_portable_continuations(lab,
     assert final.get("continuation_count", 0) == (6 if handoff == "model_request" else 0)
     assert service.ledger(experiment["id"], actor)["active_workers"] == 0
     await client.close()
+
+
+def _protocol_only_runtime(client):
+    """A supported adapter whose start() is exactly RuntimeAdapter.start (no predecessor)."""
+
+    class ProtocolOnlyRuntime:
+        def __init__(self, **kwargs):
+            self._inner = ResponsesRuntime(client=client, **kwargs)
+
+        async def start(self, prompt, model, limits):
+            return await self._inner.start(prompt, model, limits)
+
+        def __getattr__(self, name):
+            if name == "start_from_handoff":
+                raise AttributeError(name)
+            return getattr(self._inner, name)
+
+    return ProtocolOnlyRuntime
+
+
+def _ticket_state(service, actor, experiment, task):
+    row = service.get_record("task", task["id"], actor)
+    (link,) = service.list_records("continuation_link", actor, experiment["id"])
+    return row, link
+
+
+@pytest.mark.asyncio
+async def test_protocol_only_runtime_continues_portably_without_numeric_token_guard(lab):
+    limits = RuntimeLimits(max_turns=30, max_total_tokens=None)
+    service, actor, experiment, task, _, calls, client = _handoff_lab(
+        lab, "protocol-unbounded", handoffs=1, limits=limits
+    )
+    executor = ResearchTaskExecutor(
+        service, prices=PRICES, runtime_factory=_protocol_only_runtime(client), limits=limits
+    )
+    assert (await executor.execute(task["id"], actor.project_id))["continuation_count"] == 1
+    assert (await executor.execute(task["id"], actor.project_id))["status"] == "completed"
+    assert len(calls) == 2
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0
+    _assert_linear_lineage(service, actor, experiment)
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_protocol_only_runtime_with_numeric_token_guard_fails_before_consuming(lab):
+    limits = RuntimeLimits(max_turns=30, max_total_tokens=10_000)
+    service, actor, experiment, task, _, calls, client = _handoff_lab(
+        lab, "protocol-bounded", handoffs=1, limits=limits
+    )
+    executor = ResearchTaskExecutor(
+        service, prices=PRICES, runtime_factory=_protocol_only_runtime(client), limits=limits
+    )
+    assert (await executor.execute(task["id"], actor.project_id))["continuation_count"] == 1
+    ticket = service.get_record("task", task["id"], actor)["ready_continuation"]
+    with pytest.raises(HarnessError) as unsupported:
+        await executor.execute(task["id"], actor.project_id)
+    assert unsupported.value.code == "CONTINUATION_TOKEN_GUARD_UNSUPPORTED"
+    row, link = _ticket_state(service, actor, experiment, task)
+    # The cumulative guard is never silently reset, and the ticket is never spent.
+    assert row["ready_continuation"] == ticket
+    assert row.get("consumed_continuation") is None
+    assert link["status"] == "issued" and link.get("holder") is None
+    assert row["status"] == "blocked"
+    failures = [
+        json.loads(service.artifact_content(a["id"], actor))
+        for a in service.list_records("artifact", actor, experiment["id"])
+        if a.get("artifact_kind") == "execution_failure"
+    ]
+    assert [f["code"] for f in failures] == ["CONTINUATION_TOKEN_GUARD_UNSUPPORTED"]
+    assert len(calls) == 1
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_changed_portable_source_checkpoint_fails_before_consuming(lab, monkeypatch):
+    service, actor, experiment, task, executor, calls, client = _handoff_lab(
+        lab, "stale-source", handoffs=1
+    )
+    assert (await executor.execute(task["id"], actor.project_id))["continuation_count"] == 1
+    ticket = service.get_record("task", task["id"], actor)["ready_continuation"]
+    original_load = CanonicalRuntimeStore.load
+
+    async def changed_source(self, session_id):
+        checkpoint = await original_load(self, session_id)
+        if session_id != ticket["source_session_id"]:
+            return checkpoint
+        return RuntimeCheckpoint.build(
+            checkpoint.session, {**checkpoint.native_state, "rewritten": True}
+        )
+
+    monkeypatch.setattr(CanonicalRuntimeStore, "load", changed_source)
+    with pytest.raises(HarnessError) as stale:
+        await executor.execute(task["id"], actor.project_id)
+    assert stale.value.code == "CONTINUATION_STALE"
+    row, link = _ticket_state(service, actor, experiment, task)
+    assert row["ready_continuation"] == ticket
+    assert row.get("consumed_continuation") is None
+    assert link["status"] == "issued" and link.get("holder") is None
+    assert len(calls) == 1
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0
+    await client.close()

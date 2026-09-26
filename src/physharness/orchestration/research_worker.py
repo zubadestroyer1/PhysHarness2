@@ -71,6 +71,22 @@ def _validate_worker_preflight(report):
             )
 
 
+def _accepts_keyword(function, name):
+    """Whether ``function`` takes ``name`` as a keyword, directly or through ``**kwargs``."""
+    try:
+        parameters = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            p.name == name
+            and p.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+        )
+        for p in parameters
+    )
+
+
 async def _reserve_model_with_wait(
     service, experiment_id, amount, tokens, actor, operation_id, model_task_binding
 ):
@@ -1557,7 +1573,30 @@ class ResearchTaskExecutor:
             native_compatible = native_compatible and callable(
                 getattr(runtime, "start_from_handoff", None)
             )
+            handoff_source, carry_lineage_tokens = None, False
             if ready and not recovering_successor:
+                # Every check that can reject this successor runs while the ticket is
+                # still issued, so a rejection leaves it intact rather than spent.
+                if not native_compatible:
+                    # A portable successor starts a fresh session. A numeric token
+                    # guard caps the whole task lineage, so the runtime must accept
+                    # the predecessor to carry its cumulative use; never reset it.
+                    carry_lineage_tokens = _accepts_keyword(runtime.start, "predecessor")
+                    if not carry_lineage_tokens and runtime_limits.max_total_tokens is not None:
+                        raise HarnessError(
+                            "CONTINUATION_TOKEN_GUARD_UNSUPPORTED",
+                            "This runtime cannot carry the task's cumulative max_total_tokens "
+                            "guard into a portable continuation.",
+                            remediation=(
+                                "Continue with a runtime whose start() accepts predecessor "
+                                "(the Responses runtime), or set runtime_limits."
+                                "max_total_tokens to null so the shared dollar and time "
+                                "budget bounds the task."
+                            ),
+                        )
+                handoff_source = await store.load(ready["source_session_id"])
+                if handoff_source.state_digest != ready["source_checkpoint_digest"]:
+                    raise HarnessError("CONTINUATION_STALE", "Handoff source checkpoint changed.")
                 self.service.consume_continuation(
                     task_id,
                     holder,
@@ -1636,20 +1675,15 @@ class ResearchTaskExecutor:
                         runtime.continue_session(recovering_session, prompt)
                     )
             elif native_compatible:
-                source = await store.load(ready["source_session_id"])
-                if source.state_digest != ready["source_checkpoint_digest"]:
-                    raise HarnessError("CONTINUATION_STALE", "Handoff source checkpoint changed.")
                 running = asyncio.create_task(
-                    runtime.start_from_handoff(source, prompt, model_config, runtime_limits)
+                    runtime.start_from_handoff(handoff_source, prompt, model_config, runtime_limits)
                 )
             elif ready:
-                # Portable context is fresh, but the numeric token guard stays
-                # cumulative across the whole task lineage.
-                source = await store.load(ready["source_session_id"])
-                if source.state_digest != ready["source_checkpoint_digest"]:
-                    raise HarnessError("CONTINUATION_STALE", "Handoff source checkpoint changed.")
+                # Portable context is fresh, but a numeric token guard stays cumulative
+                # across the task lineage. Without one there is nothing to carry.
+                lineage = {"predecessor": handoff_source} if carry_lineage_tokens else {}
                 running = asyncio.create_task(
-                    runtime.start(prompt, model_config, runtime_limits, predecessor=source)
+                    runtime.start(prompt, model_config, runtime_limits, **lineage)
                 )
             else:
                 running = asyncio.create_task(runtime.start(prompt, model_config, runtime_limits))
