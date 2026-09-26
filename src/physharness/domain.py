@@ -94,6 +94,35 @@ class ModelConfiguration(StrictModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
+class LiteraturePolicy(StrictModel):
+    mode: Literal["off", "open", "benchmark"] = "off"
+    # arXiv ids, DOIs, domains or title fragments withheld from benchmark runs.
+    blocked_sources: list[Annotated[str, Field(min_length=1, max_length=500)]] = Field(
+        default_factory=list, max_length=200
+    )
+    masked_reference_artifact_id: str | None = Field(default=None, min_length=1, max_length=36)
+    overlap_threshold: float = Field(default=0.02, ge=0, le=1)
+
+
+class ScaffoldingPolicy(StrictModel):
+    playbook: bool = True
+    skills: bool = True
+    checkin_every_turns: int | None = Field(default=12, ge=2, le=200)
+    stagnation_nudges: bool = True
+
+
+class SocietyPolicy(StrictModel):
+    """Immutable opt-in for the shared commons; absent means today's behaviour."""
+
+    tool_profile: Literal["society"] = "society"
+    claim_ttl_seconds: int = Field(default=900, ge=60, le=86400)
+    lab_size_max: int = Field(default=8, ge=1, le=32)
+    cross_lab_direct_messages: bool = False
+    referee_quorum: int = Field(default=1, ge=1, le=5)
+    literature: LiteraturePolicy = Field(default_factory=LiteraturePolicy)
+    scaffolding: ScaffoldingPolicy = Field(default_factory=ScaffoldingPolicy)
+
+
 class ExperimentCreate(StrictModel):
     campaign_id: str
     problem_id: str
@@ -105,6 +134,18 @@ class ExperimentCreate(StrictModel):
     runtime_limits: dict[str, Any] = Field(default_factory=dict)
     execution_profile: Literal["general", "formal-research"] = "general"
     context_profile: Literal["research", "stress8192"] = "research"
+    society: SocietyPolicy | None = None
+
+    @model_validator(mode="after")
+    def society_scope(self):
+        if self.society is None:
+            return self
+        if self.sharing != "ideas":
+            raise ValueError("SOCIETY_REQUIRES_IDEAS: a society commons requires ideas sharing")
+        literature = self.society.literature
+        if literature.mode == "benchmark" and not literature.masked_reference_artifact_id:
+            raise ValueError("Benchmark literature mode requires masked_reference_artifact_id")
+        return self
 
 
 class BranchCreate(StrictModel):

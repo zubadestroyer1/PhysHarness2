@@ -37,6 +37,17 @@ READ_TOOLS = frozenset(
         "discussion_updates",
         "research_directory",
         "research_capacity",
+        # Society profile (Task 9): the consolidated read tools.
+        "commons_query",
+        "commons_read",
+        "inbox",
+        "read_file",
+        "search_library",
+        "read_source",
+        "search_literature",
+        "fetch_source",
+        "verification_status",
+        "load_skill",
     }
 )
 TERMINAL_READS = frozenset({"tail", "cat", "head", "sed", "rg", "grep", "awk"})
@@ -54,8 +65,13 @@ NON_PROGRESS_TOOLS = READ_TOOLS | frozenset(
         "publish_research_profile",
         "join_research_team",
         "request_research_capacity",
+        # Society profile (Task 9).
+        "notebook",
+        "commons_claim",
+        "wait",
     }
 )
+COMMAND_TOOLS = frozenset({"run_command", "shell"})
 STATE_KEYS = frozenset(
     {
         "progress_epoch",
@@ -65,6 +81,10 @@ STATE_KEYS = frozenset(
         "recovery_requested",
         "recovery_attempted",
         "exhausted",
+        # Society profiles only: rejected unregistered tool names in this native session,
+        # and whether that count has warned (apart from the repeated-read warning).
+        "unavailable_calls",
+        "unavailable_warned",
     }
 )
 MAX_FINGERPRINTS = 64
@@ -106,7 +126,7 @@ def _read_target(arguments: dict[str, Any]) -> dict[str, Any]:
 
 
 def _work_identity(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> str:
-    if name == "write_workspace_file":
+    if name in {"write_workspace_file", "write_file"}:
         return _hash({"name": name, "content": arguments.get("content")})
     if name == "store_artifact":
         return _hash({"name": name, "content": arguments.get("content")})
@@ -142,16 +162,32 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
         not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None for value in seen
     ):
         raise ValueError("invalid stagnation fingerprint")
-    for field in ("warned", "recovery_requested", "recovery_attempted", "exhausted"):
+    for field in (
+        "warned",
+        "recovery_requested",
+        "recovery_attempted",
+        "exhausted",
+        "unavailable_warned",
+    ):
         if type(state.get(field, False)) is not bool:
             raise ValueError("invalid stagnation flag")
+    unavailable = state.get("unavailable_calls", 0)
+    if type(unavailable) is not int or not 0 <= unavailable <= 1_000_000:
+        raise ValueError("invalid unavailable tool count")
     return dict(state)
 
 
+def _unavailable(result: dict[str, Any]) -> bool:
+    """A call outside the profile. Only society profiles answer one with this recoverable
+    rejection; the legacy dispatcher's error is fatal, so legacy state never sees it."""
+    error = result.get("error")
+    return isinstance(error, dict) and error.get("code") == "TOOL_UNAVAILABLE"
+
+
 def _terminal_read(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> bool:
-    if name == "discussion_updates":
+    if name in {"discussion_updates", "inbox"}:
         return bool(result.get("items")) and "error" not in result
-    if name in {"inspect_verification", "wait_for_verification"}:
+    if name in {"inspect_verification", "wait_for_verification", "verification_status"}:
         return result.get("status") in {"blocked", "rejected", "verified", "completed", "failed"}
     if name == "joined_children":
         children = result.get("children")
@@ -167,7 +203,7 @@ def _terminal_read(name: str, arguments: dict[str, Any], result: dict[str, Any])
             and bool(result.get("children"))
             and "error" not in result
         )
-    if name == "run_command":
+    if name in COMMAND_TOOLS:
         return _command_name(arguments) in TERMINAL_READS and result.get("exit_code") == 0
     return name in READ_TOOLS and "error" not in result
 
@@ -187,11 +223,17 @@ def observe(
     state: dict[str, Any], name: str, arguments: dict[str, Any], result: dict[str, Any]
 ) -> str | None:
     """Update in place and return a signal; lifecycle authority stays external."""
+    if _unavailable(result):
+        # A model varying the unknown name (or its arguments) never repeats a fingerprint,
+        # so every rejected name counts, for the whole native session: new work in between
+        # does not reset the count.
+        state["unavailable_calls"] = state.get("unavailable_calls", 0) + 1
+        return _escalate(state, state["unavailable_calls"], warned="unavailable_warned")
     if not _terminal_read(name, arguments, result):
         if (
             name not in NON_PROGRESS_TOOLS
             and "error" not in result
-            and (name != "run_command" or _command_name(arguments) in WORK_COMMANDS)
+            and (name not in COMMAND_TOOLS or _command_name(arguments) in WORK_COMMANDS)
         ):
             work = _work_identity(name, arguments, result)
             seen = state.setdefault("seen_work", [])
@@ -220,7 +262,14 @@ def observe(
     if fingerprint not in counts and len(counts) == MAX_FINGERPRINTS:
         counts.pop(next(iter(counts)))
     counts[fingerprint] = counts.get(fingerprint, 0) + 1
-    repeats = counts[fingerprint]
+    return _escalate(state, counts[fingerprint])
+
+
+def _escalate(state: dict[str, Any], repeats: int, warned: str = "warned") -> str | None:
+    """Warn at 4 repeats, request one recovery at 8, then report exhaustion at 8 more.
+
+    Each counter warns under its own ``warned`` flag; the recovery flags are shared.
+    """
     if state.get("recovery_attempted") and repeats >= 8:
         if not state.get("exhausted"):
             state["exhausted"] = True
@@ -229,8 +278,8 @@ def observe(
     if repeats >= 8 and not state.get("recovery_requested") and not state.get("recovery_attempted"):
         state["recovery_requested"] = True
         return "recovery_requested"
-    if repeats >= 4 and not state.get("warned"):
-        state["warned"] = True
+    if repeats >= 4 and not state.get(warned):
+        state[warned] = True
         return "stagnation_warning"
     return None
 
@@ -238,9 +287,26 @@ def observe(
 def successor_state(state: dict[str, Any]) -> dict[str, Any]:
     """Consume the single recovery request when a new native session starts."""
     result = validate_state(state)
+    # Unavailable-tool calls are counted (and warned about) per native session.
+    result.pop("unavailable_calls", None)
+    result.pop("unavailable_warned", None)
     if result.get("recovery_requested"):
         result["recovery_requested"] = False
         result["recovery_attempted"] = True
         result["read_counts"] = {}
         result["warned"] = False
     return result
+
+
+WARNING_MESSAGE = (
+    "Repeated unchanged terminal results; perform substantive new work or revise the approach."
+)
+RECOVERY_MESSAGE = "Bounded recovery is required before more repeated reads."
+
+
+def signal_message(signal: str, suggestions: list[str] | None = None) -> str:
+    """Agent-visible text for a signal; optional suggestions are listed as options only."""
+    text = WARNING_MESSAGE if signal == "stagnation_warning" else RECOVERY_MESSAGE
+    if not suggestions:
+        return text
+    return text + " Options: " + "; ".join(suggestions)

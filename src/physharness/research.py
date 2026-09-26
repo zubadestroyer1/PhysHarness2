@@ -1,6 +1,7 @@
 """Source and knowledge services connected to the canonical scientific authority."""
 
 import hashlib
+import re
 
 from sqlalchemy import select
 
@@ -9,6 +10,7 @@ from .errors import HarnessError
 from .evaluation.evidence import CanonicalEvidence
 from .knowledge import LemmaIndex, LemmaRecord, ingest_text
 from .knowledge.index import tokens
+from .knowledge.literature import FETCH_LICENSE, MAX_TEXT_CHARS, MAX_URL_CHARS
 from .storage import RecordRow, record_json_text
 
 
@@ -74,6 +76,137 @@ class ResearchMixin:
                 "source_revision": source_revision,
                 "license": license,
             },
+            action,
+        )
+
+    def record_literature_fetch(self, experiment_id, result, actor, key):
+        """Log a broker fetch; released text becomes a source, withheld text leaves a flag."""
+        self._research_role(actor)
+        status = result.get("status") if isinstance(result, dict) else None
+        url = result.get("url") if status else None
+        # Where the text actually came from after redirects; the requested URL otherwise.
+        final_url = result.get("final_url", url) if status else None
+        digest = result.get("sha256") if status else None
+        flagged = status == "withheld_contamination_risk"
+        text = result.get("text") if status == "ok" else None
+        flag = result.get("flag") if flagged else None
+        if (
+            status not in ("ok", "withheld_contamination_risk")
+            or not isinstance(url, str)
+            or not 1 <= len(url) <= MAX_URL_CHARS
+            or not isinstance(final_url, str)
+            or not 1 <= len(final_url) <= MAX_URL_CHARS
+            or not isinstance(digest, str)
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or (status == "ok" and (not isinstance(text, str) or len(text) > MAX_TEXT_CHARS))
+            or (flagged and not isinstance(flag, dict))
+        ):
+            raise HarnessError(
+                "LITERATURE_RESULT_INVALID", "Record only a literature broker fetch result."
+            )
+        self.get_record("experiment", experiment_id, actor)
+        source = screen_content = None
+        if text:
+            source = self.ingest_source(
+                experiment_id,
+                text,
+                "markdown",
+                final_url,
+                digest[:16],
+                FETCH_LICENSE,
+                actor,
+                f"literature-source:{key}",
+            )
+        if flagged:
+            # Only screen measurements are retained; withheld text never is.
+            flag = {
+                name: flag[name]
+                for name in ("shared", "reference_ngrams", "ratio", "threshold")
+                if type(flag.get(name)) in (int, float)
+            }
+            if result["flag"].get("reason") in (
+                "blocked_source_key",
+                "blocked_source_title",
+                "reference_overlap",
+            ):
+                flag["reason"] = result["flag"]["reason"]
+            screen_content = canonical_json(
+                {"url": url, "final_url": final_url, "sha256": digest, "flag": flag}
+            )
+            screen_content = screen_content.encode("utf-8")
+
+        def action(session, op):
+            self._get(session, "experiment", experiment_id, actor)
+            screen = None
+            if screen_content:
+                # Platform-written in the same transaction: agents cannot create this
+                # reserved private kind through create_artifact.
+                screen_sha256 = self.artifacts.put(screen_content)
+                screen = self._insert(
+                    session,
+                    "artifact",
+                    actor,
+                    {
+                        "experiment_id": experiment_id,
+                        "branch_id": None,
+                        "trusted_input": False,
+                        "media_type": "application/json",
+                        "provenance": {"uri": url},
+                        "artifact_kind": "literature_screen",
+                        "sha256": screen_sha256,
+                        "size_bytes": len(screen_content),
+                        "submitted_by": actor.id,
+                    },
+                )
+                self._event(
+                    session, actor, op, "artifact.created", screen["id"], {"sha256": screen_sha256}
+                )
+            record = self._insert(
+                session,
+                "literature_fetch",
+                actor,
+                {
+                    "experiment_id": experiment_id,
+                    "url": url,
+                    "final_url": final_url,
+                    "sha256": digest,
+                    "status": status,
+                    "flagged": flagged,
+                    "source_id": source["id"] if source else None,
+                    "artifact_id": source["artifact_id"] if source else None,
+                    "screen_artifact_id": screen["id"] if screen else None,
+                },
+            )
+            self._event(
+                session,
+                actor,
+                op,
+                "literature.fetched",
+                record["id"],
+                {"experiment_id": experiment_id, "status": status, "flagged": flagged},
+            )
+            if screen:
+                # Aggregated on the private screen artifact, so agents never see it.
+                self._event(
+                    session,
+                    actor,
+                    op,
+                    "literature.contamination_flag",
+                    screen["id"],
+                    {
+                        "experiment_id": experiment_id,
+                        "literature_fetch_id": record["id"],
+                        "sha256": digest,
+                        "flag": flag,
+                    },
+                )
+            return record
+
+        return self._execute(
+            actor,
+            key,
+            "literature.fetch.record",
+            {"experiment_id": experiment_id, "url": url, "sha256": digest, "status": status},
             action,
         )
 

@@ -14,6 +14,7 @@ from ..domain import Digest, StrictModel, digest_json
 from ..errors import HarnessError
 from ..execution import CommandRequest
 from ..execution.types import GUEST_PYTHON
+from .lean_session import LeanSession
 
 
 def validated_lean_imports(imports: list[str]) -> list[str]:
@@ -42,6 +43,7 @@ class WorkspacePolicy(StrictModel):
 class WorkspaceTools:
     def __init__(self, broker, policy: WorkspacePolicy):
         self.broker, self.policy, self.workspace = broker, policy, None
+        self._lean_session = None
         # Set by close(): the VM's resulting status and any final checkpoint or refusal.
         self.cleanup_report: dict | None = None
         task = broker.service.get_record("task", broker.task_id, broker.actor)
@@ -151,7 +153,8 @@ class WorkspaceTools:
             "status": receipt["status"],
         }
 
-    async def lean_scratch(self, arguments, operation_id):
+    async def lean_scratch(self, arguments, operation_id, *, lean_args=()):
+        """``lean_args`` precede the file path; tool dispatch never passes keywords."""
         source = arguments["source"]
         if len(source.encode("utf-8")) > 1_000_000:
             raise HarnessError("SOURCE_LIMIT", "Scratch Lean source exceeds one MiB.")
@@ -169,7 +172,7 @@ class WorkspaceTools:
             expected_execution_id=workspace["execution_id"],
             request=CommandRequest(
                 operation_id=operation_id + ":lean",
-                argv=["lake", "--offline", "env", "lean", "/work/" + path],
+                argv=["lake", "--offline", "env", "lean", *lean_args, "/work/" + path],
                 cwd="/opt/sources/physlib",
                 timeout_seconds=min(self.policy.timeout_seconds, 120),
                 max_output_bytes=65536,
@@ -181,6 +184,16 @@ class WorkspaceTools:
             "diagnostics": result,
             "proof_status": "not_accepted",
         }
+
+    def allows_background_processes(self) -> bool:
+        """The local Docker workbench requires a quiescent guest after every command."""
+        return self.broker.provider_spec["provider"] != "local_docker"
+
+    def lean_session(self) -> LeanSession:
+        """This workspace's one Lean session, shared by the society profile's Lean tools."""
+        if self._lean_session is None:
+            self._lean_session = LeanSession(self)
+        return self._lean_session
 
     async def check_lean_type(self, arguments, operation_id):
         expression = arguments["expression"]

@@ -248,6 +248,7 @@ class CollaborationMixin:
             task = session.get(RecordRow, task_id)
             if task is None or task.kind != "task" or task.project_id != actor.project_id:
                 raise HarnessError("NOT_FOUND", "Assignment was not found.", status=404)
+            self._guard_referee_task(task, actor)
             self._active(session, task.payload["experiment_id"], actor)
             binding = current_worker_effects.get()
             owner = task.payload.get("created_by") == actor.id
@@ -889,12 +890,78 @@ class CollaborationMixin:
             action,
         )
 
-    def send_message(self, branch_id, recipient_id, content, artifact_ids, actor, key):
-        self._research_role(actor)
+    @staticmethod
+    def _message_text(content):
         if not content.strip() or len(content) > 20000:
             raise HarnessError(
                 "INVALID_MESSAGE", "Messages require 1–20,000 characters.", status=422
             )
+
+    @staticmethod
+    def _lab_route(experiment, sender, recipient):
+        """Society direct messages stay in a lab or parent/child pair unless policy opens them."""
+        policy = experiment.payload.get("society")
+        if not policy or policy.get("cross_lab_direct_messages") or sender.id == recipient.id:
+            return
+        lab = sender.payload.get("lab")
+        if lab is not None and recipient.payload.get("lab") == lab:
+            return
+        if sender.id == recipient.payload.get("parent_id") or recipient.id == sender.payload.get(
+            "parent_id"
+        ):
+            return
+        raise HarnessError(
+            "CROSS_LAB_MESSAGE",
+            "Direct messages reach only your lab and your parent or child branches.",
+            status=403,
+            remediation=(
+                "Post on the relevant commons node; cross-lab discourse goes through the commons."
+            ),
+        )
+
+    def _deliver_message(
+        self, session, op, actor, experiment, sender, recipient_id, content, artifact_ids, extra
+    ):
+        """Insert one routed message and its event; shared by direct and lab sends."""
+        # Recipient routing is not permission to read the recipient's private branch record.
+        recipient = session.get(RecordRow, recipient_id)
+        if not recipient or recipient.kind != "branch" or recipient.project_id != actor.project_id:
+            raise HarnessError("NOT_FOUND", "Recipient branch was not found.", status=404)
+        experiment_id = sender.payload["experiment_id"]
+        if recipient.payload["experiment_id"] != experiment_id:
+            raise HarnessError(
+                "MAILBOX_SCOPE", "Branches must share an experiment to exchange messages."
+            )
+        self._guard_referee_recipient(sender, recipient)
+        self._lab_route(experiment, sender, recipient)
+        self._recipient_visible_artifacts(
+            session, artifact_ids, experiment_id, recipient_id, actor, strict=True
+        )
+        record = self._insert(
+            session,
+            "message",
+            actor,
+            {
+                "experiment_id": experiment_id,
+                "sender_branch_id": sender.id,
+                "branch_id": sender.id,
+                "recipient_branch_id": recipient_id,
+                "attributed_to": actor.id,
+                "content": content,
+                "artifact_ids": artifact_ids,
+                "evidence_status": "attributed_idea",
+                **extra,
+            },
+        )
+        self._inbox_event_lock(session, experiment_id)
+        self._event(
+            session, actor, op, "message.created", recipient_id, {"message_id": record["id"]}
+        )
+        return record
+
+    def send_message(self, branch_id, recipient_id, content, artifact_ids, actor, key):
+        self._research_role(actor)
+        self._message_text(content)
 
         def action(session, op):
             sender = self._writable_branch(session, branch_id, actor)
@@ -905,42 +972,9 @@ class CollaborationMixin:
                     "Cross-branch free-text messages require ideas sharing.",
                     status=403,
                 )
-            # Recipient routing is not permission to read the recipient's private branch record.
-            recipient = session.get(RecordRow, recipient_id)
-            if (
-                not recipient
-                or recipient.kind != "branch"
-                or recipient.project_id != actor.project_id
-            ):
-                raise HarnessError("NOT_FOUND", "Recipient branch was not found.", status=404)
-            experiment_id = sender.payload["experiment_id"]
-            if recipient.payload["experiment_id"] != experiment_id:
-                raise HarnessError(
-                    "MAILBOX_SCOPE", "Branches must share an experiment to exchange messages."
-                )
-            self._recipient_visible_artifacts(
-                session, artifact_ids, experiment_id, recipient_id, actor, strict=True
+            return self._deliver_message(
+                session, op, actor, experiment, sender, recipient_id, content, artifact_ids, {}
             )
-            record = self._insert(
-                session,
-                "message",
-                actor,
-                {
-                    "experiment_id": experiment_id,
-                    "sender_branch_id": branch_id,
-                    "branch_id": branch_id,
-                    "recipient_branch_id": recipient_id,
-                    "attributed_to": actor.id,
-                    "content": content,
-                    "artifact_ids": artifact_ids,
-                    "evidence_status": "attributed_idea",
-                },
-            )
-            self._inbox_event_lock(session, experiment_id)
-            self._event(
-                session, actor, op, "message.created", recipient_id, {"message_id": record["id"]}
-            )
-            return record
 
         return self._execute(
             actor,
@@ -949,6 +983,65 @@ class CollaborationMixin:
             {
                 "branch_id": branch_id,
                 "recipient_id": recipient_id,
+                "content": content,
+                "artifact_ids": artifact_ids,
+            },
+            action,
+        )
+
+    def send_lab_message(self, branch_id, content, artifact_ids, actor, key):
+        """Fan one attributed message out to every other member of the sender's lab."""
+        self._research_role(actor)
+        self._message_text(content)
+
+        def action(session, op):
+            sender = self._writable_branch(session, branch_id, actor)
+            experiment = self._commons_experiment(
+                session, sender.payload["experiment_id"], actor, active=False
+            )
+            lab = sender.payload.get("lab")
+            if lab is None:
+                raise HarnessError(
+                    "LAB_NOT_FOUND",
+                    "This branch belongs to no lab.",
+                    status=404,
+                    remediation="Message your parent directly or post on a commons node.",
+                )
+            # Membership is capped at lab_size_max, which bounds the fan-out.
+            recipients = session.scalars(
+                select(RecordRow.id)
+                .where(*self._lab_filter(experiment, lab), RecordRow.id != branch_id)
+                .order_by(record_json_text("created_at"), RecordRow.id)
+                .limit(experiment.payload["society"]["lab_size_max"])
+            ).all()
+            if not recipients:
+                raise HarnessError(
+                    "LAB_EMPTY",
+                    "The lab has no other members.",
+                    remediation="Recruit a lab member or post on a commons node.",
+                )
+            records = [
+                self._deliver_message(
+                    session,
+                    op,
+                    actor,
+                    experiment,
+                    sender,
+                    recipient,
+                    content,
+                    artifact_ids,
+                    {"lab": lab, "delivery_key": f"{key}:{recipient}"},
+                )
+                for recipient in recipients
+            ]
+            return {"lab": lab, "message_ids": [record["id"] for record in records]}
+
+        return self._execute(
+            actor,
+            key,
+            "message.lab-send",
+            {
+                "branch_id": branch_id,
                 "content": content,
                 "artifact_ids": artifact_ids,
             },

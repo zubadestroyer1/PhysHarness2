@@ -13,9 +13,10 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
+from ..domain import canonical_json
 from .parameters import validate_responses_parameters
 from .stagnation import observe as observe_stagnation
-from .stagnation import successor_state
+from .stagnation import signal_message, successor_state
 from .types import (
     Capabilities,
     EventSink,
@@ -33,6 +34,9 @@ from .types import (
 )
 
 ToolHandler = Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]]
+MAX_TURN_NOTE_CHARS = 4_000
+MAX_STAGNATION_SUGGESTIONS = 10
+MAX_STAGNATION_SUGGESTION_CHARS = 200
 
 
 def _safe_provider_field(value: Any, *, maximum: int) -> str | None:
@@ -150,6 +154,8 @@ class ResponsesRuntime:
         stagnation_state: dict[str, Any] | None = None,
         update_source: Callable[[RuntimeCheckpoint], Awaitable[dict[str, Any]]] | None = None,
         update_ack: Callable[[str], Awaitable[None]] | None = None,
+        turn_note: Callable[[int], Awaitable[str | None]] | None = None,
+        stagnation_suggestions: list[str] | None = None,
     ):
         self.store = store
         self.dispatcher = dispatcher or ToolDispatcher()
@@ -164,6 +170,19 @@ class ResponsesRuntime:
             )
         self.update_source = update_source
         self.update_ack = update_ack
+        self.turn_note = turn_note
+        if stagnation_suggestions is not None and (
+            not isinstance(stagnation_suggestions, list)
+            or len(stagnation_suggestions) > MAX_STAGNATION_SUGGESTIONS
+            or any(
+                not isinstance(item, str) or not item or len(item) > MAX_STAGNATION_SUGGESTION_CHARS
+                for item in stagnation_suggestions
+            )
+        ):
+            raise ExecutionError("INVALID_CONFIG", "Stagnation suggestions exceed their bounds")
+        self.stagnation_suggestions = (
+            list(stagnation_suggestions) if stagnation_suggestions is not None else None
+        )
         try:
             self.stagnation_state = successor_state(stagnation_state or {})
         except ValueError:
@@ -271,6 +290,33 @@ class ResponsesRuntime:
             # The service retained the same delivery ID but replaced a revoked
             # source with a withdrawal notice. Save that exact new view before ack.
             await self._receive_updates(session, state, changed_retry=True)
+
+    async def _receive_turn_note(self, session: RuntimeSession, state: dict[str, Any]) -> None:
+        """Persist optional harness guidance at a settled boundary before the next request."""
+        if self.turn_note is None:
+            return
+        if (
+            state.get("settled_boundary") is not True
+            or state.get("pending_operation")
+            or state.get("pending_tool_call")
+            or state.get("terminal_response_pending")
+            # A saved note already covers this boundary; resuming must not repeat it.
+            or state.get("turn_note_turns") == session.turns
+        ):
+            return
+        note = await self.turn_note(session.turns)
+        if note is None:
+            return
+        if not isinstance(note, str) or not note or len(note) > MAX_TURN_NOTE_CHARS:
+            raise ExecutionError("INVALID_TURN_NOTE", "Turn note must be bounded non-empty text")
+        content = {
+            "type": "research_runtime_note",
+            "authority": "optional harness guidance",
+            "note": note,
+        }
+        state["input"].append({"role": "user", "content": canonical_json(content)})
+        state["turn_note_turns"] = session.turns
+        await self._save(session, state)
 
     async def start(
         self,
@@ -629,6 +675,7 @@ class ResponsesRuntime:
             if session.turns >= session.limits.max_turns:
                 raise ExecutionError("BUDGET_EXHAUSTED", "Session exhausted provider-turn budget")
             await self._receive_updates(session, state)
+            await self._receive_turn_note(session, state)
             params = dict(session.model.parameters)
             count_params = {
                 k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
@@ -961,11 +1008,11 @@ class ResponsesRuntime:
                             **result,
                             "_research_runtime_signal": {
                                 "kind": signal,
-                                "message": (
-                                    "Repeated unchanged terminal results; perform substantive "
-                                    "new work or revise the approach."
+                                "message": signal_message(
+                                    signal,
+                                    self.stagnation_suggestions
                                     if signal == "stagnation_warning"
-                                    else "Bounded recovery is required before more repeated reads."
+                                    else None,
                                 ),
                             },
                         }

@@ -1,6 +1,6 @@
 # PhysHarnessV2 — Research Society plan
 
-Status: **design draft for review** (2026-09-24). This plan reorganizes the existing roadmap around an open-ended "research society": many agents working toward one hard physics problem the way a scientific community does. It adds a design and an execution order. It does not replace the twelve waves in `docs/IMPLEMENTATION_PLAN.md` or their exit criteria (see §8 for the mapping). Nothing described below as proposed is implemented yet.
+Status: **design draft for review** (2026-09-24). This plan reorganizes the existing roadmap around an open-ended "research society": many agents working toward one hard physics problem the way a scientific community does. It adds a design and an execution order. It does not replace the twelve waves in `docs/IMPLEMENTATION_PLAN.md` or their exit criteria (see §8 for the mapping). Apart from the S1 progress recorded in §7, nothing described below as proposed is implemented yet.
 
 ---
 
@@ -363,6 +363,8 @@ Each milestone has exit evidence, and no milestone counts as wave qualification 
 | **S4** | Kubernetes substrate at 128 | Agent, inference and verification planes on managed Kubernetes; workspace pool (E2B, with an Agent Sandbox + Kata trial); instrumentation | **Wave 8:** 72 hours at 128 active agents with injected failures, reconciled accounting, no lost accepted results |
 | **S5** | Hundreds to 1,000 | Sharded commons, fair admission, provider-rate governance, verifier backpressure | **Wave 9:** 1,000 agents doing useful work, **only if S1–S4 show positive marginal value per added agent** |
 | **S6** | Open-problem societies | Expert- or auto-reviewed open roots; publication review | **Wave 11:** can begin after S2 with small societies; sustained campaigns follow S4 |
+
+**S1 progress (2026-09-25):** implemented; the final whole-branch review's findings are fixed. The commons, the toolkit and the 26-tool society profile ([S1 plan](docs/superpowers/plans/2026-09-25-s1-research-society.md), Tasks 1–10) sit behind an opt-in society policy. Evidence so far is deterministic tests only, including a no-model end-to-end simulation. The live 8–16 agent comparison has **not** run: it needs the approvals in [the S1 run plan](work/society-s1/RUN_PLAN.md). Those are the budget, the target, the models, the workbench v2 rebuild, the verifier bundle and the workspace provider. Deferred by design: node-level acceptance, the root fidelity ensemble, background jobs, general web search, the allocator and maintenance agents, and hierarchical budgets.
 
 The **first society target** should be a known result that is hard enough that a single agent does not finish it quickly (harder than the Duffing-network target), with its reference solution masked. That gives collaboration real work and gives us a correct answer to check against.
 

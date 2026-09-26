@@ -19,6 +19,9 @@ from sqlalchemy.orm import Session
 from .acceptance import AcceptanceMixin
 from .artifacts import ArtifactStore
 from .collaboration import CollaborationMixin
+from .commons import CommonsMixin
+from .commons_discourse import CommonsDiscourseMixin
+from .commons_review import CommonsReviewMixin
 from .continuation import ContinuationMixin
 from .discussion import DiscussionMixin
 from .domain import (
@@ -106,9 +109,16 @@ def require_role(actor: Principal, *roles: str) -> None:
         )
 
 
+# Record kinds a society experiment's export adds; the commons edges are exported beside them.
+SOCIETY_EXPORT_KINDS = ("commons_node", "commons_claim", "commons_review", "literature_fetch")
+
+
 class HarnessService(
     AcceptanceMixin,
     CollaborationMixin,
+    CommonsDiscourseMixin,
+    CommonsMixin,
+    CommonsReviewMixin,
     ContinuationMixin,
     DiscussionMixin,
     ResearchMixin,
@@ -152,6 +162,8 @@ class HarnessService(
             "runtime_event",
             "execution_failure",
             "workspace_recovery_observation",
+            "masked_reference",
+            "literature_screen",
         }
     )
 
@@ -365,6 +377,9 @@ class HarnessService(
                     ):
                         return False
             return True
+        if row.kind in {"commons_node", "commons_claim", "commons_review"}:
+            # The commons is an ideas-sharing grant to the whole experiment, not authorship.
+            return experiment.payload.get("sharing") == "ideas"
         if row.kind in {"session", "model_reservation", "continuation_link"} or (
             row.kind == "artifact"
             and row.payload.get("artifact_kind") in self._private_artifact_kinds - {"checkpoint"}
@@ -400,6 +415,8 @@ class HarnessService(
 
     def _writable_branch(self, session, branch_id, actor, *, delegation=False):
         branch = self._get(session, "branch", branch_id, actor)
+        if delegation:
+            self._guard_referee_branch(branch, actor)
         if actor.role == "agent" and not actor.agent_orchestrator:
             own = actor.branch_id == branch_id
             legacy = not actor.branch_id and branch.payload.get("origin_actor_id") == actor.id
@@ -574,7 +591,15 @@ class HarnessService(
             if position is None:
                 return items
 
-    def _insert(self, session: Session, kind: str, actor: Principal, data: dict) -> dict:
+    def _insert(
+        self,
+        session: Session,
+        kind: str,
+        actor: Principal,
+        data: dict,
+        *,
+        record_id: str | None = None,
+    ) -> dict:
         data = dict(data)
         data["origin_actor_id"] = actor.id
         experiment_id = data.get("experiment_id")
@@ -639,6 +664,9 @@ class HarnessService(
             if kind == "source" and linked and linked.payload.get("trusted_input"):
                 data["trusted_input"] = True
         record = make_record(kind, actor, data)
+        if record_id:
+            # A caller that derives payload fields from the new id reserves it first.
+            record["id"] = record_id
         session.add(
             RecordRow(
                 id=record["id"], project_id=actor.project_id, kind=kind, revision=1, payload=record
@@ -876,6 +904,9 @@ class HarnessService(
     def create_experiment(self, request: ExperimentCreate, actor: Principal, key: str) -> dict:
         require_role(actor, "researcher", "operator")
         data = request.model_dump(mode="json")
+        if data.get("society") is None:
+            # Legacy experiments keep byte-identical payloads and command fingerprints.
+            data.pop("society", None)
 
         def action(session, op):
             problem = self._get(session, "problem", request.problem_id, actor)
@@ -1249,8 +1280,10 @@ class HarnessService(
 
         def action(session, op):
             experiment = self._get(session, "experiment", experiment_id, actor)
+            parent = None
             if request.parent_id:
                 parent = self._writable_branch(session, request.parent_id, actor)
+                self._guard_referee_branch(parent, actor)
                 if parent.payload["experiment_id"] != experiment_id:
                     raise HarnessError(
                         "BRANCH_EXPERIMENT_MISMATCH",
@@ -1280,6 +1313,7 @@ class HarnessService(
                 if request.parent_id
                 else experiment.payload["models"][0]
             )
+            branch_id = new_id()
             record = self._insert(
                 session,
                 "branch",
@@ -1292,7 +1326,11 @@ class HarnessService(
                     "status": "open",
                     "execution_identity": new_id(),
                     "model_configuration": selected_model,
+                    # Society roots found a lab; forks join their parent's lab, which an
+                    # agent may join only when it is the agent's own.
+                    **self._branch_lab(session, experiment, parent, branch_id, actor=actor),
                 },
+                record_id=branch_id,
             )
             if request.parent_id:
                 session.add(
@@ -1328,12 +1366,28 @@ class HarnessService(
                 "Only an unbound operator may record private workspace recovery evidence.",
                 status=403,
             )
+        if actor.role == "agent" and request.kind in {"masked_reference", "literature_screen"}:
+            raise HarnessError(
+                "ARTIFACT_KIND_RESERVED",
+                "Masked references and literature screens are written only by the platform.",
+                status=403,
+            )
         # Controllers write native state, checkpoints and failure evidence; export and
         # restore decode these kinds, so model or researcher bytes must not claim them.
-        if request.kind in self._private_artifact_kinds and actor.role not in {
+        # A masked reference is uploaded by a researcher or operator, never a model.
+        if request.kind == "masked_reference" and actor.role not in {
+            "researcher",
             "operator",
             "admin",
         }:
+            raise HarnessError(
+                "ARTIFACT_KIND_RESERVED",
+                "Masked references are uploaded by researchers or operators.",
+                status=403,
+            )
+        if request.kind in self._private_artifact_kinds - {
+            "masked_reference"
+        } and actor.role not in {"operator", "admin"}:
             raise HarnessError(
                 "ARTIFACT_KIND_RESERVED",
                 "This artifact kind is reserved for controller-written platform state.",
@@ -1646,6 +1700,11 @@ class HarnessService(
                     "workforce_capacity_request",
                 )
             }
+            society = experiment.get("society") is not None
+            if society:
+                # Only society exports carry commons and literature records; legacy exports
+                # keep their exact keys.
+                records.update({kind: [] for kind in SOCIETY_EXPORT_KINDS})
             rows = session.scalars(
                 select(RecordRow)
                 .where(
@@ -1661,11 +1720,18 @@ class HarnessService(
                 records["review"].append(
                     copy.deepcopy(self._get(session, "review", problem["review_id"], actor).payload)
                 )
+            commons_edges = {}
+            if society:
+                visible = {node["id"] for node in records["commons_node"]}
+                commons_edges["edges"] = self._commons_edges(
+                    session, actor.project_id, experiment_id, visible
+                )
             manifest = {
                 "format": "physharness.reproduction.v1",
                 "experiment": experiment,
                 "problem": problem,
                 "records": records,
+                **commons_edges,
                 "ledger": self._ledger(session, experiment_id, actor),
                 "snapshot": {
                     "isolation": isolation,
