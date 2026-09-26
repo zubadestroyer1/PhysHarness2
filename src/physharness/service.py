@@ -1246,8 +1246,9 @@ class HarnessService(
                     "status": "open",
                     "execution_identity": new_id(),
                     "model_configuration": selected_model,
-                    # Society roots found a lab; forks join their parent's lab.
-                    **self._branch_lab(session, experiment, parent, branch_id),
+                    # Society roots found a lab; forks join their parent's lab, which an
+                    # agent may join only when it is the agent's own.
+                    **self._branch_lab(session, experiment, parent, branch_id, actor=actor),
                 },
                 record_id=branch_id,
             )
