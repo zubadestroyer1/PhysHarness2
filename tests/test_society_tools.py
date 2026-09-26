@@ -1934,6 +1934,86 @@ async def test_runner_adopts_orphaned_parentless_synthesis(lab):
     assert report["status"] == "completed"
 
 
+@pytest.mark.parametrize("race", ["before_launch", "at_lease"])
+async def test_runner_that_loses_an_adopted_synthesis_skips_it_quietly(lab, monkeypatch, race):
+    """Two society runners may both adopt one queued parentless synthesis; the loser records
+    no outcome for it (it is the winner's work), whether it sees the winner's lease just
+    before launching or loses the lease race itself."""
+    service, author, exp, branches, (alpha, _beta) = society_lab(lab)
+    service.configure_workforce(
+        exp["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=100, max_pending_tasks=50, synthesis_interval_posts=4
+        ),
+        OPERATOR,
+        "workforce",
+    )
+    for title in ("Trace lemma", "Gap lemma"):
+        node = service.create_node(
+            exp["id"], NodeCreate(node_type="lemma", title=title, statement="S."), alpha, title
+        )
+        set_status(service, node["id"], "refereed", "formally_stated")
+    orphan = service.schedule_research_synthesis(exp["id"], OPERATOR, "run-synthesis:first")
+    orphan_id = orphan["task"]["id"]
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    acquire = service.acquire_task
+
+    def racing_acquire(task_id, holder, ttl_seconds, actor, key):
+        if task_id == orphan_id:
+            # The other runner, which adopted the same task, leases it first.
+            acquire(task_id, "other-runner", 300, actor, f"other:{key}")
+        return acquire(task_id, holder, ttl_seconds, actor, key)
+
+    objectives = []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payload = json.loads(request.content)
+        objectives.append(json.loads(payload["input"][0]["content"])["objective"])
+        return httpx.Response(200, json=response([message("done")], response_id="r"))
+
+    runner, client = society_runner(service, route)
+    if race == "at_lease":
+        monkeypatch.setattr(service, "acquire_task", racing_acquire)
+    else:
+        records = runner._records
+
+        def racing_records(kind, actor, experiment_id):
+            rows = list(records(kind, actor, experiment_id))
+            if kind == "task" and service.get_record("task", orphan_id, author)["status"] == (
+                "queued"
+            ):
+                # This snapshot shows the task queued; the other runner leases it now.
+                acquire(orphan_id, "other-runner", 300, OPERATOR, "other-runner")
+            return rows
+
+        monkeypatch.setattr(runner, "_records", racing_records)
+        launched = []
+
+        def spy_acquire(task_id, holder, ttl_seconds, actor, key):
+            launched.append(task_id)
+            return acquire(task_id, holder, ttl_seconds, actor, key)
+
+        monkeypatch.setattr(service, "acquire_task", spy_acquire)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert orphan_id not in {outcome["task_id"] for outcome in report["outcomes"]}
+    assert orphan_id not in report["remaining_task_ids"]
+    assert [outcome["status"] for outcome in report["outcomes"]] == ["completed"]
+    assert report["status"] == "completed" and report["attempted_tasks"] == 1
+    # The winner holds it; this run neither ran nor blocked it.
+    assert objectives == ["Root"]
+    assert service.get_record("task", orphan_id, author)["holder"] == "other-runner"
+    if race == "before_launch":
+        # The fresh check before launch skips it: this run never even tries the lease.
+        assert orphan_id not in launched
+
+
 # Final review fixes (I1: local compiles only for the node's real top-level declaration) ------
 
 STATEMENT = "theorem trace_add : (1 : Nat) + 1 = 2 :="

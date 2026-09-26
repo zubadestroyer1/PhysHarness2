@@ -178,7 +178,9 @@ stagnation handoff after eight. Optional check-ins and stagnation nudges are swi
 per campaign. The finite supervisor runs the referee tasks its own lineages request,
 and synthesis tasks that have no parent branch. A platform-rooted task it runs (a
 referee, or a parentless synthesis) adds its lineage to the run's own, so a review
-that such a task requests runs in the same run.
+that such a task requests runs in the same run. Every society run adopts a queued
+parentless synthesis, so two concurrent runs may pick the same one; the run that finds
+it already leased skips it without recording an outcome.
 
 Operators prepare a society arm from a run plan with a `society` block. See
 `work/society-s1/run-plan.example.json` and the

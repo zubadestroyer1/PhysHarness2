@@ -65,6 +65,8 @@ log = logging.getLogger(__name__)
 NULLABLE_STRATEGY = {"type": ["string", "null"]}
 # Tool rejections that end the runtime instead of reaching the model.
 FATAL_TOOL_CODES = frozenset({"STALE_LEASE", "EXPERIMENT_NOT_ACTIVE", "EXPERIMENT_DEADLINE"})
+# Another runner leased, or already finished, a task this run also selected.
+LEASE_CONFLICT_CODES = frozenset({"LEASE_HELD", "TASK_NOT_RUNNABLE"})
 
 
 def _validate_worker_preflight(report):
@@ -2211,6 +2213,14 @@ class ResearchTeamRunner:
                 lineages = grown
             return [task for task in tasks if task["id"] in selected_ids]
 
+        def yield_synthesis(task_id):
+            """Leave a synthesis this run scheduled or adopted to the society runner that won
+            it: drop it from this run's selection and record no outcome. Every society runner
+            adopts queued parentless synthesis, so two may select one; if it is queued again
+            later, this run may adopt it again."""
+            scheduled_synthesis_ids.discard(task_id)
+            attempted.discard(task_id)
+
         async def cancel_active():
             for future in active:
                 future.cancel()
@@ -2385,6 +2395,16 @@ class ResearchTeamRunner:
                         continue
                     if any(task_states.get(dep) != "completed" for dep in task["dependency_ids"]):
                         continue
+                    if (
+                        experiment.get("society")
+                        and task_id in scheduled_synthesis_ids
+                        and task_id not in attempted
+                        and self.service.get_record("task", task_id, actor)["status"] != "queued"
+                    ):
+                        # Another society runner adopted it since this loop's snapshot.
+                        yield_synthesis(task_id)
+                        selected = [item for item in selected if item["id"] != task_id]
+                        continue
                     attempted.add(task_id)
                     if manifest.stop_on_verified_target:
                         future = asyncio.create_task(
@@ -2442,10 +2462,20 @@ class ResearchTeamRunner:
                             outcomes[task_id] = task_result
                             next_synthesis_tick = 0.0
                     except Exception as error:
+                        code = getattr(error, "code", "EXECUTION_FAILED")
+                        if (
+                            experiment.get("society")
+                            and task_id in scheduled_synthesis_ids
+                            and code in LEASE_CONFLICT_CODES
+                        ):
+                            # Another society runner won the lease (or already finished
+                            # it): its work, not an outcome of this run.
+                            yield_synthesis(task_id)
+                            continue
                         outcomes[task_id] = {
                             "task_id": task_id,
                             "status": "blocked",
-                            "code": getattr(error, "code", "EXECUTION_FAILED"),
+                            "code": code,
                         }
             await cancel_active()
         except BaseException:
