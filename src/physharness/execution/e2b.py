@@ -20,7 +20,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict
 
 from .storage import CommandJournal
-from .types import Capabilities, CommandRequest, CommandResult, ExecutionError
+from .types import GUEST_PYTHON, Capabilities, CommandRequest, CommandResult, ExecutionError
 
 # Portable archives intentionally contain regular files only. The canonical JSON
 # envelope is small enough for one bounded, shell-quoted helper invocation.
@@ -30,10 +30,13 @@ FILE_COUNT_LIMIT = 64
 
 
 def _path(value: str) -> str:
+    try:
+        size = len(value.encode()) if isinstance(value, str) else 0
+    except UnicodeEncodeError:
+        size = 0  # Lone surrogates are not portable UTF-8 names.
     if (
-        not isinstance(value, str)
-        or not value
-        or len(value.encode()) > 256
+        not size
+        or size > 256
         or "\\" in value
         or "\x00" in value
         or any(part in ("", ".", "..") or len(part.encode()) > 255 for part in value.split("/"))
@@ -619,7 +622,7 @@ class E2BSandboxProvider:
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 result = await self._sandbox.commands.run(
-                    shlex.join(["python3", "-I", "-c", _WORKSPACE_HELPER, request]),
+                    shlex.join([*GUEST_PYTHON, "-c", _WORKSPACE_HELPER, request]),
                     envs={},
                     timeout=self.timeout_seconds,
                 )

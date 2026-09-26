@@ -1,9 +1,14 @@
 """Application authority: actors, immutable targets, commands, and budget invariants."""
 
+import base64
+import binascii
 import copy
 import hashlib
+import hmac
 import json
 import logging
+import re
+import secrets
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -72,21 +77,26 @@ def money_string(units: int) -> str:
     return format(Decimal(units) / MICRO_USD, "f")
 
 
-def scan_cursor(after: str) -> tuple[str | None, int] | None:
-    """Split a page cursor into its last returned record ID and unseen rows skipped after it."""
-    anchor, mark, skipped = after.rpartition("+")
-    if not mark:
-        return after, 0
-    if len(skipped) != 9 or not skipped.isascii() or not skipped.isdigit() or not int(skipped):
-        return None
-    return anchor or None, int(skipped)
+# A page cursor is an opaque, authenticated encryption of the last scanned record ID, bound
+# to its reader and query. It discloses no record ID or hidden-row count, and a crafted,
+# altered or transplanted cursor is refused before any scan, so it cannot probe hidden rows.
+_CURSOR_PREFIX = "pc1."
+_CURSOR_NONCE = 16
+_CURSOR_TAG = 32
+_CURSOR_POSITION = 64  # Record IDs are at most 36 characters; padding hides their length.
+# Never an idempotency command digest (those are lowercase hex), so it cannot collide.
+_CURSOR_KEY_ID = "physharness:page-cursor-key:v1"
+_CURSOR_TEXT = re.compile(r"[A-Za-z0-9_-]{1,400}")
 
 
-def next_cursor(anchor: str | None, skipped: int) -> str | None:
-    # A cursor names only a record its reader received; rows hidden from that reader are
-    # a count, so paging never discloses their IDs. "+" sorts below ID characters and the
-    # padded count keeps successive cursors increasing.
-    return f"{anchor or ''}+{skipped:09d}" if skipped else anchor
+def _cursor_stream(key: bytes, nonce: bytes, data: bytes) -> bytes:
+    """HMAC-SHA256 counter-mode keystream XOR; the MAC below authenticates the result."""
+    blocks = (len(data) + 31) // 32
+    stream = b"".join(
+        hmac.new(key, nonce + index.to_bytes(4, "big"), hashlib.sha256).digest()
+        for index in range(blocks)
+    )
+    return bytes(left ^ right for left, right in zip(data, stream, strict=False))
 
 
 def require_role(actor: Principal, *roles: str) -> None:
@@ -423,6 +433,71 @@ class HarnessService(
 
     def __init__(self, db: Database, artifacts: ArtifactStore, verifier=None):
         self.db, self.artifacts, self.verifier = db, artifacts, verifier
+        self._cursor_keys: tuple[bytes, bytes] | None = None
+
+    def _page_cursor_keys(self) -> tuple[bytes, bytes]:
+        """Cipher and MAC keys from one random secret persisted with the canonical store."""
+        keys = getattr(self, "_cursor_keys", None)
+        if keys is None:
+            with self.db.transaction() as session:
+                self.db.command_lock(session, digest_json([_CURSOR_KEY_ID]))
+                row = session.get(CommandRow, _CURSOR_KEY_ID)
+                if row is None:
+                    row = CommandRow(
+                        id=_CURSOR_KEY_ID,
+                        project_id="",
+                        operation_id=new_id(),
+                        fingerprint=digest_json([_CURSOR_KEY_ID]),
+                        result={"key": secrets.token_hex(32)},
+                    )
+                    session.add(row)
+                secret = bytes.fromhex(row.result["key"])
+            keys = tuple(
+                hmac.new(secret, label, hashlib.sha256).digest()
+                for label in (b"page-cursor-cipher", b"page-cursor-mac")
+            )
+            self._cursor_keys = keys
+        return keys
+
+    @staticmethod
+    def _cursor_scope(actor: Principal, query: list) -> bytes:
+        return digest_json([actor.model_dump(mode="json"), query]).encode()
+
+    def seal_page_cursor(self, actor: Principal, query: list, position: str) -> str:
+        cipher, mac = self._page_cursor_keys()
+        nonce = secrets.token_bytes(_CURSOR_NONCE)
+        body = nonce + _cursor_stream(
+            cipher, nonce, position.encode().ljust(_CURSOR_POSITION, b"\0")
+        )
+        tag = hmac.new(mac, self._cursor_scope(actor, query) + body, hashlib.sha256).digest()
+        return _CURSOR_PREFIX + base64.urlsafe_b64encode(body + tag).decode().rstrip("=")
+
+    def open_page_cursor(self, actor: Principal, query: list, cursor) -> str | None:
+        """The scan position of a cursor issued to this reader and query, else None."""
+        if not isinstance(cursor, str) or not cursor.startswith(_CURSOR_PREFIX):
+            return None
+        text = cursor[len(_CURSOR_PREFIX) :]
+        if not _CURSOR_TEXT.fullmatch(text):
+            return None
+        try:
+            raw = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+        except (binascii.Error, ValueError):
+            return None
+        if (
+            base64.urlsafe_b64encode(raw).decode().rstrip("=") != text
+            or len(raw) <= _CURSOR_NONCE + _CURSOR_TAG
+        ):
+            return None
+        body, tag = raw[:-_CURSOR_TAG], raw[-_CURSOR_TAG:]
+        cipher, mac = self._page_cursor_keys()
+        expected = hmac.new(mac, self._cursor_scope(actor, query) + body, hashlib.sha256)
+        if not hmac.compare_digest(tag, expected.digest()):
+            return None
+        data = _cursor_stream(cipher, body[:_CURSOR_NONCE], body[_CURSOR_NONCE:])
+        try:
+            return data.rstrip(b"\0").decode() or None
+        except UnicodeDecodeError:
+            return None
 
     def _get(self, session: Session, kind: str, identifier: str, actor: Principal) -> RecordRow:
         row = session.get(RecordRow, identifier)
@@ -444,6 +519,24 @@ class HarnessService(
     def page_records(self, kind, actor, experiment_id=None, limit=500, after=None):
         if not 1 <= limit <= 5000:
             raise HarnessError("INVALID_PAGE_SIZE", "Page size must be 1–5000.", status=422)
+        query = ["records", kind, experiment_id]
+        position = None
+        if after:
+            position = self.open_page_cursor(actor, query, after)
+            if position is None:
+                raise HarnessError(
+                    "INVALID_CURSOR",
+                    "Page cursor is malformed or was issued for another reader or query.",
+                    status=422,
+                )
+        items, position = self._page_records(kind, actor, experiment_id, limit, position)
+        return {
+            "items": items,
+            "next_cursor": self.seal_page_cursor(actor, query, position) if position else None,
+        }
+
+    def _page_records(self, kind, actor, experiment_id, limit, position):
+        """Visible rows after a scan position, and the next position while rows remain."""
         with self.db.sessions() as session:
             query = select(RecordRow).where(
                 RecordRow.project_id == actor.project_id, RecordRow.kind == kind
@@ -454,7 +547,7 @@ class HarnessService(
             if actor.role == "agent":
                 experiment = session.get(RecordRow, actor.experiment_id)
                 if not experiment or experiment.project_id != actor.project_id:
-                    return {"items": [], "next_cursor": None}
+                    return [], None
                 # SQLAlchemy's identity map holds weak references. Retain the common
                 # branch explicitly so row authorization does not reload it per record.
                 _scope_branch = session.get(RecordRow, actor.branch_id) if actor.branch_id else None
@@ -470,45 +563,32 @@ class HarnessService(
                     )
                 else:
                     query = query.where(record_json_text("experiment_id") == actor.experiment_id)
-            anchor, skipped = None, 0
-            if after:
-                position = scan_cursor(after)
-                if position is None:
-                    raise HarnessError("INVALID_CURSOR", "Page cursor is malformed.", status=422)
-                anchor, skipped = position
-            if anchor:
-                query = query.where(RecordRow.id > anchor)
+            if position:
+                query = query.where(RecordRow.id > position)
             # Limit scanned metadata, not just visible output. The unexamined lookahead
             # proves continuation without authorizing or exposing that row's contents.
             scan_limit = max(100, limit)
-            chunk = list(
-                session.scalars(
-                    query.order_by(RecordRow.id).offset(skipped or None).limit(scan_limit + 1)
-                )
-            )
+            chunk = list(session.scalars(query.order_by(RecordRow.id).limit(scan_limit + 1)))
             visible, scanned = [], 0
             for row in chunk[:scan_limit]:
                 scanned += 1
+                position = row.id
                 if self._in_scope(session, row, actor):
                     visible.append(row)
-                    anchor, skipped = row.id, 0
                     if len(visible) == limit:
                         break
-                else:
-                    skipped += 1
-            return {
-                "items": [copy.deepcopy(r.payload) for r in visible],
-                "next_cursor": next_cursor(anchor, skipped) if scanned < len(chunk) else None,
-            }
+            return (
+                [copy.deepcopy(r.payload) for r in visible],
+                position if scanned < len(chunk) else None,
+            )
 
     def list_records(self, kind, actor, experiment_id=None, limit=500):
         """Internal complete metadata read. Public callers should use bounded keyset pages."""
-        items, cursor = [], None
+        items, position = [], None
         while True:
-            page = self.page_records(kind, actor, experiment_id, limit, cursor)
-            items.extend(page["items"])
-            cursor = page["next_cursor"]
-            if cursor is None:
+            page, position = self._page_records(kind, actor, experiment_id, limit, position)
+            items.extend(page)
+            if position is None:
                 return items
 
     def _insert(

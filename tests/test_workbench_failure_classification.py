@@ -21,10 +21,11 @@ from physharness.errors import HarnessError
 from physharness.execution.e2b import E2BSandboxProvider
 from physharness.execution.local_docker import _GUEST, LocalDockerWorkspaceProvider
 from physharness.execution.types import CommandRequest, ExecutionError
-from physharness.execution.workspace_archive import checked_path
+from physharness.execution.workspace_archive import StreamedWorkspaceArchive, checked_path
 from physharness.orchestration.research_worker import research_tools
 from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
 from physharness.orchestration.workspaces import WorkspaceBroker
+from physharness.storage import LeaseRow
 
 IMAGE = "sha256:" + "a" * 64
 HOST = "unix:///tmp/physharness-failure-classification/docker.sock"
@@ -84,7 +85,7 @@ class GuestDocker:
         return any(call[0] == "rm" for call in self.calls)
 
 
-def local_broker(lab, tmp_path, **transport):
+def local_broker(lab, tmp_path, *, quota=None, **transport):
     _, service, experiment, _, _, args = setup(lab)
     root = tmp_path / "work"
     root.mkdir()
@@ -98,6 +99,7 @@ def local_broker(lab, tmp_path, **transport):
             timeout_seconds=timeout_seconds,
             runner=runner,
             journal=journal,
+            **({"workspace_quota_bytes": quota} if quota is not None else {}),
         )
         made.append(provider)
         return provider
@@ -348,7 +350,7 @@ async def test_e2b_read_range_helper_refusal_is_definite(lab):
     assert service.ledger(experiment["id"], broker.actor)["uncertain_operations"] == 0
 
 
-@pytest.mark.parametrize("kind", ["symlink", "directory_symlink", "hardlink", "fifo", "git"])
+@pytest.mark.parametrize("kind", ["symlink", "directory_symlink", "fifo", "git"])
 async def test_links_special_files_and_secret_names_are_excluded_on_record(lab, tmp_path, kind):
     broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path)
     workspace = await broker.provision(cost_bound_usd="0", operation_id="p")
@@ -363,7 +365,6 @@ async def test_links_special_files_and_secret_names_are_excluded_on_record(lab, 
     expected = {
         "symlink": ["Alias.lean"],
         "directory_symlink": ["physlib"],
-        "hardlink": ["Copy.lean", "Proof.lean"],
         "fifo": ["pipe"],
         "git": [".git"],
     }[kind]
@@ -371,8 +372,6 @@ async def test_links_special_files_and_secret_names_are_excluded_on_record(lab, 
         os.symlink("Proof.lean", root / "Alias.lean")
     elif kind == "directory_symlink":
         os.symlink(tmp_path, root / "physlib")
-    elif kind == "hardlink":
-        os.link(root / "Proof.lean", root / "Copy.lean")
     elif kind == "fifo":
         os.mkfifo(root / "pipe")
     else:
@@ -386,8 +385,364 @@ async def test_links_special_files_and_secret_names_are_excluded_on_record(lab, 
     )
     files = [entry["path"] for entry in archive.manifest["files"]]
     assert archive.manifest["excluded_paths"] == expected
-    assert files == ([] if kind == "hardlink" else ["Proof.lean"])
+    assert files == ["Proof.lean"]
+    # The caller (and so the model) learns what was left out, not only the manifest.
+    assert exported["excluded_paths"] == expected and exported["excluded_count"] == 1
     assert_available(broker, service, experiment, workspace, runner)
+
+
+def _provider(root):
+    provider = LocalDockerWorkspaceProvider(
+        docker_host=HOST, image_digest=IMAGE, timeout_seconds=60, runner=GuestDocker(root)
+    )
+    provider._container_id = "container-abcdef"
+    return provider
+
+
+async def _stream_export(provider):
+    from physharness.execution.workspace_archive import StreamedWorkspaceArchive
+
+    store = {}
+
+    async def accept_chunk(piece, digest):
+        store[digest] = piece
+        return "chunk-" + digest[:16]
+
+    files, chunks, exclusions = await provider.export_workspace_stream(
+        expected_execution_id="container-abcdef", accept_chunk=accept_chunk
+    )
+    archive = StreamedWorkspaceArchive.build(files, chunks, excluded_paths=exclusions)
+    return archive, store
+
+
+# Defect: a hardlinked agent file vanished from checkpoints under every name.
+
+
+async def test_hardlinked_files_are_checkpointed_under_every_name(lab, tmp_path):
+    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path)
+    workspace = await broker.provision(cost_bound_usd="0", operation_id="p")
+    source = b"theorem x : True := trivial\n"
+    (root / "Proof.lean").write_bytes(source)
+    os.link(root / "Proof.lean", root / "Proof.backup.lean")  # `ln Proof.lean Proof.backup.lean`
+    exported = await broker.export_workspace(
+        workspace["id"], expected_execution_id=workspace["execution_id"], operation_id="x"
+    )
+    archive = broker.load_handoff_archive(
+        exported["artifact"]["id"], exported["archive_sha256"], workspace["execution_id"]
+    )
+    digest = hashlib.sha256(source).hexdigest()
+    # Stored once under the first name; the other name records the link.
+    assert archive.manifest["files"] == [
+        {"path": "Proof.backup.lean", "size": len(source), "sha256": digest, "chunks": [digest]},
+        {"path": "Proof.lean", "size": len(source), "sha256": digest, "link": "Proof.backup.lean"},
+    ]
+    assert archive.manifest["excluded_paths"] == [] and exported["excluded_count"] == 0
+    assert_available(broker, service, experiment, workspace, runner)
+
+
+# Defect: every name of a hard-linked file was charged against the checkpoint quota.
+
+
+async def test_hard_links_count_once_against_the_checkpoint_quota(lab, tmp_path):
+    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path, quota=1_000_000)
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "data.bin", "content": "x" * 600_000}, "w1")
+    os.link(root / "data.bin", root / "data.backup")  # agent `ln data.bin data.backup`
+    result = await tools.checkpoint({}, "cp")
+    assert result["excluded_count"] == 0
+    archive = broker.load_handoff_archive(
+        result["artifact"]["id"], result["archive_sha256"], tools.workspace["execution_id"]
+    )
+    assert [(entry["path"], entry.get("link")) for entry in archive.manifest["files"]] == [
+        ("data.backup", None),
+        ("data.bin", "data.backup"),
+    ]
+    # The archive validator charges the linked data once, as tmpfs stores it once.
+    StreamedWorkspaceArchive.from_bytes(archive.data, quota_bytes=1_000_000)
+    await tools.close()
+    [teardown] = _operations(broker, service, experiment, "destroy")
+    assert teardown["inputs"]["final_checkpoint"]["status"] == "completed"
+
+
+async def test_hard_linked_files_are_readable_but_not_promotable(lab, tmp_path):
+    broker, service, experiment, runner, root, made = local_broker(lab, tmp_path)
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
+    os.link(root / "Proof.lean", root / "Proof.backup.lean")
+    os.symlink("Proof.lean", root / "Alias.lean")
+    read = await tools.read({"path": "Proof.backup.lean", "offset": 0, "length": 7}, "r1")
+    assert read["text"] == "theorem" and read["size_bytes"] == 28
+    workspace = tools.workspace
+    assert (
+        await broker.download_file(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            path="Proof.backup.lean",
+            operation_id="d1",
+        )
+    )["size_bytes"] == 28
+    with pytest.raises(HarnessError) as symlinked:  # Symlinks are still never followed.
+        await tools.read({"path": "Alias.lean", "offset": 0, "length": 7}, "r2")
+    assert symlinked.value.code == "WORKSPACE_TRANSFER_REJECTED"
+    with pytest.raises(ExecutionError) as promoted:  # Promotion keeps its single-link rule.
+        await made[0].capture_file(
+            "Proof.backup.lean", expected_execution_id=workspace["execution_id"], max_bytes=100
+        )
+    assert promoted.value.code == "WORKSPACE_TRANSFER_REJECTED"
+    assert_available(broker, service, experiment, workspace, runner)
+
+
+async def test_restore_recreates_hard_links(tmp_path):
+    source_root, target_root = tmp_path / "source", tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    (source_root / "Proof.lean").write_bytes(b"proof")
+    (source_root / "nested").mkdir()
+    os.link(source_root / "Proof.lean", source_root / "Copy.lean")
+    os.link(source_root / "Proof.lean", source_root / "nested" / "Deep.lean")
+    (source_root / "Twin.lean").write_bytes(b"proof")  # Equal bytes, separate file.
+    archive, store = await _stream_export(_provider(source_root))
+
+    async def read_chunk(chunk):
+        return store[chunk["sha256"]]
+
+    await _provider(target_root).restore_workspace_stream(
+        archive, expected_execution_id="container-abcdef", read_chunk=read_chunk
+    )
+    names = ["Copy.lean", "Proof.lean", "nested/Deep.lean"]
+    inodes = {os.stat(target_root / name).st_ino for name in names}
+    assert len(inodes) == 1 and os.stat(target_root / "Proof.lean").st_nlink == 3
+    assert os.stat(target_root / "Twin.lean").st_ino not in inodes
+    assert all((target_root / name).read_bytes() == b"proof" for name in [*names, "Twin.lean"])
+
+
+async def test_inconsistent_hard_link_listing_is_refused(tmp_path):
+    provider = _provider(tmp_path)
+    empty = hashlib.sha256(b"").hexdigest()
+    listing = {  # Two names claim one inode but report different contents.
+        "files": [["A.lean", 0, empty, 1, 1, 7], ["B.lean", 0, "b" * 64, 1, 1, 7]],
+        "excluded_paths": [],
+    }
+
+    async def guest(action, *args, **kwargs):
+        assert action == "list3"
+        return json.dumps(listing).encode()
+
+    provider._guest = guest
+    with pytest.raises(ExecutionError, match="Hard link listing") as error:
+        await provider.export_workspace_stream(
+            expected_execution_id="container-abcdef", accept_chunk=None
+        )
+    assert error.value.code == "CHECKPOINT_MISMATCH"
+
+
+def test_link_entries_must_name_an_earlier_identical_file():
+    digest = hashlib.sha256(b"proof").hexdigest()
+    primary = {"path": "A.lean", "size": 5, "sha256": digest, "chunks": [digest]}
+    chunks = [{"sha256": digest, "size": 5, "artifact_id": "chunk"}]
+    link = {"path": "B.lean", "size": 5, "sha256": digest, "link": "A.lean"}
+    archive = StreamedWorkspaceArchive.build([primary, link], chunks, quota_bytes=5)
+    assert archive.manifest["files"][1]["link"] == "A.lean"
+    for bad in (
+        {**link, "link": "C.lean"},  # Names no file.
+        {**link, "link": "B.lean"},  # Names itself.
+        {**link, "size": 4},  # Differs from its target.
+        {**link, "sha256": "0" * 64},
+        {**link, "chunks": [digest]},  # Links carry no data of their own.
+    ):
+        with pytest.raises(ExecutionError):
+            StreamedWorkspaceArchive.build([primary, bad], chunks)
+    chained = {"path": "C.lean", "size": 5, "sha256": digest, "link": "B.lean"}
+    with pytest.raises(ExecutionError):  # Only a stored file can be a link target.
+        StreamedWorkspaceArchive.build([primary, link, chained], chunks)
+    earlier = {"path": "0.lean", "size": 5, "sha256": digest, "link": "A.lean"}
+    with pytest.raises(ExecutionError):  # The target precedes every other name.
+        StreamedWorkspaceArchive.build([earlier, primary], chunks)
+
+
+def test_guest_link_refuses_to_replace_or_follow(tmp_path):
+    root = tmp_path / "work"
+    root.mkdir()
+    (root / "Proof.lean").write_bytes(b"proof")
+    (root / "Taken.lean").write_bytes(b"other")
+    os.symlink("Proof.lean", root / "Alias.lean")
+
+    def link(path, target):
+        return subprocess.run(
+            [sys.executable, "-I", "-c", local_guest(root), "link", path, target],
+            capture_output=True,
+            cwd=root,
+        )
+
+    assert link("Taken.lean", "Proof.lean").returncode != 0
+    assert (root / "Taken.lean").read_bytes() == b"other"
+    assert link("Via.lean", "Alias.lean").returncode != 0
+    assert not (root / "Via.lean").exists()
+    done = link("sub/Copy.lean", "Proof.lean")
+    assert done.returncode == 0 and done.stdout == b"ok\n"
+    assert os.stat(root / "sub" / "Copy.lean").st_ino == os.stat(root / "Proof.lean").st_ino
+
+
+@pytest.mark.parametrize("occupant", ["symlink", "hardlink", "backslash"])
+async def test_restore_still_refuses_any_occupied_target(tmp_path, occupant):
+    source_root, target_root = tmp_path / "source", tmp_path / "target"
+    source_root.mkdir()
+    target_root.mkdir()
+    (source_root / "Proof.lean").write_bytes(b"proof")
+    archive, store = await _stream_export(_provider(source_root))
+    (tmp_path / "outside").write_bytes(b"x")
+    if occupant == "symlink":
+        os.symlink(tmp_path / "outside", target_root / "Proof.lean")
+    elif occupant == "hardlink":
+        os.link(tmp_path / "outside", target_root / "Other.lean")
+    else:
+        (target_root / "odd\\name").write_bytes(b"x")
+
+    async def read_chunk(chunk):
+        return store[chunk["sha256"]]
+
+    with pytest.raises(ExecutionError) as error:
+        await _provider(target_root).restore_workspace_stream(
+            archive, expected_execution_id="container-abcdef", read_chunk=read_chunk
+        )
+    assert error.value.code == "OPERATION_CONFLICT"
+    assert (tmp_path / "outside").read_bytes() == b"x"
+
+
+# Defect: agent-made names the archive cannot hold refused or wedged the whole checkpoint.
+
+# Components stay under NAME_MAX; only the fifth pushes the relative path past 1024 bytes,
+# while every directory the guest must open stays within macOS's 1024-byte PATH_MAX.
+DEEP_PARTS = ["a" * 200, "b" * 200, "c" * 200, "d" * 197, "e" * 250]
+
+
+def _make_deep(root):
+    fd = os.open(root, os.O_RDONLY)
+    try:
+        for part in DEEP_PARTS:
+            os.mkdir(part, dir_fd=fd)
+            child = os.open(part, os.O_RDONLY, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        os.close(os.open("x.lean", os.O_CREAT | os.O_WRONLY, 0o600, dir_fd=fd))
+    finally:
+        os.close(fd)
+
+
+async def test_unportable_names_are_excluded_and_reported_not_refused(lab, tmp_path):
+    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path)
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
+    (root / "notes\\draft.tex").write_text("x")  # agent `touch 'notes\draft.tex'`
+    (root / "odd\\dir").mkdir()
+    (root / "odd\\dir" / "inner.lean").write_text("x")
+    _make_deep(root)
+    deep = "/".join(DEEP_PARTS)
+    expected = ["notes�draft.tex", "odd�dir"]
+    long_name = "é" * 200  # 400 UTF-8 bytes; some guest file systems allow it.
+    try:
+        (root / long_name).write_text("x")
+        expected.append(long_name)
+    except OSError:
+        pass
+    result = await tools.checkpoint({}, "cp1")
+    excluded = result["excluded_paths"]
+    assert result["excluded_count"] == len(excluded) == len(expected) + 1
+    truncated = [path for path in excluded if path.endswith("…")]
+    assert len(truncated) == 1 and deep.startswith(truncated[0][:-1])
+    assert len(truncated[0].encode()) <= 1024
+    assert sorted(set(excluded) - set(truncated)) == sorted(expected)
+    archive = broker.load_handoff_archive(
+        result["artifact"]["id"], result["archive_sha256"], tools.workspace["execution_id"]
+    )
+    assert [entry["path"] for entry in archive.manifest["files"]] == ["Proof.lean"]
+    assert archive.manifest["excluded_paths"] == sorted(excluded)
+    assert broker.inspect(tools.workspace["id"])["status"] == "ready"
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="needs a file system that stores raw bytes")
+async def test_non_utf8_name_is_excluded_and_reported_not_refused(lab, tmp_path):
+    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path)
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
+    fd = os.open(os.fsencode(root) + b"/bad\xffname.lean", os.O_CREAT | os.O_WRONLY, 0o600)
+    os.close(fd)
+    result = await tools.checkpoint({}, "cp1")
+    assert result["excluded_paths"] == ["bad�name.lean"]
+    archive = broker.load_handoff_archive(
+        result["artifact"]["id"], result["archive_sha256"], tools.workspace["execution_id"]
+    )
+    assert [entry["path"] for entry in archive.manifest["files"]] == ["Proof.lean"]
+
+
+def test_guest_listing_reports_undecodable_names_without_refusing(tmp_path):
+    # Portable stand-in for the Linux case above: os.walk yields lone surrogates for
+    # undecodable bytes, which macOS file systems refuse to store.
+    root = tmp_path / "work"
+    root.mkdir()
+    (root / "Proof.lean").write_bytes(b"proof")
+    prelude = (
+        "import os\n"
+        "NAMES = ['bad\\udcffname.lean', 'odd\\udcfe\\\\x.lean']\n"
+        "_walk, _lstat = os.walk, os.lstat\n"
+        "def walk(top, *a, **k):\n"
+        "    for folder, dirs, files in _walk(top, *a, **k):\n"
+        "        if folder == top: files.extend(NAMES)\n"
+        "        yield folder, dirs, files\n"
+        "def lstat(p, *a, **k):\n"
+        "    if os.path.basename(p) in NAMES:\n"
+        "        return _lstat(os.path.join(os.path.dirname(p), 'Proof.lean'))\n"
+        "    return _lstat(p, *a, **k)\n"
+        "os.walk, os.lstat = walk, lstat\n"
+    )
+    for action in ("list", "list3"):
+        done = subprocess.run(
+            [sys.executable, "-I", "-c", prelude + local_guest(root), action],
+            capture_output=True,
+            cwd=root,
+        )
+        assert done.returncode == 0, done.stderr
+        listing = json.loads(done.stdout)
+        assert [row[0] for row in listing["files"]] == ["Proof.lean"]
+        assert listing["excluded_paths"] == ["bad�name.lean", "odd��x.lean"]
+
+
+async def test_unreadable_entries_are_excluded_and_reported_not_refused(lab, tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses file modes")
+    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path)
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
+    (root / "locked.lean").write_text("x")
+    (root / "sealed").mkdir()
+    (root / "sealed" / "inner.lean").write_text("x")
+    os.chmod(root / "locked.lean", 0)  # agent `chmod 000 ...`
+    os.chmod(root / "sealed", 0)
+    try:
+        result = await tools.checkpoint({}, "cp1")
+    finally:
+        os.chmod(root / "sealed", 0o700)
+        os.chmod(root / "locked.lean", 0o600)
+    assert sorted(result["excluded_paths"]) == ["locked.lean", "sealed"]
+    archive = broker.load_handoff_archive(
+        result["artifact"]["id"], result["archive_sha256"], tools.workspace["execution_id"]
+    )
+    assert [entry["path"] for entry in archive.manifest["files"]] == ["Proof.lean"]
+
+
+def test_host_path_rule_rejects_undecodable_names_like_the_guest():
+    # os.walk yields lone surrogates for non-UTF-8 names; both sides call them unsafe.
+    with pytest.raises(ExecutionError) as error:
+        checked_path("bad\udcffname.lean")
+    assert error.value.code == "UNSAFE_PATH"
+    root = "/nonexistent-physharness-root"
+    for path in ("bad\udcffname.lean", "x" * 256, "/".join(["y" * 250] * 5), "a\\b"):
+        done = subprocess.run(
+            [sys.executable, "-I", "-c", local_guest(root), "read", path],
+            capture_output=True,
+        )
+        assert done.returncode == 3 and done.stderr.startswith(b"physharness-refused:")
+        assert b"AssertionError" in done.stderr  # Rejected by the path rule, not by open().
 
 
 def workspace_tools(broker, service, experiment):
@@ -403,6 +758,14 @@ def workspace_tools(broker, service, experiment):
             cost_source="local_no_external_invoice",
         ),
     )
+
+
+def _operations(broker, service, experiment, command):
+    return [
+        row
+        for row in service.list_records("workspace_operation", broker.actor, experiment["id"])
+        if row["command"] == command
+    ]
 
 
 async def test_close_checkpoints_around_agent_symlink_then_tears_down(lab, tmp_path):
@@ -421,25 +784,113 @@ async def test_close_checkpoints_around_agent_symlink_then_tears_down(lab, tmp_p
     )
     assert [entry["path"] for entry in archive.manifest["files"]] == ["Proof.lean"]
     assert archive.manifest["excluded_paths"] == ["Alias.lean"]
+    # The teardown record names the final checkpoint and what it left out.
+    [teardown] = _operations(broker, service, experiment, "destroy")
+    assert teardown["inputs"]["final_checkpoint"] == {
+        "status": "completed",
+        "artifact_id": closed["checkpoint_artifact_id"],
+        "archive_sha256": archive.sha256,
+        "excluded_count": 1,
+        "excluded_paths": ["Alias.lean"],
+    }
 
 
 async def test_close_tears_down_after_definitely_refused_final_checkpoint(lab, tmp_path):
-    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path)
+    # A complete but over-limit listing is a definite refusal of the transfer itself.
+    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path, oversized={"list3"})
     tools = workspace_tools(broker, service, experiment)
     await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
-    (root / "back\\slash.lean").write_bytes(b"not a portable workspace name")
     await tools.close()
     closed = broker.inspect(tools.workspace["id"])
     assert closed["status"] == "destroyed" and runner.removed()
     assert service.ledger(experiment["id"], broker.actor)["active_workers"] == 0
-    exports = [
-        row
-        for row in service.list_records("workspace_operation", broker.actor, experiment["id"])
-        if row["command"] == "export"
-    ]
+    exports = _operations(broker, service, experiment, "export")
     # The refused final checkpoint is the durable note that no archive was taken.
     assert [row["status"] for row in exports] == ["rejected"]
     assert exports[0]["result"]["code"] == "WORKSPACE_TRANSFER_REJECTED"
+    [teardown] = _operations(broker, service, experiment, "destroy")
+    assert teardown["inputs"]["final_checkpoint"] == {
+        "status": "rejected",
+        "operation_id": exports[0]["id"],
+        "code": "WORKSPACE_TRANSFER_REJECTED",
+    }
+
+
+# Defect: close destroyed the VM with no checkpoint after a pause, cancel or deadline.
+
+
+def _stop(service, broker, experiment, stop):
+    current = service.get_record("experiment", experiment["id"], broker.actor)
+    if stop == "deadline":
+        with service.db.transaction() as session:
+            row = service._get(session, "experiment", experiment["id"], broker.actor)
+            service._replace(session, row, {"started_at": "2000-01-01T00:00:00+00:00"})
+        return "EXPERIMENT_DEADLINE"
+    service.transition_experiment(
+        experiment["id"], stop, current["revision"], broker.actor, "stop-" + stop
+    )
+    return "EXPERIMENT_NOT_ACTIVE"
+
+
+@pytest.mark.parametrize("stop", ["pause", "cancel", "deadline"])
+async def test_close_after_stop_takes_final_checkpoint_under_cleanup_authority(lab, tmp_path, stop):
+    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path)
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
+    code = _stop(service, broker, experiment, stop)
+    with pytest.raises(HarnessError) as error:  # The model's own checkpoint stays refused.
+        await tools.checkpoint({}, "agent-checkpoint")
+    assert error.value.code == code
+    await tools.close()
+    closed = broker.inspect(tools.workspace["id"])
+    assert closed["status"] == "destroyed" and runner.removed()
+    assert service.ledger(experiment["id"], broker.actor)["active_workers"] == 0
+    archive = broker.load_handoff_archive(
+        closed["checkpoint_artifact_id"],
+        service.get_record("artifact", closed["checkpoint_artifact_id"], broker.actor)["sha256"],
+        closed["execution_id"],
+    )
+    assert [entry["path"] for entry in archive.manifest["files"]] == ["Proof.lean"]
+    [export] = _operations(broker, service, experiment, "export")
+    assert export["inputs"]["final_checkpoint"] is True
+    [teardown] = _operations(broker, service, experiment, "destroy")
+    assert teardown["inputs"]["final_checkpoint"]["artifact_id"] == closed["checkpoint_artifact_id"]
+    assert tools.cleanup_report["status"] == "destroyed"
+
+
+@pytest.mark.parametrize("oversized", [(), ("list3",)])
+async def test_close_after_lost_lease_keeps_vm_for_operator_reconciliation(
+    lab, tmp_path, oversized
+):
+    broker, service, experiment, runner, root, _ = local_broker(
+        lab, tmp_path, oversized=set(oversized)
+    )
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
+    with service.db.transaction() as session:
+        session.get(LeaseRow, broker.task_id).expires_at = 0
+    for _ in range(2):  # Repeated cleanup attempts never escalate to destruction.
+        with pytest.raises(HarnessError) as error:
+            await tools.close()
+        assert error.value.code == "WORKSPACE_RECONCILIATION_REQUIRED"
+    assert not runner.removed() and (root / "Proof.lean").exists()
+    assert not any("list3" in call for call in runner.calls)  # Nothing was dispatched.
+    workspace = broker.inspect(tools.workspace["id"])
+    [export] = _operations(broker, service, experiment, "export")
+    assert workspace["status"] == "reconciliation_required"
+    assert workspace["active_operation_id"] == export["id"]
+    assert export["status"] == "reconciliation_required"
+    assert export["result"]["code"] == "STALE_LEASE"
+    assert _operations(broker, service, experiment, "destroy") == []
+    assert service.ledger(experiment["id"], broker.actor)["uncertain_operations"] == 1
+    assert tools.cleanup_report == {
+        "workspace_id": workspace["id"],
+        "execution_id": workspace["execution_id"],
+        "status": "reconciliation_required",
+        "final_checkpoint": None,
+        "code": "WORKSPACE_RECONCILIATION_REQUIRED",
+        "operation_id": export["id"],
+    }
 
 
 # Defect: an unsafe promotion path escaped the tool envelope as ExecutionError.

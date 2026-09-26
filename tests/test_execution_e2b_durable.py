@@ -3,6 +3,7 @@ import hashlib
 import json
 import shlex
 import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,7 +15,13 @@ from physharness.execution.e2b import (
     WorkspaceArchive,
 )
 from physharness.execution.storage import CommandJournal
-from physharness.execution.types import ExecutionError
+from physharness.execution.types import GUEST_PYTHON, ExecutionError
+
+
+def guest_argv(command):
+    # The guest's absolute interpreter is this test's Python; its flags are unchanged.
+    argv = shlex.split(command)
+    return [sys.executable, *argv[1:]] if argv[0] == GUEST_PYTHON[0] else argv
 
 
 @pytest.mark.parametrize("cwd", [".", "nested"])
@@ -30,7 +37,7 @@ async def test_command_write_run_export_use_same_workspace(tmp_path, cwd):
 
         async def run(self, command, **kwargs):
             result = subprocess.run(
-                shlex.split(command),
+                guest_argv(command),
                 cwd=kwargs.get("cwd") or guest_home,
                 capture_output=True,
                 text=True,
@@ -114,7 +121,7 @@ class LocalCommands:
     """Executes only adapter-authored file helper, never model code or live SDK calls."""
 
     async def run(self, command, **kwargs):
-        result = subprocess.run(shlex.split(command), capture_output=True, text=True, check=False)
+        result = subprocess.run(guest_argv(command), capture_output=True, text=True, check=False)
         return SimpleNamespace(
             stdout=result.stdout, stderr=result.stderr, exit_code=result.returncode
         )

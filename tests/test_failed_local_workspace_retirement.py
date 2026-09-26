@@ -384,3 +384,38 @@ def test_retirement_rolls_back_resources_for_unexpected_native_session(lab):
         assert session.get(ReservationRow, slot["id"]).state == "uncertain"
         assert session.get(ReservationRow, reservation["id"]).state == "uncertain"
     assert service.get_record("task", task["id"], actor)["status"] == "blocked"
+
+
+def test_running_task_retires_only_as_an_abandoned_attempt(lab):
+    # A worker that lost its lease cannot mark its task terminal; the task stays running.
+    service, actor, experiment, task, workspace, operation, native, slot, reservation, artifact = (
+        recovery_case(lab, command="export")
+    )
+
+    def retire(key):
+        return service.retire_failed_local_workspace(
+            workspace["id"],
+            workspace["revision"],
+            workspace["execution_id"],
+            artifact["id"],
+            actor,
+            key,
+        )
+
+    for status, expires_at, code in [
+        ("queued", 0, "RECOVERY_SCOPE"),
+        ("running", 9999999999, "LEASE_HELD"),
+    ]:
+        with service.db.transaction() as session:
+            row = service._get(session, "task", task["id"], actor)
+            service._replace(session, row, {"status": status})
+            session.get(LeaseRow, task["id"]).expires_at = expires_at
+        with pytest.raises(HarnessError) as error:
+            retire(f"reject-{status}")
+        assert error.value.code == code
+    with service.db.transaction() as session:
+        session.get(LeaseRow, task["id"]).expires_at = 0
+    retire("retire-abandoned")
+    assert service.get_record("task", task["id"], actor)["status"] == "failed"
+    assert service.get_record("workspace", workspace["id"], actor)["status"] == "destroyed"
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0

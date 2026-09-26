@@ -340,16 +340,16 @@ def test_graph_rejects_unbounded_single_node_and_pages_hidden_scan(lab, monkeypa
     visible = service.create_task(
         TaskCreate(branch_id=alpha.branch_id, objective="Later"), alpha, "later-visible"
     )
-    cursor = max(
-        [
-            high_fanout["id"],
-            *[task["id"] for task in dependencies],
-            *[branch["id"] for branch in branches],
-        ]
-    )
+    # Cursors are opaque, so page from the start rather than from a chosen record ID.
+    earlier = {
+        high_fanout["id"],
+        *[task["id"] for task in dependencies],
+        *[branch["id"] for branch in branches],
+    }
+    cursor = None
     seen = []
     blank_page = False
-    for _ in range(4):
+    for _ in range(len(earlier) + 10):
         page = memory.research_graph_page(alpha.branch_id, alpha, limit=1, after=cursor)
         seen.extend(page["items"])
         blank_page = blank_page or bool(not page["items"] and page["next_cursor"])

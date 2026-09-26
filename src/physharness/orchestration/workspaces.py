@@ -36,6 +36,11 @@ _PURE_REQUEST_REJECTIONS = frozenset(
     {"UNSAFE_PATH", "WORKSPACE_EXCLUDED", "WORKSPACE_LIMIT", "UNSAFE_RUNTIME", "TIMEOUT_LIMIT"}
 )
 _READ_ONLY_COMMANDS = frozenset({"download", "read_range", "export"})
+_TRANSFER_REJECTIONS = frozenset({"WORKSPACE_TRANSFER_REJECTED", "WORKSPACE_LIMIT"})
+# Guard refusals meaning this broker no longer holds the task lease or its worker slot.
+_AUTHORITY_LOST = frozenset({"STALE_LEASE", "WORKER_SLOT_AUTHORITY"})
+# Checkpoint results name a bounded sample of excluded paths; the manifest keeps them all.
+_REPORTED_EXCLUSIONS = 50
 
 
 def _definite_refusal(provider: str, command: str, exc: BaseException) -> bool:
@@ -44,7 +49,7 @@ def _definite_refusal(provider: str, command: str, exc: BaseException) -> bool:
         return False
     if command in _READ_ONLY_COMMANDS:
         # A helper refusal or a complete over-limit response cannot have written files.
-        return exc.code in {"WORKSPACE_TRANSFER_REJECTED", "WORKSPACE_LIMIT"}
+        return exc.code in _TRANSFER_REJECTIONS
     # A nonzero E2B helper exit may follow a partial write, so uploads stay uncertain
     # there; the local helper reports a write refusal only after undoing its effects.
     return exc.code == "WORKSPACE_TRANSFER_REJECTED" and (
@@ -700,7 +705,9 @@ class WorkspaceBroker:
             self.service._replace(session, row, {"active_operation_id": identity})
         return identity, None
 
-    def _artifact(self, session, workspace, data, kind, operation_id, *, dependencies=None):
+    def _artifact(
+        self, session, workspace, data, kind, operation_id, *, dependencies=None, cleanup=False
+    ):
         digest = self.service.artifacts.put(data)
         # Object storage can outlive the lease while this SQL transaction remains open.
         # Unreferenced content-addressed bytes are harmless; stale canonical issuance is not.
@@ -708,6 +715,7 @@ class WorkspaceBroker:
             session,
             self._workspace(session, workspace["id"]),
             workspace["execution_id"],
+            cleanup=cleanup,
         )
         artifact = self.service._insert(
             session,
@@ -759,17 +767,21 @@ class WorkspaceBroker:
         *,
         archive=False,
         cleanup=False,
+        preserve=False,
         actual=None,
         predispatch_validate=None,
         promoted_target_digest=None,
     ):
+        # `cleanup` is destruction; `preserve` is the final read that precedes it. Both
+        # need only the current lease and slot, not an active experiment or runnable task.
+        authority = cleanup or preserve
         identity, prior = self._start(
             workspace_id,
             execution_id,
             operation_id,
             command,
             inputs,
-            cleanup=cleanup,
+            cleanup=authority,
             predispatch_validate=predispatch_validate,
         )
         if prior is not None:
@@ -781,7 +793,7 @@ class WorkspaceBroker:
             with self.service.db.transaction() as session:
                 self._lock(session)
                 row = self._workspace(session, workspace_id)
-                self._guard(session, row, execution_id, cleanup=cleanup)
+                self._guard(session, row, execution_id, cleanup=authority)
                 if row.payload["active_operation_id"] != identity:
                     raise _reconcile("Workspace operation ownership changed during provider call.")
                 values = {"active_operation_id": None}
@@ -832,13 +844,22 @@ class WorkspaceBroker:
                             if isinstance(verified, StreamedWorkspaceArchive)
                             else None
                         ),
+                        cleanup=authority,
                     )
                     values["checkpoint_artifact_id"] = artifact["id"]
+                    excluded = (
+                        verified.manifest["excluded_paths"]
+                        if isinstance(verified, StreamedWorkspaceArchive)
+                        else verified.excluded_paths
+                    )
                     result = {
                         "artifact": artifact,
                         "archive_sha256": verified.sha256,
                         "workspace_id": workspace_id,
                         "execution_id": execution_id,
+                        # Excluded entries are not in the archive and do not survive a handoff.
+                        "excluded_count": len(excluded),
+                        "excluded_paths": excluded[:_REPORTED_EXCLUSIONS],
                     }
                 if command == "restore":
                     values.update(
@@ -920,7 +941,7 @@ class WorkspaceBroker:
                     with self.service.db.transaction() as session:
                         self._lock(session)
                         row = self._workspace(session, workspace_id)
-                        self._guard(session, row, execution_id)
+                        self._guard(session, row, execution_id, cleanup=authority)
                         if row.payload.get("active_operation_id") != identity:
                             raise _reconcile("Workspace ownership changed after helper refusal.")
                         op = self.service._get(session, "workspace_operation", identity, self.actor)
@@ -1290,8 +1311,22 @@ class WorkspaceBroker:
         )
 
     async def export_workspace(
-        self, workspace_id: str, *, expected_execution_id: str, operation_id: str
+        self,
+        workspace_id: str,
+        *,
+        expected_execution_id: str,
+        operation_id: str,
+        final: bool = False,
     ) -> dict:
+        """Archive the workspace; `final` is cleanup's preserving read before teardown.
+
+        A final checkpoint needs only the current lease and worker slot, so a paused,
+        cancelled or expired experiment or a cancelled task cannot block it. If that
+        authority is already lost, nothing is dispatched: the VM is kept unchanged and
+        recorded for operator reconciliation instead of staying silently ready.
+        """
+        inputs = {"final_checkpoint": True} if final else {}
+
         async def call(provider):
             if self.provider_spec["provider"] != "local_docker":
                 return await provider.export_workspace(expected_execution_id=expected_execution_id)
@@ -1303,11 +1338,11 @@ class WorkspaceBroker:
                 with self.service.db.transaction() as session:
                     self._lock(session)
                     row = self._workspace(session, workspace_id)
-                    self._guard(session, row, expected_execution_id)
+                    self._guard(session, row, expected_execution_id, cleanup=final)
                     if row.payload.get("active_operation_id") != identity:
                         raise _reconcile("Workspace checkpoint operation ownership changed.")
                     return self._artifact(
-                        session, row.payload, piece, "checkpoint_chunk", identity
+                        session, row.payload, piece, "checkpoint_chunk", identity, cleanup=final
                     )["id"]
 
             files, chunks, exclusions = await provider.export_workspace_stream(
@@ -1320,15 +1355,93 @@ class WorkspaceBroker:
                 quota_bytes=provider.workspace_quota_bytes,
             )
 
-        return await self._perform(
-            workspace_id,
-            expected_execution_id,
-            operation_id,
-            "export",
-            {},
-            call,
-            archive=True,
-        )
+        try:
+            return await self._perform(
+                workspace_id,
+                expected_execution_id,
+                operation_id,
+                "export",
+                inputs,
+                call,
+                archive=True,
+                preserve=final,
+            )
+        except HarnessError as error:
+            # After dispatch, _perform turns a lost lease into recorded uncertainty, so an
+            # authority refusal escaping it was raised by the pre-dispatch guard.
+            if not final or error.code not in _AUTHORITY_LOST:
+                raise
+            self._retain_without_authority(
+                workspace_id, expected_execution_id, operation_id, inputs, error.code
+            )
+            raise _reconcile(
+                "Cleanup authority was lost before the final checkpoint; "
+                "the VM is kept unchanged for operator reconciliation."
+            ) from error
+
+    def _retain_without_authority(self, workspace_id, execution_id, operation_id, inputs, code):
+        """Record a VM whose final checkpoint cannot run under this broker's lost lease.
+
+        Observation-only authority, as for recorded uncertainty: nothing is dispatched,
+        released or made ready. The workspace and its undispatched final export become
+        `reconciliation_required`, which the operator recovery procedure accepts.
+        """
+        identity = self._operation_id(workspace_id, operation_id)
+        inputs = {"execution_id": execution_id, "command": "export", **inputs}
+        with self.service.db.transaction() as session:
+            self._lock(session)
+            row = self._workspace(session, workspace_id)
+            data = row.payload
+            if (
+                data["status"] != "ready"
+                or data.get("active_operation_id")
+                or data["execution_id"] != execution_id
+                or data["holder"] != self.holder
+                or data["fence"] != self.fence
+                or data.get("shared_worker_slot_id") != self.worker_slot_id
+                or session.get(RecordRow, identity) is not None
+            ):
+                return
+            self._operation(session, identity, data, "export", inputs)
+            session.flush()
+            op = self.service._get(session, "workspace_operation", identity, self.actor)
+            self.service._replace(
+                session,
+                op,
+                {
+                    "status": "reconciliation_required",
+                    "result": {
+                        "code": code,
+                        "message": "Final checkpoint was not dispatched: cleanup authority "
+                        "was lost. The VM is kept unchanged for operator reconciliation.",
+                    },
+                },
+            )
+            self.service._replace(
+                session,
+                row,
+                {
+                    "status": "reconciliation_required",
+                    "destruction_confirmed": False,
+                    "active_operation_id": identity,
+                },
+            )
+            reservation = session.get(ReservationRow, data["reservation_id"])
+            if reservation.state != "settled":
+                reservation.state = "uncertain"
+            self.service._event(
+                session,
+                self.actor,
+                identity,
+                "workspace.reconciliation_required",
+                workspace_id,
+                {
+                    "execution_id": execution_id,
+                    "reservation_held": True,
+                    "destruction_confirmed": False,
+                    "code": code,
+                },
+            )
 
     def load_handoff_archive(
         self, artifact_id: str, archive_sha256: str, source_execution_id: str
@@ -1446,6 +1559,29 @@ class WorkspaceBroker:
             call,
         )
 
+    def rejected_transfer(self, workspace_id: str, operation_id: str) -> dict | None:
+        """Return a dispatched export durably recorded as a definite transfer refusal."""
+        require_role(self.actor, "operator")
+        identity = self._operation_id(workspace_id, operation_id)
+        with self.service.db.sessions() as session:
+            row = session.get(RecordRow, identity)
+            if (
+                row is None
+                or row.project_id != self.actor.project_id
+                or row.kind != "workspace_operation"
+            ):
+                return None
+            data = row.payload
+            if (
+                data["task_id"] != self.task_id
+                or data["workspace_id"] != workspace_id
+                or data["command"] != "export"
+                or data["status"] != "rejected"
+                or (data.get("result") or {}).get("code") not in _TRANSFER_REJECTIONS
+            ):
+                return None
+            return copy.deepcopy(data)
+
     async def destroy(
         self,
         workspace_id: str,
@@ -1453,15 +1589,20 @@ class WorkspaceBroker:
         expected_execution_id: str,
         operation_id: str,
         actual_cost_usd: str | None,
+        final_checkpoint: dict | None = None,
     ) -> dict:
         require_role(self.actor, "operator")
         actual = money_units(actual_cost_usd) if actual_cost_usd is not None else None
+        inputs = {"actual_cost_units": actual}
+        if final_checkpoint is not None:
+            # The teardown record names the archive (or refusal) that preceded it.
+            inputs["final_checkpoint"] = copy.deepcopy(final_checkpoint)
         return await self._perform(
             workspace_id,
             expected_execution_id,
             operation_id,
             "destroy",
-            {"actual_cost_units": actual},
+            inputs,
             lambda provider: provider.close(),
             cleanup=True,
             actual=actual,
