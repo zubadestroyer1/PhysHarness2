@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from pydantic import ValidationError
+
 from ..discussion_models import DiscussionCreate, DiscussionPostCreate
+from ..errors import HarnessError
 from ..worker_authority import worker_effects
 from ..workforce_models import (
     JoinResearchTeamRequest,
@@ -26,6 +29,7 @@ DIRECTORY_PAGE = {
     "after": NULLABLE_STRING,
     "limit": {"type": "integer", "minimum": 1, "maximum": 20},
 }
+TERMINAL_TASK_STATUSES = frozenset({"completed", "failed", "blocked"})
 
 
 def root_lineage(branch_id: str, parents: dict[str, str | None]) -> str:
@@ -42,26 +46,63 @@ def root_lineage(branch_id: str, parents: dict[str, str | None]) -> str:
         current = parent
 
 
+def _task_age(task):
+    # Canonical task pages sort by UUID. Their order is unrelated to age.
+    # Equal timestamps break by task ID; older in-memory callers without
+    # timestamps retain their input order.
+    created_at = task.get("created_at")
+    return (created_at, task["id"]) if created_at else ("", "")
+
+
 def fair_ready_order(tasks: list[dict], parents: dict[str, str | None], last_lineage=None):
-    """Round robin over roots, FIFO by creation time within each root."""
-    groups = {}
-    for task in tasks:
-        lineage = root_lineage(task["branch_id"], parents)
-        groups.setdefault(lineage, []).append(task)
-    for group in groups.values():
-        # Canonical task pages sort by UUID. Their order is unrelated to age.
-        # Older in-memory callers without timestamps retain their input order.
-        group.sort(key=lambda task: task.get("created_at", ""))
+    """Round robin over roots, FIFO by creation time within each root.
+
+    Only ready tasks take a turn. Settled tasks lead so callers can record
+    them, and tasks with an unfinished listed dependency trail, so neither a
+    long history nor blocked work pushes a root's oldest ready task back.
+    """
+    states = {task["id"]: task.get("status") for task in tasks}
+    settled, blocked, groups = [], [], {}
+    for task in sorted(tasks, key=_task_age):
+        # Every root keeps its rotation position, even with no ready task now.
+        group = groups.setdefault(root_lineage(task["branch_id"], parents), [])
+        if task.get("status") in TERMINAL_TASK_STATUSES:
+            settled.append(task)
+        elif any(
+            dependency in states and states[dependency] != "completed"
+            for dependency in task.get("dependency_ids", [])
+        ):
+            blocked.append(task)
+        else:
+            group.append(task)
     lineages = sorted(groups)
     if last_lineage in lineages:
         pivot = lineages.index(last_lineage) + 1
         lineages = lineages[pivot:] + lineages[:pivot]
-    ordered = []
+    ordered = settled
     while any(groups.values()):
         for lineage in lineages:
             if groups[lineage]:
                 ordered.append(groups[lineage].pop(0))
-    return ordered
+    return ordered + blocked
+
+
+def _tool_request(model, args):
+    """Model-supplied out-of-bounds fields are a recoverable tool rejection, not a failed call."""
+    try:
+        return model(**args)
+    except ValidationError as error:
+        fields = [
+            {"location": list(item["loc"]), "type": item["type"], "message": item["msg"][:200]}
+            for item in error.errors(include_url=False, include_input=False)[:10]
+        ]
+        raise HarnessError(
+            "VALIDATION_ERROR",
+            "The tool arguments do not match the request contract.",
+            status=422,
+            details={"fields": fields},
+            remediation="Correct the listed fields within their documented bounds.",
+        ) from None
 
 
 def register_network_tools(register, service, agent, branch_id):
@@ -71,7 +112,9 @@ def register_network_tools(register, service, agent, branch_id):
     register(
         "create_discussion",
         {"title": STRING, "summary": STRING, "branch_id": NULLABLE_STRING},
-        lambda a, k: service.create_discussion(experiment_id, DiscussionCreate(**a), agent, k),
+        lambda a, k: service.create_discussion(
+            experiment_id, _tool_request(DiscussionCreate, a), agent, k
+        ),
         "Open an attributed research topic. Only explicitly shared ideas are visible.",
     )
     register(
@@ -89,7 +132,9 @@ def register_network_tools(register, service, agent, branch_id):
         },
         lambda a, k: service.post_discussion(
             a["topic_id"],
-            DiscussionPostCreate(**{key: value for key, value in a.items() if key != "topic_id"}),
+            _tool_request(
+                DiscussionPostCreate, {key: value for key, value in a.items() if key != "topic_id"}
+            ),
             agent,
             k,
         ),
@@ -155,7 +200,7 @@ def register_network_tools(register, service, agent, branch_id):
             "public_summary": NULLABLE_STRING,
         },
         lambda a, k: service.recruit_researcher(
-            experiment_id, RecruitResearcherRequest(**a), agent, k
+            experiment_id, _tool_request(RecruitResearcherRequest, a), agent, k
         ),
         "Queue an optional colleague or attributed synthesis under the original budget. "
         "No fixed mathematical role is required.",
@@ -170,7 +215,7 @@ def register_network_tools(register, service, agent, branch_id):
             "assignment": STRING,
         },
         lambda a, k: service.publish_research_profile(
-            experiment_id, PublishResearchProfileRequest(**a), agent, k
+            experiment_id, _tool_request(PublishResearchProfileRequest, a), agent, k
         ),
         "Opt in to a bounded public directory summary; private task data stays private.",
     )
@@ -212,7 +257,7 @@ def register_network_tools(register, service, agent, branch_id):
         "join_research_team",
         {"branch_id": STRING, "team": STRING, "joined": {"type": "boolean"}},
         lambda a, k: service.join_research_team(
-            experiment_id, JoinResearchTeamRequest(**a), agent, k
+            experiment_id, _tool_request(JoinResearchTeamRequest, a), agent, k
         ),
         "Join or leave a voluntary team label. It grants no access or proof authority.",
     )
@@ -230,7 +275,7 @@ def register_network_tools(register, service, agent, branch_id):
             "rationale": STRING,
         },
         lambda a, k: service.request_research_capacity(
-            experiment_id, RequestResearchCapacityRequest(**a), agent, k
+            experiment_id, _tool_request(RequestResearchCapacityRequest, a), agent, k
         ),
         "Record a demand signal for the scheduler; this does not grant workers or money.",
     )

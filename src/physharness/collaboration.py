@@ -687,6 +687,7 @@ class CollaborationMixin:
                             "evidence_status": "attributed_idea",
                         },
                     )
+                    self._inbox_event_lock(session, task.payload["experiment_id"])
                     self._event(
                         session,
                         actor,
@@ -863,6 +864,7 @@ class CollaborationMixin:
                     "evidence_status": "attributed_idea",
                 },
             )
+            self._inbox_event_lock(session, experiment_id)
             self._event(
                 session, actor, op, "message.created", recipient_id, {"message_id": record["id"]}
             )
