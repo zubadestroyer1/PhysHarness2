@@ -212,18 +212,27 @@ paths.
 Automatic cleanup takes a final checkpoint under cleanup authority: like destruction, it needs
 only the task's current lease, fence and worker slot, so a paused or cancelled experiment, an
 exhausted runtime deadline or a cancelled task does not block it (the model's own
-`checkpoint_workspace` stays refused then). Its export operation records
+`checkpoint_workspace` stays refused then). While it closes its own VM, the holder keeps that
+lease alive with a fenced cleanup renewal that skips only the active-experiment and task-state
+checks; it needs the same holder, fence and worker slot and an open workspace, never revives an
+expired or replaced lease, and rechecks that authority between guest reads, so reads stop once
+it is lost. Its export operation records
 `final_checkpoint: true`, and the destroy operation records the result as `final_checkpoint`.
+A final checkpoint issues no further guest reads after 900 seconds and is then recorded as the
+definite refusal `WORKSPACE_CHECKPOINT_DEADLINE` (only reads were issued, so `/work` is unchanged).
 Cleanup destroys the VM, and the Responses worker then settles its worker slot, only after that
 checkpoint completed or was dispatched and durably recorded as a definite transfer refusal
-(`WORKSPACE_TRANSFER_REJECTED` or `WORKSPACE_LIMIT`). A refusal tears the workspace down without
+(`WORKSPACE_TRANSFER_REJECTED`, `WORKSPACE_LIMIT` or `WORKSPACE_CHECKPOINT_DEADLINE`). A refusal tears the workspace down without
 an archive: the workbench container is ephemeral (it exits at its lifetime), and keeping it
 would let an unarchivable agent-made workspace hold the experiment's slot until an operator
 intervened. That teardown is reported, not silent: the worker records the cleanup outcome as
 `workspace_cleanup` in the task's `execution_failure` evidence, and a task that would otherwise
-complete ends `blocked` with code `WORKSPACE_CHECKPOINT_UNSAVED`. If the lease or worker slot is
-already lost when the final checkpoint would start, nothing is dispatched or destroyed: the
-workspace and an undispatched final `export` operation (its `result.code` names the lost
+complete ends `blocked` with code `WORKSPACE_CHECKPOINT_UNSAVED`. A task whose target was
+independently verified keeps its completed outcome; the same evidence, marked
+`severity: "warning"`, is attached to its completion evidence and reported under `warnings`. If
+the lease or worker slot is already lost when the final checkpoint would start, or after it
+completed but before teardown, nothing is dispatched or destroyed: the workspace and an
+undispatched final `export` (or teardown `destroy`) operation (its `result.code` names the lost
 authority) become `reconciliation_required`, the VM reservation is held as uncertain and the
 worker slot stays held, so [local workspace recovery](LOCAL_WORKSPACE_RECOVERY.md) applies. A
 final checkpoint whose outcome is uncertain, such as a lease lost mid-transfer, is recorded in

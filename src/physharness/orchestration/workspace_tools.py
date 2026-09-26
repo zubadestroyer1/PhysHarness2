@@ -498,14 +498,20 @@ print(json.dumps({
                 if self.broker.provider_spec["provider"] == "local_docker":
                     operation_id = f"final-checkpoint:{self.broker.holder}"
                     try:
-                        # A read of the agent's own workspace for preservation: it needs
-                        # the current lease and slot, not an active experiment or task.
-                        exported = await self.broker.export_workspace(
-                            observed["id"],
-                            expected_execution_id=observed["execution_id"],
-                            operation_id=operation_id,
-                            final=True,
+                        # A repeated close reuses its saved final checkpoint; teardown
+                        # below still needs the lease and slot.
+                        exported = self.broker.completed_final_checkpoint(
+                            observed["id"], operation_id
                         )
+                        if exported is None:
+                            # A read of the agent's own workspace for preservation: it needs
+                            # the current lease and slot, not an active experiment or task.
+                            exported = await self.broker.export_workspace(
+                                observed["id"],
+                                expected_execution_id=observed["execution_id"],
+                                operation_id=operation_id,
+                                final=True,
+                            )
                     except HarnessError as error:
                         # Teardown without an archive needs a dispatched final checkpoint
                         # durably recorded as a definite refusal of the transfer itself.

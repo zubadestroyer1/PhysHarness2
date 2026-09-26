@@ -156,9 +156,24 @@ class ContinuationMixin:
                 operation.payload.get("workspace_id") != workspace_id
                 or operation.payload.get("task_id") != task.id
                 or operation.payload.get("status") != "reconciliation_required"
-                or operation.payload.get("command") not in {"run", "export", "read_range"}
+                or operation.payload.get("command")
+                not in {"run", "export", "read_range", "destroy"}
             ):
                 raise HarnessError("RECOVERY_SCOPE", "Uncertain operation binding changed.")
+            if operation.payload["command"] == "destroy":
+                # Only worker cleanup's teardown that was never dispatched because the
+                # worker lost its lease or slot after the final checkpoint; a dispatched
+                # destroy with an uncertain outcome stays outside this procedure.
+                inputs = operation.payload.get("inputs") or {}
+                if (
+                    (operation.payload.get("result") or {}).get("code")
+                    not in {"STALE_LEASE", "WORKER_SLOT_AUTHORITY"}
+                    or inputs.get("execution_id") != expected_execution_id
+                    or inputs.get("holder") != data["holder"]
+                    or inputs.get("fence") != data["fence"]
+                    or not isinstance(inputs.get("final_checkpoint"), dict)
+                ):
+                    raise HarnessError("RECOVERY_SCOPE", "Uncertain operation binding changed.")
             if operation.payload["command"] == "read_range":
                 inputs = operation.payload.get("inputs") or {}
                 path = inputs.get("path")
