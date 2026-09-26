@@ -6,12 +6,13 @@ The host uploads this file and ``statement_check.lean`` into the workspace and r
 
 WORKDIR holds ``Source.lean`` (the agent's file) and ``Reference.lean`` (the harness's
 ``<node header> theorem NAME <node statement> := sorry``). Each is compiled to an .olean by
-``lake --offline env lean -R WORKDIR -o`` in DIR. Then ``lake --offline env lean --run
-FILE`` runs the harness checker, which reads both .olean files as data and elaborates no
-agent syntax: it replays the source's declarations through the kernel, compares NAME's
-type with the reference's and collects NAME's axioms. One JSON object goes to stdout, and
-WORKDIR is removed. Every step shares the one deadline; a process group that outlives it
-is killed.
+``lake --offline env lean -R WORKDIR -o`` in DIR, which runs the file's compile-time code
+(``#eval``, ``run_cmd``) with this process's access to the VM. Then ``lake --offline env
+lean --run FILE`` runs the harness checker, which loads both .olean files as data and
+elaborates no agent syntax: it replays the source's declarations through the kernel,
+compares NAME's type with the reference's and collects NAME's axioms. One JSON object goes
+to stdout, and WORKDIR is removed. Every step shares the one deadline; a process group that
+outlives it is killed.
 """
 
 import argparse

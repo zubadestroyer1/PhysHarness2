@@ -2,10 +2,13 @@
 
 Lean-marked tests run real Lean (``PHYSHARNESS_LEAN_CMD``, else elan's v4.33.0 toolchain)
 through the society ``lean_check`` tool and ``LeanSession.verify_statement``. They show that
-plain Lean source cannot move a false or axiom-dirty statement to ``compiles_locally``: an
-instance or macro that changes what the statement's text means, an elaborator that forges
-the ``#print axioms`` report, and a declaration added with ``debug.skipKernelTC``.
-The other tests drive the checker's plumbing and the statement-shape rules without Lean.
+elaboration-level tricks in plain Lean source cannot move a false or axiom-dirty statement
+to ``compiles_locally``: an instance or macro that changes what the statement's text means,
+an elaborator that forges the ``#print axioms`` report, and a declaration added with
+``debug.skipKernelTC``. (Compile-time code that writes VM files, like a shell command, can
+tamper with the check itself: the result is VM-attested.) They also show that honest
+headers and ``match`` statements pass. The other tests drive the checker's plumbing and the
+statement-shape rules without Lean.
 """
 
 import json
@@ -154,7 +157,7 @@ async def _formal_node(tools, service, node):
 
 @pytest.mark.lean
 @pytest.mark.parametrize("backend", ["one_shot", "repl_inline", "repl"])
-async def test_plain_lean_source_cannot_forge_a_local_compile(lab, real_lean, backend):
+async def test_elaboration_tricks_cannot_forge_a_local_compile(lab, real_lean, backend):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     session = LeanSession(_tools(real_lean, backend))
@@ -231,6 +234,59 @@ async def test_statement_check_verdicts_on_real_lean(real_lean):
     assert not any((real_lean.root / "work" / ".physharness").glob("check-*"))
 
 
+# Honest statements the elaborator gives auxiliary constants (a matcher per ``match`` or
+# ``fun`` with alternatives), each with a proof.
+AUXILIARY = {
+    "match": (": (match (0 : Nat) with | 0 => True | _ => False)", "trivial"),
+    "fun_alternatives": (": (fun | 0 => True | _ => False : Nat → Prop) 0", "trivial"),
+    "two_matches": (
+        "(n : Nat) : (match n with | 0 => True | _ + 1 => True) ∧ "
+        "(match n, n with | 0, _ => True | _, _ => True)",
+        "by cases n <;> exact ⟨trivial, trivial⟩",
+    ),
+}
+
+
+@pytest.mark.lean
+async def test_honest_headers_and_match_statements_pass_the_check(real_lean):
+    session = LeanSession(_tools(real_lean, "one_shot"))
+    # Lower-case namespaces (Mathlib's unitInterval, symmDiff...), primed and Greek universe
+    # names and safe options are honest header lines.
+    header = (
+        "import Lean\nopen scoped Classical\nopen npowRec\n  Nat.le\nuniverse u v u' uι\n"
+        "set_option maxHeartbeats 400000\nset_option linter.unusedVariables false"
+    )
+    statement = "{α : Sort u} {β : Sort v} (a : α) (b : β) : a = a ∧ b = b"
+    elaborated = await session.elaborate_statement(header, "h", statement, operation_id="h")
+    assert elaborated["ok"] is True, elaborated
+    source = f"{header}\n\ntheorem h {statement} := ⟨rfl, rfl⟩\n"
+    verdict = await session.verify_statement(source, header, "h", statement, operation_id="h")
+    assert verdict["ok"] is True and verdict["axioms"] == [], verdict
+    for label, (statement, proof) in AUXILIARY.items():
+        assert signature_problem(statement) is None, label
+        source = f"import Lean\n\ntheorem t {statement} := {proof}\n"
+        verdict = await session.verify_statement(
+            source, "import Lean", "t", statement, operation_id=label
+        )
+        assert verdict["ok"] is True and verdict["axioms"] == [], (label, verdict)
+    statement = AUXILIARY["match"][0]
+    # The elaborator reuses an earlier helper's identical matcher: another name, same meaning.
+    reused = (
+        "import Lean\n\ndef helper (n : Nat) : Prop := match n with | 0 => True | _ => False\n\n"
+        f"theorem t {statement} := trivial\n"
+    )
+    verdict = await session.verify_statement(
+        reused, "import Lean", "t", statement, operation_id="reused"
+    )
+    assert verdict["ok"] is True and verdict["axioms"] == [], verdict
+    # A matcher that means something else is another statement.
+    other = "import Lean\n\ntheorem t : (match (0 : Nat) with | 0 => True | _ => True) := trivial\n"
+    verdict = await session.verify_statement(
+        other, "import Lean", "t", statement, operation_id="other"
+    )
+    assert verdict["reason"] == "statement_mismatch", verdict
+
+
 @pytest.mark.lean
 async def test_elaboration_rejects_a_signature_that_ends_the_declaration(real_lean):
     session = LeanSession(_tools(real_lean, "one_shot"))
@@ -241,6 +297,12 @@ async def test_elaboration_rejects_a_signature_that_ends_the_declaration(real_le
     assert not [c for c in session._tools.calls if c[0] in ("lean_scratch", "run")]
     plain = await session.elaborate_statement("", "n", ": (1 : Nat) = 1", operation_id="plain")
     assert plain["ok"] is True
+    # A header that ends inside a block comment would carry the comment into the signature,
+    # whose string literal then hides a declaration and #exit from the shape check.
+    header, signature = "import Lean\nopen Nat /-", '" -/ theorem n : True := trivial\n#exit\n"'
+    with pytest.raises(HarnessError) as raised:
+        await session.elaborate_statement(header, "n", signature, operation_id="comment")
+    assert raised.value.code == "INVALID_ARGUMENTS"
 
 
 # Statement shape ---------------------------------------------------------------------
@@ -279,6 +341,10 @@ def test_signature_shape_accepts_plain_signatures(signature):
         (": let x := 1; x = 1", "declaration_value"),
         ("   ", "empty"),
         ("-- only a comment", "unreadable"),
+        # Lean would read the harness's own ``:= sorry`` into the comment or literal.
+        (": True /- := sorry", "unterminated"),
+        (': "a" = "b', "unterminated"),
+        (": «x", "unterminated"),
     ],
 )
 def test_signature_shape_rejects_text_that_ends_the_declaration(signature, problem):
@@ -294,9 +360,23 @@ def test_signature_shape_rejects_text_that_ends_the_declaration(signature, probl
         "import Mathlib\nopen Real\nopen scoped BigOperators Topology",
         "/- Copyright -/\nimport Mathlib.Data.Real.Basic\n-- physics\nopen Real\n  Topology",
         "import Lean\nset_option maxHeartbeats 400000\nset_option autoImplicit false",
-        'import Lean\nset_option trace.profiler.output "x"',
         "import Mathlib\nopen Nat (succ_le_iff)\nuniverse u v u_1 u₁",
         "public import Mathlib",
+        # Namespaces named after definitions start lower-case; universe names are any
+        # identifiers.
+        "import Mathlib\nopen scoped unitInterval",
+        "import Mathlib\nopen scoped symmDiff",
+        "import Mathlib\nopen scoped nonZeroDivisors",
+        "import Mathlib\nopen unitInterval intervalIntegral\n  symmDiff Real",
+        "import Mathlib\nopen ArithmeticFunction.sigma Nat.le in.x",
+        "import Mathlib\nuniverse u v u'",
+        "import Mathlib\nuniverse uι U u₀ uᵢ",
+        "import Mathlib\nopen Real\nopen Filter Topology",
+        "import Mathlib\nset_option linter.unusedVariables false",
+        "import Mathlib\nset_option linter.style.longLine false\nset_option pp.proofs true",
+        "import Mathlib\nset_option synthInstance.maxHeartbeats 40000\nset_option maxRecDepth 2000",
+        "import Mathlib\nset_option relaxedAutoImplicit false\n"
+        "set_option exponentiation.threshold 300",
     ],
 )
 def test_header_shape_accepts_import_open_set_option_and_universe_lines(header):
@@ -317,10 +397,49 @@ def test_header_shape_accepts_import_open_set_option_and_universe_lines(header):
         "import Lean\nuniverse u end",
         "import Lean\nnamespace Foo",
         "import Lean\nopen Real\nTopology",
+        # A command keyword ends the open or universe command and starts its own.
+        "import Mathlib\nopen Real namespace Foo",
+        "import Mathlib\nopen Real end",
+        "import Mathlib\nopen Real set_option autoImplicit true",
+        "import Mathlib\nopen Real seal Real.pi",
+        "import Mathlib\nopen Real export Nat (succ)",
+        "import Mathlib\nopen Real suppress_compilation",
+        "import Mathlib\nopen scoped Real lemma",
+        "import Mathlib\nuniverse u suppress_compilation",
+        "import Mathlib\nuniverse u in",
+        "import Mathlib\nopen Real hiding",
+        "import Mathlib\nopen Real in\nopen Nat",
+        "import Mathlib\nset_option maxHeartbeats 400000 in",
+        "import Mathlib\nopen Real.",
+        "import Mathlib\nuniverse u.v",
     ],
 )
 def test_header_shape_rejects_other_commands(header):
     assert header_problem(header) == "header_line"
+
+
+@pytest.mark.parametrize(
+    "header",
+    [
+        'import Lean\nset_option trace.profiler.output "x"',  # writes a file
+        "import Lean\nset_option trace.profiler true",
+        "import Lean\nset_option debug.skipKernelTC true",
+        "import Lean\nset_option warningAsError true",
+        "import Lean\nset_option compiler.extract_closed false",
+        "import Lean\nset_option backward.synthInstance.canonInstances false",
+        "import Lean\nset_option pp false",
+    ],
+)
+def test_header_shape_allows_only_elaboration_limit_and_display_options(header):
+    assert header_problem(header) == "set_option_not_allowed"
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["import Lean\nopen Nat /-", "import Lean\nopen Nat /- a -/ /-", 'import Lean\n"'],
+)
+def test_header_shape_rejects_a_header_ending_in_a_comment_or_literal(header):
+    assert header_problem(header) == "unterminated"
 
 
 async def test_elaboration_refuses_injected_statements_before_lean_runs(lean_env):  # noqa: F811
@@ -341,6 +460,12 @@ async def test_elaboration_refuses_injected_statements_before_lean_runs(lean_env
         await session.elaborate_statements(
             "import Mathlib", [("h", ": 1 = 1", ("u_1\n#exit",))], operation_id="u"
         )
+    with pytest.raises(HarnessError) as raised:  # the refusal names the options allowed
+        await session.elaborate_statement(
+            'import Lean\nset_option trace.profiler.output "p"', "n", ": 1 = 1", operation_id="o"
+        )
+    assert "set_option_not_allowed" in raised.value.message
+    assert "maxHeartbeats" in raised.value.remediation and "pp." in raised.value.remediation
     assert tools.calls == []
 
 

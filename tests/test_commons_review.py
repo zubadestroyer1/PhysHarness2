@@ -1189,27 +1189,24 @@ def test_local_compile_after_statement_change_not_recorded(lab):
     assert service.record_local_compile(node["id"], "c" * 64, fresh, beta, "fresh")["recorded"]
 
 
-def test_lean_digest_is_injective_so_a_changed_statement_loses_its_reviews(lab):
+def test_lean_digest_is_injective_and_colliding_headers_are_refused(lab):
     """``header\\nname\\nstatement`` joined these two into one text and one digest."""
     first = ("import Mathlib\n/-\nv", "x", ": (x : Nat) + 0 = x")
     second = ("import Mathlib\n/-", "v", "x\n: (x : Nat) + 0 = x")
     assert "\n".join(first) == "\n".join(second)
     assert _lean_digest(*first) != _lean_digest(*second)
     assert _lean_digest(None, "x", ": True") == _lean_digest("", "x", ": True")
-    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    # Both headers end inside a block comment, which a header may not: every header line
+    # has a space and a name has none, so no two valid statements share that joined text.
+    service, _, exp, _, (alpha, _) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
-    service.set_lean_statement(node["id"], *first, ELABORATED, alpha, "lean-first")
-    review = submit(
-        service, service.request_review(node["id"], "fidelity", beta, "f"), exp, "faithful"
-    )
-    assert review["node_status"] == "formally_stated"
-    changed = service.set_lean_statement(node["id"], *second, ELABORATED, alpha, "lean-second")
-    assert changed["status"] == "informal"
-    assert changed["lean_statement_sha256"] == _lean_digest(*second)
-    with service.db.sessions() as session:
-        row = session.get(RecordRow, node["id"])
-        counts, _ = service._review_tally(session, row, "fidelity")
-    assert counts["faithful"] == 0
+    for index, fields in enumerate((first, second)):
+        error = rejected(
+            lambda f=fields, i=index: service.set_lean_statement(
+                node["id"], *f, ELABORATED, alpha, f"lean-{i}"
+            )
+        )
+        assert error.code == "INVALID_LEAN_STATEMENT" and "unterminated" in error.message
 
 
 def test_statement_recorded_under_the_old_digest_keeps_its_standing(lab):
