@@ -391,6 +391,7 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
     - It calls `_new_branch_task` with `relation="helper"`, `parent_id=actor.branch_id`, `detached=True` and title `f"Referee {scope}: {title}"[:200]`.
     - `objective` is the platform template below.
     - `model_index` = `(author_index + 1) % len(models)` when `len(models) > 1`, else `None`. `author_index` is the author branch's `model_index or 0`. `cross_model` = `len(models) > 1`.
+    - *Revised after the final review:* the referee's model avoids the author's family and, for a fidelity review, the family of every branch that has claimed the node (any of them may have written the Lean statement); among the rest it takes the family this text version's earlier referees used least, so a quorum spreads over families. `cross_model` is fixed in the review assignment and is true only when the chosen family avoids all of those. Each text version gets at most `referee_quorum` (informal) or 1 (fidelity) plus `REVIEW_RETRIES = 2` referees that submitted or are live, and a node at most `MAX_FIDELITY_REVIEWS = 9` fidelity referees (`REVIEW_LIMIT` 409).
     - `task_extra = {"review_assignment": {"node_id", "scope", "statement_sha256", "lean_statement_sha256"}, "hat": "referee"}`.
   - It is admitted like recruitment: call `self._admit_research_tasks` as `recruit_researcher` does.
 - **Objective template:** exact text lives in a module constant `REFEREE_OBJECTIVE`.
@@ -406,8 +407,8 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
   - It inserts a `commons_review` record `{experiment_id, node_id, scope, verdict, summary, objections, task_id, referee_branch_id, model_index, cross_model, statement_sha256, lean_statement_sha256, stale}`.
   - `stale = True` if the node's current statement sha or `lean_statement_sha256` differs from the assignment. A stale review never transitions.
   - Transitions:
-    - informal + `sound`: once the count of non-stale `sound` reviews for this statement sha is ≥ `policy.referee_quorum` and there is no non-stale `wrong`, move to `refereed`.
-    - fidelity + `faithful` with `lean_elaborated`: move to `formally_stated`.
+    - informal + `sound`: once the count of non-stale `sound` reviews for this statement sha is ≥ `policy.referee_quorum` and there is no non-stale `wrong`, move to `refereed`. (The implementation also requires more `sound` than `gaps`; `gaps` is not a veto.)
+    - fidelity + `faithful` with `lean_elaborated`: move to `formally_stated`, unless a non-stale `unfaithful` review of the same Lean statement exists (a veto until the statement changes).
     - Any negative verdict: insert an `objection` post (attributed to the referee's actor) on the node thread, with the abstract `f"Referee ({scope}): {verdict}: {summary}"[:600]` and the body listing the objections.
   - Event `commons.review_submitted`.
 - **`set_lean_statement`:**
