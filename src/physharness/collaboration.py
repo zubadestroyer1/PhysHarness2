@@ -6,7 +6,7 @@ from sqlalchemy import select
 
 from .domain import Principal, TaskCreate, canonical_json, utcnow
 from .errors import HarnessError
-from .storage import EdgeRow, EventRow, LeaseRow, RecordRow, record_json_text
+from .storage import EdgeRow, EventRow, LeaseRow, RecordRow, ReservationRow, record_json_text
 from .worker_authority import current_worker_effects
 
 
@@ -542,6 +542,78 @@ class CollaborationMixin:
             key,
             "task.renew",
             {"task_id": task_id, "holder": holder, "fence": fence, "ttl_seconds": ttl_seconds},
+            action,
+        )
+
+    def renew_task_for_cleanup(
+        self, task_id, holder, fence, worker_slot_id, ttl_seconds, actor, key
+    ):
+        """Extend a live lease while its holder closes its own VM.
+
+        Unlike `renew_task`, a paused, cancelled or expired experiment or a cancelled task
+        does not refuse this, so a slow final checkpoint and teardown can finish. It still
+        needs the exact current holder, fence and worker slot, never revives an expired or
+        replaced lease, never shortens one, and applies only while that holder has a ready
+        workspace to close.
+        """
+        controller_only(actor)
+        if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 300:
+            raise HarnessError("INVALID_LEASE", "Lease duration must be 1–300 seconds.", status=422)
+
+        def action(session, op):
+            task = self._get(session, "task", task_id, actor)
+            experiment = self._get(session, "experiment", task.payload["experiment_id"], actor)
+            session.refresh(experiment, with_for_update=True)
+            lease = self._fenced(session, task_id, holder, fence)
+            if worker_slot_id:
+                slot = session.scalar(
+                    select(ReservationRow)
+                    .where(ReservationRow.id == worker_slot_id)
+                    .with_for_update()
+                )
+                if (
+                    task.payload.get("worker_slot_id") != worker_slot_id
+                    or slot is None
+                    or slot.state != "active"
+                    or slot.workers != 1
+                    or slot.experiment_id != experiment.id
+                ):
+                    raise HarnessError(
+                        "WORKER_SLOT_AUTHORITY",
+                        "Shared worker slot requires the task's active controller reservation.",
+                    )
+            workspaces = session.scalars(
+                select(RecordRow).where(
+                    RecordRow.project_id == actor.project_id,
+                    RecordRow.kind == "workspace",
+                    record_json_text("experiment_id") == experiment.id,
+                    record_json_text("task_id") == task_id,
+                    record_json_text("status") == "ready",
+                )
+            )
+            if not any(
+                row.payload.get("holder") == holder
+                and row.payload.get("fence") == fence
+                and row.payload.get("shared_worker_slot_id") == worker_slot_id
+                for row in workspaces
+            ):
+                raise HarnessError(
+                    "CLEANUP_SCOPE", "This holder has no open workspace left to close."
+                )
+            lease.expires_at = max(lease.expires_at, utcnow().timestamp() + ttl_seconds)
+            return {"task_id": task_id, "fence": fence, "expires_at": lease.expires_at}
+
+        return self._execute(
+            actor,
+            key,
+            "task.cleanup-renew",
+            {
+                "task_id": task_id,
+                "holder": holder,
+                "fence": fence,
+                "worker_slot_id": worker_slot_id,
+                "ttl_seconds": ttl_seconds,
+            },
             action,
         )
 

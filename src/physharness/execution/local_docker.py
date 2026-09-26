@@ -793,10 +793,21 @@ class LocalDockerWorkspaceProvider:
             excluded_paths=observed["excluded_paths"],
         )
 
-    async def export_workspace_stream(self, *, expected_execution_id: str, accept_chunk):
-        """Read one bounded chunk at a time; broker persists each before the next read."""
+    async def export_workspace_stream(
+        self, *, expected_execution_id: str, accept_chunk, before_read=None
+    ):
+        """Read one bounded chunk at a time; broker persists each before the next read.
+
+        `before_read` runs before every guest read and may raise to stop the export.
+        """
         self._identity(expected_execution_id)
-        before = json.loads(await self._guest("list3", max_output=4_000_000))
+
+        async def read(*args, **kwargs):
+            if before_read is not None:
+                await before_read()
+            return await self._guest(*args, **kwargs)
+
+        before = json.loads(await read("list3", max_output=4_000_000))
         listing = before["files"]
         # The first (sorted) name of each inode stores its data; tmpfs holds it only once.
         stored = {}
@@ -825,7 +836,7 @@ class LocalDockerWorkspaceProvider:
             refs = []
             for offset in range(0, size, CHUNK_SIZE):
                 length = min(CHUNK_SIZE, size - offset)
-                piece = await self._guest(
+                piece = await read(
                     "chunk",
                     path,
                     arguments=[str(offset), str(length), str(size), str(mtime), str(ctime)],
@@ -842,7 +853,7 @@ class LocalDockerWorkspaceProvider:
             if file_hash.hexdigest() != expected_hash:
                 raise ExecutionError("CHECKPOINT_MISMATCH", "Workspace changed during export")
             files.append({"path": path, "size": size, "sha256": expected_hash, "chunks": refs})
-        after = json.loads(await self._guest("list3", max_output=4_000_000))
+        after = json.loads(await read("list3", max_output=4_000_000))
         if after != before:
             raise ExecutionError("CHECKPOINT_MISMATCH", "Workspace changed during export")
         return (
