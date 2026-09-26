@@ -113,8 +113,10 @@ tools, the prompts and the delivery shapes.
     claims. The score is attention, never proof.
 - **Status ladder.** `informal` → `refereed` → `formally_stated` → `compiles_locally` →
   `accepted`, with `abandoned` (the author, with a reason) and `refuted` as exits.
-  - Only platform code moves a node. A sound referee quorum makes it refereed. A
-    faithful fidelity review of a statement that elaborates makes it formally stated. A
+  - Only platform code moves a node. A sound referee quorum makes it refereed, unless a
+    standing `wrong` verdict vetoes it or gap reports match the sound verdicts. A
+    faithful fidelity review of a statement that elaborates makes it formally stated,
+    unless a standing `unfaithful` verdict vetoes that Lean statement. A
     complete compile of the node's exact Lean statement as a top-level theorem, reported
     with only standard axioms, makes it compile locally. That compile (like statement
     elaboration) runs in the agent-controlled workspace VM, so `compiles_locally` is
@@ -137,8 +139,18 @@ tools, the prompts and the delivery shapes.
   - Status moves are posted by the platform.
 - **Referees.** `request_review` makes the platform create an isolated referee:
   - a detached branch with no parent and no lab, marked `hat="referee"`;
-  - on a different model family when the experiment records one;
+  - on the model family the node's earlier referees (for its current text) used least,
+    preferring one other than the author's (for a fidelity review, also other than
+    every branch that has claimed the node, since any of them may have written the Lean
+    statement). The first referee is cross-model whenever a family allows it, and a
+    quorum spans distinct families when several are configured, the author's included
+    once the others are used; `cross_model` reports whether each referee avoided them;
   - unreachable by direct message or delegation from other branches.
+
+  A node cannot shop for verdicts: each text version gets at most the positive verdicts
+  it needs plus two referees (`REVIEW_RETRIES`), so `referee_quorum + 2` informal
+  referees in all and three per Lean statement, and at most nine fidelity referees per
+  node (`REVIEW_LIMIT`). A referee that ends without a verdict does not count.
 
   The referee submits one verdict. Negative verdicts stay on the thread as objections.
   Its tool profile only reads and checks: no `commons_node`, `commons_claim`,
@@ -146,13 +158,14 @@ tools, the prompts and the delivery shapes.
   `lean_check` records no local compiles, and it posts questions, findings and
   objections only on the assigned node's thread.
 - **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
-  (`lab="new"`), up to `lab_size_max`. `message(to="lab")` fans out to the lab. Direct
+  (`lab="new"`), up to `lab_size_max`. An agent cannot recruit into another lab, so no
+  outsider fills a lab or plants a child in it to relay messages across labs. `message(to="lab")` fans out to the lab. Direct
   messages across labs are refused unless the policy allows them, so cross-lab
   discourse goes through the commons.
 
 Society workers get the consolidated profile in
-`src/physharness/orchestration/society_tools.py`. It has 25 tools in all; a worker's
-widest catalog has 24 (all but `submit_review`), and a referee's has 17:
+`src/physharness/orchestration/society_tools.py`. It has 26 tools in all; a worker's
+widest catalog has 25 (all but `submit_review`), and a referee's has 18:
 
 | Group | Tools |
 |---|---|
@@ -161,19 +174,25 @@ widest catalog has 24 (all but `submit_review`), and a referee's has 17:
 | Library and literature | `search_library`, `read_source`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
 | Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `inbox` |
 | Society | `recruit`, `message`, `wait` |
-| Evidence | `submit_for_verification`, `verification_status` |
+| Evidence | `read_artifact`, `submit_for_verification`, `verification_status` |
 | Memory and skills | `notebook`, `load_skill` |
 | Task-specific | `return_result` (joined children), `submit_review` (referee tasks) |
 
 The prompt carries the constitution (community norms and an optional playbook), the
 frontier, the lab roster and the agent's claimed nodes. A referee gets a referee
 constitution instead, with no playbook, and its notes name only referee-profile tools.
+Its frontier's node titles and statements arrive fenced as untrusted author data, like
+its review packet, since they may come from the author of the node it reviews.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
-that lists the available tools. Optional check-ins and stagnation nudges are switched
+that lists the available tools. Rejections count per native session whatever the name,
+so a model that keeps inventing names reaches the stagnation warning after four and the
+stagnation handoff after eight. Optional check-ins and stagnation nudges are switched
 per campaign. The finite supervisor runs the referee tasks its own lineages request,
 and synthesis tasks that have no parent branch. A platform-rooted task it runs (a
 referee, or a parentless synthesis) adds its lineage to the run's own, so a review
-that such a task requests runs in the same run.
+that such a task requests runs in the same run. Every society run adopts a queued
+parentless synthesis, so two concurrent runs may pick the same one; the run that finds
+it already leased skips it without recording an outcome.
 
 Operators prepare a society arm from a run plan with a `society` block. See
 `work/society-s1/run-plan.example.json` and the

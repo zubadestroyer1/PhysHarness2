@@ -127,17 +127,17 @@ MATH_LEAN_COMPUTATION = frozenset(
 # Memory, knowledge, literature and skills: neither coordination nor mathematics.
 OTHER = frozenset(
     {
-        # Society profile.
+        # Society profile (read_artifact is in both profiles).
         "search_literature",
         "fetch_source",
         "notebook",
         "load_skill",
+        "read_artifact",
         # Legacy profile.
         "checkpoint_context",
         "checkpoint_research_notes",
         "history_page",
         "index_page",
-        "read_artifact",
         "read_artifact_chunk",
         "read_dependency_bundle",
         "read_scientific_record",

@@ -178,19 +178,26 @@ class _Capture:
 
 def test_commons_queries_compile_for_postgresql():
     """Runs without a server: the JSON paths and NOT EXISTS compile on PostgreSQL."""
-    session, experiment = _Capture(), SimpleNamespace(project_id="p", id="e")
+    session = _Capture()
+    experiment = SimpleNamespace(project_id="p", id="e", payload={"society": {"referee_quorum": 1}})
     assignment = {
         "node_id": "n",
         "scope": "fidelity",
         "statement_sha256": "s",
         "lean_statement_sha256": "l",
     }
+    node = SimpleNamespace(project_id="p", id="n", payload={"experiment_id": "e"})
     CommonsReviewMixin._open_review_task(session, experiment, assignment)
     list(CommonsDiscourseMixin._live_claim_rows(session, "p", "e", 1.0, node_id="n"))
     CommonsMixin._experiment_dependencies(session, experiment)
     CommonsMixin._commons_edges(session, "p", "e", {"n"})
+    # The referee panel bound (per Lean statement, then per node) and claimant families.
+    assert CommonsReviewMixin._review_panel(session, experiment, assignment) == []
+    assert CommonsReviewMixin._claimant_families(session, node, [{}]) == set()
     compiled = [
         str(statement.compile(dialect=postgresql.dialect())) for statement in session.statements
     ]
-    assert len(compiled) == 4
+    assert len(compiled) == 7
     assert "NOT (EXISTS" in compiled[0]
+    assert all(" OR (EXISTS" in text for text in compiled[4:6])
+    assert " IN (SELECT" in compiled[6]

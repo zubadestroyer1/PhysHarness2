@@ -391,6 +391,7 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
     - It calls `_new_branch_task` with `relation="helper"`, `parent_id=actor.branch_id`, `detached=True` and title `f"Referee {scope}: {title}"[:200]`.
     - `objective` is the platform template below.
     - `model_index` = `(author_index + 1) % len(models)` when `len(models) > 1`, else `None`. `author_index` is the author branch's `model_index or 0`. `cross_model` = `len(models) > 1`.
+    - *Revised after the final review:* the referee takes the family this text version's earlier referees used least, preferring a family other than the author's and, for a fidelity review, other than every branch that has claimed the node (any of them may have written the Lean statement). The first referee is therefore cross-model whenever possible, and a quorum spans distinct families when several are configured. `cross_model` is fixed in the review assignment and is true only when the chosen family avoids all of those. Each text version gets at most `referee_quorum` (informal) or 1 (fidelity) plus `REVIEW_RETRIES = 2` referees that submitted or are live, and a node at most `MAX_FIDELITY_REVIEWS = 9` fidelity referees (`REVIEW_LIMIT` 409).
     - `task_extra = {"review_assignment": {"node_id", "scope", "statement_sha256", "lean_statement_sha256"}, "hat": "referee"}`.
   - It is admitted like recruitment: call `self._admit_research_tasks` as `recruit_researcher` does.
 - **Objective template:** exact text lives in a module constant `REFEREE_OBJECTIVE`.
@@ -406,8 +407,8 @@ REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithfu
   - It inserts a `commons_review` record `{experiment_id, node_id, scope, verdict, summary, objections, task_id, referee_branch_id, model_index, cross_model, statement_sha256, lean_statement_sha256, stale}`.
   - `stale = True` if the node's current statement sha or `lean_statement_sha256` differs from the assignment. A stale review never transitions.
   - Transitions:
-    - informal + `sound`: once the count of non-stale `sound` reviews for this statement sha is ≥ `policy.referee_quorum` and there is no non-stale `wrong`, move to `refereed`.
-    - fidelity + `faithful` with `lean_elaborated`: move to `formally_stated`.
+    - informal + `sound`: once the count of non-stale `sound` reviews for this statement sha is ≥ `policy.referee_quorum` and there is no non-stale `wrong`, move to `refereed`. (The implementation also requires more `sound` than `gaps`; `gaps` is not a veto.)
+    - fidelity + `faithful` with `lean_elaborated`: move to `formally_stated`, unless a non-stale `unfaithful` review of the same Lean statement exists (a veto until the statement changes).
     - Any negative verdict: insert an `objection` post (attributed to the referee's actor) on the node thread, with the abstract `f"Referee ({scope}): {verdict}: {summary}"[:600]` and the body listing the objections.
   - Event `commons.review_submitted`.
 - **`set_lean_statement`:**
@@ -463,7 +464,7 @@ def send_lab_message(self, branch_id, content, artifact_ids, actor, key) -> dict
 **Behaviour** (society experiments only; everything is unchanged when `society` is absent):
 - **Branch `lab`:**
   - Root branches (no parent) get `lab = "lab-" + branch_id[:8]` at creation.
-  - Recruited branches get their lab from `RecruitResearcherRequest.lab`: None → the parent's lab; `"new"` → `"lab-" + new_branch_id[:8]`; a name → it must match an existing lab in the experiment (`LAB_NOT_FOUND`).
+  - Recruited branches get their lab from `RecruitResearcherRequest.lab`: None → the parent's lab; `"new"` → `"lab-" + new_branch_id[:8]`; a name → it must match an existing lab in the experiment (`LAB_NOT_FOUND`), and an agent may name only its own lab, its recruiting branch's (`LAB_MEMBERSHIP` 403); operators and researchers place branches in any lab.
   - Referee branches (Task 3) inherit the requester's lab.
   - Cap: the member count must stay < `policy.lab_size_max` before adding (`LAB_FULL` 409).
   - Lab names match `^[a-z0-9-]{1,40}$`.
@@ -796,6 +797,7 @@ SOCIETY_TOOL_NAMES = (...)  # the widest catalog, for tests
 | `fetch_source` | url | Only when mode ≠ off: `broker.fetch`, then `service.record_literature_fetch` |
 | `commons_query` | text, status, node_type, frontier, after, limit (nullable defaults) | `query_nodes` |
 | `commons_read` | node_id or post_id (exactly one) | `read_node` / `read_discussion_post` |
+| `read_artifact` | artifact_id, offset (default 0) | `PortableMemory.read_artifact_chunk` (16 KiB chunks, existing visibility rules). A referee opens only its own artifacts and those its assigned node or the node's thread cites (`ARTIFACT_NOT_CITED`). Added after the final review: cited evidence was otherwise unreadable. |
 | `commons_node` | action: create, link, set_lean_statement, abandon, request_review; plus nullable fields | Dispatch per action. `set_lean_statement` elaborates via `LeanSession.elaborate_statement` first. |
 | `commons_post` | node_id, kind, abstract, body, cites, artifact_ids, reply_to_post_id | `post_on_node` |
 | `commons_claim` | node_id, action | `claim_node` |
@@ -828,7 +830,7 @@ SOCIETY_TOOL_NAMES = (...)  # the widest catalog, for tests
 
 - [x] **Step 1: Write failing tests:**
   - `test_legacy_catalog_unchanged`: 63 tools and the same definitions digest as before the change; record the digest from the current code first.
-  - `test_society_catalog_widest`: the tool count equals `len(SOCIETY_TOOL_NAMES)`, which is ≤25, and the names match.
+  - `test_society_catalog_widest`: the tool count equals `len(SOCIETY_TOOL_NAMES)`, which is 26 (25 for a worker at most, 18 for a referee), and the names match.
   - `test_society_catalog_without_literature_or_review`: no `search_literature`, `fetch_source` or `submit_review`.
   - `test_referee_task_gets_submit_review`
   - `test_commons_node_actions_dispatch`

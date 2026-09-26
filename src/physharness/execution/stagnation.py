@@ -81,6 +81,8 @@ STATE_KEYS = frozenset(
         "recovery_requested",
         "recovery_attempted",
         "exhausted",
+        # Society profiles only: rejected unregistered tool names in this native session.
+        "unavailable_calls",
     }
 )
 MAX_FINGERPRINTS = 64
@@ -161,15 +163,20 @@ def validate_state(state: dict[str, Any]) -> dict[str, Any]:
     for field in ("warned", "recovery_requested", "recovery_attempted", "exhausted"):
         if type(state.get(field, False)) is not bool:
             raise ValueError("invalid stagnation flag")
+    unavailable = state.get("unavailable_calls", 0)
+    if type(unavailable) is not int or not 0 <= unavailable <= 1_000_000:
+        raise ValueError("invalid unavailable tool count")
     return dict(state)
 
 
-def _terminal_read(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> bool:
+def _unavailable(result: dict[str, Any]) -> bool:
+    """A call outside the profile. Only society profiles answer one with this recoverable
+    rejection; the legacy dispatcher's error is fatal, so legacy state never sees it."""
     error = result.get("error")
-    if isinstance(error, dict) and error.get("code") == "TOOL_UNAVAILABLE":
-        # A call outside the profile (a recoverable rejection in the society profile)
-        # repeats unchanged without new work, like a repeated read.
-        return True
+    return isinstance(error, dict) and error.get("code") == "TOOL_UNAVAILABLE"
+
+
+def _terminal_read(name: str, arguments: dict[str, Any], result: dict[str, Any]) -> bool:
     if name in {"discussion_updates", "inbox"}:
         return bool(result.get("items")) and "error" not in result
     if name in {"inspect_verification", "wait_for_verification", "verification_status"}:
@@ -208,6 +215,12 @@ def observe(
     state: dict[str, Any], name: str, arguments: dict[str, Any], result: dict[str, Any]
 ) -> str | None:
     """Update in place and return a signal; lifecycle authority stays external."""
+    if _unavailable(result):
+        # A model varying the unknown name (or its arguments) never repeats a fingerprint,
+        # so every rejected name counts, for the whole native session: new work in between
+        # does not reset the count.
+        state["unavailable_calls"] = state.get("unavailable_calls", 0) + 1
+        return _escalate(state, state["unavailable_calls"])
     if not _terminal_read(name, arguments, result):
         if (
             name not in NON_PROGRESS_TOOLS
@@ -241,7 +254,11 @@ def observe(
     if fingerprint not in counts and len(counts) == MAX_FINGERPRINTS:
         counts.pop(next(iter(counts)))
     counts[fingerprint] = counts.get(fingerprint, 0) + 1
-    repeats = counts[fingerprint]
+    return _escalate(state, counts[fingerprint])
+
+
+def _escalate(state: dict[str, Any], repeats: int) -> str | None:
+    """Warn at 4 repeats, request one recovery at 8, then report exhaustion at 8 more."""
     if state.get("recovery_attempted") and repeats >= 8:
         if not state.get("exhausted"):
             state["exhausted"] = True
@@ -259,6 +276,8 @@ def observe(
 def successor_state(state: dict[str, Any]) -> dict[str, Any]:
     """Consume the single recovery request when a new native session starts."""
     result = validate_state(state)
+    # Unavailable-tool calls are counted per native session.
+    result.pop("unavailable_calls", None)
     if result.get("recovery_requested"):
         result["recovery_requested"] = False
         result["recovery_attempted"] = True
