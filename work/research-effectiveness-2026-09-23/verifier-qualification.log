@@ -4,10 +4,10 @@ Starting regressions
 Starting core-kernel
 Collector stopped: RuntimeError: core/kernel exited 1; report and log retained
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.state/pilot-qualification/collect.py", line 221, in <module>
+  File "<repo>/.state/pilot-qualification/collect.py", line 221, in <module>
     main()
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.state/pilot-qualification/collect.py", line 215, in main
+  File "<repo>/.state/pilot-qualification/collect.py", line 215, in main
     suite(directory, suite_id, mode == "independent")
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.state/pilot-qualification/collect.py", line 152, in suite
+  File "<repo>/.state/pilot-qualification/collect.py", line 152, in suite
     raise RuntimeError(f"{suite_id}/{mode} exited {code}; report and log retained")
 RuntimeError: core/kernel exited 1; report and log retained

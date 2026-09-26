@@ -68,6 +68,7 @@ class ModelConfig(Record):
 
 
 class RuntimeLimits(Record):
+    # Provider turns per native session; a continuation starts a fresh session.
     max_turns: int = Field(default=8, ge=1, le=1000)
     max_output_tokens: int = Field(default=4096, ge=1)
     # None delegates the cumulative ceiling to the shared dollar/time budget.

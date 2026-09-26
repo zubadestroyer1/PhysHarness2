@@ -14,7 +14,13 @@ from test_research_loop_integration import PRICES, tool_call
 from physharness.continuation_lineage import LineageError, validate_terminal_lineage
 from physharness.domain import ArtifactCreate, BranchCreate, Principal, TaskCreate
 from physharness.errors import HarnessError
-from physharness.execution import ModelConfig, ResponsesRuntime, RuntimeCheckpoint, RuntimeLimits
+from physharness.execution import (
+    ExecutionError,
+    ModelConfig,
+    ResponsesRuntime,
+    RuntimeCheckpoint,
+    RuntimeLimits,
+)
 from physharness.execution.types import RuntimeSession
 from physharness.orchestration.research_worker import (
     CanonicalRuntimeStore,
@@ -902,3 +908,244 @@ def test_model_reservation_and_task_binding_commit_atomically(lab):
     )
     service.reconcile_model_reservations(task["id"], controller, "reconcile")
     assert service.task_model_effects_settled(task["id"], controller)
+
+
+class _WorkerDied(Exception):
+    """Simulated process death: the dead worker makes no later canonical write."""
+
+
+def _worker_dies_at(monkeypatch, service, name, *, committed):
+    """Kill the worker at one service call, either before or after that call commits."""
+    dead = False
+    originals = {}
+
+    def guarded(method):
+        original = originals[method] = getattr(service, method)
+
+        def call(*args, **kwargs):
+            nonlocal dead
+            if dead:
+                raise _WorkerDied(method)
+            if method != name:
+                return original(*args, **kwargs)
+            dead = True
+            if committed:
+                original(*args, **kwargs)
+            raise _WorkerDied(method)
+
+        return call
+
+    # Failure evidence, blocking and slot settlement never run in a dead process.
+    for method in {
+        name,
+        "create_artifact",
+        "finish_task",
+        "requeue_settled_terminal",
+        "settle_resources",
+    }:
+        monkeypatch.setattr(service, method, guarded(method))
+
+    def revive():
+        for method, original in originals.items():
+            monkeypatch.setattr(service, method, original)
+
+    return revive
+
+
+def _expire_lease(service, task_id):
+    from physharness.storage import LeaseRow
+
+    with service.db.transaction() as session:
+        session.get(LeaseRow, task_id).expires_at = 0
+
+
+def _handoff_lab(lab, tag, handoffs, limits=None, step=None):
+    service, actor, _ = lab
+    experiment, _ = setup_experiment(lab, concurrency=1)
+    service.transition_experiment(experiment["id"], "start", 1, actor, f"start-{tag}")
+    branch = service.create_branch(
+        experiment["id"], BranchCreate(title="Root", objective="Explore"), actor, f"root-{tag}"
+    )
+    task = service.create_task(
+        TaskCreate(branch_id=branch["id"], objective="Research"), actor, f"task-{tag}"
+    )
+    calls = []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        calls.append(request)
+        n = len(calls)
+        if step is not None:
+            item = step(n)
+        elif n <= handoffs:
+            item = tool_call("request_handoff", {"reason": "continue research"}, f"yield-{n}")
+        else:
+            item = message("Completed.")
+        return httpx.Response(200, json=response([item], response_id=f"{tag}-{n}"))
+
+    client = AsyncOpenAI(
+        api_key="mock-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(route)),
+    )
+    executor = ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kw: ResponsesRuntime(client=client, **kw),
+        limits=limits or RuntimeLimits(max_turns=30),
+    )
+    return service, actor, experiment, task, executor, calls, client
+
+
+async def _run_to_terminal(executor, task, actor, bound=8):
+    for _ in range(bound):
+        result = await executor.execute(task["id"], actor.project_id)
+        if result["status"] != "continuation":
+            return result
+    raise AssertionError("task did not reach a terminal state")
+
+
+def _assert_linear_lineage(service, actor, experiment):
+    problem = service.get_record("problem", experiment["problem_id"], actor)
+    assert validate_terminal_lineage(
+        service.list_records("task", actor, experiment["id"]),
+        service.list_records("session", actor, experiment["id"]),
+        service.list_records("continuation_link", actor, experiment["id"]),
+        {a["id"]: a for a in service.list_records("artifact", actor, experiment["id"])},
+        lambda artifact_id: service.artifact_content(artifact_id, actor),
+        experiment["id"],
+        {
+            "target_digest": experiment["target_digest"],
+            "review_id": problem.get("review_id"),
+            "environment_digest": problem["environment_digest"],
+        },
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("deaths", [1, 2])
+async def test_worker_death_after_consuming_ticket_restores_and_reconsumes_it(
+    lab, monkeypatch, deaths
+):
+    service, actor, experiment, task, executor, calls, client = _handoff_lab(
+        lab, "consume-death", handoffs=1
+    )
+    assert (await executor.execute(task["id"], actor.project_id))["continuation_count"] == 1
+    for _ in range(deaths):
+        # The executor's own consume commits; the successor never saves a checkpoint.
+        revive = _worker_dies_at(monkeypatch, service, "consume_continuation", committed=True)
+        with pytest.raises(_WorkerDied):
+            await executor.execute(task["id"], actor.project_id)
+        revive()
+        _expire_lease(service, task["id"])
+        stranded = service.get_record("task", task["id"], actor)
+        assert stranded["ready_continuation"] is None
+        assert stranded["consumed_continuation"]["ordinal"] == 1
+    assert (await executor.execute(task["id"], actor.project_id))["status"] == "completed"
+    assert len(calls) == 2
+    assert service.get_record("task", task["id"], actor)["continuation_count"] == 1
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0
+    _assert_linear_lineage(service, actor, experiment)
+    await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dead_ordinal", [0, 1])
+async def test_worker_death_before_ticket_issue_reissues_from_handed_off_source(
+    lab, monkeypatch, dead_ordinal
+):
+    service, actor, experiment, task, executor, calls, client = _handoff_lab(
+        lab, "issue-death", handoffs=3
+    )
+    for ordinal in range(1, dead_ordinal + 1):
+        assert (await executor.execute(task["id"], actor.project_id))[
+            "continuation_count"
+        ] == ordinal
+    # The source session is saved handed_off, then the worker dies before issue commits.
+    revive = _worker_dies_at(monkeypatch, service, "issue_continuation", committed=False)
+    with pytest.raises(_WorkerDied):
+        await executor.execute(task["id"], actor.project_id)
+    revive()
+    _expire_lease(service, task["id"])
+    handed_off = [
+        row["status"]
+        for row in service.list_records("session", actor, experiment["id"])
+        if row["task_id"] == task["id"]
+    ]
+    assert handed_off == ["handed_off"] * (dead_ordinal + 1)
+    recovered = await executor.execute(task["id"], actor.project_id)
+    assert recovered["continuation_count"] == dead_ordinal + 2
+    assert (await _run_to_terminal(executor, task, actor))["status"] == "completed"
+    # No settled provider response is replayed during recovery.
+    assert len(calls) == 4
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0
+    _assert_linear_lineage(service, actor, experiment)
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_handoff_from_superseded_source_is_rejected_without_forking(lab, monkeypatch):
+    service, actor, experiment, task, executor, calls, client = _handoff_lab(
+        lab, "fork", handoffs=3
+    )
+    assert (await executor.execute(task["id"], actor.project_id))["continuation_count"] == 1
+    (first_link,) = service.list_records("continuation_link", actor, experiment["id"])
+    original = service.issue_continuation
+
+    def stale_source(task_id, holder, fence, source_id, digest, reason, issuer, key, **kwargs):
+        return original(
+            task_id,
+            holder,
+            fence,
+            first_link["source_session_id"],
+            first_link["source_checkpoint_digest"],
+            reason,
+            issuer,
+            key,
+            **kwargs,
+        )
+
+    monkeypatch.setattr(service, "issue_continuation", stale_source)
+    with pytest.raises(HarnessError) as forked:
+        await executor.execute(task["id"], actor.project_id)
+    assert forked.value.code == "HANDOFF_SOURCE_NOT_HEAD"
+    monkeypatch.setattr(service, "issue_continuation", original)
+    links = service.list_records("continuation_link", actor, experiment["id"])
+    assert [link["ordinal"] for link in links] == [1]
+    assert service.get_record("task", task["id"], actor)["ready_continuation"] is None
+    _expire_lease(service, task["id"])
+    assert (await _run_to_terminal(executor, task, actor))["status"] == "completed"
+    assert len(calls) == 4
+    _assert_linear_lineage(service, actor, experiment)
+    await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("handoff", ["model_request", "token_pressure"])
+async def test_task_token_guard_is_cumulative_across_portable_continuations(lab, handoff):
+    def step(n):
+        if handoff == "model_request":
+            return tool_call("request_handoff", {"reason": "continue research"}, f"yield-{n}")
+        return tool_call("working_context", {}, f"context-{n}")
+
+    limits = RuntimeLimits(max_turns=30, max_total_tokens=100, max_output_tokens=10)
+    service, actor, experiment, task, executor, calls, client = _handoff_lab(
+        lab, f"tokens-{handoff}", handoffs=0, limits=limits, step=step
+    )
+    with pytest.raises(ExecutionError) as exhausted:
+        await _run_to_terminal(executor, task, actor, bound=12)
+    assert exhausted.value.code == "BUDGET_EXHAUSTED"
+    sessions = [
+        row
+        for row in service.list_records("session", actor, experiment["id"])
+        if row["task_id"] == task["id"]
+    ]
+    # Each mock generation uses 15 tokens; a sixth would exceed the 100-token task guard.
+    assert sum(row["input_tokens"] + row["output_tokens"] for row in sessions) == 90
+    assert len(calls) == 6
+    final = service.get_record("task", task["id"], actor)
+    assert final["status"] == "blocked"
+    assert final.get("continuation_count", 0) == (6 if handoff == "model_request" else 0)
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0
+    await client.close()

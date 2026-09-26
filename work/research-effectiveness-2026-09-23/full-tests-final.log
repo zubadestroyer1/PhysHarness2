@@ -15,7 +15,7 @@
 =================================== FAILURES ===================================
 ______________ test_export_writes_and_validates_nonempty_artifact ______________
 
-tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2069/test_export_writes_and_validat0')
+tmp_path = PosixPath('$TMPDIR/pytest-of-<user>/pytest-2069/test_export_writes_and_validat0')
 monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x116ec19d0>
 
     def test_export_writes_and_validates_nonempty_artifact(tmp_path, monkeypatch):
@@ -49,7 +49,7 @@ tests/test_effectiveness_pilot.py:176: in fake_export
     path.parent.mkdir()
 _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
 
-self = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2069/test_export_writes_and_validat0/export')
+self = PosixPath('$TMPDIR/pytest-of-<user>/pytest-2069/test_export_writes_and_validat0/export')
 mode = 511, parents = False, exist_ok = False
 
     def mkdir(self, mode=0o777, parents=False, exist_ok=False):
@@ -58,26 +58,26 @@ mode = 511, parents = False, exist_ok = False
         """
         try:
 >           os.mkdir(self, mode)
-E           FileExistsError: [Errno 17] File exists: '/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2069/test_export_writes_and_validat0/export'
+E           FileExistsError: [Errno 17] File exists: '$TMPDIR/pytest-of-<user>/pytest-2069/test_export_writes_and_validat0/export'
 
 ../../../../../.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py:1311: FileExistsError
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/fastapi/testclient.py:1
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  <repo>/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
     from starlette.testclient import TestClient as TestClient  # noqa
 
 .venv/lib/python3.12/site-packages/starlette/testclient.py:53
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+  <repo>/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
     _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
 
 tests/test_execution_openhands.py: 16 warnings
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+  <repo>/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
     val = getattr(obj, name)
 
 tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
 tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
 tests/test_execution_openhands.py::test_native_checkpoint_can_import_into_new_journal_for_same_vm
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+  <repo>/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
     llm = handler(data)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

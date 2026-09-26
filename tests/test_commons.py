@@ -268,9 +268,15 @@ def test_node_artifacts_must_be_shareable_experiment_evidence(lab):
     with pytest.raises(HarnessError) as err:
         service.create_node(exp["id"], lemma(artifact_ids=[foreign["id"]]), alpha, "foreign")
     assert err.value.code == "NOT_FOUND"
+    # Private kinds are controller-written; the platform records this one on alpha's branch.
     private = service.create_artifact(
-        ArtifactCreate(experiment_id=exp["id"], kind="checkpoint", content="context"),
-        alpha,
+        ArtifactCreate(
+            experiment_id=exp["id"],
+            branch_id=alpha.branch_id,
+            kind="checkpoint",
+            content="context",
+        ),
+        alpha.model_copy(update={"role": "operator", "experiment_id": None, "branch_id": None}),
         "checkpoint",
     )
     with pytest.raises(HarnessError) as err:

@@ -18,7 +18,7 @@
 =================================== FAILURES ===================================
 ________________ test_probe_uses_full_schema_and_refuses_repeat ________________
 
-tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2325/test_probe_uses_full_schema_an0')
+tmp_path = PosixPath('$TMPDIR/pytest-of-<user>/pytest-2325/test_probe_uses_full_schema_an0')
 
     def test_probe_uses_full_schema_and_refuses_repeat(tmp_path):
         path, private = config(tmp_path)
@@ -57,7 +57,7 @@ E       parallel_probe_api.ProbeFailure: TOOL_HANDLER_INVOKED
 work/parallel-pilot-2026-09-24/probe_api.py:76: ProbeFailure
 _________________ test_probe_refuses_over_budget_before_create _________________
 
-tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2325/test_probe_refuses_over_budget0')
+tmp_path = PosixPath('$TMPDIR/pytest-of-<user>/pytest-2325/test_probe_refuses_over_budget0')
 
     def test_probe_refuses_over_budget_before_create(tmp_path):
         path, private = config(tmp_path)
@@ -71,7 +71,7 @@ E         Actual message: 'TOOL_HANDLER_INVOKED'
 tests/test_parallel_probe_api.py:89: AssertionError
 ____________ test_probe_retains_unknown_request_and_disallows_retry ____________
 
-tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2325/test_probe_retains_unknown_req0')
+tmp_path = PosixPath('$TMPDIR/pytest-of-<user>/pytest-2325/test_probe_retains_unknown_req0')
 
     def test_probe_retains_unknown_request_and_disallows_retry(tmp_path):
         path, private = config(tmp_path)
@@ -85,7 +85,7 @@ E         Actual message: 'TOOL_HANDLER_INVOKED'
 tests/test_parallel_probe_api.py:98: AssertionError
 ______________ test_output_cap_incomplete_confirms_schema_access _______________
 
-tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2325/test_output_cap_incomplete_con0')
+tmp_path = PosixPath('$TMPDIR/pytest-of-<user>/pytest-2325/test_output_cap_incomplete_con0')
 
     def test_output_cap_incomplete_confirms_schema_access(tmp_path):
         path, private = config(tmp_path)
@@ -133,21 +133,21 @@ E       parallel_probe_api.ProbeFailure: TOOL_HANDLER_INVOKED
 work/parallel-pilot-2026-09-24/probe_api.py:76: ProbeFailure
 =============================== warnings summary ===============================
 .venv/lib/python3.12/site-packages/fastapi/testclient.py:1
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
+  <repo>/.venv/lib/python3.12/site-packages/fastapi/testclient.py:1: StarletteDeprecationWarning: Using `httpx` with `starlette.testclient` is deprecated; install `httpx2` instead.
     from starlette.testclient import TestClient as TestClient  # noqa
 
 .venv/lib/python3.12/site-packages/starlette/testclient.py:53
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
+  <repo>/.venv/lib/python3.12/site-packages/starlette/testclient.py:53: DeprecationWarning: The anyio.abc.BlockingPortal alias is deprecated, use anyio.from_thread.BlockingPortal instead.
     _PortalFactoryType = Callable[[], AbstractContextManager[anyio.abc.BlockingPortal]]
 
 tests/test_execution_openhands.py: 16 warnings
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+  <repo>/.venv/lib/python3.12/site-packages/openhands/sdk/agent/base.py:772: DeprecationWarning: Deprecated since v1.42.0 and scheduled for removal in v1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
     val = getattr(obj, name)
 
 tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
 tests/test_execution_openhands.py::test_actual_sdk_round_trip_preserves_model_usage_provider_id_and_resume
 tests/test_execution_openhands.py::test_native_checkpoint_can_import_into_new_journal_for_same_vm
-  /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
+  <repo>/.venv/lib/python3.12/site-packages/openhands/sdk/llm/llm.py:942: UnsupportedWarning: LLM.modify_params is unsupported as of 1.47.0. LiteLLM parameter modification is enabled process-wide; remove this argument.
     llm = handler(data)
 
 -- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html

@@ -1,12 +1,12 @@
 """Fenced, canonical handoffs between settled native research sessions."""
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 
 from .domain import digest_json, utcnow
 from .errors import HarnessError
 from .execution.types import ExecutionError
 from .execution.workspace_archive import checked_path
-from .storage import BudgetRow, LeaseRow, RecordRow, ReservationRow, record_json_text
+from .storage import BudgetRow, EventRow, LeaseRow, RecordRow, ReservationRow, record_json_text
 from .worker_authority import current_worker_effects
 
 
@@ -1000,6 +1000,10 @@ class ContinuationMixin:
                     "Peer wait requires a branch in this ideas-sharing experiment.",
                 )
             now = utcnow()
+            # Anchor the wake on this branch's acknowledged delivery position, not
+            # registration time: a reply that landed earlier in the same model turn
+            # is still unseen, while already delivered messages must not wake it.
+            reader = self._discussion_reader(session, experiment.id, actor)
             peer_wait = {
                 "experiment_id": experiment.id,
                 "task_id": task_id,
@@ -1007,6 +1011,7 @@ class ContinuationMixin:
                 "recipient_branch_id": recipient_branch_id,
                 "requested_at": now.isoformat(),
                 "deadline_at": now.timestamp() + timeout_seconds,
+                "after_sequence": reader.payload["ack_sequence"] if reader else 0,
             }
             intent = {
                 "reason": "wait_for_peer",
@@ -1045,7 +1050,7 @@ class ContinuationMixin:
     def peer_wait_status(self, peer_wait, actor):
         """Return only the wake reason; message content remains mailbox scoped."""
         self._research_role(actor)
-        if not isinstance(peer_wait, dict):
+        if not isinstance(peer_wait, dict) or type(peer_wait.get("after_sequence")) is not int:
             raise HarnessError("PEER_WAIT_INVALID", "Peer wait ticket is malformed.")
         branch_id = peer_wait.get("branch_id")
         if actor.role == "agent" and branch_id != actor.branch_id:
@@ -1077,20 +1082,28 @@ class ContinuationMixin:
                 or recipient.payload.get("experiment_id") != experiment.id
             ):
                 return {"ready": True, "reason": "scope_withdrawn", "message_id": None}
-            messages = session.scalars(
+            message = session.scalar(
                 select(RecordRow)
+                .join(
+                    EventRow,
+                    and_(
+                        EventRow.project_id == RecordRow.project_id,
+                        EventRow.kind == "message.created",
+                        EventRow.payload["message_id"].as_string() == RecordRow.id,
+                    ),
+                )
                 .where(
                     RecordRow.project_id == actor.project_id,
                     RecordRow.kind == "message",
                     record_json_text("experiment_id") == peer_wait["experiment_id"],
                     record_json_text("sender_branch_id") == peer_wait.get("recipient_branch_id"),
                     record_json_text("recipient_branch_id") == branch_id,
-                    record_json_text("created_at") > peer_wait.get("requested_at", ""),
+                    EventRow.aggregate_id == branch_id,
+                    EventRow.sequence > peer_wait["after_sequence"],
                 )
-                .order_by(record_json_text("created_at"), RecordRow.id)
+                .order_by(EventRow.sequence)
                 .limit(1)
             )
-            message = next(iter(messages), None)
             if message:
                 return {"ready": True, "reason": "message_received", "message_id": message.id}
             recipient_tasks = list(
@@ -1316,6 +1329,18 @@ class ContinuationMixin:
             ):
                 raise HarnessError(
                     "CONTINUATION_LINEAGE_MISMATCH", "Prior continuation links are unresolved."
+                )
+            # Only the newest successor may hand off; an older handed-off source
+            # would fork the chain into a second ticket from superseded context.
+            if prior_links and (
+                max(prior_links, key=lambda link: link.payload["ordinal"]).payload.get(
+                    "successor_session_id"
+                )
+                != source_session_id
+            ):
+                raise HarnessError(
+                    "HANDOFF_SOURCE_NOT_HEAD",
+                    "Handoff source is not the latest session in this task's continuation chain.",
                 )
             # Cleanup has already destroyed the source VM. Settle its shared
             # capacity in this same transaction as issuing the runnable ticket:

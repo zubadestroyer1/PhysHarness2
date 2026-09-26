@@ -1,6 +1,6 @@
 # Task: finish interrupted verifier resource integration
 
-Work only in /Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop.
+Work only in <repo>
 Implementer is GPT-5.6 Sol. Root controls planning, Docker/VM/Lean execution and GitHub.
 Do not spawn agents, commit, push, run Docker, or execute Lean on the host.
 

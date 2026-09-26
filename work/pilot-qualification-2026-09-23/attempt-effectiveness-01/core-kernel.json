@@ -22,7 +22,7 @@
         "diagnostics": {
           "operation": "docker run",
           "exit_code": 125,
-          "output": "docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: /var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/physharness-verifier-68isjrer/trusted\n\nRun 'docker run --help' for more information\n",
+          "output": "docker: Error response from daemon: invalid mount config for type \"bind\": bind source path does not exist: $TMPDIR/physharness-verifier-68isjrer/trusted\n\nRun 'docker run --help' for more information\n",
           "container_state": {
             "status": "unavailable",
             "exit_code": 1,

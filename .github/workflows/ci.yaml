@@ -58,6 +58,9 @@ jobs:
       - run: uv run pytest tests/test_infrastructure.py tests/test_acceptance_integration.py tests/test_commons_postgresql.py -k postgresql -q
         env:
           PHYSHARNESS_TEST_DATABASE_URL: postgresql+psycopg://ci:ephemeral_ci_only@localhost:5432/physharness_ci
+      - run: uv run pytest tests/test_network_postgres.py -q
+        env:
+          PHYSHARNESS_TEST_DATABASE_URL: postgresql+psycopg://ci:ephemeral_ci_only@localhost:5432/physharness_ci
 
   console:
     runs-on: ubuntu-24.04

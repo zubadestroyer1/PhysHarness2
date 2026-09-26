@@ -823,7 +823,11 @@ async def test_read_artifact_opens_cited_evidence_under_existing_scope(lab):
     assert uncited_read["content_utf8"] == "uncited alpha work"
     # Existing visibility rules still apply: a private checkpoint stays hidden.
     private = service.create_artifact(
-        ArtifactCreate(experiment_id=exp["id"], kind="checkpoint", content="{}"), alpha, "ckpt"
+        ArtifactCreate(
+            experiment_id=exp["id"], branch_id=alpha.branch_id, kind="checkpoint", content="{}"
+        ),
+        author.model_copy(update={"role": "operator"}),
+        "ckpt",
     )
     hidden = await call(tools, "read_artifact", {"artifact_id": private["id"]})
     assert hidden["error"]["code"] == "NOT_FOUND"

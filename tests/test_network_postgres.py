@@ -1,6 +1,7 @@
 """Opt-in PostgreSQL races for task admission and durable reader delivery."""
 
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from uuid import uuid4
 
@@ -8,9 +9,17 @@ import pytest
 from sqlalchemy import create_engine, event
 
 from physharness.artifacts import LocalArtifactStore
-from physharness.domain import CampaignCreate, ExperimentCreate, Principal, ProblemCreate
+from physharness.domain import (
+    BranchCreate,
+    CampaignCreate,
+    ExperimentCreate,
+    Principal,
+    ProblemCreate,
+    TaskCreate,
+)
 from physharness.service import HarnessService
-from physharness.storage import Database
+from physharness.storage import Database, EventRow
+from physharness.worker_authority import worker_effects
 from physharness.workforce_models import ConfigureWorkforceRequest, SeedPortfolioRequest
 
 
@@ -148,3 +157,116 @@ def test_postgres_concurrent_reader_poll_reuses_one_delivery_and_ack_cursor(pg_l
     assert duplicate_ack == ack
     assert ack["next_cursor"] >= first["items"][0]["sequence"]
     assert service.discussion_updates(experiment["id"], reader)["items"] == []
+
+
+@pytest.mark.integration
+def test_postgres_lower_sequence_committing_late_is_still_delivered(pg_lab):
+    # SERIAL values are allocated at insert. A writer that allocates first and
+    # commits last must not be skipped by an ack taken over a later sequence.
+    service, operator, experiment = pg_lab
+    roots = service.seed_portfolio(
+        experiment["id"],
+        SeedPortfolioRequest(
+            roots=[{"title": "A", "objective": "A"}, {"title": "B", "objective": "B"}]
+        ),
+        operator,
+        "seed",
+    )["roots"]
+    source, reader = (
+        Principal(
+            id=root["branch"]["execution_identity"],
+            project_id=operator.project_id,
+            role="agent",
+            experiment_id=experiment["id"],
+            branch_id=root["branch"]["id"],
+        )
+        for root in roots
+    )
+    allocated, release = threading.Event(), threading.Event()
+
+    def pause_late_writer(session, flush_context):
+        if threading.current_thread().name == "late-writer" and any(
+            isinstance(row, EventRow) and row.kind == "message.created" for row in session.new
+        ):
+            allocated.set()
+            assert release.wait(30)
+
+    def send(content, key):
+        message = service.send_message(source.branch_id, reader.branch_id, content, [], source, key)
+        return message["id"]
+
+    sent = {}
+    late = threading.Thread(
+        target=lambda: sent.setdefault("late", send("allocated first", "late")),
+        name="late-writer",
+    )
+    early = threading.Thread(target=lambda: sent.setdefault("early", send("second", "early")))
+    event.listen(service.db.sessions, "after_flush", pause_late_writer)
+    delivered = []
+    try:
+        late.start()
+        assert allocated.wait(30)
+        early.start()
+        early.join(1)
+        batch = service.discussion_updates(experiment["id"], reader)
+        if batch["items"]:
+            delivered.extend(item["retrieval_id"] for item in batch["items"])
+            service.acknowledge_discussion_updates(
+                experiment["id"], batch["delivery_id"], reader, "ack-during-race"
+            )
+    finally:
+        release.set()
+        for thread in (late, early):
+            if thread.ident:
+                thread.join(30)
+        event.remove(service.db.sessions, "after_flush", pause_late_writer)
+    for attempt in range(3):
+        batch = service.discussion_updates(experiment["id"], reader)
+        if not batch["items"]:
+            break
+        delivered.extend(item["retrieval_id"] for item in batch["items"])
+        service.acknowledge_discussion_updates(
+            experiment["id"], batch["delivery_id"], reader, f"ack-{attempt}"
+        )
+    assert sorted(delivered) == sorted([sent["late"], sent["early"]])
+
+
+@pytest.mark.integration
+def test_postgres_peer_wait_wakes_on_reply_sent_before_registration(pg_lab):
+    service, operator, experiment = pg_lab
+    researcher = Principal(id="researcher", project_id="network-pg", role="researcher")
+    agents = []
+    for name in ("alpha", "beta"):
+        branch = service.create_branch(
+            experiment["id"], BranchCreate(title=name, objective=name), researcher, name
+        )
+        agents.append(
+            Principal(
+                id=f"worker-{name}",
+                role="agent",
+                project_id="network-pg",
+                experiment_id=experiment["id"],
+                branch_id=branch["id"],
+            )
+        )
+    alpha, beta = agents
+    a_task = service.create_task(
+        TaskCreate(branch_id=alpha.branch_id, objective="A"), researcher, "a"
+    )
+    b_task = service.create_task(
+        TaskCreate(branch_id=beta.branch_id, objective="B"), researcher, "b"
+    )
+    lease_a = service.acquire_task(a_task["id"], "ha", 60, operator, "lease-a")
+    lease_b = service.acquire_task(b_task["id"], "hb", 60, operator, "lease-b")
+    with worker_effects(alpha, a_task["id"], "ha", lease_a["fence"]):
+        service.send_message(alpha.branch_id, beta.branch_id, "Question?", [], alpha, "q")
+    with worker_effects(beta, b_task["id"], "hb", lease_b["fence"]):
+        reply = service.send_message(beta.branch_id, alpha.branch_id, "Answer", [], beta, "r")
+    with worker_effects(alpha, a_task["id"], "ha", lease_a["fence"]):
+        wait = service.request_peer_wait(a_task["id"], beta.branch_id, 3600, alpha, "wait")
+    # The JSON-payload join between message events and records must match on PostgreSQL.
+    assert service.peer_wait_status(wait["intent"]["peer_wait"], alpha) == {
+        "ready": True,
+        "reason": "message_received",
+        "message_id": reply["id"],
+    }

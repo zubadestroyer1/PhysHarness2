@@ -21,9 +21,14 @@ from physharness.workforce_models import (
 )
 
 
-def started(lab):
+def started(lab, sharing=None):
     service, researcher, _ = lab
     experiment, _ = setup_experiment(lab)
+    if sharing:
+        request = ExperimentCreate.model_validate(
+            {k: experiment[k] for k in ("campaign_id", "problem_id", "models", "budget")}
+        ).model_copy(update={"sharing": sharing})
+        experiment = service.create_experiment(request, researcher, f"{sharing}-experiment")
     service.transition_experiment(experiment["id"], "start", 1, researcher, "start")
     operator = Principal(id="operator", project_id=researcher.project_id, role="operator")
     return service, researcher, operator, experiment
@@ -207,7 +212,8 @@ def test_invalid_second_root_rolls_back_first_root_and_task(lab):
 
 
 def test_recruit_directory_teams_and_capacity_demand_are_scoped(lab):
-    service, _, operator, experiment = started(lab)
+    # Cross-branch directory discovery exists only under ideas sharing.
+    service, _, operator, experiment = started(lab, "ideas")
     roots = service.seed_portfolio(
         experiment["id"],
         SeedPortfolioRequest(
@@ -294,7 +300,7 @@ def test_recruit_directory_teams_and_capacity_demand_are_scoped(lab):
 
 
 def test_recruit_preserves_parent_and_publication_is_opt_in(lab):
-    service, _, operator, experiment = started(lab)
+    service, _, operator, experiment = started(lab, "ideas")
     root = service.seed_portfolio(
         experiment["id"],
         SeedPortfolioRequest(
@@ -678,10 +684,11 @@ def test_direct_message_rejects_attachment_recipient_cannot_read(lab):
     secret = service.create_artifact(
         ArtifactCreate(
             experiment_id=experiment["id"],
+            branch_id=alpha.branch_id,
             kind="checkpoint",
             content="private state",
         ),
-        alpha,
+        author.model_copy(update={"role": "operator"}),
         "private-checkpoint",
     )
     with pytest.raises(HarnessError) as error:
@@ -729,10 +736,11 @@ def test_auto_return_omits_private_attachment_without_poisoning_parent(lab):
     private = service.create_artifact(
         ArtifactCreate(
             experiment_id=experiment["id"],
+            branch_id=child_agent.branch_id,
             kind="checkpoint",
             content="private state",
         ),
-        child_agent,
+        controller,
         "child-checkpoint",
     )
     child_lease = service.acquire_task(child["id"], "child-holder", 60, controller, "child-lease")
@@ -752,3 +760,134 @@ def test_auto_return_omits_private_attachment_without_poisoning_parent(lab):
     assert "attachments_omitted_for_recipient" in messages[0]["content"]
     updates = service.discussion_updates(experiment["id"], parent_agent)
     assert updates["items"]
+
+
+@pytest.mark.parametrize("sharing", ["none", "verified"])
+def test_directory_profiles_and_teams_stay_in_branch_without_ideas_sharing(lab, sharing):
+    from test_sharing import approaches
+
+    service, author, experiment, _, (alpha, beta) = approaches(lab, sharing)
+    operator = Principal(id="operator", project_id=author.project_id, role="operator")
+    secret = "Key step: use Gronwall on E(t); energy_bound closes goal 3"
+    service.publish_research_profile(
+        experiment["id"],
+        PublishResearchProfileRequest(
+            branch_id=alpha.branch_id,
+            published=True,
+            summary=secret,
+            interests=["energy estimates"],
+            assignment="Close goal 3",
+        ),
+        alpha,
+        "publish",
+    )
+    service.join_research_team(
+        experiment["id"],
+        JoinResearchTeamRequest(branch_id=alpha.branch_id, team="hint: try Gronwall"),
+        alpha,
+        "alpha-team",
+    )
+    service.join_research_team(
+        experiment["id"],
+        JoinResearchTeamRequest(branch_id=beta.branch_id, team="analysis"),
+        beta,
+        "beta-team",
+    )
+    peer = service.research_directory(experiment["id"], beta)
+    assert peer["items"] == []
+    assert peer["teams"] == [{"name": "analysis", "member_count": 1}]
+    assert "Gronwall" not in str(peer) and "goal 3" not in str(peer)
+    own = service.research_directory(experiment["id"], alpha)
+    assert [item["summary"] for item in own["items"]] == [secret]
+    assert own["items"][0]["teams"] == ["hint: try Gronwall"]
+    assert own["teams"] == [{"name": "hint: try Gronwall", "member_count": 1}]
+    project = service.research_directory(experiment["id"], operator)
+    assert [item["summary"] for item in project["items"]] == [secret]
+    assert {team["name"] for team in project["teams"]} == {"analysis", "hint: try Gronwall"}
+
+
+def test_branchless_first_post_does_not_stall_automatic_synthesis(lab):
+    from test_sharing import approaches
+
+    service, author, experiment, _, (alpha, beta) = approaches(lab, "ideas")
+    operator = Principal(id="operator", project_id=author.project_id, role="operator")
+    service.configure_workforce(
+        experiment["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=10, max_pending_tasks=10, synthesis_interval_posts=4
+        ),
+        operator,
+        "policy",
+    )
+    kickoff = service.create_discussion(
+        experiment["id"], DiscussionCreate(title="Kickoff", summary="Welcome"), operator, "k"
+    )
+    welcome = service.post_discussion(
+        kickoff["id"], DiscussionPostCreate(kind="update", content="Welcome all"), operator, "kp"
+    )
+    assert welcome["branch_id"] is None
+    topics = [
+        service.create_discussion(
+            experiment["id"], DiscussionCreate(title=name, summary=name), agent, name
+        )
+        for name, agent in (("A", alpha), ("B", beta))
+    ]
+    for index in range(4):
+        service.post_discussion(
+            topics[index % 2]["id"],
+            DiscussionPostCreate(kind="finding", content=f"Post {index}"),
+            (alpha, beta)[index % 2],
+            f"post-{index}",
+        )
+    result = service.schedule_research_synthesis(experiment["id"], operator, "tick-1")
+    assert result["scheduled"] is True
+    assert result["parent_branch_id"] == alpha.branch_id
+    assert welcome["id"] not in result["source_post_ids"]
+    assert result["branch"]["parent_id"] == alpha.branch_id
+
+
+def test_branchless_posts_alone_advance_synthesis_watermark(lab):
+    from test_sharing import approaches
+
+    service, author, experiment, _, (alpha, beta) = approaches(lab, "ideas")
+    operator = Principal(id="operator", project_id=author.project_id, role="operator")
+    service.configure_workforce(
+        experiment["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=10, max_pending_tasks=10, synthesis_interval_posts=4
+        ),
+        operator,
+        "policy",
+    )
+    topics = [
+        service.create_discussion(
+            experiment["id"], DiscussionCreate(title=name, summary=name), operator, name
+        )
+        for name in ("Kickoff", "Logistics")
+    ]
+    for index in range(20):
+        service.post_discussion(
+            topics[index % 2]["id"],
+            DiscussionPostCreate(kind="update", content=f"Notice {index}"),
+            operator,
+            f"notice-{index}",
+        )
+    first = service.schedule_research_synthesis(experiment["id"], operator, "tick-1")
+    assert first["scheduled"] is False
+    agent_topic = service.create_discussion(
+        experiment["id"], DiscussionCreate(title="A", summary="A"), alpha, "a"
+    )
+    other_topic = service.create_discussion(
+        experiment["id"], DiscussionCreate(title="B", summary="B"), beta, "b"
+    )
+    for index in range(4):
+        service.post_discussion(
+            (agent_topic, other_topic)[index % 2]["id"],
+            DiscussionPostCreate(kind="finding", content=f"Post {index}"),
+            (alpha, beta)[index % 2],
+            f"post-{index}",
+        )
+    second = service.schedule_research_synthesis(experiment["id"], operator, "tick-2")
+    assert second["scheduled"] is True
+    assert second["eligible_post_count"] == 4
+    assert second["through_sequence"] > first["through_sequence"]

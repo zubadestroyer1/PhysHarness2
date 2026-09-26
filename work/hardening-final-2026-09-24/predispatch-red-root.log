@@ -941,14 +941,14 @@ src/physharness/orchestration/research_worker.py:1594: ExecutionError
 ------------------------------ Captured log call -------------------------------
 ERROR    physharness.orchestration.research_worker:research_worker.py:1595 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1594, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1594, in execute
     await running
 physharness.execution.types.ExecutionError: Workspace path is not canonical
 WARNING  physharness.service:service.py:666 command_rejected
 ________ test_native_response_loop_persists_rejection_then_valid_result ________
 
 lab = (<physharness.service.HarnessService object at 0x1097ecfe0>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
-tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2345/test_native_response_loop_pers0')
+tmp_path = PosixPath('$TMPDIR/pytest-of-<user>/pytest-2345/test_native_response_loop_pers0')
 
     async def test_native_response_loop_persists_rejection_then_valid_result(lab, tmp_path):
         broker, service, experiment, calls, made, args = setup(lab)

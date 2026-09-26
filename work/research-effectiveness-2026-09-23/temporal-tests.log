@@ -2,7 +2,7 @@
 =================================== FAILURES ===================================
 _ test_real_temporal_retry_consumes_canonical_handoff_without_replaying_provider _
 
-tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2035/test_real_temporal_retry_consu0')
+tmp_path = PosixPath('$TMPDIR/pytest-of-<user>/pytest-2035/test_real_temporal_retry_consu0')
 lab = (<physharness.service.HarnessService object at 0x116043350>, Principal(id='researcher', project_id='lab', role='resear...ncipal(id='reviewer', project_id='lab', role='reviewer', experiment_id=None, branch_id=None, agent_orchestrator=False))
 
     @pytest.mark.asyncio
@@ -85,30 +85,30 @@ tests/test_temporal_integration.py:303: AssertionError
 Temporal CLI 1.8.3 (Server 1.31.2, UI 2.50.1)
 
 Temporal Server:      localhost:51086
-Temporal Persistence: /private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-2035/test_real_temporal_retry_consu0/temporal.db
+Temporal Persistence: $TMPDIR/pytest-of-<user>/pytest-2035/test_real_temporal_retry_consu0/temporal.db
 Temporal Metrics:     http://localhost:51096/metrics
 ------------------------------ Captured log call -------------------------------
 ERROR    physharness.orchestration.research_worker:research_worker.py:1347 Research task failed
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 WARNING  physharness.service:service.py:556 command_rejected
 WARNING  temporalio.activity:_activity.py:452 Completing activity as failed ({'activity_id': '1', 'activity_type': 'run_research_task', 'attempt': 1, 'namespace': 'default', 'task_queue': 'canonical-crash-fixture', 'workflow_id': 'task:d54dfe1c-97cf-498d-b507-23d30f8accfe', 'workflow_run_id': '01a0d03b-fb0c-7b5e-8ef4-b0695d244938', 'workflow_type': 'TaskWorkflow'})
 Traceback (most recent call last):
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/temporalio/worker/_activity.py", line 351, in _handle_start_activity_task
+  File "<repo>/.venv/lib/python3.12/site-packages/temporalio/worker/_activity.py", line 351, in _handle_start_activity_task
     result = await self._execute_activity(
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/temporalio/worker/_activity.py", line 681, in _execute_activity
+  File "<repo>/.venv/lib/python3.12/site-packages/temporalio/worker/_activity.py", line 681, in _execute_activity
     return await impl.execute_activity(input)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/.venv/lib/python3.12/site-packages/temporalio/worker/_activity.py", line 889, in execute_activity
+  File "<repo>/.venv/lib/python3.12/site-packages/temporalio/worker/_activity.py", line 889, in execute_activity
     return await input.fn(*input.args)
            ^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/tests/test_temporal_integration.py", line 277, in canonical_task
+  File "<repo>/tests/test_temporal_integration.py", line 277, in canonical_task
     result = await executor.execute(item["aggregate_id"], actor.project_id)
              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/kieranpi/Desktop/Projects/PhysHarnessV2/.worktrees/formal-research-loop/src/physharness/orchestration/research_worker.py", line 1346, in execute
+  File "<repo>/src/physharness/orchestration/research_worker.py", line 1346, in execute
     await running
 physharness.execution.types.ExecutionError: Provider response model differs from the requested model
 =========================== short test summary info ============================

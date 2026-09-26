@@ -311,7 +311,7 @@ E                   temporalio.exceptions.WorkflowAlreadyStartedError: Workflow 
 
 During handling of the above exception, another exception occurred:
 
-tmp_path = PosixPath('/private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-1928/test_real_temporal_validates_a0')
+tmp_path = PosixPath('$TMPDIR/pytest-of-<user>/pytest-1928/test_real_temporal_validates_a0')
 
     @pytest.mark.asyncio
     async def test_real_temporal_validates_active_and_completed_duplicate_identity(tmp_path):
@@ -418,7 +418,7 @@ src/physharness/orchestration/temporal_delivery.py:56: AttributeError
 Temporal CLI 1.8.3 (Server 1.31.2, UI 2.50.1)
 
 Temporal Server:      localhost:56110
-Temporal Persistence: /private/var/folders/4x/gtrwnl511qvbkvtpksqmvyc80000gn/T/pytest-of-kieranpi/pytest-1928/test_real_temporal_validates_a0/temporal.db
+Temporal Persistence: $TMPDIR/pytest-of-<user>/pytest-1928/test_real_temporal_validates_a0/temporal.db
 Temporal Metrics:     http://localhost:56119/metrics
 =========================== short test summary info ============================
 FAILED tests/test_temporal_integration.py::test_real_temporal_validates_active_and_completed_duplicate_identity

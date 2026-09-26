@@ -41,7 +41,7 @@ PRIVATE = HERE.parent.parent / ".state/research-effectiveness-2026-09-23/private
 SOURCE = HERE.parent.parent / ".state/runs/first-pilot/private/harness.db"
 HISTORICAL = HERE.parent / "long-horizon-2026-09-23/pilot_ops.py"
 IMAGE = "sha256:48e4f60a07c289baf846c0ff6fa2624870c59547c2a00971db0510e767161be0"
-DOCKER_HOST = "unix:///Users/kieranpi/.colima/physharness-pilot/docker.sock"
+DOCKER_HOST = "unix://" + os.path.expanduser("~/.colima/physharness-pilot/docker.sock")
 TARGETS = {
     "projection": "b3817784-8d0e-4961-9903-c3c0feef1b58",
     "purity": "215b5024-4285-4aa4-baed-05cf37363291",

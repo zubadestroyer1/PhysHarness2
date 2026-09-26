@@ -2,7 +2,7 @@
   "protocol": "physharness-local-workbench-observation-v1",
   "observed_at": "2026-09-23T23:56:51.274376+00:00",
   "image_digest": "sha256:48e4f60a07c289baf846c0ff6fa2624870c59547c2a00971db0510e767161be0",
-  "docker_host": "unix:///Users/kieranpi/.colima/physharness-pilot/docker.sock",
+  "docker_host": "unix://~/.colima/physharness-pilot/docker.sock",
   "test_result": {
     "passed": 2,
     "failed": 0,
