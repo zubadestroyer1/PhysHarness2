@@ -12,7 +12,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import select
 
-from ..commons_review import REFEREE_HAT, is_referee_task
+from ..commons_review import (
+    REFEREE_FRONTIER_NOTE,
+    REFEREE_HAT,
+    fence_author_data,
+    is_referee_task,
+)
 from ..domain import (
     ArtifactCreate,
     BranchCreate,
@@ -1513,10 +1518,18 @@ class ResearchTaskExecutor:
 
             def society_context():
                 lab = branch.get("lab")
+                frontier = self.service.query_nodes(
+                    experiment["id"], agent, frontier=True, limit=10
+                )
+                if referee:
+                    # Node titles and statements are author text (possibly the reviewed
+                    # node's author): a referee reads them fenced, like its review packet.
+                    frontier = {
+                        "note": REFEREE_FRONTIER_NOTE,
+                        "data": fence_author_data(frontier["items"]),
+                    }
                 return {
-                    "commons_frontier": self.service.query_nodes(
-                        experiment["id"], agent, frontier=True, limit=10
-                    ),
+                    "commons_frontier": frontier,
                     "lab": self.service.lab_members(experiment["id"], lab, agent) if lab else None,
                     "focus_nodes": self.service.branch_claims(experiment["id"], agent, limit=10),
                     "review_assignment": task.get("review_assignment"),
