@@ -76,7 +76,9 @@ What exists (Tasks 1–10):
   - Referees get referee-specific norms, check-ins, nudges and skill lists, which name
     only the tools they have.
   - In society profiles, a call to an unregistered tool name is a recoverable rejection
-    rather than a fatal error. Repeating such a call trips the stagnation detector.
+    rather than a fatal error. Every such rejection counts toward stagnation for the rest
+    of the native session, whatever the name: the fourth warns, the eighth requests the
+    stagnation handoff, and eight more in the recovery session exhaust it.
 - **Tests.** The full suite passes 1,577 tests with 2 opt-in PostgreSQL skips (1,258
   before S1). Ruff check and format are clean.
 

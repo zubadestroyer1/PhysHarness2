@@ -172,7 +172,9 @@ constitution instead, with no playbook, and its notes name only referee-profile 
 Its frontier's node titles and statements arrive fenced as untrusted author data, like
 its review packet, since they may come from the author of the node it reviews.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
-that lists the available tools. Optional check-ins and stagnation nudges are switched
+that lists the available tools. Rejections count per native session whatever the name,
+so a model that keeps inventing names reaches the stagnation warning after four and the
+stagnation handoff after eight. Optional check-ins and stagnation nudges are switched
 per campaign. The finite supervisor runs the referee tasks its own lineages request,
 and synthesis tasks that have no parent branch. A platform-rooted task it runs (a
 referee, or a parentless synthesis) adds its lineage to the run's own, so a review
