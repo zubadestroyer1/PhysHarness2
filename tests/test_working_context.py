@@ -195,7 +195,7 @@ def test_failed_attempts_accepted_claims_and_status_refresh(lab):
 
 
 def test_chunk_read_is_byte_exact_bounded_and_excludes_native(lab):
-    service, _, experiment, _, (alpha, beta) = approaches(lab, "none")
+    service, author, experiment, _, (alpha, beta) = approaches(lab, "none")
     content = "é🚀" * 8
     own = service.create_artifact(
         ArtifactCreate(experiment_id=experiment["id"], kind="text", content=content),
@@ -203,8 +203,13 @@ def test_chunk_read_is_byte_exact_bounded_and_excludes_native(lab):
         "unicode-artifact",
     )
     native = service.create_artifact(
-        ArtifactCreate(experiment_id=experiment["id"], kind="native_checkpoint", content="private"),
-        alpha,
+        ArtifactCreate(
+            experiment_id=experiment["id"],
+            branch_id=alpha.branch_id,
+            kind="native_checkpoint",
+            content="private",
+        ),
+        author.model_copy(update={"role": "operator"}),
         "native-artifact",
     )
     memory = PortableMemory(service)
