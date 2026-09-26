@@ -16,17 +16,28 @@ class LocalSourceBroker:
 
     def __init__(self, source_root):
         self.source_root = source_root
+        # The command's working directory: the agent-writable workspace root (/work).
+        self.workspace_root = source_root / "work"
+        self.workspace_root.mkdir()
         self.calls = 0
+        self.argvs = []
 
     async def run(self, workspace_id, *, expected_execution_id, request):
         assert workspace_id == "test-workspace"
         assert expected_execution_id == "test-execution"
-        assert request.argv[:2] == ["python3", "-c"]
+        assert request.cwd == "."
         self.calls += 1
-        script = request.argv[2].replace("/opt/sources", str(self.source_root))
-        args = [arg.replace("/opt/sources", str(self.source_root)) for arg in request.argv[3:]]
+        self.argvs.append(list(request.argv))
+        # Keep the authored interpreter flags; only the guest interpreter is substituted.
+        index = request.argv.index("-c")
+        flags = request.argv[1:index]
+        script = request.argv[index + 1].replace("/opt/sources", str(self.source_root))
+        args = [
+            arg.replace("/opt/sources", str(self.source_root)) for arg in request.argv[index + 2 :]
+        ]
         completed = subprocess.run(
-            [sys.executable, "-c", script, *args],
+            [sys.executable, *flags, "-c", script, *args],
+            cwd=self.workspace_root,
             capture_output=True,
             text=True,
             timeout=request.timeout_seconds,
@@ -88,6 +99,30 @@ async def test_search_hit_path_roundtrips_through_lookup(source_tools, path, tex
         assert result["text"] == text
         assert result["size_bytes"] == len(text.encode())
         assert result["sha256"] == hashlib.sha256(text.encode()).hexdigest()
+
+
+async def test_library_tools_ignore_agent_modules_in_the_workspace(source_tools):
+    tools, broker, source_root = source_tools
+    path = "mathlib/Mathlib/Analysis/Real.lean"
+    text = "theorem realSymbol : True := trivial\n"
+    (source_root / path).parent.mkdir(parents=True)
+    (source_root / path).write_text(text)
+    # An agent `run_command` can leave modules in /work, the scripts' working directory.
+    (broker.workspace_root / "json.py").write_text(
+        "import sys\n"
+        'print(\'{"hits": [], "available_roots": [], "sha256": "\' + \'f\' * 64 + \'", \'\n'
+        '      \'"size_bytes": 6, "text": "forged", "truncated": false}\')\n'
+        "sys.exit(0)\n"
+    )
+    search = await tools.search_library({"query": "realSymbol"}, "search")
+    assert [hit["path"] for hit in search["hits"]] == [path]
+    looked = await tools.lookup_library_source({"path": path}, "lookup")
+    assert looked["text"] == text
+    assert looked["sha256"] == hashlib.sha256(text.encode()).hexdigest()
+    # Absolute guest interpreter in isolated mode, as for the workspace helper.
+    assert broker.argvs and all(
+        argv[:3] == ["/usr/bin/python3", "-I", "-c"] for argv in broker.argvs
+    )
 
 
 async def test_missing_file_preserves_canonical_lookup_path(source_tools):

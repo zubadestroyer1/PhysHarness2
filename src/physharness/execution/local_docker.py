@@ -18,7 +18,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from .types import Capabilities, CommandRequest, CommandResult, ExecutionError
+from .types import GUEST_PYTHON, Capabilities, CommandRequest, CommandResult, ExecutionError
 from .workspace_archive import CHUNK_SIZE, DEFAULT_QUOTA, WorkspaceArchive, checked_path
 
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -36,17 +36,21 @@ def refuse(kind,value,trace):
         sys.stderr.write('physharness-refused: '+kind.__name__+'\n');sys.stderr.flush();os._exit(3)
     sys.__excepthook__(kind,value,trace)
 sys.excepthook=refuse
+def secret(name):
+    return (name in ('.git','.ssh','.aws','.config','__pycache__','.cache','node_modules')
+            or name.startswith('.env') or name.endswith('.pyc'))
+def portable(p):
+    # The host checked_path rule: a name a checkpoint can hold and restore exactly.
+    try:size=len(p.encode())
+    except UnicodeEncodeError:return False
+    return 0<size<=1024 and all(x not in ('','.','..') and '\\' not in x and '\x00' not in x
+                                and len(x.encode())<=255 for x in p.split('/'))
 def checked(p):
-    parts=p.split('/')
-    assert p and all(x not in ('','.','..') and '\\' not in x and '\x00' not in x for x in parts)
-    assert not any(
-        x in ('.git','.ssh','.aws','.config','__pycache__','.cache','node_modules')
-        or x.startswith('.env') or x.endswith('.pyc') for x in parts
-    )
-    return parts
+    assert portable(p) and not any(secret(x) for x in p.split('/'))
+    return p.split('/')
 def parent(p,create=False):
-    fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     parts=checked(p)
+    fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     for part in parts[:-1]:
         if create:
             try: os.mkdir(part,mode=0o700,dir_fd=fd)
@@ -54,17 +58,22 @@ def parent(p,create=False):
         nxt=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
         os.close(fd);fd=nxt
     return fd,parts[-1]
+def inside(s):
+    # Hard links cannot leave /work's own file system, so a regular file there, under any
+    # of its names, is workspace content. Symlinks are never followed (O_NOFOLLOW).
+    return stat.S_ISREG(s.st_mode) and s.st_dev==os.lstat(root).st_dev
 def get(p):
     fd,name=parent(p)
     try:
         h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
         try:
-            s=os.fstat(h);assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
+            s=os.fstat(h);assert inside(s)
             with os.fdopen(os.dup(h),'rb') as f:return f.read()
         finally:os.close(h)
     finally:os.close(fd)
 def put(p,data):
-    parts=checked(p)
+    try:parts=checked(p)
+    except AssertionError:raise Refused('unsafe path refused before any change')
     fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     made=[];temp=None
     try:
@@ -104,7 +113,7 @@ if action=='chunk':
         h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
         try:
             s=os.fstat(h)
-            assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
+            assert stat.S_ISREG(s.st_mode) and s.st_dev==os.lstat(root).st_dev
             assert (s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(size,mtime,ctime)
             with os.fdopen(os.dup(h),'rb') as stream:
                 stream.seek(offset);piece=stream.read(length)
@@ -154,6 +163,17 @@ elif action=='commit_stage':
         finally:os.close(h)
     finally:os.close(fd)
     print('ok')
+elif action=='link':
+    # Restore another name of an already restored regular file; never replace an entry.
+    tfd,tname=parent(sys.argv[3])
+    try:
+        fd,name=parent(path,True)
+        try:
+            assert inside(os.stat(tname,dir_fd=tfd,follow_symlinks=False))
+            os.link(tname,name,src_dir_fd=tfd,dst_dir_fd=fd,follow_symlinks=False)
+        finally:os.close(fd)
+    finally:os.close(tfd)
+    print('ok')
 elif action=='capture':
     try:
         limit=int(sys.argv[3]);assert 0<limit<=4000000
@@ -194,7 +214,7 @@ elif action=='slice':
     try:
         h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
         try:
-            s=os.fstat(h);assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
+            s=os.fstat(h);assert inside(s)
             sha=hashlib.sha256()
             with os.fdopen(os.dup(h),'rb') as stream:
                 while chunk:=stream.read(1048576):sha.update(chunk)
@@ -215,54 +235,68 @@ elif action in ('list','list3','quiescent'):
     assert not live, 'Checkpoint requires a quiescent workspace'
     if action=='quiescent':
         print('ok');sys.exit(0)
-    result=[];excluded=[]
-    def secret(name):
-        return (name in ('.git','.ssh','.aws','.config','__pycache__','.cache','node_modules')
-                or name.startswith('.env') or name.endswith('.pyc'))
+    result=[];excluded=[];hashed={}
+    device=os.lstat(root).st_dev
     def omit(relative):
-        # Links, special files, secrets and caches are never read; the manifest records them.
-        assert len(relative.encode())<=1024
-        assert all(x not in ('','.','..') and '\\' not in x and '\x00' not in x
-                   for x in relative.split('/'))
-        excluded.append(relative)
-    for folder,dirs,files in os.walk(root,followlinks=False):
+        # Links, special files, secrets, caches, unreadable entries and names no archive can
+        # hold are never read. Each is reported as bounded portable text: U+FFFD replaces
+        # backslashes and undecodable bytes, and an over-long path ends in an ellipsis.
+        text=os.fsencode(relative).decode('utf-8','replace').replace('\\','\ufffd')
+        if len(text.encode())>1024:
+            text=text.encode()[:1000].decode('utf-8','ignore').rstrip('/')+'\u2026'
+        excluded.append(text)
+    def unlisted(error):
+        # A directory that cannot be listed is reported, never silently skipped.
+        if error.filename==root:raise error
+        omit(os.path.relpath(error.filename,root))
+    def status(full):
+        try:return os.lstat(full)
+        except PermissionError:return None
+    for folder,dirs,files in os.walk(root,onerror=unlisted,followlinks=False):
         dirs.sort();files.sort()
         for d in list(dirs):
             full=os.path.join(folder,d);relative=os.path.relpath(full,root)
-            if d=='.lake' or secret(d) or not stat.S_ISDIR(os.lstat(full).st_mode):
-                dirs.remove(d);omit(relative);continue
-            checked(relative)
+            s=None if d=='.lake' or secret(d) or not portable(relative) else status(full)
+            if s is None or not stat.S_ISDIR(s.st_mode):
+                dirs.remove(d);omit(relative)
         for f in files:
             full=os.path.join(folder,f);relative=os.path.relpath(full,root)
-            s=os.lstat(full)
-            if secret(f) or not (stat.S_ISREG(s.st_mode) and s.st_nlink==1):
+            s=None if secret(f) or not portable(relative) else status(full)
+            # Hard links cannot leave /work's own file system, so every name of a regular
+            # file there is ordinary workspace content. list3 reports the inode so the
+            # host stores and charges linked data once and restores the link itself.
+            if s is None or not stat.S_ISREG(s.st_mode) or s.st_dev!=device:
                 omit(relative);continue
-            checked(relative)
-            if action=='list3':
-                sha=hashlib.sha256()
-                fd,name=parent(relative)
+            identity=(s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
+            fd,name=parent(relative)
+            try:
+                try:h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+                except PermissionError:
+                    omit(relative);continue
                 try:
-                    h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
-                    try:
-                        observed=os.fstat(h)
-                        assert stat.S_ISREG(observed.st_mode) and observed.st_nlink==1
-                        assert (s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(
-                            observed.st_ino,observed.st_size,observed.st_mtime_ns,observed.st_ctime_ns)
+                    observed=os.fstat(h)
+                    assert stat.S_ISREG(observed.st_mode)
+                    assert identity==(
+                        observed.st_ino,observed.st_size,observed.st_mtime_ns,observed.st_ctime_ns)
+                    if action=='list3' and identity not in hashed:
+                        sha=hashlib.sha256()
                         with os.fdopen(os.dup(h),'rb') as stream:
                             while part:=stream.read(1048576):sha.update(part)
-                    finally:os.close(h)
-                finally:os.close(fd)
+                        hashed[identity]=sha.hexdigest()
+                finally:os.close(h)
+            finally:os.close(fd)
+            if action=='list3':
                 after=os.lstat(full)
-                assert (s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(
-                    after.st_size,after.st_mtime_ns,after.st_ctime_ns)
-                result.append([relative,s.st_size,sha.hexdigest(),s.st_mtime_ns,s.st_ctime_ns])
+                assert identity==(after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns)
+                result.append([relative,s.st_size,hashed[identity],s.st_mtime_ns,s.st_ctime_ns,
+                               s.st_ino])
             else:result.append([relative,s.st_size])
     result.sort(key=lambda row:row[0])
     print(json.dumps({'files':result,'excluded_paths':excluded},separators=(',',':')))
 else:raise ValueError('invalid action')
 """
 # Isolated mode: agent files in the /work exec directory cannot shadow helper imports.
-_GUEST_ARGV = ("/usr/bin/python3", "-I", "-c", _GUEST)
+_GUEST_ARGV = (*GUEST_PYTHON, "-c", _GUEST)
 _GUEST_REFUSED = 3
 # These actions never write /work, so an oversized complete response is a definite refusal.
 _READ_ONLY_GUEST_ACTIONS = frozenset({"read", "slice", "chunk", "capture", "list", "list3"})
@@ -764,16 +798,29 @@ class LocalDockerWorkspaceProvider:
         self._identity(expected_execution_id)
         before = json.loads(await self._guest("list3", max_output=4_000_000))
         listing = before["files"]
+        # The first (sorted) name of each inode stores its data; tmpfs holds it only once.
+        stored = {}
+        for row in listing:
+            stored.setdefault(row[5], row)
         if (
             len(listing) > 10_000
             or len(before["excluded_paths"]) > 10_000
-            or sum(row[1] for row in listing) > self.workspace_quota_bytes
+            or sum(row[1] for row in stored.values()) > self.workspace_quota_bytes
         ):
             raise ExecutionError("WORKSPACE_LIMIT", "Workspace exceeds checkpoint quota")
         files = []
         chunks = {}
-        for path, size, expected_hash, mtime, ctime in listing:
+        for path, size, expected_hash, mtime, ctime, inode in listing:
             checked_path(path)
+            first = stored[inode]
+            if first[0] != path:
+                # Another name of a file already read: record the link, not a second copy.
+                if first[1:5] != [size, expected_hash, mtime, ctime]:
+                    raise ExecutionError("CHECKPOINT_MISMATCH", "Hard link listing is inconsistent")
+                files.append(
+                    {"path": path, "size": size, "sha256": expected_hash, "link": first[0]}
+                )
+                continue
             file_hash = hashlib.sha256()
             refs = []
             for offset in range(0, size, CHUNK_SIZE):
@@ -813,6 +860,10 @@ class LocalDockerWorkspaceProvider:
         declarations = {entry["sha256"]: entry for entry in archive.manifest["chunks"]}
         for entry in archive.manifest["files"]:
             path, total = entry["path"], entry["size"]
+            if "link" in entry:
+                # Its target sorts first, so it is already restored and verified below.
+                await self._guest("link", path, arguments=[checked_path(entry["link"])])
+                continue
             token = uuid4().hex
             digest = hashlib.sha256()
             offset = 0
@@ -835,9 +886,14 @@ class LocalDockerWorkspaceProvider:
             await self._guest("commit_stage", path, arguments=[str(total), entry["sha256"], token])
         observed = json.loads(await self._guest("list3", max_output=4_000_000))
         expected = [
-            [entry["path"], entry["size"], entry["sha256"]] for entry in archive.manifest["files"]
+            [entry["path"], entry["size"], entry["sha256"], entry.get("link", entry["path"])]
+            for entry in archive.manifest["files"]
         ]
-        actual = [[row[0], row[1], row[2]] for row in observed["files"]]
+        first = {}
+        for row in observed["files"]:
+            first.setdefault(row[5], row[0])
+        # Each restored name must also share exactly the recorded file (hard link) or none.
+        actual = [[row[0], row[1], row[2], first[row[5]]] for row in observed["files"]]
         if actual != expected:
             raise ExecutionError(
                 "CHECKPOINT_MISMATCH", "Restored workspace differs from checkpoint"

@@ -90,6 +90,22 @@ def _validate_worker_preflight(report):
             )
 
 
+def _accepts_keyword(function, name):
+    """Whether ``function`` takes ``name`` as a keyword, directly or through ``**kwargs``."""
+    try:
+        parameters = inspect.signature(function).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(
+        p.kind is inspect.Parameter.VAR_KEYWORD
+        or (
+            p.name == name
+            and p.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+        )
+        for p in parameters
+    )
+
+
 async def _reserve_model_with_wait(
     service, experiment_id, amount, tokens, actor, operation_id, model_task_binding
 ):
@@ -1734,7 +1750,30 @@ class ResearchTaskExecutor:
             native_compatible = native_compatible and callable(
                 getattr(runtime, "start_from_handoff", None)
             )
+            handoff_source, carry_lineage_tokens = None, False
             if ready and not recovering_successor:
+                # Every check that can reject this successor runs while the ticket is
+                # still issued, so a rejection leaves it intact rather than spent.
+                if not native_compatible:
+                    # A portable successor starts a fresh session. A numeric token
+                    # guard caps the whole task lineage, so the runtime must accept
+                    # the predecessor to carry its cumulative use; never reset it.
+                    carry_lineage_tokens = _accepts_keyword(runtime.start, "predecessor")
+                    if not carry_lineage_tokens and runtime_limits.max_total_tokens is not None:
+                        raise HarnessError(
+                            "CONTINUATION_TOKEN_GUARD_UNSUPPORTED",
+                            "This runtime cannot carry the task's cumulative max_total_tokens "
+                            "guard into a portable continuation.",
+                            remediation=(
+                                "Continue with a runtime whose start() accepts predecessor "
+                                "(the Responses runtime), or set runtime_limits."
+                                "max_total_tokens to null so the shared dollar and time "
+                                "budget bounds the task."
+                            ),
+                        )
+                handoff_source = await store.load(ready["source_session_id"])
+                if handoff_source.state_digest != ready["source_checkpoint_digest"]:
+                    raise HarnessError("CONTINUATION_STALE", "Handoff source checkpoint changed.")
                 self.service.consume_continuation(
                     task_id,
                     holder,
@@ -1818,20 +1857,15 @@ class ResearchTaskExecutor:
                         runtime.continue_session(recovering_session, prompt)
                     )
             elif native_compatible:
-                source = await store.load(ready["source_session_id"])
-                if source.state_digest != ready["source_checkpoint_digest"]:
-                    raise HarnessError("CONTINUATION_STALE", "Handoff source checkpoint changed.")
                 running = asyncio.create_task(
-                    runtime.start_from_handoff(source, prompt, model_config, runtime_limits)
+                    runtime.start_from_handoff(handoff_source, prompt, model_config, runtime_limits)
                 )
             elif ready:
-                # Portable context is fresh, but the numeric token guard stays
-                # cumulative across the whole task lineage.
-                source = await store.load(ready["source_session_id"])
-                if source.state_digest != ready["source_checkpoint_digest"]:
-                    raise HarnessError("CONTINUATION_STALE", "Handoff source checkpoint changed.")
+                # Portable context is fresh, but a numeric token guard stays cumulative
+                # across the task lineage. Without one there is nothing to carry.
+                lineage = {"predecessor": handoff_source} if carry_lineage_tokens else {}
                 running = asyncio.create_task(
-                    runtime.start(prompt, model_config, runtime_limits, predecessor=source)
+                    runtime.start(prompt, model_config, runtime_limits, **lineage)
                 )
             else:
                 running = asyncio.create_task(runtime.start(prompt, model_config, runtime_limits))
@@ -1925,6 +1959,19 @@ class ResearchTaskExecutor:
                 f"task-output:{task_id}:{result.session.id}",
             )
             await cleanup()
+            teardown = getattr(workspace_tools, "cleanup_report", None) or {}
+            if (
+                teardown.get("status") == "destroyed"
+                and (teardown.get("final_checkpoint") or {}).get("status") == "rejected"
+            ):
+                # The workspace is gone without an archive: report it as a failure with
+                # evidence rather than completing as if nothing were lost.
+                raise HarnessError(
+                    "WORKSPACE_CHECKPOINT_UNSAVED",
+                    "The VM was destroyed after its final checkpoint was refused.",
+                    remediation="Inspect the refused final checkpoint recorded in the "
+                    "failure evidence and on the workspace destroy operation.",
+                )
             finish_status = "completed"
             if result.completion_reason == "target_verified":
                 joined = self.service.joined_task_statuses(task_id, agent)
@@ -1969,6 +2016,9 @@ class ResearchTaskExecutor:
                 if current_task.get("research_progress_status") == "recovery_exhausted"
                 else getattr(error, "code", "EXECUTION_FAILED")
             )
+            # What cleanup did to the VM: a saved final checkpoint, a teardown after a
+            # refused one, or a VM kept for operator reconciliation.
+            workspace_cleanup = getattr(workspace_tools, "cleanup_report", None)
             failure_artifact = self.service.create_artifact(
                 ArtifactCreate(
                     experiment_id=experiment["id"],
@@ -1983,8 +2033,17 @@ class ResearchTaskExecutor:
                             "message": (
                                 str(error)
                                 if getattr(error, "code", None)
-                                in {"TOKEN_BUDGET_EXCEEDED", "BUDGET_EXCEEDED"}
+                                in {
+                                    "TOKEN_BUDGET_EXCEEDED",
+                                    "BUDGET_EXCEEDED",
+                                    "WORKSPACE_CHECKPOINT_UNSAVED",
+                                }
                                 else "Inspect logs; external calls may need reconciliation."
+                            ),
+                            **(
+                                {"workspace_cleanup": workspace_cleanup}
+                                if workspace_cleanup is not None
+                                else {}
                             ),
                         }
                     ),

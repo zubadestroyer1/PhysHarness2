@@ -22,6 +22,12 @@ def digest(value: Any) -> str:
     ).hexdigest()
 
 
+# Interpreter for harness-authored Python inside a workspace VM. An absolute path and
+# isolated mode keep agent files on PATH, in the working directory (/work) or in user
+# site-packages from replacing the interpreter or shadowing the script's imports.
+GUEST_PYTHON = ("/usr/bin/python3", "-I")
+
+
 class ExecutionError(Exception):
     """Safe public error; provider exception details remain in the exception chain."""
 
@@ -72,7 +78,8 @@ class RuntimeLimits(Record):
     max_turns: int = Field(default=8, ge=1, le=1000)
     max_output_tokens: int = Field(default=4096, ge=1)
     # None delegates the cumulative ceiling to the shared dollar/time budget.
-    # A numeric guard remains cumulative across compaction and continuation.
+    # A numeric guard caps the task's whole continuation lineage; a portable
+    # successor on a runtime that cannot accept `predecessor` is refused.
     max_total_tokens: int | None = Field(default=32768, ge=1)
     max_context_tokens: int | None = Field(default=None, ge=1)
     timeout_seconds: float = Field(default=300, gt=0, le=86400)
@@ -168,6 +175,9 @@ class RuntimeStore(Protocol):
 
 
 class RuntimeAdapter(Protocol):
+    """A runtime may also accept `start(..., predecessor=checkpoint)` to carry a
+    portable successor's lineage token use; see docs/EXECUTION.md."""
+
     capabilities: Capabilities
 
     async def start(
