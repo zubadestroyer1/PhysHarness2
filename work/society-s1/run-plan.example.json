@@ -87,7 +87,7 @@
     "literature": {
       "mode": "benchmark",
       "blocked_sources": [
-        "USER DECISION REQUIRED: arXiv id, DOI, domain or title fragment of each known-solution source for the chosen target"
+        "USER DECISION REQUIRED: arXiv id, journal DOI and a title fragment of each known-solution source for the chosen target (one entry each)"
       ],
       "masked_reference_artifact_id": "USER DECISION REQUIRED: ref id",
       "overlap_threshold": 0.02

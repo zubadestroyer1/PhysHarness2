@@ -84,6 +84,8 @@ class ResearchMixin:
         self._research_role(actor)
         status = result.get("status") if isinstance(result, dict) else None
         url = result.get("url") if status else None
+        # Where the text actually came from after redirects; the requested URL otherwise.
+        final_url = result.get("final_url", url) if status else None
         digest = result.get("sha256") if status else None
         flagged = status == "withheld_contamination_risk"
         text = result.get("text") if status == "ok" else None
@@ -92,6 +94,8 @@ class ResearchMixin:
             status not in ("ok", "withheld_contamination_risk")
             or not isinstance(url, str)
             or not 1 <= len(url) <= MAX_URL_CHARS
+            or not isinstance(final_url, str)
+            or not 1 <= len(final_url) <= MAX_URL_CHARS
             or not isinstance(digest, str)
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
             or (status == "ok" and (not isinstance(text, str) or len(text) > MAX_TEXT_CHARS))
@@ -107,7 +111,7 @@ class ResearchMixin:
                 experiment_id,
                 text,
                 "markdown",
-                url,
+                final_url,
                 digest[:16],
                 FETCH_LICENSE,
                 actor,
@@ -120,9 +124,15 @@ class ResearchMixin:
                 for name in ("shared", "reference_ngrams", "ratio", "threshold")
                 if type(flag.get(name)) in (int, float)
             }
-            if result["flag"].get("reason") in ("blocked_source_key", "reference_overlap"):
+            if result["flag"].get("reason") in (
+                "blocked_source_key",
+                "blocked_source_title",
+                "reference_overlap",
+            ):
                 flag["reason"] = result["flag"]["reason"]
-            screen_content = canonical_json({"url": url, "sha256": digest, "flag": flag})
+            screen_content = canonical_json(
+                {"url": url, "final_url": final_url, "sha256": digest, "flag": flag}
+            )
             screen_content = screen_content.encode("utf-8")
 
         def action(session, op):
@@ -158,6 +168,7 @@ class ResearchMixin:
                 {
                     "experiment_id": experiment_id,
                     "url": url,
+                    "final_url": final_url,
                     "sha256": digest,
                     "status": status,
                     "flagged": flagged,
