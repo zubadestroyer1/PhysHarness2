@@ -152,15 +152,19 @@ uses its one-shot fallback.
 On both images, a local compile (`lean_check` with `node_id`) also runs the harness
 statement check with the image's own `lake --offline env lean`. It needs no REPL. It
 compiles the file and a reference statement to `.olean` files. Then it runs
-`statement_check.lean` with `lean --run`, which reads both as data. The checker:
+`statement_check.lean` with `lean --run`, which loads both only as data. The checker:
 
 - replays the file's declarations through the kernel;
-- compares the theorem's elaborated type with the reference's;
+- compares the theorem's elaborated type with the reference's, each with its own file's
+  definitions and theorems (such as `match` matchers) unfolded;
 - collects the theorem's axioms itself.
 
 That check, not the file's `#print axioms` output, is what `compiles_locally` rests on. It
-still runs in the agent-controlled VM, so it is VM-attested evidence, not an acceptance
-receipt.
+defeats elaboration-level tricks in the file (instances, macros, `#print axioms`
+overrides, skipped kernel checks). But compiling the file runs its compile-time code
+(`#eval`, `run_cmd`, its own elaborators and tactics) in the agent-controlled VM, where,
+like any shell command, it can alter the checker, the reference or the imported `.olean`
+files the checker trusts. So the result is VM-attested evidence, not an acceptance receipt.
 
 | Component | Route | Pin status |
 | --- | --- | --- |
