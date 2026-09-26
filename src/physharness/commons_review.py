@@ -2,17 +2,20 @@
 
 A referee is an isolated branch the platform creates for one review: it has no parent and no
 lab, no other branch may message it or delegate work into it, and when the experiment records
-several models it runs one distinct from the author's. Each referee task submits exactly one
-verdict. Verdicts, Lean elaboration results, local compiles and independent kernel receipts
-become ladder moves only here, through ``_set_node_status``.
+several models it runs one distinct from the author's (and, for a fidelity review, from every
+branch that may have written the Lean statement), spreading a quorum over model families. Each
+referee task submits exactly one verdict, and a node gets a bounded panel of referees per text
+version, so it cannot shop for verdicts. Verdicts, Lean elaboration results, local compiles and
+independent kernel receipts become ladder moves only here, through ``_set_node_status``.
 """
 
 import copy
 import json
+from collections import Counter
 from typing import Annotated, Any
 
 from pydantic import Field, StrictBool, ValidationError, model_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
 
 from .commons import PLATFORM, _lean_digest, _platform
@@ -28,6 +31,12 @@ FORMAL_STATUSES = frozenset({"formally_stated", "compiles_locally"})
 TERMINAL_TASK_STATUSES = ("completed", "failed", "blocked")
 REFEREE_HAT = "referee"
 MAX_EVIDENCE_REVIEWS = 20  # Review ids cited in one status evidence record.
+# Review shopping bound: referees one text version may be given beyond the positive verdicts a
+# promotion needs (referee_quorum sound, or one faithful). The informal statement never
+# changes, so this bounds a node's informal referees; a new Lean statement is a new object to
+# judge and gets a fresh fidelity panel, up to MAX_FIDELITY_REVIEWS for the node in all.
+REVIEW_RETRIES = 2
+MAX_FIDELITY_REVIEWS = 9
 MAX_OBJECTIVE = 20_000  # The task objective bound shared with recruitment and task creation.
 # Encoded-size budgets for author fields, applied only when the full objective would exceed
 # MAX_OBJECTIVE (the node keeps the exact text). Sized so the worst case fits with margin.
@@ -277,15 +286,15 @@ class CommonsReviewMixin:
         )
 
     @staticmethod
-    def _open_review_task(session, experiment, assignment):
-        """The live, not yet submitted referee task for the same review, in one query.
+    def _version_keys(scope):
+        """Assignment keys naming one text version: what makes each kind of review stale."""
+        keys = ("node_id", "scope", "statement_sha256")
+        return (*keys, "lean_statement_sha256") if scope == "fidelity" else keys
 
-        Informal requests match on (node, scope, statement digest); fidelity requests also on
-        the Lean digest, mirroring what makes each kind of review stale.
-        """
-        keys = ["node_id", "scope", "statement_sha256"]
-        if assignment["scope"] == "fidelity":
-            keys.append("lean_statement_sha256")
+    @staticmethod
+    def _referee_tasks(experiment, assignment, keys):
+        """Filters for referee tasks whose assignment matches ``keys``, and a correlated
+        subquery for the review each one submitted."""
         review = aliased(RecordRow)
         submitted = select(review.id).where(
             review.project_id == experiment.project_id,
@@ -293,23 +302,70 @@ class CommonsReviewMixin:
             review.payload["experiment_id"].as_string() == experiment.id,
             review.payload["task_id"].as_string() == RecordRow.id,
         )
+        filters = [
+            RecordRow.project_id == experiment.project_id,
+            RecordRow.kind == "task",
+            record_json_text("experiment_id") == experiment.id,
+            record_json_text("hat") == REFEREE_HAT,
+            *(
+                RecordRow.payload[("review_assignment", key)].as_string() == assignment[key]
+                for key in keys
+            ),
+        ]
+        return filters, submitted
+
+    def _open_review_task(self, session, experiment, assignment):
+        """The live, not yet submitted referee task for the same review, in one query.
+
+        Informal requests match on (node, scope, statement digest); fidelity requests also on
+        the Lean digest, mirroring what makes each kind of review stale.
+        """
+        filters, submitted = self._referee_tasks(
+            experiment, assignment, self._version_keys(assignment["scope"])
+        )
         return session.scalar(
             select(RecordRow)
             .where(
-                RecordRow.project_id == experiment.project_id,
-                RecordRow.kind == "task",
-                record_json_text("experiment_id") == experiment.id,
-                record_json_text("hat") == REFEREE_HAT,
+                *filters,
                 record_json_text("status").not_in(TERMINAL_TASK_STATUSES),
-                *(
-                    RecordRow.payload[("review_assignment", key)].as_string() == assignment[key]
-                    for key in keys
-                ),
                 ~submitted.exists(),
             )
             .order_by(RecordRow.id)
             .limit(1)
         )
+
+    def _review_panel(self, session, experiment, assignment):
+        """The referees this text version already has, within the review-shopping bound.
+
+        A referee counts once it submitted a verdict or while its task is live; one that
+        ended without a verdict does not. Raises ``REVIEW_LIMIT`` when the version's panel,
+        or a node's fidelity panels in all, are full.
+        """
+        scope = assignment["scope"]
+        required = experiment.payload["society"]["referee_quorum"] if scope == "informal" else 1
+        bounds = [(self._version_keys(scope), required + REVIEW_RETRIES)]
+        if scope == "fidelity":
+            bounds.append((("node_id", "scope"), MAX_FIDELITY_REVIEWS))
+        panel = None
+        for keys, limit in bounds:
+            filters, submitted = self._referee_tasks(experiment, assignment, keys)
+            given = or_(
+                record_json_text("status").not_in(TERMINAL_TASK_STATUSES), submitted.exists()
+            )
+            rows = session.scalars(
+                select(RecordRow).where(*filters, given).order_by(RecordRow.id).limit(limit)
+            ).all()
+            if len(rows) >= limit:
+                raise HarnessError(
+                    "REVIEW_LIMIT",
+                    f"This node already has {len(rows)} {scope} referees; the limit is {limit}.",
+                    status=409,
+                    details={"scope": scope, "referees": len(rows), "limit": limit},
+                    remediation="Answer the referees' objections on the node thread; a new Lean "
+                    "statement gets a fresh fidelity panel, and a revised claim is a new node.",
+                )
+            panel = rows if panel is None else panel
+        return panel
 
     @staticmethod
     def _author_model(session, node, models):
@@ -324,25 +380,49 @@ class CommonsReviewMixin:
         return index, configuration
 
     @staticmethod
-    def _referee_model(models, author_index, author_configuration):
-        """The first index after the author's whose (runtime, model) differs from it.
+    def _claimant_families(session, row, models):
+        """Model families of every branch that has claimed the node, live or not.
 
-        Returns ``(model_index, cross_model)``. Without a distinct model the referee takes the
-        next index (``None`` for a single model) and ``cross_model`` is False.
+        The author or any live claimant may set the Lean statement (``_may_formalize``) and
+        the platform does not record which one did, so a fidelity referee avoids them all.
+        """
+        claimants = select(record_json_text("branch_id")).where(
+            RecordRow.project_id == row.project_id,
+            RecordRow.kind == "commons_claim",
+            record_json_text("experiment_id") == row.payload["experiment_id"],
+            record_json_text("node_id") == row.id,
+        )
+        branches = session.scalars(
+            select(RecordRow).where(
+                RecordRow.project_id == row.project_id,
+                RecordRow.kind == "branch",
+                RecordRow.id.in_(claimants.scalar_subquery()),
+            )
+        )
+        return {
+            _model_family(branch.payload.get("model_configuration") or models[0])
+            for branch in branches
+        }
+
+    @staticmethod
+    def _referee_model(models, author_index, avoided, author, used):
+        """Pick the referee's model index; returns ``(model_index, cross_model)``.
+
+        Candidates after the author's index rank by: a family outside ``avoided`` first; then
+        any family but the author's; then the family this text version's earlier referees
+        (``used``) ran least, so a quorum spreads over families; then rotation order.
+        ``cross_model`` is True only for a family outside ``avoided``. A single model gives
+        ``(None, False)``.
         """
         if len(models) == 1:
             return None, False
-        for step in range(1, len(models)):
-            index = (author_index + step) % len(models)
-            if _model_family(models[index]) != _model_family(author_configuration):
-                return index, True
-        return (author_index + 1) % len(models), False
 
-    def _cross_model(self, session, node, referee_branch, models):
-        _, author_configuration = self._author_model(session, node, models)
-        return _model_family(referee_branch.payload["model_configuration"]) != _model_family(
-            author_configuration
-        )
+        def rank(step):
+            family = _model_family(models[(author_index + step) % len(models)])
+            return (family in avoided, family == author, used[family], step)
+
+        index = (author_index + min(range(1, len(models)), key=rank)) % len(models)
+        return index, _model_family(models[index]) not in avoided
 
     @staticmethod
     def _guard_referee_branch(branch, actor):
@@ -394,11 +474,24 @@ class CommonsReviewMixin:
                     "review_task_id": existing.id,
                     "branch_id": branch.id,
                     "model_index": branch.payload["model_index"],
-                    "cross_model": self._cross_model(session, node, branch, models),
+                    "cross_model": existing.payload["review_assignment"].get("cross_model", False),
                     "deduplicated": True,
                 }
+            used = Counter(
+                _model_family(
+                    session.get(RecordRow, task.payload["branch_id"]).payload["model_configuration"]
+                )
+                for task in self._review_panel(session, experiment, assignment)
+            )
+            author_index, author_configuration = self._author_model(session, node, models)
+            author = _model_family(author_configuration)
+            # An informal referee judges the author's text; a fidelity referee also judges
+            # the Lean statement, written by the author or a claimant.
+            avoided = {author}
+            if scope == "fidelity":
+                avoided |= self._claimant_families(session, row, models)
             model_index, cross_model = self._referee_model(
-                models, *self._author_model(session, node, models)
+                models, author_index, avoided, author, used
             )
             # The requester's admission; the platform owns the branch, so the requester gets
             # no delegation or parent/child messaging into it.
@@ -417,7 +510,12 @@ class CommonsReviewMixin:
                 # Independent reviewers are not lab members and fill no lab cap.
                 lab=None,
                 task_extra={
-                    "review_assignment": {**assignment, "requested_by": actor.branch_id},
+                    "review_assignment": {
+                        **assignment,
+                        "requested_by": actor.branch_id,
+                        # Fixed with the text version the referee judges.
+                        "cross_model": cross_model,
+                    },
                     "hat": REFEREE_HAT,
                 },
                 branch_extra={"hat": REFEREE_HAT},
@@ -487,10 +585,14 @@ class CommonsReviewMixin:
         return counts, list(ids)
 
     def _refereed_evidence(self, session, row, quorum):
-        """Evidence for refereed: a sound quorum that outnumbers every gap and no wrong verdict."""
+        """Evidence for refereed: a sound quorum, no wrong verdict, and more sound than gaps.
+
+        The S1 plan vetoes on any non-stale wrong; a gap report is outvoted only by a sound
+        majority of the bounded panel (``REVIEW_RETRIES``).
+        """
         counts, ids = self._review_tally(session, row, "informal")
         sound = counts["sound"]
-        if sound < quorum or sound <= counts["gaps"] + counts["wrong"] or counts["wrong"]:
+        if counts["wrong"] or sound < quorum or sound <= counts["gaps"]:
             return None
         return {
             "review_ids": ids,
@@ -499,9 +601,13 @@ class CommonsReviewMixin:
         }
 
     def _formally_stated_evidence(self, session, row):
-        """Evidence for formally_stated: faithful verdicts outnumber unfaithful ones."""
+        """Evidence for formally_stated: a faithful verdict and no unfaithful one.
+
+        An unfaithful verdict vetoes this Lean statement until it changes (making the
+        verdict stale); more faithful verdicts never outvote it.
+        """
         counts, ids = self._review_tally(session, row, "fidelity")
-        if counts["faithful"] < 1 or counts["faithful"] <= counts["unfaithful"]:
+        if counts["unfaithful"] or counts["faithful"] < 1:
             return None
         return {
             "review_ids": ids,
@@ -628,9 +734,7 @@ class CommonsReviewMixin:
                 "task_id": task.id,
                 "referee_branch_id": referee_branch.id,
                 "model_index": referee_branch.payload.get("model_index"),
-                "cross_model": self._cross_model(
-                    session, row.payload, referee_branch, experiment.payload["models"]
-                ),
+                "cross_model": assignment.get("cross_model", False),
                 "statement_sha256": assignment["statement_sha256"],
                 "lean_statement_sha256": assignment["lean_statement_sha256"],
                 "stale": stale,

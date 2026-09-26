@@ -12,9 +12,11 @@ from physharness import commons_discourse
 from physharness.commons import PLATFORM, _platform
 from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.commons_review import (
+    MAX_FIDELITY_REVIEWS,
     NODE_DATA_BEGIN,
     NODE_DATA_END,
     REFEREE_OBJECTIVE,
+    REVIEW_RETRIES,
     REVIEW_VERDICTS,
     statement_digest,
 )
@@ -205,6 +207,7 @@ def test_request_informal_review_creates_detached_referee_task_cross_model(lab):
         "statement_sha256": statement_digest(node),
         "lean_statement_sha256": None,
         "requested_by": alpha.branch_id,
+        "cross_model": True,
     }
     # The platform owns the referee: no parent, so no delegation or parent/child messages.
     assert branch["parent_id"] is None and branch["reply_to_parent"] is None
@@ -747,39 +750,153 @@ def rewrite_statement(service, node_id, statement):
         service._replace(session, session.get(RecordRow, node_id), {"statement": statement})
 
 
-def verdicts(service, experiment, node, requester, scope, *answers):
+def verdicts(service, experiment, node, requester, scope, *answers, tag=""):
     """Request and submit one review per answer; return the node status after each."""
     statuses = []
     for answer in answers:
         requested = service.request_review(
-            node["id"], scope, requester, f"{scope}-{node['id']}-{len(statuses)}-{answer}"
+            node["id"], scope, requester, f"{scope}-{node['id']}-{tag}{len(statuses)}-{answer}"
         )
         statuses.append(submit(service, requested, experiment, answer)["node_status"])
     return statuses
 
 
-def test_sound_reviews_must_outnumber_negative_reviews(lab):
+def test_sound_reviews_must_outnumber_gap_reports(lab):
+    """S1 plan: only a standing wrong vetoes refereed; a gap report must be outvoted."""
     service, _, exp, _, (alpha, beta) = society_lab(lab)  # referee_quorum = 1
     node = service.create_node(exp["id"], lemma(), alpha, "node")
     assert verdicts(service, exp, node, beta, "informal", "gaps", "sound") == [
         "informal",
         "informal",
     ]
-    # A second sound verdict outweighs the gap report.
-    assert verdicts(service, exp, node, beta, "informal", "sound") == ["refereed"]
+    # A second sound verdict outweighs the gap report, within the bounded panel.
+    assert verdicts(service, exp, node, beta, "informal", "sound", tag="more") == ["refereed"]
     evidence = service.get_record("commons_node", node["id"], alpha)["status_evidence"]
     assert evidence["counts"] == {"sound": 2, "gaps": 1, "wrong": 0}
     assert len(evidence["review_ids"]) == 2
-    # Fidelity follows the same rule: faithful verdicts must outnumber unfaithful ones.
+    # Two gap reports fill the panel: the node cannot shop for a third sound verdict.
     other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
+    assert (
+        verdicts(service, exp, other, beta, "informal", "gaps", "gaps", "sound") == ["informal"] * 3
+    )
+    error = rejected(lambda: service.request_review(other["id"], "informal", alpha, "shop"))
+    assert (error.code, error.status) == ("REVIEW_LIMIT", 409)
+
+
+def test_wrong_verdict_vetoes_refereed_whatever_the_sound_count(lab):
+    service, _, exp, _, (alpha, _beta) = society_lab(lab)  # referee_quorum = 1
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    assert (
+        verdicts(service, exp, node, alpha, "informal", "wrong", "sound", "sound")
+        == ["informal"] * 3
+    )
+
+
+def test_unfaithful_verdict_vetoes_formally_stated_until_the_lean_statement_changes(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    formalize(service, node, alpha, key="lean-1")
+    # The author asks again and again: faithful verdicts cannot outvote an unfaithful one.
+    assert (
+        verdicts(service, exp, node, alpha, "fidelity", "unfaithful", "faithful", "faithful")
+        == ["informal"] * 3
+    )
+    error = rejected(lambda: service.request_review(node["id"], "fidelity", alpha, "shop"))
+    assert error.code == "REVIEW_LIMIT"
+    # A new Lean statement is a new object to judge: the old verdicts are stale.
+    formalize(service, node, alpha, statement="∀ n : Nat, 0 + n = n", key="lean-2")
+    assert verdicts(service, exp, node, alpha, "fidelity", "faithful", tag="v2") == [
+        "formally_stated"
+    ]
+    evidence = service.get_record("commons_node", node["id"], alpha)["status_evidence"]
+    assert evidence["counts"] == {"faithful": 1, "unfaithful": 0}
+    # The same veto holds a refereed node at refereed.
+    other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
+    refereed_quorum(service, exp, other, beta)
     formalize(service, other, alpha, key="lean-other")
     assert verdicts(service, exp, other, beta, "fidelity", "unfaithful", "faithful") == [
-        "informal",
-        "informal",
+        "refereed",
+        "refereed",
     ]
-    assert verdicts(service, exp, other, beta, "fidelity", "faithful") == ["formally_stated"]
-    evidence = service.get_record("commons_node", other["id"], alpha)["status_evidence"]
-    assert evidence["counts"] == {"faithful": 2, "unfaithful": 1}
+
+
+def test_review_requests_are_bounded_per_text_version_and_node(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab, referee_quorum=2)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    # quorum (2) + REVIEW_RETRIES (2) informal referees for the immutable informal statement.
+    assert REVIEW_RETRIES == 2
+    verdicts(service, exp, node, alpha, "informal", "gaps", "gaps", "sound", "sound")
+    error = rejected(lambda: service.request_review(node["id"], "informal", beta, "fifth"))
+    assert (error.code, error.status) == ("REVIEW_LIMIT", 409)
+    assert error.details == {"scope": "informal", "referees": 4, "limit": 4}
+    # An open request still deduplicates at the bound; a referee that ended without a
+    # verdict does not use up the panel.
+    other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
+    verdicts(service, exp, other, alpha, "informal", "gaps", "gaps", "sound")
+    crashed = service.request_review(other["id"], "informal", beta, "crashed")
+    assert service.request_review(other["id"], "informal", alpha, "dup")["deduplicated"] is True
+    finish(service, crashed["review_task_id"], "failed")
+    last = service.request_review(other["id"], "informal", alpha, "last")
+    assert last["deduplicated"] is False
+    # Fidelity: 1 + REVIEW_RETRIES per Lean statement, MAX_FIDELITY_REVIEWS per node.
+    formal = service.create_node(exp["id"], lemma("Formal"), alpha, "formal")
+    for version in range(MAX_FIDELITY_REVIEWS // 3):
+        statement = f"∀ n : Nat, n + {version} = n"
+        formalize(service, formal, alpha, statement=statement, key=str(version))
+        verdicts(service, exp, formal, beta, "fidelity", *["unfaithful"] * 3, tag=f"v{version}")
+        error = rejected(lambda: service.request_review(formal["id"], "fidelity", beta, "more"))
+        assert error.code == "REVIEW_LIMIT"
+    formalize(service, formal, alpha, statement="∀ n : Nat, 0 + n = n", key="final")
+    error = rejected(lambda: service.request_review(formal["id"], "fidelity", beta, "final"))
+    assert error.code == "REVIEW_LIMIT"
+    assert error.details == {"scope": "fidelity", "referees": 9, "limit": 9}
+
+
+def test_quorum_referees_spread_over_model_families(lab):
+    service, _, exp, _, (alpha, _beta) = society_lab(lab, models=3, referee_quorum=2)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")  # alpha runs model 0
+    first = service.request_review(node["id"], "informal", alpha, "first")
+    assert submit(service, first, exp, "sound")["node_status"] == "informal"
+    second = service.request_review(node["id"], "informal", alpha, "second")
+    assert submit(service, second, exp, "sound")["node_status"] == "refereed"
+    # Both referees avoid the author's family, and the quorum spans two families.
+    assert {first["model_index"], second["model_index"]} == {1, 2}
+    assert first["cross_model"] is second["cross_model"] is True
+    # With one family besides the author's, cross-model review wins over quorum spread.
+    service, _, exp, _, (alpha, _beta) = society_lab(lab, models=2, referee_quorum=2, prefix="two")
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    first = service.request_review(node["id"], "informal", alpha, "two-first")
+    submit(service, first, exp, "sound")
+    second = service.request_review(node["id"], "informal", alpha, "two-second")
+    assert (first["model_index"], second["model_index"]) == (1, 1)
+    assert first["cross_model"] is second["cross_model"] is True
+
+
+def test_fidelity_referee_avoids_every_possible_lean_statement_writer(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab, models=3)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")  # author on model 0
+    service.claim_node(node["id"], "claim", beta, "claim")  # beta (model 1) may formalize
+    formalize(service, node, beta)
+    requested = service.request_review(node["id"], "fidelity", alpha, "fidelity")
+    assert (requested["model_index"], requested["cross_model"]) == (2, True)
+    task = service.get_record("task", requested["review_task_id"], author)
+    assert task["review_assignment"]["cross_model"] is True
+    assert submit(service, requested, exp, "faithful")["cross_model"] is True
+    # With two families the author's and the writer's cover every model: the referee
+    # runs a writer's family, and the request and review say so.
+    service, author, exp, _, (alpha, beta) = society_lab(lab, models=2, prefix="two")
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    service.claim_node(node["id"], "claim", beta, "two-claim")
+    formalize(service, node, beta, key="two-lean")
+    requested = service.request_review(node["id"], "fidelity", beta, "two-fidelity")
+    assert (requested["model_index"], requested["cross_model"]) == (1, False)
+    again = service.request_review(node["id"], "fidelity", alpha, "two-again")
+    assert again == {**requested, "deduplicated": True}
+    # An informal review judges only the author's text, so a claimant's family is fine.
+    informal = service.request_review(node["id"], "informal", alpha, "two-informal")
+    assert (informal["model_index"], informal["cross_model"]) == (1, True)
+    review = submit(service, requested, exp, "faithful")
+    assert review["cross_model"] is False
 
 
 def test_statement_change_resets_review_counts(lab):
