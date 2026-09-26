@@ -1293,7 +1293,17 @@ class HarnessService(
             )
         # Controllers write native state, checkpoints and failure evidence; export and
         # restore decode these kinds, so model or researcher bytes must not claim them.
-        # A masked reference is researcher-uploaded; the check above refuses agents.
+        # A masked reference is uploaded by a researcher or operator, never a model.
+        if request.kind == "masked_reference" and actor.role not in {
+            "researcher",
+            "operator",
+            "admin",
+        }:
+            raise HarnessError(
+                "ARTIFACT_KIND_RESERVED",
+                "Masked references are uploaded by researchers or operators.",
+                status=403,
+            )
         if request.kind in self._private_artifact_kinds - {
             "masked_reference"
         } and actor.role not in {"operator", "admin"}:

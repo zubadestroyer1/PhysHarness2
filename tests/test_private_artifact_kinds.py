@@ -14,7 +14,10 @@ from physharness.execution import ModelConfig, RuntimeCheckpoint, RuntimeLimits,
 from physharness.orchestration.research_worker import CanonicalRuntimeStore, research_tools
 from physharness.service import HarnessService
 
-RESERVED = sorted(HarnessService._private_artifact_kinds - {"workspace_recovery_observation"})
+# Recovery observations and masked references have role rules of their own, tested below.
+RESERVED = sorted(
+    HarnessService._private_artifact_kinds - {"workspace_recovery_observation", "masked_reference"}
+)
 POISON = json.dumps({"format": "physharness.native_checkpoint.v2"})
 
 
@@ -113,3 +116,23 @@ def test_http_artifact_route_refuses_private_kind(tmp_path):
         )
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "ARTIFACT_KIND_RESERVED"
+
+
+@pytest.mark.parametrize("role", ["agent", "verifier"])
+def test_masked_reference_upload_refuses_models_and_verifiers(lab, role):
+    service, researcher, operator, experiment, branch, agent = running_branch(lab)
+    actor = agent if role == "agent" else researcher.model_copy(update={"role": role})
+    with pytest.raises(HarnessError) as error:
+        service.create_artifact(
+            ArtifactCreate(experiment_id=experiment["id"], kind="masked_reference", content="x"),
+            actor,
+            f"masked-{role}",
+        )
+    assert (error.value.code, error.value.status) == ("ARTIFACT_KIND_RESERVED", 403)
+    for uploader in (researcher, operator):
+        created = service.create_artifact(
+            ArtifactCreate(experiment_id=experiment["id"], kind="masked_reference", content="x"),
+            uploader,
+            f"masked-{role}-{uploader.role}",
+        )
+        assert created["artifact_kind"] == "masked_reference"
