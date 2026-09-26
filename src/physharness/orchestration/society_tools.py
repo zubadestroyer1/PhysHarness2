@@ -1171,7 +1171,7 @@ def society_tools(
             "model_index": integer(0, 99, "Recorded experiment model, or null.", nullable=True),
             "lab": text(
                 40,
-                "null joins your lab; 'new' founds a lab; or name an existing lab.",
+                "null joins your lab; 'new' founds a lab. You cannot recruit into another lab.",
                 nullable=True,
             ),
             "detached": {
