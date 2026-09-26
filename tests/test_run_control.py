@@ -290,11 +290,20 @@ def guard_only(error):
 def test_run_plan_rejects_unfilled_user_decisions():
     from physharness.run_control import RunPlan
 
-    data = plan_input()
+    data = society_plan()
     data["target"]["title"] = "USER DECISION REQUIRED: choose the target"
     with pytest.raises(ValidationError) as error:
         RunPlan.model_validate(data)
     guard_only(error)
+
+
+def test_legacy_plan_validates_placeholder_text_as_before():
+    """The skeleton guard belongs to society plans; legacy plans behave exactly as before."""
+    from physharness.run_control import RunPlan
+
+    data = plan_input()
+    data["target"]["title"] = "USER DECISION REQUIRED: choose the target"
+    assert RunPlan.model_validate(data).target.title == data["target"]["title"]
 
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "work/society-s1/run-plan.example.json"
@@ -390,8 +399,10 @@ def test_preflight_requires_the_benchmark_masked_reference(lab, tmp_path, kind):
     source_files(tmp_path)
     reference = "missing-reference"
     if kind is not None:
+        # Long enough for the broker's overlap screen (see usable_reference).
+        content = " ".join(f"reference{i}" for i in range(40))
         reference = service.create_artifact(
-            ArtifactCreate(kind=kind, content="Masked reference text."), actor, "reference"
+            ArtifactCreate(kind=kind, content=content), actor, "reference"
         )["id"]
     literature = {"mode": "benchmark", "masked_reference_artifact_id": reference}
     plan = society_plan(society={**SOCIETY, "literature": literature})

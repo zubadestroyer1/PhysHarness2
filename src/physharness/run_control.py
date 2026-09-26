@@ -25,6 +25,7 @@ from .errors import HarnessError
 from .execution import ExecutionError, ModelConfig, RuntimeLimits
 from .execution.context_policy import apply_context_profile
 from .execution.parameters import validate_responses_parameters
+from .knowledge.literature import blocklist_notes, blocklist_problems, usable_reference
 from .orchestration.pricing import ModelPrice
 from .service import require_role
 from .verification import VerificationRequest
@@ -68,15 +69,22 @@ class RunPlan(StrictModel):
         if self.target.program not in self.campaign.programs:
             raise ValueError("Target program is not included in the campaign")
         validate_runtime_inputs(self.models, self.runtime_limits)
-        if USER_DECISION in canonical_json(self.model_dump(mode="json")):
-            raise ValueError(f"Replace every {USER_DECISION} placeholder before preparing")
         if self.society is not None:
+            # Only society plans ship as skeletons; a legacy plan validates exactly as before.
+            if USER_DECISION in canonical_json(self.model_dump(mode="json")):
+                raise ValueError(f"Replace every {USER_DECISION} placeholder before preparing")
             # The experiment's own checks, applied before any durable record is created.
             if self.sharing != "ideas":
                 raise ValueError("A society plan requires ideas sharing")
             literature = self.society.literature
             if literature.mode == "benchmark" and not literature.masked_reference_artifact_id:
                 raise ValueError("Benchmark literature mode requires masked_reference_artifact_id")
+            problems = blocklist_problems(literature.blocked_sources)
+            if problems:
+                raise ValueError(
+                    f"society.literature.blocked_sources[{problems[0]}] is not an arXiv id, DOI, "
+                    "OpenAlex id, URL, domain or title fragment of two or more words"
+                )
         return self
 
     def recorded(self) -> dict:
@@ -238,13 +246,18 @@ def prepare_run(service, actor, plan: RunPlan, base_directory: Path) -> dict:
 
 
 def _masked_reference_ready(service, actor, identifier) -> bool:
+    """Whether the broker could screen with this reference (the broker's own check)."""
     if not isinstance(identifier, str) or not identifier:
         return False
     try:
         record = service.get_record("artifact", identifier, actor)
+        if record.get("artifact_kind") != "masked_reference":
+            return False
+        content = service.artifact_content(identifier, actor)
     except HarnessError:
         return False
-    return record.get("artifact_kind") == "masked_reference"
+    # Decoded exactly as the research worker decodes it for the broker.
+    return usable_reference(content.decode("utf-8", errors="replace"))
 
 
 def run_preflight(
@@ -298,8 +311,18 @@ def run_preflight(
         # The broker fails closed without it, which would silently switch literature off.
         block(
             "MASKED_REFERENCE_REQUIRED",
-            "Upload the target's masked_reference artifact and name it in the society policy.",
+            "Upload the target's masked_reference artifact, long enough to screen with, and "
+            "name it in the society policy.",
         )
+    if blocklist_problems(literature.get("blocked_sources")):
+        # The broker refuses to start with an entry it cannot classify.
+        block(
+            "LITERATURE_BLOCKLIST_INVALID",
+            "List arXiv ids, DOIs, OpenAlex ids, URLs, domains or multi-word title fragments.",
+        )
+    if literature.get("mode") == "benchmark":
+        for code in blocklist_notes(literature.get("blocked_sources")):
+            observations.append({"component": "literature", "code": code, "status": "warning"})
     if not environment.get("OPENAI_API_KEY"):
         block("MODEL_CREDENTIAL_REQUIRED", "Supply OPENAI_API_KEY privately to the worker process.")
     try:

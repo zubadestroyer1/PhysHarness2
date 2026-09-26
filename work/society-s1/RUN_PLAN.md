@@ -147,25 +147,59 @@ pinned libraries or given a reference proof.
 ## 4. Literature mode
 
 - **Benchmark mode (arm S, and every arm in Design B).**
-  - `blocked_sources` lists the chosen target's known-solution sources: arXiv ids, DOIs,
-    domains and identifiable title fragments.
+  - `blocked_sources` lists, for **each** known-solution source of the chosen target,
+    its arXiv id **and** its journal DOI, plus a distinctive title fragment of two or
+    more words. Other accepted entries are OpenAlex ids (`W…` or its URL), single page
+    URLs and bare domains.
+  - Identifiers may be written in any common form: `arXiv: 2101.00001v2 [math-ph]`,
+    `math.AP/0601001`, abs, pdf or html URLs with or without a scheme,
+    `10.48550/arXiv.<id>` (read as the arXiv id), and bare, `doi:`, `DOI:` or doi.org
+    DOIs in any case. An entry that is none of these is rejected when the plan is
+    validated, by preflight (`LITERATURE_BLOCKLIST_INVALID`) and by the broker; it is
+    never accepted silently.
+  - Identifiers are matched against every identity of a search result (its DOI, all
+    OpenAlex locations and `ids`, arXiv's own DOI and links). They also refuse fetches
+    of the named arXiv, doi.org and OpenAlex pages, and withhold fetched text that
+    cites them. Title fragments are normalized (case, accents, LaTeX markup and math
+    delimiters, quotes, dashes, spacing) and screen titles, abstracts, journal
+    references and fetched text, as whole words. They are never compared with a URL an
+    agent chose, so a fetch cannot probe them.
+  - **List both forms.** The broker makes no extra network calls to map an arXiv id to
+    its journal DOI or back. It links the two only when a provider record carries both
+    (an arXiv entry with its journal DOI, or an OpenAlex work with an arXiv location),
+    and then refuses both for the rest of that execution. Until then a DOI-only entry
+    does not stop a fetch of `arxiv.org/html/<id>`, and an arXiv-only entry does not
+    stop a journal record that lists no arXiv copy. Preflight notes
+    `LITERATURE_BLOCKLIST_ONE_FORM` when a benchmark blocklist uses only one form.
   - `masked_reference_artifact_id` names a private `masked_reference` artifact holding
     the reference text. The operator uploads it before `prepare-run`, and agents cannot
     read it. In the example it is the short placeholder
     `USER DECISION REQUIRED: ref id`, because the field holds at most 36 characters.
+    Preflight applies the broker's own check: the text needs at least 20 distinct
+    eight-word sequences (about 27 words), or the overlap screen could never fire and
+    preflight reports `MASKED_REFERENCE_REQUIRED`.
   - The broker screens search results and fetched text for overlap with the reference
     (`overlap_threshold` 0.02) and withholds flagged text. Agents see one reason code,
     `withheld_contamination_risk`, whether the text overlapped the reference or cited a
     blocked source. The measurements stay in a private `literature_screen` artifact.
+    Searches return only the released items: how many were withheld is logged on the
+    worker, never returned to the agent.
   - The withholding is an inherent 1-bit oracle: an agent learns that a source it chose
     was close to the reference or named a blocked source, and repeated fetches can probe
     that. It never sees the text, the measurements or which screen fired. The post-run
     audit below covers what an agent could infer.
   - Fetches of search and listing pages on allowlisted hosts are refused
-    (`LITERATURE_SOURCE_BLOCKED`): arXiv `/search`, `/list` and `/a/`, Wikipedia
-    `api.php`, `rest.php`, `Special:Search` and any `search=` query, and the
-    MathOverflow, Math StackExchange and nLab search pages. Those pages list other works
-    outside `search_literature`'s per-item screen.
+    (`LITERATURE_SOURCE_BLOCKED`), after percent-decoding and dot-segment removal:
+    arXiv `/search`, `/list`, `/a/`, `/catchup`, `/year`, `/find`, `/archive` and
+    `/multi`; Wikipedia `api.php`, `rest.php`, `/api/`, every `Special:` page (by path
+    or `title=`) and any `search=` or `fulltext=` query; the MathOverflow and Math
+    StackExchange home page, `/questions` listing, `/questions/tagged`, `/search`,
+    `/tags`, `/unanswered`, `/feeds` and `/users`; and nLab search, `all_pages`, `list`,
+    `recently_revised`, feeds and exports. Those pages list other works outside
+    `search_literature`'s per-item screen.
+  - Only verbatim reuse is detected: eight-word overlap with the reference, cited
+    identifiers and normalized title fragments. Paraphrase, translation or a proof
+    restated in other notation passes the screen; the post-run audit is the check.
   - A flag means text was withheld, not leaked. An arm is **contaminated** only if a
     post-run audit finds reference text in released sources, posts or the accepted
     proof. A contaminated arm is reported but excluded from the benchmark comparison.
@@ -177,6 +211,15 @@ pinned libraries or given a reference proof.
   more reason to prefer Design B.
 - There is no general web search: it needs a paid search API key. S1 offers arXiv,
   OpenAlex and allowlisted fetch.
+- **Politeness.** Every broker in a worker process shares one per-host limiter. arXiv
+  (arxiv.org and the https export API together) gets one request at a time, three
+  seconds apart, as its API terms ask; OpenAlex 0.2 s; other hosts one second. A 429 or
+  503 holds the host back for everyone for its `Retry-After` (or an exponential
+  backoff), with up to three attempts when the wait is at most 30 s. A request that
+  would queue longer than 60 s fails with the retryable `LITERATURE_RATE_LIMITED`. Set
+  `PHYSHARNESS_LITERATURE_CONTACT` to an operator email to send it as OpenAlex's
+  `mailto` and in the User-Agent; unset, none is sent. The limiter does not span
+  processes, so run literature-enabled workers in one process.
 
 ## 5. Budget
 
