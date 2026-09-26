@@ -33,7 +33,7 @@ from physharness.domain import (
 )
 from physharness.errors import HarnessError
 from physharness.execution import ExecutionError, ResponsesRuntime, RuntimeLimits
-from physharness.execution.stagnation import observe
+from physharness.execution.stagnation import observe, successor_state
 from physharness.knowledge.literature import LiteratureBroker
 from physharness.orchestration import research_worker
 from physharness.orchestration.research_worker import (
@@ -657,6 +657,58 @@ async def test_repeated_unknown_tool_calls_trip_the_stagnation_detector():
     invalid = {"error": {"code": "INVALID_ARGUMENTS", "message": "bad"}}
     assert [observe(state, "commons_read", {}, invalid) for _ in range(8)] == [None] * 8
     assert state == {}
+
+
+async def test_varied_unknown_tool_names_are_counted_per_session():
+    """A model varying the unknown name never repeats a fingerprint; every rejection counts."""
+    dispatcher, state, signals = widest(), {}, []
+    for index in range(8):
+        name, arguments = f"bogus_{index}", {"x": index}
+        signals.append(observe(state, name, arguments, await call(dispatcher, name, arguments)))
+    assert signals == [None] * 3 + ["stagnation_warning"] + [None] * 3 + ["recovery_requested"]
+    assert state["unavailable_calls"] == 8
+    # New work does not reset the session's count of rejected names.
+    state, signals = {}, []
+    for index in range(3):
+        signals.append(observe(state, f"a{index}", {}, await call(dispatcher, f"a{index}", {})))
+    work = {"path": "x.py", "content": "print(1)"}
+    assert observe(state, "write_file", work, {"path": "x.py", "bytes": 8}) is None
+    assert state["progress_epoch"] == 1
+    signals.append(observe(state, "a3", {}, await call(dispatcher, "a3", {})))
+    assert signals == [None] * 3 + ["stagnation_warning"]
+    # The recovery session starts a fresh count, and its own bound ends recovery.
+    state = {}
+    for index in range(8):
+        observe(state, f"b{index}", {}, await call(dispatcher, f"b{index}", {}))
+    successor = successor_state(state)
+    assert "unavailable_calls" not in successor and successor["recovery_attempted"] is True
+    signals = [
+        observe(successor, f"c{index}", {}, await call(dispatcher, f"c{index}", {}))
+        for index in range(8)
+    ]
+    assert signals == [None] * 3 + ["stagnation_warning"] + [None] * 3 + ["recovery_exhausted"]
+    # A legacy state never gains the counter.
+    legacy = {"read_counts": {}, "seen_work": []}
+    assert successor_state(legacy) == legacy
+    observe(legacy, "read_artifact", {"artifact_id": "a"}, {"reference": {}})
+    assert "unavailable_calls" not in legacy
+
+
+async def test_worker_varying_unknown_tool_names_hands_off(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    task = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Research"), author, "task"
+    )
+
+    def script(phase, payload):
+        return [tool_call(f"bogus_{phase}", {"x": phase}, f"call-{phase}")]
+
+    result, seen = await run_worker(service, author, task["id"], script)
+    # Eight rejected names end the session with a stagnation handoff (not 29 provider calls).
+    assert len(seen["payloads"]) == 8
+    assert result["status"] == "continuation"
+    stored = service.get_record("task", task["id"], author)
+    assert stored["ready_continuation"]["reason"] == "stagnation_recovery"
 
 
 async def test_referee_task_gets_submit_review(lab):
