@@ -1275,17 +1275,21 @@ def test_synthesis_without_an_eligible_parent_runs_parentless(lab):
 def test_legacy_synthesis_parent_choice_unchanged(lab):
     service, author, exp, _, (alpha, beta) = approaches(lab, "ideas")
     operator = synthesis_policy(service, exp)
-    # A researcher's unattributed post leads the sample; legacy keeps its exact answer.
+    # A researcher's unattributed post comes first. Legacy synthesis passes it by (it never
+    # parents or samples a branchless post) and anchors on the first attributed source.
     topic = service.create_discussion(
         exp["id"], DiscussionCreate(title="Desk", summary="Researcher note"), author, "desk"
     )
-    service.post_discussion(
+    note = service.post_discussion(
         topic["id"], DiscussionPostCreate(kind="finding", content="Unattributed"), author, "note"
     )
     two_topic_posts(service, exp, (alpha, beta))
     result = service.schedule_research_synthesis(exp["id"], operator, "scan")
-    assert result == {"scheduled": False, "reason": "source_branch_missing"}
-    assert not [t for t in service.list_records("task", author, exp["id"]) if t["synthesis"]]
+    assert result["scheduled"] is True
+    (task,) = [t for t in service.list_records("task", author, exp["id"]) if t["synthesis"]]
+    assert note["id"] not in task["discussion_refs"]
+    branch = service.get_record("branch", task["branch_id"], author)
+    assert branch["parent_id"] in {alpha.branch_id, beta.branch_id}
 
 
 def test_referee_task_objective_is_platform_only(lab):

@@ -961,15 +961,31 @@ class ResearchTaskExecutor:
                         and self.service.task_model_effects_settled(task_id, actor)
                     ):
                         recovering_first_session = candidate["native_record_id"]
+            latest = max(prior_sessions, key=lambda row: row["created_at"])
             if consumed and len(prior_sessions) == consumed["ordinal"]:
+                if task.get("worker_slot_id") and task.get("holder"):
+                    # Restoring clears the dead consumer's binding; release its slot
+                    # first, while that exact holder and fence can still be checked.
+                    self.service.reconcile_orphan_worker_slot(
+                        task_id, actor, f"reconcile-slot:{task_id}:{task['worker_slot_id']}"
+                    )
+                # Each consumption attempt has its own fence, so one ticket can be
+                # restored again if a later consumer also dies before saving.
                 self.service.restore_unstarted_continuation(
                     task_id,
                     actor,
-                    f"restore-unstarted:{task_id}:{consumed['source_checkpoint_digest']}",
+                    f"restore-unstarted:{task_id}:{consumed['source_checkpoint_digest']}:"
+                    f"{consumed['fence']}",
                 )
                 task = self.service.get_record("task", task_id, actor)
                 ready = task.get("ready_continuation")
-            elif consumed and len(prior_sessions) == consumed["ordinal"] + 1:
+            elif (
+                consumed
+                and len(prior_sessions) == consumed["ordinal"] + 1
+                # A successor saved at its handoff boundary is a source awaiting
+                # its ticket; it is reissued below like a first session.
+                and latest["status"] != "handed_off"
+            ):
                 successors = [
                     row
                     for row in prior_sessions
@@ -1005,7 +1021,6 @@ class ResearchTaskExecutor:
                         if k not in {"holder", "fence", "consumed_at"}
                     }
             elif not consumed or len(prior_sessions) > consumed["ordinal"]:
-                latest = max(prior_sessions, key=lambda row: row["created_at"])
                 if latest["status"] == "handed_off" and task.get("holder"):
                     checkpoint = self.service.load_native_checkpoint(
                         latest["checkpoint_artifact_id"], actor
@@ -1493,12 +1508,10 @@ class ResearchTaskExecutor:
                     return {"reason": "stagnation_recovery"}
                 if checkpoint.native_state.get("context_pressure"):
                     return {"reason": "automatic_context_boundary"}
-                limits = checkpoint.session.limits
-                if checkpoint.session.turns >= limits.max_turns - 1 or (
-                    limits.max_total_tokens is not None
-                    and checkpoint.session.input_tokens + checkpoint.session.output_tokens
-                    >= limits.max_total_tokens - limits.max_output_tokens * 2
-                ):
+                # max_turns bounds one native session, so a fresh successor may
+                # continue. The token guard spans the task lineage; a handoff cannot
+                # replenish it, so the runtime stops at its cumulative limit instead.
+                if checkpoint.session.turns >= checkpoint.session.limits.max_turns - 1:
                     return {"reason": "automatic_context_boundary"}
                 return None
 
@@ -1728,7 +1741,8 @@ class ResearchTaskExecutor:
                     lease["fence"],
                     ready,
                     actor,
-                    f"consume-continuation:{task_id}:{ready['source_checkpoint_digest']}",
+                    f"consume-continuation:{task_id}:{ready['source_checkpoint_digest']}:"
+                    f"{lease['fence']}",
                     successor_model=model_config.model_dump(mode="json"),
                     successor_runtime_limits=runtime_limits.model_dump(mode="json"),
                     continuation_mode="native" if native_compatible else "portable",
@@ -1811,7 +1825,14 @@ class ResearchTaskExecutor:
                     runtime.start_from_handoff(source, prompt, model_config, runtime_limits)
                 )
             elif ready:
-                running = asyncio.create_task(runtime.start(prompt, model_config, runtime_limits))
+                # Portable context is fresh, but the numeric token guard stays
+                # cumulative across the whole task lineage.
+                source = await store.load(ready["source_session_id"])
+                if source.state_digest != ready["source_checkpoint_digest"]:
+                    raise HarnessError("CONTINUATION_STALE", "Handoff source checkpoint changed.")
+                running = asyncio.create_task(
+                    runtime.start(prompt, model_config, runtime_limits, predecessor=source)
+                )
             else:
                 running = asyncio.create_task(runtime.start(prompt, model_config, runtime_limits))
 

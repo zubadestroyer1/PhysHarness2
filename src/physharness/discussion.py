@@ -23,6 +23,13 @@ class DiscussionMixin:
             return f"branch:{actor.branch_id}"
         return f"actor:{actor.id}"
 
+    def _inbox_event_lock(self, session, experiment_id):
+        # PostgreSQL allocates event sequences at insert, not commit. Every
+        # inbox-visible event and subscription start takes this lock through
+        # commit, so inbox commit order matches sequence order and an ack past
+        # sequence N can never skip a lower sequence that commits later.
+        self.db.command_lock(session, self._digest(["inbox-events", experiment_id]))
+
     def _discussion_experiment(self, session, experiment_id, actor):
         experiment = self._get(session, "experiment", experiment_id, actor)
         target = session.get(RecordRow, experiment.payload["problem_id"])
@@ -97,9 +104,36 @@ class DiscussionMixin:
             return copy.deepcopy(message.payload)
 
     @staticmethod
-    def _discussion_excerpt(post):
-        raw = post["content"].encode("utf-8")
-        excerpt = raw[:1024].decode("utf-8", errors="ignore")
+    def _bounded_excerpt(item, content):
+        # JSON escaping can grow a character sixfold, so a raw-byte cut alone
+        # does not bound the item. Shrink the peer-controlled excerpt until the
+        # serialized item fits; one escaped source must never wedge an inbox.
+        text = content.encode("utf-8")[:1024].decode("utf-8", errors="ignore")
+
+        def bounded(length):
+            excerpt = text[:length]
+            candidate = {**item, "excerpt": excerpt, "truncated": excerpt != content}
+            size = len(json.dumps(candidate, ensure_ascii=False).encode("utf-8"))
+            return candidate, size <= 2048
+
+        candidate, fits = bounded(len(text))
+        if fits:
+            return candidate
+        low, high = 0, len(text) - 1
+        while low < high:
+            middle = (low + high + 1) // 2
+            if bounded(middle)[1]:
+                low = middle
+            else:
+                high = middle - 1
+        candidate, fits = bounded(low)
+        if not fits:
+            # Only fixed identity metadata remains; it is not peer content.
+            raise HarnessError("DELIVERY_BOUNDS", "Delivery metadata exceeds its byte bound.")
+        return candidate
+
+    @classmethod
+    def _discussion_excerpt(cls, post):
         item = {
             "id": post["id"],
             "topic_id": post["topic_id"],
@@ -107,20 +141,17 @@ class DiscussionMixin:
             "post_kind": post["post_kind"],
             "attributed_to": post["attributed_to"],
             "branch_id": post.get("branch_id"),
-            "excerpt": excerpt,
-            "truncated": len(raw) > 1024,
+            "excerpt": "",
+            "truncated": False,
             "retrieval_post_id": post["id"],
             "retrieval_id": post["id"],
             "source_kind": "discussion_post",
             "evidence_status": "unverified_discussion",
         }
-        if len(json.dumps(item, ensure_ascii=False).encode("utf-8")) > 2048:
-            raise HarnessError("DELIVERY_BOUNDS", "Discussion excerpt exceeds its byte bound.")
-        return item
+        return cls._bounded_excerpt(item, post["content"])
 
-    @staticmethod
-    def _research_message_excerpt(message, sequence):
-        raw = message["content"].encode("utf-8")
+    @classmethod
+    def _research_message_excerpt(cls, message, sequence):
         item = {
             "id": message["id"],
             "sequence": sequence,
@@ -128,14 +159,12 @@ class DiscussionMixin:
             "attributed_to": message["attributed_to"],
             "branch_id": message.get("sender_branch_id"),
             "recipient_branch_id": message["recipient_branch_id"],
-            "excerpt": raw[:1024].decode("utf-8", errors="ignore"),
-            "truncated": len(raw) > 1024,
+            "excerpt": "",
+            "truncated": False,
             "retrieval_id": message["id"],
             "evidence_status": "attributed_idea",
         }
-        if len(json.dumps(item, ensure_ascii=False).encode("utf-8")) > 2048:
-            raise HarnessError("DELIVERY_BOUNDS", "Message excerpt exceeds its byte bound.")
-        return item
+        return cls._bounded_excerpt(item, message["content"])
 
     @staticmethod
     def _withdrawal_notice(sequence):
@@ -402,6 +431,7 @@ class DiscussionMixin:
             if data.get(field) is not None and (field != "platform_status" or platform):
                 payload[field] = copy.deepcopy(data[field])
         record = self._insert(session, "discussion_post", actor, payload)
+        self._inbox_event_lock(session, topic["experiment_id"])
         event = EventRow(
             project_id=topic_row.project_id,
             operation_id=op,
@@ -570,6 +600,8 @@ class DiscussionMixin:
         self.db.command_lock(
             session, self._digest(["discussion-reader", experiment_id, reader_key])
         )
+        # A start sequence taken while a lower post is uncommitted would hide it.
+        self._inbox_event_lock(session, experiment_id)
         reader_subscriptions = (
             RecordRow.project_id == topic_row.project_id,
             RecordRow.kind == "discussion_subscription",

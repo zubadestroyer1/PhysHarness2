@@ -402,10 +402,11 @@ async def test_chunk_artifacts_stay_private_under_ideas_sharing(lab):
     chunk = service.create_artifact(
         ArtifactCreate(
             experiment_id=experiment["id"],
+            branch_id=beta.branch_id,
             kind="checkpoint_chunk",
             content="private checkpoint bytes",
         ),
-        beta,
+        author.model_copy(update={"role": "operator"}),
         "private-chunk",
     )
     assert service.artifact_content(chunk["id"], author) == b"private checkpoint bytes"

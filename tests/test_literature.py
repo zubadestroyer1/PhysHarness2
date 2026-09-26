@@ -690,10 +690,20 @@ def test_agents_cannot_create_reserved_private_kinds(lab):
                 f"forge-{kind}",
             )
         assert (caught.value.code, caught.value.status) == ("ARTIFACT_KIND_RESERVED", 403)
-        created = service.create_artifact(
-            ArtifactCreate(experiment_id=exp["id"], kind=kind, content="real"), author, kind
+    # Researchers upload masked references; screens stay controller-written.
+    created = service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="masked_reference", content="real"),
+        author,
+        "masked_reference",
+    )
+    assert created["artifact_kind"] == "masked_reference"
+    with pytest.raises(HarnessError) as caught:
+        service.create_artifact(
+            ArtifactCreate(experiment_id=exp["id"], kind="literature_screen", content="real"),
+            author,
+            "literature_screen",
         )
-        assert created["artifact_kind"] == kind
+    assert (caught.value.code, caught.value.status) == ("ARTIFACT_KIND_RESERVED", 403)
     # The platform path still records a private screen for an agent's flagged fetch.
     record = service.record_literature_fetch(exp["id"], withheld(), alpha, "fetch-flag")
     screen = service.get_record("artifact", record["screen_artifact_id"], author)

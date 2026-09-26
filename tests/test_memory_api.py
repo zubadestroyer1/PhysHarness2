@@ -117,7 +117,7 @@ def test_generic_api_hides_native_artifacts_from_own_branch_agent(lab, tmp_path)
             kind="native_checkpoint",
             content="opaque native state",
         ),
-        actor,
+        actor.model_copy(update={"role": "operator"}),
         "native-artifact",
     )
     task = service.create_task(

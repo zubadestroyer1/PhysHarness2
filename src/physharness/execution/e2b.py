@@ -36,7 +36,7 @@ def _path(value: str) -> str:
         or len(value.encode()) > 256
         or "\\" in value
         or "\x00" in value
-        or any(part in ("", ".", "..") for part in value.split("/"))
+        or any(part in ("", ".", "..") or len(part.encode()) > 255 for part in value.split("/"))
     ):
         raise ExecutionError("UNSAFE_PATH", "Workspace path must be a canonical relative file path")
     return value
@@ -162,13 +162,14 @@ for part in req['root'].split('/')[1:]:
     os.close(root)
     root = nxt
 
-def parent(path):
+def parent(path, create=False):
     parts = path.split('/')
     assert all(p not in ('', '.', '..') and '\\' not in p and '\x00' not in p for p in parts)
     fd = os.dup(root)
     for part in parts[:-1]:
-        try: os.mkdir(part, mode=0o700, dir_fd=fd)
-        except FileExistsError: pass
+        if create:  # Reads never leave directories behind, so their refusals change nothing.
+            try: os.mkdir(part, mode=0o700, dir_fd=fd)
+            except FileExistsError: pass
         nxt = os.open(part, flags, dir_fd=fd)
         os.close(fd)
         fd = nxt
@@ -202,7 +203,7 @@ def walk(fd, prefix='', result=None):
     return result
 
 def write(path, data):
-    fd, name = parent(path)
+    fd, name = parent(path, True)
     temp = '.physharness-' + uuid.uuid4().hex
     try:
         try:

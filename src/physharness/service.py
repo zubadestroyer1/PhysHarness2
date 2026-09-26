@@ -72,6 +72,23 @@ def money_string(units: int) -> str:
     return format(Decimal(units) / MICRO_USD, "f")
 
 
+def scan_cursor(after: str) -> tuple[str | None, int] | None:
+    """Split a page cursor into its last returned record ID and unseen rows skipped after it."""
+    anchor, mark, skipped = after.rpartition("+")
+    if not mark:
+        return after, 0
+    if len(skipped) != 9 or not skipped.isascii() or not skipped.isdigit() or not int(skipped):
+        return None
+    return anchor or None, int(skipped)
+
+
+def next_cursor(anchor: str | None, skipped: int) -> str | None:
+    # A cursor names only a record its reader received; rows hidden from that reader are
+    # a count, so paging never discloses their IDs. "+" sorts below ID characters and the
+    # padded count keeps successive cursors increasing.
+    return f"{anchor or ''}+{skipped:09d}" if skipped else anchor
+
+
 def require_role(actor: Principal, *roles: str) -> None:
     if actor.role not in roles and actor.role != "admin":
         raise HarnessError(
@@ -453,22 +470,35 @@ class HarnessService(
                     )
                 else:
                     query = query.where(record_json_text("experiment_id") == actor.experiment_id)
+            anchor, skipped = None, 0
             if after:
-                query = query.where(RecordRow.id > after)
+                position = scan_cursor(after)
+                if position is None:
+                    raise HarnessError("INVALID_CURSOR", "Page cursor is malformed.", status=422)
+                anchor, skipped = position
+            if anchor:
+                query = query.where(RecordRow.id > anchor)
             # Limit scanned metadata, not just visible output. The unexamined lookahead
             # proves continuation without authorizing or exposing that row's contents.
             scan_limit = max(100, limit)
-            chunk = list(session.scalars(query.order_by(RecordRow.id).limit(scan_limit + 1)))
+            chunk = list(
+                session.scalars(
+                    query.order_by(RecordRow.id).offset(skipped or None).limit(scan_limit + 1)
+                )
+            )
             visible, scanned = [], 0
             for row in chunk[:scan_limit]:
                 scanned += 1
                 if self._in_scope(session, row, actor):
                     visible.append(row)
+                    anchor, skipped = row.id, 0
                     if len(visible) == limit:
                         break
+                else:
+                    skipped += 1
             return {
                 "items": [copy.deepcopy(r.payload) for r in visible],
-                "next_cursor": chunk[scanned - 1].id if scanned < len(chunk) else None,
+                "next_cursor": next_cursor(anchor, skipped) if scanned < len(chunk) else None,
             }
 
     def list_records(self, kind, actor, experiment_id=None, limit=500):
@@ -1260,6 +1290,18 @@ class HarnessService(
                 "ARTIFACT_KIND_RESERVED",
                 "Masked references and literature screens are written only by the platform.",
                 status=403,
+            )
+        # Controllers write native state, checkpoints and failure evidence; export and
+        # restore decode these kinds, so model or researcher bytes must not claim them.
+        # A masked reference is researcher-uploaded; the check above refuses agents.
+        if request.kind in self._private_artifact_kinds - {
+            "masked_reference"
+        } and actor.role not in {"operator", "admin"}:
+            raise HarnessError(
+                "ARTIFACT_KIND_RESERVED",
+                "This artifact kind is reserved for controller-written platform state.",
+                status=403,
+                remediation="Store findings or Lean source under a scientific artifact kind.",
             )
         if actor.role == "agent" and request.experiment_id != actor.experiment_id:
             raise HarnessError(

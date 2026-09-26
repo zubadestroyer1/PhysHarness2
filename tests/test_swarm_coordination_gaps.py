@@ -143,6 +143,50 @@ def test_peer_wait_cancelled_wake(lab):
     assert service.peer_wait_status(ticket, alpha)["reason"] == "cancelled"
 
 
+def test_peer_wait_wakes_on_reply_sent_before_wait_registration(lab):
+    service, author, controller, _, (alpha, beta) = ideas_lab(lab)
+    a_task = service.create_task(TaskCreate(branch_id=alpha.branch_id, objective="A"), author, "a")
+    b_task = service.create_task(TaskCreate(branch_id=beta.branch_id, objective="B"), author, "b")
+    lease_a = service.acquire_task(a_task["id"], "ha", 60, controller, "lease-a")
+    lease_b = service.acquire_task(b_task["id"], "hb", 60, controller, "lease-b")
+    with worker_effects(alpha, a_task["id"], "ha", lease_a["fence"]):
+        service.send_message(alpha.branch_id, beta.branch_id, "Question?", [], alpha, "q")
+    # The active peer answers during the same model turn, before the wait is registered.
+    with worker_effects(beta, b_task["id"], "hb", lease_b["fence"]):
+        reply = service.send_message(beta.branch_id, alpha.branch_id, "Answer", [], beta, "r")
+    with worker_effects(alpha, a_task["id"], "ha", lease_a["fence"]):
+        wait = service.request_peer_wait(a_task["id"], beta.branch_id, 3600, alpha, "wait")
+    assert service.peer_wait_status(wait["intent"]["peer_wait"], alpha) == {
+        "ready": True,
+        "reason": "message_received",
+        "message_id": reply["id"],
+    }
+
+
+def test_peer_wait_ignores_peer_messages_already_delivered_to_waiter(lab):
+    service, author, controller, experiment, (alpha, beta) = ideas_lab(lab)
+    service.create_task(TaskCreate(branch_id=beta.branch_id, objective="B"), author, "b")
+    service.send_message(beta.branch_id, alpha.branch_id, "Earlier idea", [], beta, "early")
+    task = service.create_task(TaskCreate(branch_id=alpha.branch_id, objective="A"), alpha, "a")
+    lease = service.acquire_task(task["id"], "holder", 60, controller, "lease")
+    with worker_effects(alpha, task["id"], "holder", lease["fence"]):
+        # Automatic delivery persisted and acknowledged the earlier message.
+        delivery = service.discussion_updates(experiment["id"], alpha)
+        assert [item["source_kind"] for item in delivery["items"]] == ["message"]
+        service.acknowledge_discussion_updates(
+            experiment["id"], delivery["delivery_id"], alpha, "ack"
+        )
+        wait = service.request_peer_wait(task["id"], beta.branch_id, 3600, alpha, "wait")
+    ticket = wait["intent"]["peer_wait"]
+    assert service.peer_wait_status(ticket, alpha) == {
+        "ready": False,
+        "reason": "pending",
+        "message_id": None,
+    }
+    later = service.send_message(beta.branch_id, alpha.branch_id, "New reply", [], beta, "later")
+    assert service.peer_wait_status(ticket, alpha)["message_id"] == later["id"]
+
+
 async def test_supervisor_resumes_waiter_when_sharing_withdrawn(lab, monkeypatch):
     service, author, _, experiment, (alpha, beta) = ideas_lab(lab)
     task = service.create_task(TaskCreate(branch_id=alpha.branch_id, objective="A"), author, "a")
@@ -658,3 +702,57 @@ async def test_helper_final_response_alone_leaves_root_unproved(lab):
     assert report["root_goal_status"] == "unproved"
     assert service.verified_target_receipt(experiment["id"], author) is None
     await client.close()
+
+
+async def test_runner_launches_oldest_queued_root_task_despite_long_settled_history(lab):
+    service, author, _, experiment, (alpha, beta) = ideas_lab(lab, concurrency=1)
+    ids = []
+    for index in range(10):
+        done = service.create_task(
+            TaskCreate(branch_id=alpha.branch_id, objective=f"a-done-{index}"), author, f"a{index}"
+        )
+        set_payload(service, done["id"], {"status": "completed"})
+        ids.append(done["id"])
+    oldest = service.create_task(
+        TaskCreate(branch_id=alpha.branch_id, objective="A-QUEUED"), author, "a-queued"
+    )
+    ids.append(oldest["id"])
+    done = service.create_task(
+        TaskCreate(branch_id=beta.branch_id, objective="b-done"), author, "bd"
+    )
+    set_payload(service, done["id"], {"status": "completed"})
+    ids.append(done["id"])
+    for index in range(5):
+        queued = service.create_task(
+            TaskCreate(branch_id=beta.branch_id, objective=f"B-QUEUED-{index}"), author, f"b{index}"
+        )
+        ids.append(queued["id"])
+    launched = []
+
+    async def route(request, payload):
+        objective = objective_of(payload)
+        if not launched or launched[-1] != objective:
+            launched.append(objective)
+        return httpx.Response(
+            200, json=response([message("done")], response_id=f"r{len(launched)}")
+        )
+
+    client = mock_client(route)
+    report = await research_worker.ResearchTeamRunner(
+        service, executor=executor_for(service, client)
+    ).run(
+        research_worker.TeamRunManifest(
+            experiment_id=experiment["id"],
+            project_id=author.project_id,
+            mode="replay",
+            task_ids=ids,
+            max_concurrency=1,
+            max_tasks=len(ids),
+            timeout_seconds=60,
+            process_verifications=False,
+        )
+    )
+    await client.close()
+    assert report["status"] == "completed", report
+    assert launched.index("A-QUEUED") <= 1, launched
+    assert sorted(launched) == sorted(["A-QUEUED", *[f"B-QUEUED-{n}" for n in range(5)]])

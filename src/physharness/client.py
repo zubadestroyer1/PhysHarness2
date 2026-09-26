@@ -43,12 +43,15 @@ class HarnessClient:
                 "Client mutations require a stable command key.",
                 status=422,
             )
+        if params:
+            # httpx sends None as an empty value; an absent cursor must be omitted.
+            params = {name: value for name, value in params.items() if value is not None}
         try:
             response = self.http.request(
                 method,
                 path,
                 json=body,
-                params=params,
+                params=params or None,
                 headers={"Idempotency-Key": key} if key else {},
             )
         except httpx.TransportError as error:

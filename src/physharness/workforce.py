@@ -759,7 +759,7 @@ class WorkforceMixin:
             )
         )
 
-    def _public_team_directory(self, session, experiment_id, actor):
+    def _public_team_directory(self, session, experiment_id, actor, branch_id=None):
         team = record_json_text("team")
         branch = record_json_text("branch_id")
         latest = (
@@ -778,6 +778,7 @@ class WorkforceMixin:
                 RecordRow.project_id == actor.project_id,
                 RecordRow.kind == "workforce_team",
                 record_json_text("experiment_id") == experiment_id,
+                *([branch == branch_id] if branch_id is not None else []),
             )
             .subquery()
         )
@@ -843,7 +844,7 @@ class WorkforceMixin:
         if not 1 <= limit <= 50:
             raise HarnessError("INVALID_PAGE_SIZE", "Directory page size is 1–50.", status=422)
         with self.db.sessions() as session:
-            self._get(session, "experiment", experiment_id, actor)
+            experiment = self._get(session, "experiment", experiment_id, actor)
             # Directory discovery is opt-in even when the experiment shares ideas.
             # A raw profile record is never returned; only its public fields are.
             query = select(RecordRow).where(
@@ -851,6 +852,13 @@ class WorkforceMixin:
                 RecordRow.kind == "workforce_profile",
                 record_json_text("experiment_id") == experiment_id,
             )
+            # Profiles and team labels are free text. Without ideas sharing a
+            # worker sees only its own branch, as for messages and discussions.
+            own_branch = actor.role == "agent" and experiment.payload.get("sharing") != "ideas"
+            if own_branch:
+                if not actor.branch_id:
+                    return {"items": [], "next_cursor": None, "teams": []}
+                query = query.where(record_json_text("branch_id") == actor.branch_id)
             if after:
                 query = query.where(RecordRow.id > after)
             rows = list(session.scalars(query.order_by(RecordRow.id).limit(201)))
@@ -883,7 +891,9 @@ class WorkforceMixin:
             return {
                 "items": items,
                 "next_cursor": last if last and scanned < len(rows) else None,
-                "teams": self._public_team_directory(session, experiment_id, actor),
+                "teams": self._public_team_directory(
+                    session, experiment_id, actor, actor.branch_id if own_branch else None
+                ),
             }
 
     def join_research_team(
@@ -1127,7 +1137,14 @@ class WorkforceMixin:
             ]
             sampled_topics = {post.payload["topic_id"] for post in sampled}
             first_topic = sampled[0].payload["topic_id"] if sampled else None
+            society = bool(experiment.payload.get("society"))
             for _, post in posts:
+                if not post.payload.get("branch_id") and not society:
+                    # A synthesis is anchored in a source research branch. Posts on
+                    # unbranched project topics are passed by the watermark, never
+                    # sampled, so they cannot hold the schedule at one sequence.
+                    # A society synthesis may run parentless, so its platform posts stay.
+                    continue
                 eligible_count += 1
                 if len(source_ids) < 20:
                     source_ids.append(post.id)
@@ -1145,7 +1162,25 @@ class WorkforceMixin:
                         sampled_topics.add(post.payload["topic_id"])
             through = events[min(len(events), 100) - 1].sequence if events else watermark
             topic_ids = sorted(sampled_topics)
-            if eligible_count < interval or len(topic_ids) < 2:
+            if society:
+                # Referee objections come from isolated branches and platform status posts
+                # have none, so neither may parent; without an eligible author branch the
+                # synthesis runs parentless instead of wedging the pending sample.
+                parent_branch_id = self._synthesis_parent(session, experiment, sampled, actor)
+            else:
+                parent_branch_id = next(
+                    (
+                        post.payload["branch_id"]
+                        for post in sampled
+                        if post.payload.get("branch_id")
+                    ),
+                    None,
+                )
+            if (
+                eligible_count < interval
+                or len(topic_ids) < 2
+                or (not parent_branch_id and not society)
+            ):
                 self._replace(
                     session,
                     policy,
@@ -1158,7 +1193,11 @@ class WorkforceMixin:
                 )
                 return {
                     "scheduled": False,
-                    "reason": "insufficient_posts" if eligible_count < interval else "single_topic",
+                    "reason": "insufficient_posts"
+                    if eligible_count < interval
+                    else "single_topic"
+                    if len(topic_ids) < 2
+                    else "source_branch_missing",
                     "eligible_posts": eligible_count,
                     "through_sequence": through,
                 }
@@ -1170,15 +1209,6 @@ class WorkforceMixin:
                 "Identify useful next experiments; treat every claim as unverified "
                 "until the normal verifier accepts independent evidence."
             )
-            if experiment.payload.get("society"):
-                # Referee objections come from isolated branches and platform status posts
-                # have none, so neither may parent; without an eligible author branch the
-                # synthesis runs parentless instead of wedging the pending sample.
-                parent_branch_id = self._synthesis_parent(session, experiment, sampled, actor)
-            else:
-                parent_branch_id = sampled[0].payload.get("branch_id")
-                if not parent_branch_id:
-                    return {"scheduled": False, "reason": "source_branch_missing"}
             result = self._new_branch_task(
                 session,
                 op,

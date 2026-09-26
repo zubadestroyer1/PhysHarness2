@@ -58,6 +58,8 @@ Existing addressed messaging, scientific memory, artifact retrieval, proof tools
 joined-child return mechanisms remain available. The runtime supplies the new tools
 and recruitment guidance in initial context and after compaction. Profiles publish
 only explicit summaries; team labels and subscriptions grant no additional access.
+Profiles and team labels reach other branches only under `sharing="ideas"`. Otherwise
+a worker's directory shows only its own branch; operators keep project-wide visibility.
 Capacity requests record demand and grant zero workers by themselves.
 
 Joined recruitment waits for children through the existing continuation mechanism.
@@ -76,7 +78,10 @@ advertised for them.
 
 The inbox is durable per branch, including successor sessions. Subscription starts at
 the current event sequence; earlier posts remain available through paged retrieval.
-An inbox has one outstanding batch, at most ten items, and a byte bound. Acknowledgement
+An inbox has one outstanding batch, at most ten items, and a byte bound. An excerpt
+shrinks until its escaped form fits, so no source text can block delivery. Inbox-visible
+writes serialize per experiment through commit, so an acknowledged cursor never passes
+an update that commits later with a lower sequence. Acknowledgement
 means durable receipt, not agreement, mathematical usefulness, or proof. At-least-once
 delivery with stable identities permits safe recovery; it is not an exactly-once
 model-understanding guarantee.
@@ -89,7 +94,8 @@ reread and saves the notice before retrying acknowledgement. Corrupt or missing 
 metadata remains a coded fault rather than being treated as an ordinary withdrawal.
 
 Optional synthesis is disabled by default. Setting `synthesis_interval_posts` to 4–100
-enables bounded cross-topic sampling. A synthesis is an ordinary queued research task
+enables bounded cross-topic sampling of branch-attributed posts; posts on unbranched
+project topics are passed over. A synthesis is an ordinary queued research task
 with exact source post IDs and explicit sample coverage. It preserves source objections;
 it does not claim to have read the entire discussion or settle disagreement by voting.
 Automatic synthesis only runs when the finite supervisor owns all experiment roots.
