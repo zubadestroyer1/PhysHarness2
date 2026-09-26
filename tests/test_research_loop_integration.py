@@ -902,15 +902,18 @@ async def test_model_candidate_requests_independent_replay_and_missing_checker_c
     assert service.search_knowledge(experiment["id"], "", agent)["items"] == []
 
 
-async def test_rate_limit_give_up_releases_the_model_reservation(lab):
+async def rate_limited_team(lab, *, runtime_timeout, retry_after, team_timeout=300):
+    """Run one task against a provider that refuses every generation for rate limiting."""
     service, actor, _ = lab
     experiment, _, task = campaign(lab, concurrency=1)
+    sent = []
 
     async def route(request):
         if request.url.path.endswith("/input_tokens"):
             return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        sent.append(request.headers.get("X-Client-Request-Id"))
         refusal = {"message": "TPM", "type": "tokens", "param": None, "code": "rate_limit_exceeded"}
-        return httpx.Response(429, json={"error": refusal}, headers={"retry-after": "20"})
+        return httpx.Response(429, json={"error": refusal}, headers={"retry-after": retry_after})
 
     client = AsyncOpenAI(
         api_key="mock-only",
@@ -921,7 +924,7 @@ async def test_rate_limit_give_up_releases_the_model_reservation(lab):
         service,
         prices=PRICES,
         runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
-        limits=RuntimeLimits(max_turns=30, timeout_seconds=2),
+        limits=RuntimeLimits(max_turns=30, timeout_seconds=runtime_timeout),
     )
     try:
         result = await research_worker.ResearchTeamRunner(service, executor=executor).run(
@@ -932,13 +935,32 @@ async def test_rate_limit_give_up_releases_the_model_reservation(lab):
                 task_ids=[task["id"]],
                 max_concurrency=1,
                 max_tasks=1,
+                timeout_seconds=team_timeout,
             )
         )
     finally:
         await client.close()
     # Every send was refused, so nothing is uncertain and the reservation is released at zero.
-    assert result["outcomes"][0]["code"] == "PROVIDER_RATE_LIMITED"
     assert result["ledger"]["uncertain_operations"] == 0
     assert result["ledger"]["reserved_cost_usd"] == "0"
     assert result["ledger"]["spent_cost_usd"] == "0"
     assert service.task_model_effects_settled(task["id"], actor)
+    return result, sent
+
+
+async def test_rate_limit_give_up_releases_the_model_reservation(lab):
+    result, sent = await rate_limited_team(lab, runtime_timeout=2, retry_after="20")
+    assert result["outcomes"][0]["code"] == "PROVIDER_RATE_LIMITED" and len(sent) == 1
+
+
+async def test_rate_limit_resends_one_operation_until_giving_up(lab):
+    result, sent = await rate_limited_team(lab, runtime_timeout=3.5, retry_after="1")
+    assert result["outcomes"][0]["code"] == "PROVIDER_RATE_LIMITED"
+    assert len(sent) >= 2 and len(set(sent)) == 1
+
+
+async def test_stopping_the_team_during_a_rate_limit_wait_releases_the_reservation(lab):
+    result, _ = await rate_limited_team(
+        lab, runtime_timeout=300, retry_after="20", team_timeout=1.5
+    )
+    assert result["outcomes"][0]["status"] == "blocked"

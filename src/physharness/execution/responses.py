@@ -290,9 +290,13 @@ class ResponsesRuntime:
     async def _abandon_refused(
         self, session: RuntimeSession, state: dict[str, Any], operation_id: str
     ) -> None:
-        """Every send was refused and none is in flight: release the reservation at zero."""
-        state["pending_operation"] = None
+        """Every send was refused and none is in flight: release the reservation at zero.
+
+        As with usage, the operation is cleared only after its accounting succeeds, so a
+        failed or interrupted release leaves the session uncertain rather than definite.
+        """
         await self._emit("generation_aborted", session, operation_id, reason="rate_limited")
+        state["pending_operation"] = None
 
     async def _receive_updates(
         self, session: RuntimeSession, state: dict[str, Any], *, changed_retry: bool = False
