@@ -19,7 +19,7 @@ from test_workspace_service import FakeVM
 
 from physharness import commons_discourse
 from physharness.commons import _lean_digest
-from physharness.commons_models import NodeCreate
+from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.commons_review import NODE_DATA_BEGIN, NODE_DATA_END
 from physharness.domain import (
     ArtifactCreate,
@@ -369,6 +369,7 @@ REFEREE_TOOLS = (
     "fetch_source",
     "commons_query",
     "commons_read",
+    "read_artifact",
     "commons_post",
     "inbox",
     "verification_status",
@@ -425,7 +426,8 @@ def test_society_catalog_widest():
     assert tuple(names(dispatcher)) == tuple(n for n in SOCIETY_TOOL_NAMES if n != "submit_review")
     assert tuple(names(referee)) == REFEREE_TOOLS
     assert set(names(dispatcher)) | set(names(referee)) == set(SOCIETY_TOOL_NAMES)
-    assert len(SOCIETY_TOOL_NAMES) <= 25
+    # 26 tools in all: 25 for a worker at most, and 18 for a referee.
+    assert (len(SOCIETY_TOOL_NAMES), len(names(dispatcher)), len(REFEREE_TOOLS)) == (26, 25, 18)
     for item in dispatcher.definitions + referee.definitions:
         schema = item["parameters"]
         assert item["strict"] is True and schema["additionalProperties"] is False
@@ -496,6 +498,7 @@ def test_society_catalog_without_literature_or_review():
     assert names(bare) == [
         "commons_query",
         "commons_read",
+        "read_artifact",
         "commons_node",
         "commons_post",
         "commons_claim",
@@ -671,6 +674,7 @@ async def test_referee_task_gets_submit_review(lab):
     assert names(dispatcher) == [
         "commons_query",
         "commons_read",
+        "read_artifact",
         "commons_post",
         "inbox",
         "verification_status",
@@ -724,6 +728,71 @@ async def test_referee_prompt_fences_author_text_in_the_frontier(lab):
     worker_view = json.loads(seen["payloads"][0]["input"][0]["content"])
     titles = {item["title"] for item in worker_view["commons_frontier"]["items"]}
     assert evil in titles
+
+
+async def test_read_artifact_opens_cited_evidence_under_existing_scope(lab):
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    cited = service.create_artifact(
+        ArtifactCreate(
+            experiment_id=exp["id"], kind="lean_source", content="node evidence " + "x" * 20000
+        ),
+        alpha,
+        "cited",
+    )
+    uncited = artifact(service, alpha, "uncited alpha work")
+    node = service.create_node(
+        exp["id"],
+        NodeCreate(
+            node_type="lemma",
+            title="Trace lemma",
+            statement="The trace is additive.",
+            artifact_ids=[cited["id"]],
+        ),
+        alpha,
+        "node",
+    )
+    thread = artifact(service, beta, "beta's counterexample run")
+    service.post_on_node(
+        node["id"],
+        NodePostCreate(kind="finding", abstract="See my run.", artifact_ids=[thread["id"]]),
+        beta,
+        "finding",
+    )
+    # A worker opens a peer's cited evidence (ideas sharing), a bounded chunk at a time.
+    worker, context = running(service, author, exp, branches[1]["id"])
+    tools = profile(service, worker, context)
+    first = await call(tools, "read_artifact", {"artifact_id": cited["id"]})
+    assert first["content_utf8"].startswith("node evidence")
+    assert (first["offset"], first["next_offset"], first["complete"]) == (0, 16384, False)
+    rest = await call(tools, "read_artifact", {"artifact_id": cited["id"], "offset": 16384})
+    assert rest["complete"] is True and rest["next_offset"] == rest["total_bytes"]
+    assert first["reference"]["artifact_sha256"] == cited["sha256"]
+    uncited_read = await call(tools, "read_artifact", {"artifact_id": uncited["id"]})
+    assert uncited_read["content_utf8"] == "uncited alpha work"
+    # Existing visibility rules still apply: a private checkpoint stays hidden.
+    private = service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="checkpoint", content="{}"), alpha, "ckpt"
+    )
+    hidden = await call(tools, "read_artifact", {"artifact_id": private["id"]})
+    assert hidden["error"]["code"] == "NOT_FOUND"
+    # A referee opens only evidence cited by its node or the node's thread, and its own.
+    requested = service.request_review(node["id"], "informal", beta, "review")
+    task = service.get_record("task", requested["review_task_id"], author)
+    referee, referee_context = running(service, author, exp, requested["branch_id"], task=task)
+    referee_tools = profile(service, referee, referee_context)
+    assert "read_artifact" in names(referee_tools)
+    for evidence in (cited, thread):
+        opened = await call(referee_tools, "read_artifact", {"artifact_id": evidence["id"]})
+        assert opened["reference"]["artifact_sha256"] == evidence["sha256"]
+    own = artifact(service, referee, "referee's own check")
+    assert (await call(referee_tools, "read_artifact", {"artifact_id": own["id"]}))[
+        "content_utf8"
+    ] == "referee's own check"
+    refused = await call(referee_tools, "read_artifact", {"artifact_id": uncited["id"]})
+    assert refused["error"]["code"] == "ARTIFACT_NOT_CITED"
+    assert node["id"] in refused["error"]["message"]
+    missing = await call(referee_tools, "read_artifact", {"artifact_id": "missing"})
+    assert missing["error"]["code"] == "ARTIFACT_NOT_CITED"
 
 
 async def test_referee_calling_an_absent_tool_still_submits_its_review(lab):
@@ -1707,6 +1776,7 @@ async def test_every_society_tool_dispatches_without_tool_failure(lab):
         (tools, "write_file", {"path": "calc.py", "content": "print(3)"}),
         (tools, "search_library", {"query": "trace"}),
         (tools, "read_source", {"path": "mathlib/Mathlib/Order/Basic.lean"}),
+        (tools, "read_artifact", {"artifact_id": source["id"]}),
         (
             child_tools,
             "return_result",

@@ -152,8 +152,8 @@ tools, the prompts and the delivery shapes.
   discourse goes through the commons.
 
 Society workers get the consolidated profile in
-`src/physharness/orchestration/society_tools.py`. It has 25 tools in all; a worker's
-widest catalog has 24 (all but `submit_review`), and a referee's has 17:
+`src/physharness/orchestration/society_tools.py`. It has 26 tools in all; a worker's
+widest catalog has 25 (all but `submit_review`), and a referee's has 18:
 
 | Group | Tools |
 |---|---|
@@ -162,7 +162,7 @@ widest catalog has 24 (all but `submit_review`), and a referee's has 17:
 | Library and literature | `search_library`, `read_source`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
 | Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `inbox` |
 | Society | `recruit`, `message`, `wait` |
-| Evidence | `submit_for_verification`, `verification_status` |
+| Evidence | `read_artifact`, `submit_for_verification`, `verification_status` |
 | Memory and skills | `notebook`, `load_skill` |
 | Task-specific | `return_result` (joined children), `submit_review` (referee tasks) |
 

@@ -796,6 +796,7 @@ SOCIETY_TOOL_NAMES = (...)  # the widest catalog, for tests
 | `fetch_source` | url | Only when mode ≠ off: `broker.fetch`, then `service.record_literature_fetch` |
 | `commons_query` | text, status, node_type, frontier, after, limit (nullable defaults) | `query_nodes` |
 | `commons_read` | node_id or post_id (exactly one) | `read_node` / `read_discussion_post` |
+| `read_artifact` | artifact_id, offset (default 0) | `PortableMemory.read_artifact_chunk` (16 KiB chunks, existing visibility rules). A referee opens only its own artifacts and those its assigned node or the node's thread cites (`ARTIFACT_NOT_CITED`). Added after the final review: cited evidence was otherwise unreadable. |
 | `commons_node` | action: create, link, set_lean_statement, abandon, request_review; plus nullable fields | Dispatch per action. `set_lean_statement` elaborates via `LeanSession.elaborate_statement` first. |
 | `commons_post` | node_id, kind, abstract, body, cites, artifact_ids, reply_to_post_id | `post_on_node` |
 | `commons_claim` | node_id, action | `claim_node` |
@@ -828,7 +829,7 @@ SOCIETY_TOOL_NAMES = (...)  # the widest catalog, for tests
 
 - [x] **Step 1: Write failing tests:**
   - `test_legacy_catalog_unchanged`: 63 tools and the same definitions digest as before the change; record the digest from the current code first.
-  - `test_society_catalog_widest`: the tool count equals `len(SOCIETY_TOOL_NAMES)`, which is ≤25, and the names match.
+  - `test_society_catalog_widest`: the tool count equals `len(SOCIETY_TOOL_NAMES)`, which is 26 (25 for a worker at most, 18 for a referee), and the names match.
   - `test_society_catalog_without_literature_or_review`: no `search_literature`, `fetch_source` or `submit_review`.
   - `test_referee_task_gets_submit_review`
   - `test_commons_node_actions_dispatch`

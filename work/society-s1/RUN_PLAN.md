@@ -265,7 +265,7 @@ exactly one bucket; `tests/test_society_metrics.py` enforces this. A tool in no 
 - `math_lean_computation`: shell, file, Lean, library, computation, candidate and
   verification tools.
 - `other` (memory, knowledge, literature and skills): society `search_literature`,
-  `fetch_source`, `notebook`, `load_skill`; legacy `checkpoint_context`,
+  `fetch_source`, `notebook`, `load_skill`, `read_artifact`; legacy `checkpoint_context`,
   `checkpoint_research_notes`, `history_page`, `index_page`, `read_artifact`,
   `read_artifact_chunk`, `read_dependency_bundle`, `read_scientific_record`,
   `research_graph_page`, `restart_brief`, `restore_context`, `search_knowledge`,

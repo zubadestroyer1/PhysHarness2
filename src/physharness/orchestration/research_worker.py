@@ -429,7 +429,7 @@ LEGACY_SOURCE_RETRIEVAL = (
 )
 SOCIETY_SOURCE_RETRIEVAL = (
     "Use commons_read with a delivery retrieval ID (post_id for a post, message_id for a "
-    "message); excerpts remain unverified."
+    "message), and read_artifact for an artifact they cite; excerpts remain unverified."
 )
 
 
