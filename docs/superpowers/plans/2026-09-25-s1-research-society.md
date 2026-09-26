@@ -82,7 +82,7 @@ passes 1,577 tests with 2 opt-in PostgreSQL skips; ruff is clean.
 
 ## Execution waves (parallelism)
 
-Each task runs in its own git worktree, branched from `kieranpi/s1-research-society`, and the controller merges it back after review.
+Each task runs in its own git worktree, branched from `society/s1-research-society`, and the controller merges it back after review.
 
 - **Wave A (parallel):** Tasks 1, 5, 6, 7, 8. They touch disjoint files, except `service.py`, where Task 7 adds one line to `_private_artifact_kinds`; the controller resolves that at merge.
 - **Wave B (parallel, after Task 1 is merged):** Tasks 2 and 4.
