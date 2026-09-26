@@ -3,13 +3,15 @@
 import json
 
 import pytest
+from sqlalchemy import event
 from test_sharing import approaches, artifact
 
 from physharness.discussion_models import DiscussionCreate, DiscussionPostCreate
-from physharness.domain import ArtifactCreate, Principal
+from physharness.domain import ArtifactCreate, BranchCreate, Principal, TaskCreate
 from physharness.errors import HarnessError
 from physharness.service import HarnessService
-from physharness.storage import RecordRow
+from physharness.storage import EventRow, RecordRow
+from physharness.worker_authority import worker_effects
 
 
 def test_ideas_posts_are_attributed_and_scoped_across_generic_reads(lab):
@@ -510,3 +512,137 @@ def test_irrelevant_messages_do_not_starve_addressed_message(lab):
     )
     batch = service.discussion_updates(exp["id"], beta)
     assert [item["id"] for item in batch["items"]] == [wanted["id"]]
+
+
+@pytest.mark.parametrize(
+    "content",
+    ['"' * 1100, "\\" * 1024, "\x01" * 400, "é\x02" * 700],
+    ids=["quotes", "backslashes", "controls", "mixed-width-controls"],
+)
+def test_escaped_peer_content_shrinks_to_its_bound_instead_of_wedging_the_inbox(lab, content):
+    service, _, exp, _, (alpha, beta) = approaches(lab, "ideas")
+    topic = service.create_discussion(
+        exp["id"], DiscussionCreate(title="Escapes", summary="Bounds"), alpha, "topic"
+    )
+    service.subscribe_discussion(topic["id"], True, beta, "subscribe")
+    post = service.post_discussion(
+        topic["id"], DiscussionPostCreate(kind="update", content=content), alpha, "post"
+    )
+    message = service.send_message(alpha.branch_id, beta.branch_id, content, [], alpha, "message")
+    later = service.send_message(alpha.branch_id, beta.branch_id, "useful idea", [], alpha, "later")
+    batch = service.discussion_updates(exp["id"], beta)
+    assert [item["retrieval_id"] for item in batch["items"]] == [
+        post["id"],
+        message["id"],
+        later["id"],
+    ]
+    for item in batch["items"][:2]:
+        assert len(json.dumps(item, ensure_ascii=False).encode()) <= 2048
+        assert len(item["excerpt"].encode()) <= 1024
+        assert item["excerpt"] and content.startswith(item["excerpt"])
+        assert item["truncated"] is (item["excerpt"] != content)
+    assert batch["items"][2]["excerpt"] == "useful idea"
+    assert batch["items"][2]["truncated"] is False
+    service.acknowledge_discussion_updates(exp["id"], batch["delivery_id"], beta, "ack")
+    assert service.discussion_updates(exp["id"], beta)["items"] == []
+    assert service.read_research_message(message["id"], beta)["content"] == content
+    assert service.read_discussion_post(post["id"], beta)["content"] == content
+
+
+def test_short_escaped_content_that_fits_is_not_marked_truncated(lab):
+    service, _, exp, _, (alpha, beta) = approaches(lab, "ideas")
+    content = '"quoted" \\ path\n' * 20
+    service.send_message(alpha.branch_id, beta.branch_id, content, [], alpha, "message")
+    [item] = service.discussion_updates(exp["id"], beta)["items"]
+    assert item["excerpt"] == content
+    assert item["truncated"] is False
+
+
+def test_inbox_event_writers_hold_experiment_lock_from_sequence_allocation_to_commit(
+    lab, monkeypatch
+):
+    # PostgreSQL allocates SERIAL values at insert, not commit. Delivery is
+    # commit-order safe only if every inbox-visible event and subscription start
+    # is taken under one experiment lock held until commit.
+    service, author, exp, _, (alpha, beta) = approaches(lab, "ideas")
+    topic = service.create_discussion(
+        exp["id"], DiscussionCreate(title="Order", summary="Commit"), alpha, "topic"
+    )
+    controller = Principal(id="controller", project_id=author.project_id, role="operator")
+    child_branch = service.create_branch(
+        exp["id"],
+        BranchCreate(title="Child", objective="Part", parent_id=alpha.branch_id, relation="helper"),
+        author,
+        "child-branch",
+    )
+    parent = service.create_task(
+        TaskCreate(branch_id=alpha.branch_id, objective="Parent"), author, "parent"
+    )
+    parent_lease = service.acquire_task(parent["id"], alpha.id, 60, controller, "parent-lease")
+    with worker_effects(alpha, parent["id"], alpha.id, parent_lease["fence"]):
+        child = service.create_task(
+            TaskCreate(branch_id=child_branch["id"], objective="Child"), alpha, "child"
+        )
+    child_lease = service.acquire_task(child["id"], "child", 60, controller, "child-lease")
+    evidence = service.create_artifact(
+        ArtifactCreate(
+            experiment_id=exp["id"],
+            branch_id=child_branch["id"],
+            kind="research_output",
+            content="Returned result",
+        ),
+        controller,
+        "evidence",
+    )
+    inbox_lock = service._digest(["inbox-events", exp["id"]])
+    journal = []
+    original_lock = service.db.command_lock
+    original_start = service._discussion_max_sequence
+
+    def recording_lock(session, key):
+        original_lock(session, key)
+        if key == inbox_lock:
+            pending = [
+                row.kind
+                for row in [*session.new, *session.identity_map.values()]
+                if isinstance(row, EventRow)
+            ]
+            journal.append(("lock", pending))
+
+    def recording_start(session):
+        journal.append(("start", None))
+        return original_start(session)
+
+    def appended(session, instance):
+        if isinstance(instance, EventRow):
+            journal.append(("event", instance.kind))
+
+    monkeypatch.setattr(service.db, "command_lock", recording_lock)
+    monkeypatch.setattr(service, "_discussion_max_sequence", recording_start)
+    event.listen(service.db.sessions, "before_attach", appended)
+    try:
+        service.subscribe_discussion(topic["id"], True, beta, "subscribe")
+        assert journal[:2] == [("lock", []), ("start", None)]
+        journal.clear()
+        service.post_discussion(
+            topic["id"], DiscussionPostCreate(kind="finding", content="post"), alpha, "post"
+        )
+        assert journal == [("lock", []), ("event", "discussion.post_created")]
+        journal.clear()
+        service.send_message(alpha.branch_id, beta.branch_id, "message", [], alpha, "message")
+        assert journal == [("lock", []), ("event", "message.created")]
+        journal.clear()
+        service.finish_task(
+            child["id"],
+            "child",
+            child_lease["fence"],
+            [evidence["id"]],
+            "completed",
+            controller,
+            "done",
+        )
+        assert journal[:2] == [("lock", []), ("event", "message.created")]
+    finally:
+        event.remove(service.db.sessions, "before_attach", appended)
+    batch = service.discussion_updates(exp["id"], beta)
+    assert [item["source_kind"] for item in batch["items"]] == ["discussion_post", "message"]
