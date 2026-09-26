@@ -110,6 +110,16 @@ class ScriptedLean:
             "reason_code": None,
         }
 
+    async def verify_statement(self, source, header, name, signature, *, operation_id):
+        self.calls.append(("verify", name))
+        return {
+            "ok": True,
+            "reason": None,
+            "axioms": ["propext"],
+            "detail": None,
+            "backend": "lean_statement_check",
+        }
+
     async def elaborate_statements(self, header, entries, *, operation_id):
         # The real batching, over this stand-in's check: one check for every hole.
         return await LeanSession.elaborate_statements(

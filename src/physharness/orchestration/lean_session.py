@@ -6,6 +6,10 @@ Backends, chosen once per workspace:
   Docker workbench) run the same request against a private REPL that dies with the command;
 - ``one_shot``: without a REPL binary, ``lake env lean`` on a scratch file; axioms via ``--json``.
 
+A check's ``axioms`` are the file's own ``#print axioms`` output, which the file can redefine.
+``verify_statement`` is the separate judgement a local compile rests on, on every backend: a
+harness-authored checker that reads the compiled file as data.
+
 Every result is evidence only: ``proof_status`` stays ``not_accepted``.
 """
 
@@ -15,6 +19,7 @@ import re
 import shlex
 from importlib import resources
 
+from ..commons_models import LEAN_NAME
 from ..errors import HarnessError
 from ..formal_tools.lean_session_daemon import (
     SORRY_WARNING,
@@ -57,6 +62,12 @@ MAX_AXIOM_NAMES = 32
 MAX_NAME = 200
 # The daemon answers this long before the provider's own timeout, which quarantines the VM.
 RUN_MARGIN_SECONDS = 30
+# The local-compile statement check: a stdlib driver and a Lean checker, uploaded to
+# .physharness/ and kept in the runtime directory, out of the workspace archive.
+CHECK_FILES = ("statement_check.py", "statement_check.lean")
+CHECK_TIMEOUT_SECONDS = 240
+CHECK_BACKEND = "lean_statement_check"
+_CHECK_REASON = re.compile(r"[a-z][a-z_]{0,59}")
 # Plain ``lean`` prints info messages (``#print axioms``) without a position, so the one-shot
 # axiom pass reads JSON; with linters off, fewer warnings precede the reports in the 64 KiB head.
 _AXIOM_PASS_ARGS = ("--json", "-Dlinter.all=false")
@@ -294,18 +305,98 @@ def _scan(source: str, index: int, out: list, close: str | None) -> int:
     return len(source)
 
 
+def _scanned(source: str) -> str | None:
+    out: list[str] = []
+    try:
+        _scan(source, 0, out, None)
+    except RecursionError:
+        return None
+    return "".join(out)
+
+
 def lean_code(source: str) -> str:
     """Lean source with comments blanked and literals and quotations made opaque tokens.
 
     Source nested too deeply to scan (interpolations or quotations) yields no code, so
     nothing in it counts as a declaration.
     """
-    out: list[str] = []
-    try:
-        _scan(source, 0, out, None)
-    except RecursionError:
-        return ""
-    return "".join(out)
+    code = _scanned(source)
+    return "" if code is None else code
+
+
+_BRACKETS = {"(": ")", "[": "]", "{": "}", "⟨": "⟩", "⦃": "⦄"}
+_CLOSERS = frozenset(_BRACKETS.values())
+_WHERE = re.compile(r"(?<![\w.'!?])where(?![\w'!?])")
+_HEADER_COMMAND = re.compile(
+    r"(?:public\s+)?(?:meta\s+)?import\s+[A-Za-z_][\w.']*"
+    r"|open(?:\s+scoped)?(?:\s+[A-Z][\w.']*)+(?:\s*\(\s*[\w.'!?]+(?:\s+[\w.'!?]+)*\s*\))?"
+    r"|set_option\s+[A-Za-z_][\w.]*\s+(?:true|false|[0-9]+|\x00[0-9A-F]{16}\x00)"
+    r"|universe(?:\s+[a-z](?:_?[0-9]+|[₀-₉]+)?)+"
+)
+_OPEN_CONTINUATION = re.compile(r"[A-Z][\w.']*(?:\s+[A-Z][\w.']*)*")
+
+
+def signature_problem(signature) -> str | None:
+    """Why ``signature`` is not one declaration signature (binders, then ``: type``), or None.
+
+    The harness elaborates ``theorem <name> <signature> := ...``, which must stay one
+    declaration whose value is the harness's. A declaration value starts only at ``:=``, at
+    ``| pattern => value`` alternatives or at ``where``. Outside comments, literals and
+    brackets the signature may hold none of them, and its brackets must balance, so no text
+    in it can end the declaration and run commands of its own (``#exit``, say). A ``let``,
+    ``match`` or ``fun`` with alternatives in the type goes in parentheses.
+    """
+    if not isinstance(signature, str) or not signature.strip():
+        return "empty"
+    code = _scanned(signature)
+    if not code or not code.strip():
+        return "unreadable"
+    stack, bar = [], False
+    for index, character in enumerate(code):
+        if character in _BRACKETS:
+            stack.append(_BRACKETS[character])
+        elif character in _CLOSERS:
+            if not stack or stack.pop() != character:
+                return "unbalanced_brackets"
+        elif stack:
+            continue
+        elif code.startswith(":=", index):
+            return "declaration_value"
+        elif character == "|":
+            bar = True
+        elif bar and code.startswith("=>", index):
+            return "match_alternatives"
+        elif _WHERE.match(code, index):
+            return "where_clause"
+    return "unbalanced_brackets" if stack else None
+
+
+def header_problem(header) -> str | None:
+    """Why a node's Lean header is not only import, open, set_option and universe lines, or
+    None.
+
+    Each non-blank line must be one whole such command (an ``open`` may continue on
+    indented lines of namespaces), so no header text can run other commands (``#exit``, an
+    instance, a macro). ``open ... in``, ``hiding`` and ``renaming`` are not header lines.
+    """
+    if header is None:
+        return None
+    if not isinstance(header, str):
+        return "not_text"
+    code = _scanned(header)
+    if code is None:
+        return "unreadable"
+    opened = False
+    for line in code.split("\n"):
+        text = line.strip()
+        if not text:
+            continue
+        if opened and line[:1].isspace() and _OPEN_CONTINUATION.fullmatch(text):
+            continue
+        if not _HEADER_COMMAND.fullmatch(text):
+            return "header_line"
+        opened = text.startswith("open")
+    return None
 
 
 def top_level_declarations(code: str) -> list[tuple[str, str, str]]:
@@ -326,6 +417,29 @@ def top_level_declarations(code: str) -> list[tuple[str, str, str]]:
             if name is not None:
                 found.append((keyword, name.group(1), code[name.end() :]))
     return found
+
+
+def _with_universes(header: str, universes) -> str:
+    """A hole node's header: the file header, then its ``universe`` line."""
+    if not universes:
+        return header
+    line = "universe " + " ".join(universes)
+    return f"{header}\n{line}" if header else line
+
+
+def _require_statement_shape(header: str, signature: str) -> None:
+    problem = header_problem(header)
+    subject = "header" if problem else "signature"
+    problem = problem or signature_problem(signature)
+    if problem is not None:
+        raise HarnessError(
+            "INVALID_ARGUMENTS",
+            f"The Lean {subject} is not a plain {subject} ({problem}).",
+            status=422,
+            remediation="A header holds only import, open, set_option and universe lines; a "
+            "signature is binders then ': type', with any let, match or fun alternatives "
+            "in parentheses and no ':=' or 'where' outside brackets.",
+        )
 
 
 def _clean(value: str) -> str:
@@ -476,6 +590,46 @@ def _appended_axioms(report, source, names):
     return axioms
 
 
+def _verdict(reason, detail=None):
+    return {
+        "ok": False,
+        "reason": reason,
+        "axioms": None,
+        "detail": detail,
+        "backend": CHECK_BACKEND,
+    }
+
+
+def _check_verdict(result):
+    """Re-type the statement check's answer; the VM, so the agent, controls these bytes."""
+    try:
+        answer = json.loads(result.get("stdout") or "")
+    except Exception:  # Includes RecursionError from deeply nested agent-controlled JSON.
+        answer = None
+    if not isinstance(answer, dict):
+        tail = (result.get("stderr") or result.get("stdout") or "")[-MAX_MESSAGE_TEXT:]
+        return _verdict("statement_check_failed", _clip(tail, MAX_MESSAGE_TEXT))
+    axioms = answer.get("axioms")
+    if answer.get("ok") is True:
+        if (
+            isinstance(axioms, list)
+            and len(axioms) <= MAX_AXIOM_NAMES
+            and all(isinstance(value, str) and 0 < len(value) <= MAX_NAME for value in axioms)
+        ):
+            return {
+                "ok": True,
+                "reason": None,
+                "axioms": [_clean(value) for value in axioms],
+                "detail": None,
+                "backend": CHECK_BACKEND,
+            }
+        return _verdict("statement_check_malformed")
+    reason = answer.get("reason")
+    if not (isinstance(reason, str) and _CHECK_REASON.fullmatch(reason)):
+        reason = "statement_check_failed"
+    return _verdict(reason, _clip(answer.get("detail"), MAX_MESSAGE_TEXT) or None)
+
+
 class LeanSession:
     """One Lean session per workspace, reached through the existing broker tools."""
 
@@ -484,6 +638,7 @@ class LeanSession:
         self._backend = None
         self._repl = None
         self._note = None
+        self._checker_placed = False
 
     async def check(
         self, source: str, *, automate: bool, operation_id: str, timeout: float = 120
@@ -516,6 +671,11 @@ class LeanSession:
                 failure = "statement_too_long"  # never a silently truncated statement
             elif parsed is None:
                 failure = "extract_goal_failed"
+            elif header_problem(_with_universes(header, parsed[2])) is not None:
+                failure = "invalid_header"
+            elif signature_problem(parsed[1]) is not None:
+                # A goal pretty-printed through the file's own notation, say.
+                failure = "invalid_signature"
             else:
                 failure = None
                 entry.update(
@@ -545,6 +705,7 @@ class LeanSession:
             or not signature.strip()
         ):
             raise HarnessError("INVALID_ARGUMENTS", "Supply a Lean header, name and signature.")
+        _require_statement_shape(header, signature)
         source = f"{header}\n\ntheorem {name} {signature} := by\n  sorry\n"
         result = await self.check(source, automate=False, operation_id=operation_id)
         ok = result["ok"] and not any(m["severity"] == "error" for m in result["messages"])
@@ -583,6 +744,8 @@ class LeanSession:
             for name, signature, universes in entries
         ):
             raise HarnessError("INVALID_ARGUMENTS", "Supply a Lean header, names and signatures.")
+        for _, signature, universes in entries:
+            _require_statement_shape(_with_universes(header, universes), signature)
         if not entries:
             return []
         lines, spans = [header, ""], []
@@ -642,6 +805,87 @@ class LeanSession:
                 }
             )
         return outcomes
+
+    async def verify_statement(
+        self,
+        source: str,
+        header: str,
+        name: str,
+        signature: str,
+        *,
+        operation_id: str,
+        timeout: float = CHECK_TIMEOUT_SECONDS,
+    ) -> dict:
+        """Whether ``source`` proves ``theorem <name> <signature>`` under ``header``, as the
+        harness checker (``formal_tools/statement_check.lean``) judges it.
+
+        The source, and the reference ``<header> theorem <name> <signature> := sorry``, are
+        compiled to .olean files in the workspace. The checker reads both as data and runs
+        none of the source's code: it replays the source's declarations through the kernel,
+        compares the theorem's elaborated type and universe parameters with the reference's,
+        and collects the theorem's axioms itself. This is the same on every backend, so what
+        the source prints (``#print axioms`` included) never enters the judgement.
+
+        Returns ``{ok, reason, axioms, detail, backend}``; anything but a well-formed
+        success, an unreadable answer included, is ``ok: False``.
+        """
+        if (
+            not all(isinstance(value, str) for value in (source, header, name, signature))
+            or not re.fullmatch(LEAN_NAME, name)
+            or header_problem(header) is not None
+            or signature_problem(signature) is not None
+        ):
+            return _verdict("invalid_lean_statement")
+        reference = f"{header}\n\ntheorem {name} {signature} := sorry\n"
+        try:
+            sizes = [len(text.encode("utf-8")) for text in (source, reference)]
+        except UnicodeEncodeError:
+            return _verdict("invalid_lean_statement")
+        if sizes[0] > MAX_SOURCE_BYTES or sizes[1] > MAX_UPLOAD_BYTES:
+            return _verdict("statement_check_too_large")
+        digest = hashlib.sha256(f"{operation_id}\n{source}\n{reference}".encode()).hexdigest()
+        workdir = f".physharness/check-{digest}"
+        if not self._checker_placed:
+            await self._upload_checker(f"{operation_id}:check-upload")
+        for label, text in (("Source", source), ("Reference", reference)):
+            await self._tools.write(
+                {"path": f"{workdir}/{label}.lean", "content": text},
+                f"{operation_id}:check-{label.lower()}",
+            )
+        check_timeout, run_timeout = self._timeouts(timeout)
+        runtime = [f"{DAEMON_RUNTIME_DIR}/{file}" for file in CHECK_FILES]
+        uploaded = [f".physharness/{file}" for file in CHECK_FILES]
+        place = (
+            f"if test -f {uploaded[0]}; then mkdir -p {DAEMON_RUNTIME_DIR} && "
+            f"mv -f {shlex.join(uploaded)} {DAEMON_RUNTIME_DIR}/; fi; "
+        )
+        argv = ["python3", runtime[0], "--timeout", f"{check_timeout:g}", "--cwd", LAKE_PROJECT]
+        argv += ["--checker", runtime[1], workdir, name]
+        for attempt in range(2):
+            tidy = f"rm -rf {workdir}; " if attempt else ""  # the driver removes it otherwise
+            script = (
+                f"{place}if ! {{ test -f {runtime[0]} && test -f {runtime[1]}; }}; then "
+                f"{tidy}rmdir .physharness 2>/dev/null; exit {_DAEMON_MISSING}; fi; "
+                f"{shlex.join(argv)}; status=$?; rmdir .physharness 2>/dev/null; exit $status"
+            )
+            result = await self._tools.run(
+                {"argv": ["sh", "-c", script], "cwd": ".", "timeout_seconds": run_timeout},
+                f"{operation_id}:check-run-{attempt}",
+            )
+            if result["exit_code"] != _DAEMON_MISSING or attempt:
+                break
+            await self._upload_checker(f"{operation_id}:check-reupload")  # a VM restore
+        if result["exit_code"] == _DAEMON_MISSING:
+            return _verdict("statement_check_unavailable")
+        return _check_verdict(result)
+
+    async def _upload_checker(self, operation_id):
+        for file in CHECK_FILES:
+            content = (resources.files("physharness.formal_tools") / file).read_text("utf-8")
+            await self._tools.write(
+                {"path": f".physharness/{file}", "content": content}, f"{operation_id}:{file}"
+            )
+        self._checker_placed = True
 
     async def _check(self, source, automate, extract, operation_id, timeout):
         try:

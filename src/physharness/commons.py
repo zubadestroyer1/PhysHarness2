@@ -6,6 +6,7 @@ which platform code calls; the single author-initiated move is abandonment with 
 
 import copy
 import hashlib
+import json
 from collections import Counter, defaultdict, deque
 from datetime import datetime
 
@@ -45,9 +46,16 @@ def _platform(project_id):
 
 
 def _lean_digest(header, name, statement):
+    """The digest of a node's exact Lean statement: a canonical JSON array of its three
+    fields, so no two different (header, name, statement) triples share an encoding.
+
+    Nodes recorded before this encoding keep their stored digest until their statement
+    changes; ``set_lean_statement`` compares the fields themselves, never the digests.
+    """
     if statement is None:
         return None
-    return hashlib.sha256(f"{header or ''}\n{name}\n{statement}".encode()).hexdigest()
+    encoded = json.dumps([header or "", name, statement], ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode()).hexdigest()
 
 
 def _not_found():

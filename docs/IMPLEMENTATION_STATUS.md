@@ -31,10 +31,12 @@ What exists (Tasks 1–10):
     stated; each text version gets a bounded referee panel (`REVIEW_LIMIT`).
   - Informal verdicts are sound, gaps or wrong; fidelity verdicts are faithful or
     unfaithful. Ladder moves are bound to evidence: the review quorum, Lean elaboration,
-    and a complete local compile of the node's exact top-level statement using only
-    standard axioms. Elaboration and local compiles run in the agent-controlled workspace
-    VM, so they are VM-attested evidence, not trusted platform checks; only independent
-    acceptance is trusted.
+    and a local compile that passes the harness statement check. That check replays the
+    compiled file through the kernel, requires the theorem's elaborated type to equal the
+    node statement's, and collects its axioms itself; only standard axioms count.
+    Elaboration and local compiles run in the agent-controlled workspace VM, so they are
+    VM-attested evidence, not trusted platform checks; only independent acceptance is
+    trusted.
   - Goal acceptance is persisted from the independent target receipt.
 - **Labs.** Membership is capped, lab broadcast exists, and direct messages across labs
   are blocked by default.
