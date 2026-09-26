@@ -37,6 +37,30 @@ ToolHandler = Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]]
 MAX_TURN_NOTE_CHARS = 4_000
 MAX_STAGNATION_SUGGESTIONS = 10
 MAX_STAGNATION_SUGGESTION_CHARS = 200
+# A provider rate-limit refusal waits at most this long per attempt before a resend.
+MAX_RATE_LIMIT_WAIT_SECONDS = 30.0
+
+
+def _rate_limit_wait(error: Exception, fallback: float) -> float | None:
+    """Seconds to wait before resending a request the provider refused for rate limiting.
+
+    Only an HTTP 429 with code `rate_limit_exceeded` qualifies: the provider refused the
+    request before doing any work, so nothing was generated or charged. Quota exhaustion
+    (`insufficient_quota`) and every other error return None and keep their existing path.
+    """
+    if getattr(error, "status_code", None) != 429:
+        return None
+    if getattr(error, "code", None) != "rate_limit_exceeded":
+        return None
+    headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    for name, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
+        try:
+            hinted = float(headers.get(name)) * scale
+        except (TypeError, ValueError):
+            continue
+        if hinted > 0:
+            return min(hinted, MAX_RATE_LIMIT_WAIT_SECONDS)
+    return min(fallback, MAX_RATE_LIMIT_WAIT_SECONDS)
 
 
 def _safe_provider_field(value: Any, *, maximum: int) -> str | None:
@@ -789,17 +813,29 @@ class ResponsesRuntime:
                 state["pending_operation"] = None
                 await self._emit("generation_aborted", session, operation_id, reason="timeout")
                 raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
-            response = await client.responses.create(
-                model=session.model.model,
-                input=state["input"],
-                tools=self.dispatcher.definitions,
-                parallel_tool_calls=False,
-                max_output_tokens=output_reservation,
-                store=False,
-                include=["reasoning.encrypted_content"],
-                extra_headers={"X-Client-Request-Id": operation_id},
-                **params,
-            )
+            backoff = 1.0
+            while True:
+                try:
+                    response = await client.responses.create(
+                        model=session.model.model,
+                        input=state["input"],
+                        tools=self.dispatcher.definitions,
+                        parallel_tool_calls=False,
+                        max_output_tokens=output_reservation,
+                        store=False,
+                        include=["reasoning.encrypted_content"],
+                        extra_headers={"X-Client-Request-Id": operation_id},
+                        **params,
+                    )
+                    break
+                except Exception as error:
+                    # A rate-limit refusal did no work, so the same operation and
+                    # reservation are resent; anything else keeps its existing path.
+                    wait = _rate_limit_wait(error, backoff)
+                    if wait is None or asyncio.get_running_loop().time() + wait >= deadline:
+                        raise
+                    await asyncio.sleep(wait)
+                    backoff *= 2
             native = response.model_dump(mode="json", exclude_none=True)
             if native.get("model") != session.model.model:
                 # Retain exact provider evidence and the unsettled reservation.
