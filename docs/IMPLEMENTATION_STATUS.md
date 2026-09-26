@@ -1,3 +1,23 @@
+## S1 live comparison — 2026-09-26
+
+**Status:** run on the local Colima workbench with `gpt-6-sol`; the evidence is in the [results report](../work/society-s1/results-2026-09-26/REPORT.md).
+- **Outcome:** all 13 completed arms proved their exact target, each with a single accepted submission. There was no literature use or contamination.
+- **Targets:** both were within one agent's reach, so the arms differ only in time and cost.
+- **Aperiodic target:**
+
+  | Arm | Time to proof | Cost |
+  |---|---|---|
+  | Society (6 roots, concurrency 8) | 29.7 min | $155.41 |
+  | Eight independent one-root runs (median) | 14.0 min | $36.02 |
+  | Single agent | 13.9 min | $31.97 |
+
+- **Society overhead:** referee tasks took 34 of the society's 40 task slots, and it was throttled by the provider's 2M tokens-per-minute limit.
+- **Change:** the Responses runtime now resends HTTP 429 `rate_limit_exceeded` refusals within the same operation. Previously each one failed its task.
+- **Limits:**
+  - the society arm is a single run;
+  - no research-performance claim is made;
+  - a harder target is needed before a society can show any benefit.
+
 ## S1 research society — 2026-09-25
 
 **Status:** implemented; the final whole-branch review's findings are fixed. The society

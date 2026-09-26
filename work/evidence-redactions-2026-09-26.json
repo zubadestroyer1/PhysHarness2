@@ -1,0 +1,21 @@
+{
+ "note": "On 2026-09-26, absolute local paths in these evidence files were replaced with the placeholder <repo> (the worktree root) before merging to the public main branch. No other content changed. Digests that other evidence files record for these files were updated to the redacted bytes; original_sha256 identifies the unredacted originals, which are retained privately. The S1 live-run registries pin the original qualification-review.json digest.",
+ "files": {
+  "work/pilot-qualification-2026-09-23/attempt-s1-20260926-02/regressions.xml": {
+   "original_sha256": "a8e2f766b9610fbc525f9b3462bb5aba397d8d54fea0ce9d3d2abaf1c56d78b3",
+   "redacted_sha256": "9643600ede450911b7cfe2438e36aa545790aadcea5491831a70c32b2622e08c"
+  },
+  "work/pilot-qualification-2026-09-23/attempt-s1-20260926-02/regressions.json": {
+   "original_sha256": "16b1737b82f60e55ea008d138c209416b40b0ff5d8f901007c7f6914cc449247",
+   "redacted_sha256": "3727c2162b3723cb087b3081ef43ba44286c3e6298338136d03d08e87e181290"
+  },
+  "work/pilot-qualification-2026-09-23/attempt-s1-20260926-02/qualification-review.json": {
+   "original_sha256": "70423133a45d162abdaf7b516036a5a82fd4fe92ad98b2c3bd03c8c2656cd897",
+   "redacted_sha256": "842bce966abac4d11a1cd9f45a67ebaa0217157eb48377866e4c80772639dab7"
+  },
+  "work/pilot-qualification-2026-09-23/attempt-s1-20260926-02/QUALIFICATION_REVIEW.md": {
+   "original_sha256": "abffef7cbae10c45ad4502245e8eea466eb3392f572be2f54f12085c02d0edb1",
+   "redacted_sha256": "cd336b4b8751d497f03fa80a0433f5c531eb082343adf163e794eb62111b1f3c"
+  }
+ }
+}

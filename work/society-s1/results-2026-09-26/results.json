@@ -1,0 +1,1431 @@
+{
+ "format": "s1-live-results-v1",
+ "summary": {
+  "independent": {
+   "verified": "8/8",
+   "time_to_root_seconds": {
+    "n": 8,
+    "min": 701.362,
+    "median": 837.8545,
+    "mean": 867.693,
+    "max": 1044.478
+   },
+   "spent_usd": {
+    "n": 8,
+    "min": 18.599088,
+    "median": 36.02224,
+    "mean": 35.816,
+    "max": 49.491406
+   },
+   "total_spent_usd": 286.528386
+  },
+  "total_spent_usd_all_arms": 568.289142
+ },
+ "arms": [
+  {
+   "arm": "calibration-doeblin",
+   "role": "calibration attempt 1 (paused by the operator; replaced)",
+   "target": "doeblin",
+   "experiment_id": "170260bb-15de-4467-a0a7-2b9ce45be69f",
+   "target_digest": "c6340c7396667a0163f518ea4487b4f003e40411ea13c7ff45473519b92721ca",
+   "challenge_sha256": "0b022a0b85e4d1598eb9f6ee119f7d4683a57b645d50fdb9156854ec33e2d03e",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "80.00",
+    "wall": 3600,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "blocked",
+    "stop_reason": "EXPERIMENT_NOT_ACTIVE",
+    "root_goal_status": "unproved",
+    "verified_target_receipt_id": null,
+    "attempted_tasks": 2,
+    "outcomes": {
+     "blocked:EXECUTION_CANCELLED": 2
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 80.0,
+    "spent_usd": 1.4629,
+    "reserved_usd": 0.0,
+    "active_workers": 2,
+    "tokens_spent": 559497,
+    "unsettled_reservations": 4,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": false,
+    "time_to_root_seconds": null,
+    "spent_cost_usd": "1.4629",
+    "tokens_spent": 559497,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 0
+    },
+    "nodes_by_status": {
+     "formally_stated": 1
+    },
+    "reviews_by_verdict": {},
+    "referee_negative_share": null,
+    "citations": 0,
+    "cross_branch_citations": 0,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.0,
+    "lean_checks_per_accepted_result": null,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 106,
+    "lean_formalization_share": 0.5,
+    "lean_formalization_share_of_math": 0.607143,
+    "commons_society_share": 0.176471,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 1,
+     "commons_post": 1,
+     "commons_read": 1,
+     "lean_check": 1,
+     "message": 2,
+     "read_source": 1,
+     "recruit": 1,
+     "search_library": 15,
+     "shell": 9,
+     "write_file": 2
+    }
+   },
+   "export": {
+    "artifacts": null,
+    "manifest_sha256": "926991af993553dc64ff8cff2499797c6b0c02d5e80c3949062c22294d758a99",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "calibration-doeblin-r2",
+   "role": "calibration",
+   "target": "doeblin",
+   "experiment_id": "2c76ad6c-06f0-46f3-a31c-be847682d67b",
+   "target_digest": "46773fbac5d8978e91bf1e688ce29d85329d62b70eb8284a56ea48d01d301df9",
+   "challenge_sha256": "0b022a0b85e4d1598eb9f6ee119f7d4683a57b645d50fdb9156854ec33e2d03e",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "80.00",
+    "wall": 3600,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "6c23fe51-e098-436c-ac62-6a5bfb914ce8",
+    "attempted_tasks": 2,
+    "outcomes": {
+     "completed": 2
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 80.0,
+    "spent_usd": 10.543586,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 4112987,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 376.856,
+    "spent_cost_usd": "10.543586",
+    "tokens_spent": 4112987,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 0
+    },
+    "nodes_by_status": {
+     "accepted": 1
+    },
+    "reviews_by_verdict": {},
+    "referee_negative_share": null,
+    "citations": 0,
+    "cross_branch_citations": 0,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 1.0,
+    "lean_checks_per_accepted_result": 9.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 327,
+    "lean_formalization_share": 0.268519,
+    "lean_formalization_share_of_math": 0.329545,
+    "commons_society_share": 0.185185,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 1,
+     "commons_post": 2,
+     "commons_query": 1,
+     "commons_read": 4,
+     "inbox": 1,
+     "lean_check": 9,
+     "message": 10,
+     "read_file": 2,
+     "read_source": 1,
+     "recruit": 1,
+     "search_library": 19,
+     "shell": 49,
+     "submit_for_verification": 1,
+     "verification_status": 1,
+     "write_file": 6
+    }
+   },
+   "export": {
+    "artifacts": null,
+    "manifest_sha256": "3b6c2e8a107f0e59b2d94156f31125f934ee5629c8d8ada40839bcbf5b32f7c6",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "calibration-aperiodic",
+   "role": "calibration",
+   "target": "aperiodic",
+   "experiment_id": "e36de4b5-c39c-4798-88d7-82f413d3ad1f",
+   "target_digest": "00ac4d6616e276aad5fe634c9b6019ca10d12de4c6353bc96eba5714b64f6855",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "80.00",
+    "wall": 3600,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "9fe3327f-366a-425d-8db3-1425024b97a3",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 4
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 200.0,
+    "spent_usd": 34.614257,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 13638255,
+    "unsettled_reservations": 0,
+    "budget_amendments": [
+     {
+      "old_max_cost_usd": "80",
+      "new_max_cost_usd": "200",
+      "authorization_ref": "User instruction in the S1 operator session, 2026-09-26 ~09:25Z: raise the $80 spend limit to around $200 for this run, just in case it needs that much."
+     }
+    ]
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 1053.117,
+    "spent_cost_usd": "34.614257",
+    "tokens_spent": 13638255,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "formally_stated": 2,
+     "informal": 7
+    },
+    "reviews_by_verdict": {
+     "faithful": 2
+    },
+    "referee_negative_share": null,
+    "citations": 16,
+    "cross_branch_citations": 4,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.333333,
+    "lean_checks_per_accepted_result": 33.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 572,
+    "lean_formalization_share": 0.40107,
+    "lean_formalization_share_of_math": 0.652174,
+    "commons_society_share": 0.368984,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 3,
+     "commons_node": 26,
+     "commons_post": 12,
+     "commons_read": 9,
+     "inbox": 5,
+     "lean_check": 33,
+     "message": 9,
+     "notebook": 3,
+     "read_file": 2,
+     "read_source": 9,
+     "recruit": 1,
+     "return_result": 1,
+     "search_library": 33,
+     "shell": 34,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 1,
+     "wait": 1,
+     "write_file": 2
+    }
+   },
+   "export": {
+    "artifacts": 9119,
+    "manifest_sha256": "dc5c2de2fce56a4e28d7d792578fad7f4f1b630770b6350d931d4b3947dcf6c8",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "pilot-doeblin",
+   "role": "pilot",
+   "target": "doeblin",
+   "experiment_id": "b99a2edf-f552-4f56-a385-ce6225475f7e",
+   "target_digest": "90c35fa308ba7a524034a883551d242dc6ebefe2d988f6fd4e829355e6ffacd1",
+   "challenge_sha256": "0b022a0b85e4d1598eb9f6ee119f7d4683a57b645d50fdb9156854ec33e2d03e",
+   "config": {
+    "roots": 3,
+    "policy": "independent",
+    "concurrency": 4,
+    "ceiling": "160.00",
+    "wall": 2700,
+    "max_total_tasks": 12
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "554b3778-8e39-481f-a2b5-2b6e104deeac",
+    "attempted_tasks": 5,
+    "outcomes": {
+     "completed": 5,
+     "blocked:TARGET_ALREADY_VERIFIED": 1
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 160.0,
+    "spent_usd": 22.752441,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 8882117,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 356.769,
+    "spent_cost_usd": "22.752441",
+    "tokens_spent": 8882117,
+    "branches": {
+     "agents": 5,
+     "labs": 3,
+     "referees": 1
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "informal": 4
+    },
+    "reviews_by_verdict": {},
+    "referee_negative_share": null,
+    "citations": 16,
+    "cross_branch_citations": 3,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.25,
+    "lean_checks_per_accepted_result": 27.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 666,
+    "lean_formalization_share": 0.334842,
+    "lean_formalization_share_of_math": 0.540146,
+    "commons_society_share": 0.371041,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 6,
+     "commons_node": 15,
+     "commons_post": 20,
+     "commons_query": 2,
+     "commons_read": 23,
+     "inbox": 2,
+     "lean_check": 27,
+     "message": 11,
+     "notebook": 2,
+     "read_file": 1,
+     "read_source": 4,
+     "recruit": 2,
+     "return_result": 1,
+     "search_library": 43,
+     "shell": 48,
+     "submit_for_verification": 1,
+     "verification_status": 1,
+     "write_file": 12
+    }
+   },
+   "export": {
+    "artifacts": 10454,
+    "manifest_sha256": "32ef0fd592cf90a7f20ebcc033d204c91ece8b8ca60f34e698ca6b1a4cdad1a0",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "S",
+   "role": "society attempt 1 (paused after provider rate-limit failures; replaced)",
+   "target": "aperiodic",
+   "experiment_id": "8fd7c28e-2f6d-4891-a367-cb9f1a0ab939",
+   "target_digest": "3c0f0be4cc3c88f0593cdd41c6e86220405f8cf39fb756faf5750bdc2127c75f",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 6,
+    "policy": "independent",
+    "concurrency": 8,
+    "ceiling": "720.00",
+    "wall": 8100,
+    "max_total_tasks": 40
+   },
+   "run": {
+    "status": "blocked",
+    "stop_reason": "EXPERIMENT_NOT_ACTIVE",
+    "root_goal_status": "unproved",
+    "verified_target_receipt_id": null,
+    "attempted_tasks": 17,
+    "outcomes": {
+     "blocked:PROVIDER_FAILED": 5,
+     "completed": 4,
+     "blocked:EXECUTION_CANCELLED": 8
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 720.0,
+    "spent_usd": 25.001386,
+    "reserved_usd": 16.64,
+    "active_workers": 0,
+    "tokens_spent": 9772532,
+    "unsettled_reservations": 13,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": false,
+    "time_to_root_seconds": null,
+    "spent_cost_usd": "25.001386",
+    "tokens_spent": 9772532,
+    "branches": {
+     "agents": 8,
+     "labs": 6,
+     "referees": 10
+    },
+    "nodes_by_status": {
+     "abandoned": 1,
+     "formally_stated": 4,
+     "informal": 6,
+     "refereed": 2
+    },
+    "reviews_by_verdict": {
+     "faithful": 3,
+     "sound": 2
+    },
+    "referee_negative_share": 0.0,
+    "citations": 9,
+    "cross_branch_citations": 3,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.2,
+    "lean_checks_per_accepted_result": null,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 991,
+    "lean_formalization_share": 0.437888,
+    "lean_formalization_share_of_math": 0.638009,
+    "commons_society_share": 0.313665,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 11,
+     "commons_node": 33,
+     "commons_post": 20,
+     "commons_query": 2,
+     "commons_read": 22,
+     "inbox": 1,
+     "lean_check": 50,
+     "message": 5,
+     "read_source": 15,
+     "recruit": 2,
+     "search_library": 76,
+     "shell": 72,
+     "submit_review": 5,
+     "write_file": 8
+    }
+   },
+   "export": {
+    "artifacts": 14698,
+    "manifest_sha256": "a33b8c3e820c30573afc10011354dadfcb49ef81897035630f2b382b598e3a1b",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "S-r2",
+   "role": "society (S)",
+   "target": "aperiodic",
+   "experiment_id": "61de25c6-b117-4338-8c3e-c258e5f1067b",
+   "target_digest": "1530c1440086b417b54d2d58aa126a7fd2f6f7379daadb131f8b50d0e27a3599",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 6,
+    "policy": "independent",
+    "concurrency": 8,
+    "ceiling": "720.00",
+    "wall": 8100,
+    "max_total_tasks": 40
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "3431b5b6-c470-4e35-a380-85695015514c",
+    "attempted_tasks": 40,
+    "outcomes": {
+     "completed": 38,
+     "blocked:TARGET_ALREADY_VERIFIED": 2
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 720.0,
+    "spent_usd": 155.414961,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 61292454,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 1782.181,
+    "spent_cost_usd": "155.414961",
+    "tokens_spent": 61292454,
+    "branches": {
+     "agents": 6,
+     "labs": 6,
+     "referees": 34
+    },
+    "nodes_by_status": {
+     "abandoned": 5,
+     "accepted": 1,
+     "formally_stated": 22,
+     "informal": 4
+    },
+    "reviews_by_verdict": {
+     "faithful": 23,
+     "sound": 10,
+     "unfaithful": 1
+    },
+    "referee_negative_share": 0.0,
+    "citations": 154,
+    "cross_branch_citations": 29,
+    "cross_branch_dependencies": 1,
+    "duplicate_claim_fraction": 0.076923,
+    "lean_checks_per_accepted_result": 169.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 2985,
+    "lean_formalization_share": 0.306972,
+    "lean_formalization_share_of_math": 0.702381,
+    "commons_society_share": 0.554631,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 19,
+     "commons_node": 116,
+     "commons_post": 162,
+     "commons_query": 13,
+     "commons_read": 159,
+     "inbox": 21,
+     "lean_check": 169,
+     "message": 2,
+     "notebook": 8,
+     "read_file": 4,
+     "read_source": 20,
+     "search_library": 106,
+     "shell": 100,
+     "submit_for_verification": 1,
+     "submit_review": 34,
+     "verification_status": 1,
+     "wait": 7,
+     "write_file": 19
+    }
+   },
+   "export": {
+    "artifacts": 47523,
+    "manifest_sha256": "c1072ecb6dddf9e9da398541255ad3dae20e126bab768739baf17e69144c535a",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "I-01",
+   "role": "independent (I)",
+   "target": "aperiodic",
+   "experiment_id": "9b61da59-2813-4e20-9553-93b439350a9e",
+   "target_digest": "ef6ea137e768f76b19085cf60d7f804045316bd6cb86ea568e538afdd8ef292d",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "90.00",
+    "wall": 8100,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "652b921d-12b6-4b24-99d3-839a7c72d9fd",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 3,
+     "blocked:TARGET_ALREADY_VERIFIED": 1
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 90.0,
+    "spent_usd": 49.491406,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 19531047,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 1044.478,
+    "spent_cost_usd": "49.491406",
+    "tokens_spent": 19531047,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "informal": 3,
+     "refereed": 2
+    },
+    "reviews_by_verdict": {
+     "sound": 2
+    },
+    "referee_negative_share": 0.0,
+    "citations": 10,
+    "cross_branch_citations": 0,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.25,
+    "lean_checks_per_accepted_result": 46.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 695,
+    "lean_formalization_share": 0.366812,
+    "lean_formalization_share_of_math": 0.591549,
+    "commons_society_share": 0.366812,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 4,
+     "commons_node": 16,
+     "commons_post": 10,
+     "commons_read": 11,
+     "inbox": 5,
+     "lean_check": 46,
+     "message": 34,
+     "notebook": 1,
+     "read_artifact": 2,
+     "read_file": 2,
+     "read_source": 11,
+     "recruit": 1,
+     "run_computation": 2,
+     "search_library": 27,
+     "shell": 47,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 1,
+     "wait": 1,
+     "write_file": 5
+    }
+   },
+   "export": {
+    "artifacts": 10871,
+    "manifest_sha256": "9a432860681640549f7f980042eac6e5e5be3c91ec07268caf8ac12c47609a6d",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "I-02",
+   "role": "independent (I)",
+   "target": "aperiodic",
+   "experiment_id": "15876862-eebe-4d45-a0c7-7db97e8d0e93",
+   "target_digest": "3167a9111510f8f97c22096b7b82a0302e14d5508f614f39a11e3a82524ea850",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "90.00",
+    "wall": 8100,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "f9738f76-50a0-4417-b289-38613c11fc93",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 4
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 90.0,
+    "spent_usd": 33.575254,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 13244278,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 816.467,
+    "spent_cost_usd": "33.575254",
+    "tokens_spent": 13244278,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "informal": 6,
+     "refereed": 2
+    },
+    "reviews_by_verdict": {
+     "sound": 2
+    },
+    "referee_negative_share": 0.0,
+    "citations": 9,
+    "cross_branch_citations": 1,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 1.0,
+    "lean_checks_per_accepted_result": 13.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 579,
+    "lean_formalization_share": 0.1,
+    "lean_formalization_share_of_math": 0.162393,
+    "commons_society_share": 0.384211,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 1,
+     "commons_node": 29,
+     "commons_post": 14,
+     "commons_read": 9,
+     "inbox": 4,
+     "lean_check": 13,
+     "message": 13,
+     "read_file": 7,
+     "recruit": 1,
+     "search_library": 6,
+     "shell": 82,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 1,
+     "write_file": 7
+    }
+   },
+   "export": {
+    "artifacts": 8896,
+    "manifest_sha256": "a3ae1c23437501387f89470fbcabd34ade8d64674986abd9d7856cdc67f6ebc4",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "I-03",
+   "role": "independent (I)",
+   "target": "aperiodic",
+   "experiment_id": "ce1c47bb-551b-45d7-ba17-69a4ea498bb1",
+   "target_digest": "6ce7572af16ad3ae8b5b196833053f3f2b7b57e588a4f2a0953f62ced08c9e2a",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "90.00",
+    "wall": 8100,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "584a165d-9f1c-4b2d-a010-4dc5c360ba17",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 4
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 90.0,
+    "spent_usd": 34.534862,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 13569044,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 847.614,
+    "spent_cost_usd": "34.534862",
+    "tokens_spent": 13569044,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "formally_stated": 2,
+     "informal": 2
+    },
+    "reviews_by_verdict": {
+     "faithful": 2
+    },
+    "referee_negative_share": null,
+    "citations": 9,
+    "cross_branch_citations": 3,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.25,
+    "lean_checks_per_accepted_result": 46.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 579,
+    "lean_formalization_share": 0.263158,
+    "lean_formalization_share_of_math": 0.434783,
+    "commons_society_share": 0.394737,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 4,
+     "commons_node": 13,
+     "commons_post": 9,
+     "commons_query": 1,
+     "commons_read": 14,
+     "inbox": 2,
+     "lean_check": 46,
+     "message": 28,
+     "read_file": 2,
+     "recruit": 1,
+     "return_result": 1,
+     "search_library": 4,
+     "shell": 57,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 1,
+     "write_file": 4
+    }
+   },
+   "export": {
+    "artifacts": 8894,
+    "manifest_sha256": "7c898a3b44ebbb64c415b4dfc964b8c088067ddb77f00ab7f6f6520254935b4c",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "I-04",
+   "role": "independent (I)",
+   "target": "aperiodic",
+   "experiment_id": "9b527c86-052e-4fca-8977-03583ea88740",
+   "target_digest": "716fa4052dde186e613142b707d784a1f33012a0902a877b1baceb7ed6631007",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "90.00",
+    "wall": 8100,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "b6a7dac7-0730-46cd-bf7e-37326888e510",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 4
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 90.0,
+    "spent_usd": 35.059229,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 13824131,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 828.095,
+    "spent_cost_usd": "35.059229",
+    "tokens_spent": 13824131,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "informal": 1,
+     "refereed": 2
+    },
+    "reviews_by_verdict": {
+     "sound": 2
+    },
+    "referee_negative_share": 0.0,
+    "citations": 7,
+    "cross_branch_citations": 1,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.5,
+    "lean_checks_per_accepted_result": 7.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 654,
+    "lean_formalization_share": 0.138889,
+    "lean_formalization_share_of_math": 0.214286,
+    "commons_society_share": 0.337963,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 2,
+     "commons_node": 12,
+     "commons_post": 9,
+     "commons_query": 2,
+     "commons_read": 7,
+     "inbox": 5,
+     "lean_check": 7,
+     "message": 31,
+     "notebook": 1,
+     "read_artifact": 2,
+     "read_file": 3,
+     "read_source": 2,
+     "recruit": 1,
+     "run_computation": 1,
+     "search_library": 21,
+     "shell": 92,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 2,
+     "wait": 2,
+     "write_file": 11
+    }
+   },
+   "export": {
+    "artifacts": 10171,
+    "manifest_sha256": "7db1c92bfe5979162a20e8dfa670dfdbbd1b366314fe2d358f26dcd901cdc4ec",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "I-05",
+   "role": "independent (I)",
+   "target": "aperiodic",
+   "experiment_id": "15e6202c-0153-454a-a76c-04299921dd4c",
+   "target_digest": "8965b2b0c8f6944eabe2d1a1880db6577a96cf2b58d281e74be85478d3f5c241",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "90.00",
+    "wall": 8100,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "ad868642-be00-4fa0-8bed-4307a6a25d5c",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 4
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 90.0,
+    "spent_usd": 38.916318,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 15283659,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 870.032,
+    "spent_cost_usd": "38.916318",
+    "tokens_spent": 15283659,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "formally_stated": 2,
+     "informal": 2
+    },
+    "reviews_by_verdict": {
+     "faithful": 2
+    },
+    "referee_negative_share": null,
+    "citations": 5,
+    "cross_branch_citations": 2,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 1.0,
+    "lean_checks_per_accepted_result": 57.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 669,
+    "lean_formalization_share": 0.289593,
+    "lean_formalization_share_of_math": 0.426667,
+    "commons_society_share": 0.321267,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 1,
+     "commons_node": 15,
+     "commons_post": 10,
+     "commons_read": 11,
+     "inbox": 2,
+     "lean_check": 57,
+     "message": 26,
+     "read_file": 2,
+     "read_source": 2,
+     "recruit": 1,
+     "return_result": 2,
+     "search_library": 5,
+     "shell": 79,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 1,
+     "wait": 1,
+     "write_file": 3
+    }
+   },
+   "export": {
+    "artifacts": 10381,
+    "manifest_sha256": "38da8238e6747ebd6c1f823e0a00d2c38bc71db6e0ba02ccd31f9a72f18b3898",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "I-06",
+   "role": "independent (I)",
+   "target": "aperiodic",
+   "experiment_id": "1700c899-93ae-476a-a9e2-ae42ab743cf3",
+   "target_digest": "1d3034337395ab28a035f6f07c4b9a374be9cf251e5a1b9e5d09ecc3bcb84c5d",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "90.00",
+    "wall": 8100,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "e4f07061-56fc-4732-8210-2362d5cbd627",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 4
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 90.0,
+    "spent_usd": 18.599088,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 7290858,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 701.362,
+    "spent_cost_usd": "18.599088",
+    "tokens_spent": 7290858,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "formally_stated": 1,
+     "refereed": 1
+    },
+    "reviews_by_verdict": {
+     "faithful": 1,
+     "sound": 1
+    },
+    "referee_negative_share": 0.0,
+    "citations": 9,
+    "cross_branch_citations": 4,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 1.0,
+    "lean_checks_per_accepted_result": 30.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 426,
+    "lean_formalization_share": 0.374101,
+    "lean_formalization_share_of_math": 0.536082,
+    "commons_society_share": 0.294964,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 1,
+     "commons_node": 8,
+     "commons_post": 9,
+     "commons_read": 9,
+     "inbox": 6,
+     "lean_check": 30,
+     "message": 4,
+     "read_artifact": 1,
+     "read_file": 2,
+     "read_source": 2,
+     "recruit": 1,
+     "return_result": 1,
+     "search_library": 20,
+     "shell": 35,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 1,
+     "write_file": 6
+    }
+   },
+   "export": {
+    "artifacts": 6472,
+    "manifest_sha256": "30e8eddf705fed1aa202d45fa438e80873eb8530709c13bd949b4d65a9b27522",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "I-07",
+   "role": "independent (I)",
+   "target": "aperiodic",
+   "experiment_id": "efc3309f-37ae-4791-8e60-ac486d102b92",
+   "target_digest": "17686637c109ba3b4e48c77635203b713f63c56cbcbc52d2d17fd880ab8fff3d",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "90.00",
+    "wall": 8100,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "68f118b8-ea69-4c1d-87b2-a015a4db16e6",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 4
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 90.0,
+    "spent_usd": 39.366978,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 15555819,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 1019.302,
+    "spent_cost_usd": "39.366978",
+    "tokens_spent": 15555819,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "abandoned": 1,
+     "accepted": 1,
+     "formally_stated": 1,
+     "informal": 4
+    },
+    "reviews_by_verdict": {
+     "faithful": 1,
+     "sound": 1
+    },
+    "referee_negative_share": 0.0,
+    "citations": 8,
+    "cross_branch_citations": 2,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.5,
+    "lean_checks_per_accepted_result": 18.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 705,
+    "lean_formalization_share": 0.24569,
+    "lean_formalization_share_of_math": 0.345455,
+    "commons_society_share": 0.288793,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 2,
+     "commons_node": 21,
+     "commons_post": 13,
+     "commons_read": 11,
+     "inbox": 3,
+     "lean_check": 18,
+     "message": 12,
+     "read_file": 4,
+     "read_source": 11,
+     "recruit": 1,
+     "return_result": 2,
+     "search_library": 28,
+     "shell": 85,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 1,
+     "write_file": 17
+    }
+   },
+   "export": {
+    "artifacts": 10804,
+    "manifest_sha256": "9576d56eade2d7e4107079f5122f8c0e33e359a41f25aeacc9ef9c64e2a3d964",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "I-08",
+   "role": "independent (I)",
+   "target": "aperiodic",
+   "experiment_id": "8950b81f-8635-4665-8861-fd0773fdfeb9",
+   "target_digest": "ab38535324c08994800e87f7475a25ad7e6c8c60d381b63fd517c445a731a0a9",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "90.00",
+    "wall": 8100,
+    "max_total_tasks": 4
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "f8c649b8-f92b-4bbb-86e1-cc6cf3e3a0d5",
+    "attempted_tasks": 4,
+    "outcomes": {
+     "completed": 4
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 90.0,
+    "spent_usd": 36.985251,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 14591467,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 814.193,
+    "spent_cost_usd": "36.985251",
+    "tokens_spent": 14591467,
+    "branches": {
+     "agents": 2,
+     "labs": 1,
+     "referees": 2
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "informal": 1,
+     "refereed": 2
+    },
+    "reviews_by_verdict": {
+     "sound": 2
+    },
+    "referee_negative_share": 0.0,
+    "citations": 4,
+    "cross_branch_citations": 1,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.333333,
+    "lean_checks_per_accepted_result": 7.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 708,
+    "lean_formalization_share": 0.206009,
+    "lean_formalization_share_of_math": 0.3,
+    "commons_society_share": 0.309013,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 3,
+     "commons_node": 9,
+     "commons_post": 9,
+     "commons_query": 2,
+     "commons_read": 16,
+     "inbox": 5,
+     "lean_check": 7,
+     "message": 21,
+     "notebook": 1,
+     "read_file": 7,
+     "read_source": 7,
+     "recruit": 1,
+     "return_result": 2,
+     "search_library": 34,
+     "shell": 92,
+     "submit_for_verification": 1,
+     "submit_review": 2,
+     "verification_status": 1,
+     "wait": 2,
+     "write_file": 11
+    }
+   },
+   "export": {
+    "artifacts": 10973,
+    "manifest_sha256": "8652e59c6767179116526b4d3492632bce3e3e392b0c9efb6ea973037440a35c",
+    "validation": "artifact_integrity_checked"
+   }
+  },
+  {
+   "arm": "single",
+   "role": "single agent",
+   "target": "aperiodic",
+   "experiment_id": "e038db50-7787-435f-8e29-6d12565de955",
+   "target_digest": "9a8ed909c66c92de67433d07aa45593323a3f71d8ee90fc5253ba9d6a4eec3c9",
+   "challenge_sha256": "5a6bc517d34115aa52263c07151f68f2d06c7ba3d67dcceb7053da15474419c1",
+   "config": {
+    "roots": 1,
+    "policy": "direct",
+    "concurrency": 2,
+    "ceiling": "720.00",
+    "wall": 64800,
+    "max_total_tasks": 25
+   },
+   "run": {
+    "status": "completed",
+    "stop_reason": "TARGET_VERIFIED",
+    "root_goal_status": "verified",
+    "verified_target_receipt_id": "c50e7f4a-8228-4df8-85ba-49a5f2991e82",
+    "attempted_tasks": 9,
+    "outcomes": {
+     "completed": 9
+    }
+   },
+   "ledger": {
+    "max_cost_usd": 720.0,
+    "spent_usd": 31.971225,
+    "reserved_usd": 0.0,
+    "active_workers": 0,
+    "tokens_spent": 12571517,
+    "unsettled_reservations": 0,
+    "budget_amendments": []
+   },
+   "metrics": {
+    "accepted_root": true,
+    "time_to_root_seconds": 833.902,
+    "spent_cost_usd": "31.971225",
+    "tokens_spent": 12571517,
+    "branches": {
+     "agents": 3,
+     "labs": 1,
+     "referees": 6
+    },
+    "nodes_by_status": {
+     "accepted": 1,
+     "formally_stated": 3
+    },
+    "reviews_by_verdict": {
+     "faithful": 3,
+     "sound": 3
+    },
+    "referee_negative_share": 0.0,
+    "citations": 9,
+    "cross_branch_citations": 1,
+    "cross_branch_dependencies": 0,
+    "duplicate_claim_fraction": 0.25,
+    "lean_checks_per_accepted_result": 14.0,
+    "contamination_flags": 0,
+    "literature_fetches": 0
+   },
+   "tool_call_mix": {
+    "runtime_events": 672,
+    "lean_formalization_share": 0.148148,
+    "lean_formalization_share_of_math": 0.222222,
+    "commons_society_share": 0.333333,
+    "stagnation_warnings": 0,
+    "by_tool": {
+     "commons_claim": 4,
+     "commons_node": 16,
+     "commons_post": 13,
+     "commons_read": 17,
+     "inbox": 1,
+     "lean_check": 14,
+     "message": 11,
+     "read_file": 2,
+     "read_source": 4,
+     "recruit": 2,
+     "return_result": 2,
+     "search_library": 14,
+     "shell": 106,
+     "submit_for_verification": 1,
+     "submit_review": 6,
+     "verification_status": 1,
+     "write_file": 2
+    }
+   },
+   "export": {
+    "artifacts": 10183,
+    "manifest_sha256": "8dac949a19814c231c9d9223655995d291d1cc75fae2310fc26402c120ad2479",
+    "validation": "artifact_integrity_checked"
+   }
+  }
+ ]
+}
