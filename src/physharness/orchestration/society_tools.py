@@ -854,7 +854,10 @@ def society_tools(
     if literature is not None and policy["literature"]["mode"] != "off":
 
         async def search_literature(a, k):
-            return await asyncio.to_thread(literature.search, a["query"])
+            result = await asyncio.to_thread(literature.search, a["query"])
+            # Only the released page: screening statistics stay with the broker's server-side
+            # log, since per-query counts would let an agent probe the blocklist.
+            return {key: result[key] for key in ("query", "items", "errors", "authority")}
 
         async def fetch_source(a, k):
             result = await asyncio.to_thread(literature.fetch, a["url"])

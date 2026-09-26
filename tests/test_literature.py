@@ -21,8 +21,8 @@ from physharness.knowledge.literature import (
     overlap,
 )
 
-ARXIV = "http://export.arxiv.org/api/query"
-OPENALEX = "https://api.openalex.org/works"
+ARXIV = literature.ARXIV_API
+OPENALEX = literature.OPENALEX_API
 
 ATOM = b"""<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
@@ -81,6 +81,19 @@ OPENALEX_RESULTS = {
         openalex_work("W5", "Clean monopole paper", landing="https://clean.example/5"),
     ]
 }
+
+
+@pytest.fixture(autouse=True)
+def instant_politeness(monkeypatch):
+    """The process-wide per-host limiter, on a clock that sleeps instantly."""
+    clock = {"now": 0.0}
+
+    def sleep(seconds):
+        clock["now"] += seconds
+
+    limiter = literature.HostLimiter(clock=lambda: clock["now"], sleep=sleep)
+    monkeypatch.setattr(literature, "LIMITER", limiter)
+    return limiter
 
 
 def ok(body, content_type="text/html; charset=utf-8", final_url=None):
@@ -149,7 +162,7 @@ def test_arxiv_atom_and_openalex_parse_and_dedupe():
     assert by_url[ARXIV]["params"] == {"search_query": "all:spectral gap", "max_results": 8}
     assert by_url[OPENALEX]["params"] == {"search": "spectral gap", "per-page": 8}
     assert {call["timeout"] for call in transport.calls} == {20}
-    assert result["errors"] == [] and result["blocked_count"] == 0
+    assert result["errors"] == [] and "blocked_count" not in result
     assert result["authority"] == AUTHORITY_NOTE
     items = result["items"]
     assert [(item["source"], item["id"]) for item in items] == [
@@ -204,11 +217,11 @@ def test_benchmark_blocklist_filters_search():
     # arXiv id, title fragment, DOI and domain each remove a provider item; the
     # OpenAlex copies of both blocked arXiv entries are caught through their DOIs.
     assert [item["id"] for item in result["items"]] == ["W5", "W6"]
-    assert result["blocked_count"] == 6
+    assert "blocked_count" not in result  # agents never learn how many were withheld
     open_result = LiteratureBroker(policy("open", blocked), transport=FakeTransport(routes)).search(
         "gap"
     )
-    assert open_result["blocked_count"] == 0 and len(open_result["items"]) == 6
+    assert len(open_result["items"]) == 6
 
 
 def test_fetch_rejects_disallowed_domain_and_redirect():
@@ -230,9 +243,12 @@ def test_fetch_rejects_disallowed_domain_and_redirect():
     assert code_of(lambda: broker.fetch(abs_url)) == "LITERATURE_DOMAIN_BLOCKED"
     assert len(transport.calls) == 1
     assert "export.arxiv.org" in ALLOWED_DOMAINS
-    api = "http://export.arxiv.org/api/query?id_list=2101.00001"
+    api = "https://export.arxiv.org/api/query?id_list=2101.00001"
     plain = LiteratureBroker(policy(), transport=FakeTransport({api: ok(b"feed", "text/plain")}))
     assert plain.fetch(api)["status"] == "ok"
+    # The arXiv API is https too: plain http is refused for every host.
+    insecure = api.replace("https://", "http://")
+    assert code_of(lambda: plain.fetch(insecure)) == "LITERATURE_DOMAIN_BLOCKED"
 
 
 def test_fetch_benchmark_blocklist_checks_request_and_final_url():
@@ -330,7 +346,7 @@ def test_fetch_falls_back_when_charset_is_not_a_text_codec():
 
 def test_benchmark_fetch_refuses_provider_search_apis():
     urls = [
-        "http://export.arxiv.org/api/query?search_query=all:gap",
+        "https://export.arxiv.org/api/query?search_query=all:gap",
         "https://api.openalex.org/works?search=gap",
         "https://api.semanticscholar.org/graph/v1/paper/search?query=gap",
     ]
@@ -407,7 +423,7 @@ def test_benchmark_fetch_withholds_text_citing_blocked_keys():
     )
     for name in "ABCD":
         result = broker.fetch(f"https://en.wikipedia.org/wiki/{name}")
-        assert set(result) == {"status", "url", "sha256", "flag"}, name
+        assert set(result) == {"status", "url", "final_url", "sha256", "flag"}, name
         assert result["status"] == "withheld_contamination_risk"
         assert result["flag"]["reason"] == "blocked_source_key"
     assert broker.fetch("https://en.wikipedia.org/wiki/E")["text"] == pages["E"]
@@ -435,7 +451,6 @@ def test_url_shaped_blocklist_entries_name_one_work():
     result = broker.search("gap")
     # Only the named arXiv work (and its OpenAlex copy) and the named DOI are removed.
     assert [item["id"] for item in result["items"]] == ["2102.00002", "W4", "W5"]
-    assert result["blocked_count"] == 3
 
 
 def test_benchmark_requires_usable_reference():
@@ -476,7 +491,6 @@ def test_benchmark_search_screens_titles_and_abstracts():
     ).search("gap")
     # 30 copied words share 23 reference 8-grams (>= 20); 26 share 19 and are released.
     assert [item["id"] for item in result["items"]] == ["W9", "W5"]
-    assert result["blocked_count"] == 2
     assert "Leaky" not in json.dumps(result) and "Cites" not in json.dumps(result)
     open_result = LiteratureBroker(policy(), transport=FakeTransport(routes)).search("gap")
     assert len(open_result["items"]) == 4
@@ -520,7 +534,7 @@ def test_overlap_flag_withholds_text():
     transport = FakeTransport({url: ok(page(REFERENCE_WORDS[100:127]).encode())})
     broker = LiteratureBroker(policy("benchmark"), transport=transport, reference_text=REFERENCE)
     result = broker.fetch(url)
-    assert set(result) == {"status", "url", "sha256", "flag"}
+    assert set(result) == {"status", "url", "final_url", "sha256", "flag"}
     assert result["status"] == "withheld_contamination_risk"
     assert result["flag"]["shared"] == 20 and result["flag"]["reference_ngrams"] == 293
     assert "ref110" not in json.dumps(result)
@@ -591,7 +605,8 @@ def test_record_fetch_ingests_source_and_logs(lab):
     }
     source = service.get_record("source", record["source_id"], alpha)
     assert source["artifact_id"] == record["artifact_id"]
-    assert source["uri"] == result["url"]
+    # The source names where its text came from, after redirects.
+    assert source["uri"] == result["final_url"] == record["final_url"]
     assert source["source_revision"] == result["sha256"][:16]
     assert source["source_format"] == "markdown"
     assert source["license"] == "Fetched via broker for research use; third-party rights apply"
