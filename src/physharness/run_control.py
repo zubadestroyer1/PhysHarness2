@@ -25,7 +25,13 @@ from .errors import HarnessError
 from .execution import ExecutionError, ModelConfig, RuntimeLimits
 from .execution.context_policy import apply_context_profile
 from .execution.parameters import validate_responses_parameters
-from .knowledge.literature import blocklist_notes, blocklist_problems, usable_reference
+from .knowledge.literature import (
+    blocklist_errors,
+    blocklist_notes,
+    blocklist_problems,
+    broad_title_entries,
+    usable_reference,
+)
 from .orchestration.pricing import ModelPrice
 from .service import require_role
 from .verification import VerificationRequest
@@ -79,11 +85,13 @@ class RunPlan(StrictModel):
             literature = self.society.literature
             if literature.mode == "benchmark" and not literature.masked_reference_artifact_id:
                 raise ValueError("Benchmark literature mode requires masked_reference_artifact_id")
-            problems = blocklist_problems(literature.blocked_sources)
+            problems = blocklist_errors(literature.blocked_sources)
             if problems:
+                index, reason = problems[0]
+                entry = literature.blocked_sources[index][:80]
                 raise ValueError(
-                    f"society.literature.blocked_sources[{problems[0]}] is not an arXiv id, DOI, "
-                    "OpenAlex id, URL, domain or title fragment of two or more words"
+                    f"society.literature.blocked_sources[{index}] ({entry!r}) is not an arXiv "
+                    f"id, DOI, OpenAlex id, URL, domain or distinctive title fragment: {reason}"
                 )
         return self
 
@@ -318,11 +326,17 @@ def run_preflight(
         # The broker refuses to start with an entry it cannot classify.
         block(
             "LITERATURE_BLOCKLIST_INVALID",
-            "List arXiv ids, DOIs, OpenAlex ids, URLs, domains or multi-word title fragments.",
+            "List arXiv ids, DOIs, OpenAlex ids, URLs or domains on their own, or distinctive "
+            "multi-word title fragments.",
         )
     if literature.get("mode") == "benchmark":
-        for code in blocklist_notes(literature.get("blocked_sources")):
-            observations.append({"component": "literature", "code": code, "status": "warning"})
+        sources = literature.get("blocked_sources")
+        for code in blocklist_notes(sources):
+            note = {"component": "literature", "code": code, "status": "warning"}
+            if code == "LITERATURE_BLOCKLIST_BROAD_TITLE":
+                # Which fragments may withhold many unrelated results.
+                note["entries"] = broad_title_entries(sources)
+            observations.append(note)
     if not environment.get("OPENAI_API_KEY"):
         block("MODEL_CREDENTIAL_REQUIRED", "Supply OPENAI_API_KEY privately to the worker process.")
     try:
