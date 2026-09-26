@@ -195,13 +195,18 @@ def test_unsubscribe_resubscribe_has_new_start_and_no_old_replay(lab):
 
 
 def test_private_artifact_and_stale_target_pins_fail_closed(lab):
-    service, _, exp, _, (alpha, beta) = approaches(lab, "ideas")
+    service, author, exp, _, (alpha, beta) = approaches(lab, "ideas")
     topic = service.create_discussion(
         exp["id"], DiscussionCreate(title="Board", summary="Research"), alpha, "topic"
     )
     private = service.create_artifact(
-        ArtifactCreate(experiment_id=exp["id"], kind="native_checkpoint", content="private"),
-        alpha,
+        ArtifactCreate(
+            experiment_id=exp["id"],
+            branch_id=alpha.branch_id,
+            kind="native_checkpoint",
+            content="private",
+        ),
+        author.model_copy(update={"role": "operator"}),
         "private",
     )
     with pytest.raises(HarnessError) as error:
@@ -372,10 +377,15 @@ def test_undelivered_revocation_yields_notice_before_later_valid_message(lab):
 
 
 def test_historical_unreadable_attachment_withdraws_without_leaking_id(lab):
-    service, _, exp, branches, (alpha, beta) = approaches(lab, "ideas")
+    service, author, exp, branches, (alpha, beta) = approaches(lab, "ideas")
     checkpoint = service.create_artifact(
-        ArtifactCreate(experiment_id=exp["id"], kind="checkpoint", content="private state"),
-        alpha,
+        ArtifactCreate(
+            experiment_id=exp["id"],
+            branch_id=alpha.branch_id,
+            kind="checkpoint",
+            content="private state",
+        ),
+        author.model_copy(update={"role": "operator"}),
         "checkpoint",
     )
     poisoned = service.send_message(
@@ -402,10 +412,15 @@ def test_historical_unreadable_attachment_withdraws_without_leaking_id(lab):
 
 
 def test_same_branch_readable_checkpoint_message_is_delivered(lab):
-    service, _, exp, branches, (alpha, _) = approaches(lab, "ideas")
+    service, author, exp, branches, (alpha, _) = approaches(lab, "ideas")
     checkpoint = service.create_artifact(
-        ArtifactCreate(experiment_id=exp["id"], kind="checkpoint", content="own state"),
-        alpha,
+        ArtifactCreate(
+            experiment_id=exp["id"],
+            branch_id=alpha.branch_id,
+            kind="checkpoint",
+            content="own state",
+        ),
+        author.model_copy(update={"role": "operator"}),
         "checkpoint",
     )
     message = service.send_message(

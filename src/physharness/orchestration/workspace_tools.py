@@ -461,11 +461,19 @@ print(json.dumps({
                         "Uncertain workspace cannot be destroyed during automatic cleanup.",
                     )
                 if self.broker.provider_spec["provider"] == "local_docker":
-                    await self.broker.export_workspace(
-                        observed["id"],
-                        expected_execution_id=observed["execution_id"],
-                        operation_id=f"final-checkpoint:{self.broker.holder}",
-                    )
+                    try:
+                        await self.broker.export_workspace(
+                            observed["id"],
+                            expected_execution_id=observed["execution_id"],
+                            operation_id=f"final-checkpoint:{self.broker.holder}",
+                        )
+                    except HarnessError:
+                        # A definite refusal (for example an unportable agent-made name)
+                        # is durably recorded as the rejected final checkpoint and leaves
+                        # the VM ready; it must not keep the workbench alive. Uncertain
+                        # outcomes are no longer ready and still block automatic cleanup.
+                        if self.broker.inspect(observed["id"])["status"] != "ready":
+                            raise
                 await self.broker.destroy(
                     observed["id"],
                     expected_execution_id=observed["execution_id"],

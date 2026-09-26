@@ -28,6 +28,14 @@ import base64, hashlib, json, os, stat, sys
 root='/work'
 action=sys.argv[1]
 path=sys.argv[2] if len(sys.argv)>2 else None
+class Refused(Exception):pass
+def refuse(kind,value,trace):
+    # Exit 3 only when /work is provably unchanged: read-only actions, or an undone write.
+    if issubclass(kind,Refused) or (action in ('read','slice','chunk','list','list3')
+                                    and issubclass(kind,(AssertionError,OSError,ValueError))):
+        sys.stderr.write('physharness-refused: '+kind.__name__+'\n');sys.stderr.flush();os._exit(3)
+    sys.__excepthook__(kind,value,trace)
+sys.excepthook=refuse
 def checked(p):
     parts=p.split('/')
     assert p and all(x not in ('','.','..') and '\\' not in x and '\x00' not in x for x in parts)
@@ -56,22 +64,38 @@ def get(p):
         finally:os.close(h)
     finally:os.close(fd)
 def put(p,data):
-    fd,name=parent(p,True)
+    parts=checked(p)
+    fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    made=[];temp=None
     try:
         try:
-            s=os.stat(name,dir_fd=fd,follow_symlinks=False)
-            assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
-        except FileNotFoundError:pass
-        temp='.physharness-'+os.urandom(16).hex()
-        h=os.open(temp,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=fd)
-        try:
+            for part in parts[:-1]:
+                owner=os.dup(fd)
+                try:os.mkdir(part,mode=0o700,dir_fd=fd);made.append((owner,part))
+                except FileExistsError:os.close(owner)
+                nxt=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
+                os.close(fd);fd=nxt
+            name=parts[-1]
+            try:
+                s=os.stat(name,dir_fd=fd,follow_symlinks=False)
+                assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
+            except FileNotFoundError:pass
+            candidate='.physharness-'+os.urandom(16).hex()
+            h=os.open(candidate,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600,dir_fd=fd)
+            temp=candidate
             with os.fdopen(h,'wb') as f:
                 f.write(data);f.flush();os.fsync(f.fileno())
             os.replace(temp,name,src_dir_fd=fd,dst_dir_fd=fd)
-        finally:
-            try:os.unlink(temp,dir_fd=fd)
-            except FileNotFoundError:pass
-    finally:os.close(fd)
+        except (AssertionError,OSError,ValueError):
+            # Undo only this helper's own temp file and directories; a failed undo stays uncertain.
+            if temp is not None:
+                try:os.unlink(temp,dir_fd=fd)
+                except FileNotFoundError:pass
+            for owner,part in reversed(made):os.rmdir(part,dir_fd=owner)
+            raise Refused('write refused before any lasting change')
+    finally:
+        os.close(fd)
+        for owner,_ in made:os.close(owner)
 if action=='chunk':
     offset=int(sys.argv[3]);length=int(sys.argv[4]);size=int(sys.argv[5]);mtime=int(sys.argv[6]);ctime=int(sys.argv[7])
     assert 0<=offset<=size and 0<=length<=1048576 and offset+length<=size
@@ -192,21 +216,28 @@ elif action in ('list','list3','quiescent'):
     if action=='quiescent':
         print('ok');sys.exit(0)
     result=[];excluded=[]
+    def secret(name):
+        return (name in ('.git','.ssh','.aws','.config','__pycache__','.cache','node_modules')
+                or name.startswith('.env') or name.endswith('.pyc'))
+    def omit(relative):
+        # Links, special files, secrets and caches are never read; the manifest records them.
+        assert len(relative.encode())<=1024
+        assert all(x not in ('','.','..') and '\\' not in x and '\x00' not in x
+                   for x in relative.split('/'))
+        excluded.append(relative)
     for folder,dirs,files in os.walk(root,followlinks=False):
         dirs.sort();files.sort()
         for d in list(dirs):
-            full=os.path.join(folder,d)
-            assert stat.S_ISDIR(os.lstat(full).st_mode)
-            if d in ('__pycache__','.cache','.lake','node_modules'):
-                dirs.remove(d);excluded.append(os.path.relpath(full,root));continue
-            checked(os.path.relpath(full,root))
+            full=os.path.join(folder,d);relative=os.path.relpath(full,root)
+            if d=='.lake' or secret(d) or not stat.S_ISDIR(os.lstat(full).st_mode):
+                dirs.remove(d);omit(relative);continue
+            checked(relative)
         for f in files:
             full=os.path.join(folder,f);relative=os.path.relpath(full,root)
-            if f.endswith('.pyc'):
-                excluded.append(relative);continue
-            checked(relative)
             s=os.lstat(full)
-            assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
+            if secret(f) or not (stat.S_ISREG(s.st_mode) and s.st_nlink==1):
+                omit(relative);continue
+            checked(relative)
             if action=='list3':
                 sha=hashlib.sha256()
                 fd,name=parent(relative)
@@ -230,6 +261,11 @@ elif action in ('list','list3','quiescent'):
     print(json.dumps({'files':result,'excluded_paths':excluded},separators=(',',':')))
 else:raise ValueError('invalid action')
 """
+# Isolated mode: agent files in the /work exec directory cannot shadow helper imports.
+_GUEST_ARGV = ("/usr/bin/python3", "-I", "-c", _GUEST)
+_GUEST_REFUSED = 3
+# These actions never write /work, so an oversized complete response is a definite refusal.
+_READ_ONLY_GUEST_ACTIONS = frozenset({"read", "slice", "chunk", "capture", "list", "list3"})
 
 
 async def _docker(argv, *, input_data=b"", timeout=30, max_output=65536):
@@ -249,12 +285,13 @@ async def _docker(argv, *, input_data=b"", timeout=30, max_output=65536):
         raise ExecutionError("PROVIDER_UNAVAILABLE", "Docker CLI unavailable") from exc
 
     async def bounded(stream):
+        # Keep one byte past the bound so callers can report truncation, and drain
+        # the rest so the command finishes instead of blocking on a full pipe.
         chunks, size = [], 0
-        while part := await stream.read(min(65536, max_output - size + 1)):
+        while part := await stream.read(65536):
+            if size <= max_output:
+                chunks.append(part[: max_output + 1 - size])
             size += len(part)
-            if size > max_output:
-                raise ExecutionError("OUTPUT_LIMIT", "Docker command output exceeded bound")
-            chunks.append(part)
         return b"".join(chunks)
 
     async def feed():
@@ -263,15 +300,26 @@ async def _docker(argv, *, input_data=b"", timeout=30, max_output=65536):
             await proc.stdin.drain()
         proc.stdin.close()
 
+    readers = [
+        asyncio.ensure_future(bounded(proc.stdout)),
+        asyncio.ensure_future(bounded(proc.stderr)),
+    ]
     try:
         async with asyncio.timeout(timeout):
-            _, out, err = await asyncio.gather(feed(), bounded(proc.stdout), bounded(proc.stderr))
+            await feed()
+            out, err = await asyncio.gather(*readers)
             await proc.wait()
             return proc.returncode, out, err
     except BaseException:
         if proc.returncode is None:
             proc.kill()
-        await proc.wait()
+        for reader in readers:
+            reader.cancel()
+        await asyncio.gather(*readers, return_exceptions=True)
+        # wait() also needs both pipes at EOF, so discard what the killed CLI left.
+        await asyncio.gather(
+            bounded(proc.stdout), bounded(proc.stderr), proc.wait(), return_exceptions=True
+        )
         raise
 
 
@@ -348,19 +396,37 @@ class LocalDockerWorkspaceProvider:
             raise ExecutionError("SESSION_NOT_READY", "Docker workbench is not running")
         return self._container_id
 
-    async def _call(self, args, *, input_data=b"", timeout=30, max_output=65536):
+    async def _call(self, args, *, input_data=b"", timeout=30, max_output=65536, guest_action=None):
         result = await self._runner(
             ["docker", "--host", self.docker_host, *args],
             input_data=input_data,
             timeout=timeout,
             max_output=max_output,
         )
+        # Only the helper's own marker proves a refusal; transport failures stay uncertain.
+        if (
+            guest_action is not None
+            and result[0] == _GUEST_REFUSED
+            and result[2].startswith(b"physharness-refused:")
+        ):
+            raise ExecutionError(
+                "WORKSPACE_TRANSFER_REJECTED",
+                "Guest refused a missing, linked, non-regular or unsafe workspace path; "
+                "/work is unchanged",
+            )
         if result[0]:
             diagnostic = result[2].decode("utf-8", errors="replace")[:1000].strip()
             raise ExecutionError(
                 "PROVIDER_FAILED",
                 "Dedicated Docker operation failed" + (f": {diagnostic}" if diagnostic else ""),
             )
+        if len(result[1]) > max_output:
+            if guest_action in _READ_ONLY_GUEST_ACTIONS:
+                raise ExecutionError(
+                    "WORKSPACE_TRANSFER_REJECTED",
+                    "Guest response exceeded its bound; /work is unchanged",
+                )
+            raise ExecutionError("OUTPUT_LIMIT", "Docker command output exceeded bound")
         return result[1]
 
     @asynccontextmanager
@@ -564,11 +630,11 @@ class LocalDockerWorkspaceProvider:
                 )
                 await self._guest("quiescent")
         except (TimeoutError, ExecutionError, asyncio.CancelledError) as exc:
+            self._quarantined = True
             after = await self._resource_observation()
             self.last_command_diagnostics = self._diagnostics(
                 before, after, "timeout" if isinstance(exc, TimeoutError) else "failed"
             )
-            self._quarantined = True
             await asyncio.shield(self.close())
             raise
         after = await self._resource_observation()
@@ -582,12 +648,16 @@ class LocalDockerWorkspaceProvider:
             if code != 0
             else None
         )
+        # The transport keeps one byte past the bound; excess output is reported, not fatal.
+        limit = request.max_output_bytes
         return CommandResult(
             operation_id=request.operation_id,
             execution_id=self.execution_id,
             exit_code=code,
-            stdout=out.decode("utf-8", errors="replace"),
-            stderr=err.decode("utf-8", errors="replace"),
+            stdout=out[:limit].decode("utf-8", errors="replace"),
+            stderr=err[:limit].decode("utf-8", errors="replace"),
+            stdout_truncated=len(out) > limit,
+            stderr_truncated=len(err) > limit,
         )
 
     async def _resource_observation(self) -> dict | None:
@@ -598,9 +668,14 @@ class LocalDockerWorkspaceProvider:
 
     @staticmethod
     def _diagnostics(before: dict | None, after: dict | None, phase: str) -> dict:
-        old = (before or {}).get("events") or {}
-        new = (after or {}).get("events") or {}
-        oom_delta = new.get("oom", 0) - old.get("oom", 0) if old and new else None
+        # Guest resource reports are untrusted; malformed counters are simply unknown.
+        def oom(report):
+            events = report.get("events") if isinstance(report, dict) else None
+            count = events.get("oom", 0) if isinstance(events, dict) and events else None
+            return count if type(count) is int else None
+
+        old, new = oom(before), oom(after)
+        oom_delta = new - old if old is not None and new is not None else None
         return {
             "phase": phase,
             "memory_before": before,
@@ -608,12 +683,19 @@ class LocalDockerWorkspaceProvider:
             "oom_delta": oom_delta,
         }
 
-    async def _guest(self, action: str, path: str | None = None, *, data=b"", max_output=65536):
-        args = ["exec", "-i", self.execution_id, "/usr/bin/python3", "-c", _GUEST, action]
+    async def _guest(
+        self, action: str, path: str | None = None, *, arguments=(), data=b"", max_output=65536
+    ):
+        args = ["exec", "-i", self.execution_id, *_GUEST_ARGV, action]
         if path is not None:
             args.append(checked_path(path))
+        args.extend(arguments)
         return await self._call(
-            args, input_data=data, timeout=self.timeout_seconds, max_output=max_output
+            args,
+            input_data=data,
+            timeout=self.timeout_seconds,
+            max_output=max_output,
+            guest_action=action,
         )
 
     async def upload_file(self, path: str, data: bytes, *, expected_execution_id: str) -> str:
@@ -631,20 +713,8 @@ class LocalDockerWorkspaceProvider:
         self._identity(expected_execution_id)
         if type(max_bytes) is not int or not 1 <= max_bytes <= 4_000_000:
             raise ExecutionError("WORKSPACE_LIMIT", "Invalid capture byte limit")
-        response = await self._call(
-            [
-                "exec",
-                "-i",
-                self.execution_id,
-                "/usr/bin/python3",
-                "-c",
-                _GUEST,
-                "capture",
-                checked_path(path),
-                str(max_bytes),
-            ],
-            timeout=self.timeout_seconds,
-            max_output=max_bytes + 2,
+        response = await self._guest(
+            "capture", path, arguments=[str(max_bytes)], max_output=max_bytes + 2
         )
         if response == b"R":
             raise ExecutionError(
@@ -665,19 +735,9 @@ class LocalDockerWorkspaceProvider:
             or not 1 <= length <= 65536
         ):
             raise ExecutionError("WORKSPACE_LIMIT", "Read range must be at most 65536 bytes")
-        args = [
-            "exec",
-            "-i",
-            self.execution_id,
-            "/usr/bin/python3",
-            "-c",
-            _GUEST,
-            "slice",
-            checked_path(path),
-            str(offset),
-            str(length),
-        ]
-        response = await self._call(args, timeout=self.timeout_seconds, max_output=100_000)
+        response = await self._guest(
+            "slice", path, arguments=[str(offset), str(length)], max_output=100_000
+        )
         return json.loads(response)
 
     async def export_workspace(self, *, expected_execution_id: str) -> WorkspaceArchive:
@@ -704,7 +764,11 @@ class LocalDockerWorkspaceProvider:
         self._identity(expected_execution_id)
         before = json.loads(await self._guest("list3", max_output=4_000_000))
         listing = before["files"]
-        if len(listing) > 10_000 or sum(row[1] for row in listing) > self.workspace_quota_bytes:
+        if (
+            len(listing) > 10_000
+            or len(before["excluded_paths"]) > 10_000
+            or sum(row[1] for row in listing) > self.workspace_quota_bytes
+        ):
             raise ExecutionError("WORKSPACE_LIMIT", "Workspace exceeds checkpoint quota")
         files = []
         chunks = {}
@@ -714,22 +778,12 @@ class LocalDockerWorkspaceProvider:
             refs = []
             for offset in range(0, size, CHUNK_SIZE):
                 length = min(CHUNK_SIZE, size - offset)
-                args = [
-                    "exec",
-                    "-i",
-                    self.execution_id,
-                    "/usr/bin/python3",
-                    "-c",
-                    _GUEST,
+                piece = await self._guest(
                     "chunk",
                     path,
-                    str(offset),
-                    str(length),
-                    str(size),
-                    str(mtime),
-                    str(ctime),
-                ]
-                piece = await self._call(args, timeout=self.timeout_seconds, max_output=CHUNK_SIZE)
+                    arguments=[str(offset), str(length), str(size), str(mtime), str(ctime)],
+                    max_output=CHUNK_SIZE,
+                )
                 if len(piece) != length:
                     raise ExecutionError("CHECKPOINT_MISMATCH", "Workspace changed during export")
                 file_hash.update(piece)
@@ -754,7 +808,7 @@ class LocalDockerWorkspaceProvider:
         """Restore v3 into an empty VM via bounded temporary files and verified rename."""
         self._identity(expected_execution_id)
         existing = json.loads(await self._guest("list", max_output=4_000_000))
-        if existing["files"]:
+        if existing["files"] or existing["excluded_paths"]:
             raise ExecutionError("OPERATION_CONFLICT", "Restore requires empty workspace")
         declarations = {entry["sha256"]: entry for entry in archive.manifest["chunks"]}
         for entry in archive.manifest["files"]:
@@ -770,52 +824,15 @@ class LocalDockerWorkspaceProvider:
                         "CHECKPOINT_MISMATCH", "Checkpoint chunk integrity mismatch"
                     )
                 digest.update(piece)
-                args = [
-                    "exec",
-                    "-i",
-                    self.execution_id,
-                    "/usr/bin/python3",
-                    "-c",
-                    _GUEST,
-                    "stage_chunk",
-                    path,
-                    str(offset),
-                    str(total),
-                    token,
-                ]
-                await self._call(args, input_data=piece, timeout=self.timeout_seconds)
+                await self._guest(
+                    "stage_chunk", path, arguments=[str(offset), str(total), token], data=piece
+                )
                 offset += len(piece)
             if not entry["chunks"]:
-                args = [
-                    "exec",
-                    "-i",
-                    self.execution_id,
-                    "/usr/bin/python3",
-                    "-c",
-                    _GUEST,
-                    "stage_chunk",
-                    path,
-                    "0",
-                    "0",
-                    token,
-                ]
-                await self._call(args, timeout=self.timeout_seconds)
+                await self._guest("stage_chunk", path, arguments=["0", "0", token])
             if offset != total or digest.hexdigest() != entry["sha256"]:
                 raise ExecutionError("CHECKPOINT_MISMATCH", "Checkpoint file integrity mismatch")
-            args = [
-                "exec",
-                "-i",
-                self.execution_id,
-                "/usr/bin/python3",
-                "-c",
-                _GUEST,
-                "commit_stage",
-                path,
-                str(total),
-                entry["sha256"],
-                token,
-            ]
-            await self._call(args, timeout=self.timeout_seconds)
+            await self._guest("commit_stage", path, arguments=[str(total), entry["sha256"], token])
         observed = json.loads(await self._guest("list3", max_output=4_000_000))
         expected = [
             [entry["path"], entry["size"], entry["sha256"]] for entry in archive.manifest["files"]
@@ -830,7 +847,7 @@ class LocalDockerWorkspaceProvider:
         self._identity(expected_execution_id)
         files = archive.files(quota_bytes=self.workspace_quota_bytes)
         existing = json.loads(await self._guest("list", max_output=2_000_000))
-        if existing["files"]:
+        if existing["files"] or existing["excluded_paths"]:
             raise ExecutionError("OPERATION_CONFLICT", "Restore requires empty workspace")
         for path, data in files.items():
             await self.upload_file(path, data, expected_execution_id=expected_execution_id)

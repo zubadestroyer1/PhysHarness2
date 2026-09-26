@@ -142,15 +142,19 @@ def test_restoration_rejects_changed_review_and_new_unresolved_failures(lab):
 
 
 def test_restoration_rejects_corrupt_bytes_forged_status_and_unissued_checkpoint(lab):
-    service, _, _, _, (alpha, _) = approaches(lab, "none")
+    service, author, _, _, (alpha, _) = approaches(lab, "none")
     memory = PortableMemory(service)
     saved = capture(memory, alpha.branch_id, alpha)
     payload = memory.restore(saved["id"], alpha)
+    # Generic creation of this kind is controller-only; an unissued record still fails.
     forged = service.create_artifact(
         ArtifactCreate(
-            experiment_id=alpha.experiment_id, kind="checkpoint", content=json.dumps(payload)
+            experiment_id=alpha.experiment_id,
+            branch_id=alpha.branch_id,
+            kind="checkpoint",
+            content=json.dumps(payload),
         ),
-        alpha,
+        author.model_copy(update={"role": "operator"}),
         "forged",
     )
     with pytest.raises(HarnessError) as exc:
@@ -291,20 +295,25 @@ def test_restoration_binds_exact_environment_assumptions_and_definitions(lab, fi
 
 
 def test_native_checkpoint_cannot_enter_portable_history(lab):
-    service, _, _, _, (alpha, _) = approaches(lab, "none")
+    service, author, _, _, (alpha, _) = approaches(lab, "none")
     native = service.create_artifact(
         ArtifactCreate(
             experiment_id=alpha.experiment_id,
+            branch_id=alpha.branch_id,
             kind="native_checkpoint",
             content='{"provider_session_id":"opaque"}',
         ),
-        alpha,
+        author.model_copy(update={"role": "operator"}),
         "native",
     )
     memory = PortableMemory(service)
     assert memory.history_page(alpha.branch_id, alpha, kind="artifact")["items"] == []
     with pytest.raises(HarnessError) as exc:
         capture(memory, alpha.branch_id, alpha, evidence_ids=[native["id"]])
+    # Native state is unreadable to agents, so it is indistinguishable from a missing ID.
+    assert exc.value.code == "NOT_FOUND"
+    with pytest.raises(HarnessError) as exc:
+        capture(memory, alpha.branch_id, alpha, "own-branch", evidence_ids=[alpha.branch_id])
     assert exc.value.code == "CONTEXT_EVIDENCE_KIND"
 
 

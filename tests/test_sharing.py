@@ -105,7 +105,7 @@ def test_cross_branch_free_text_messages_are_blocked_even_with_verified_looking_
 
 
 def test_ideas_attribution_does_not_expose_native_history_or_allow_sender_forgery(lab):
-    service, _, exp, branches, (alpha, beta) = approaches(lab, "ideas")
+    service, author, exp, branches, (alpha, beta) = approaches(lab, "ideas")
     item = artifact(service, alpha, "attributed idea")
     message = service.send_message(
         branches[0]["id"], branches[1]["id"], "try symmetry", [item["id"]], alpha, "message"
@@ -114,9 +114,12 @@ def test_ideas_attribution_does_not_expose_native_history_or_allow_sender_forger
     assert service.get_record("artifact", item["id"], beta)["origin_actor_id"] == alpha.id
     private = service.create_artifact(
         ArtifactCreate(
-            experiment_id=exp["id"], kind="native_checkpoint", content="private context"
+            experiment_id=exp["id"],
+            branch_id=alpha.branch_id,
+            kind="native_checkpoint",
+            content="private context",
         ),
-        alpha,
+        author.model_copy(update={"role": "operator"}),
         "private",
     )
     with pytest.raises(HarnessError):
