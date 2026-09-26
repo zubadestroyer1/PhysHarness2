@@ -18,7 +18,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from .types import Capabilities, CommandRequest, CommandResult, ExecutionError
+from .types import GUEST_PYTHON, Capabilities, CommandRequest, CommandResult, ExecutionError
 from .workspace_archive import CHUNK_SIZE, DEFAULT_QUOTA, WorkspaceArchive, checked_path
 
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
@@ -36,17 +36,21 @@ def refuse(kind,value,trace):
         sys.stderr.write('physharness-refused: '+kind.__name__+'\n');sys.stderr.flush();os._exit(3)
     sys.__excepthook__(kind,value,trace)
 sys.excepthook=refuse
+def secret(name):
+    return (name in ('.git','.ssh','.aws','.config','__pycache__','.cache','node_modules')
+            or name.startswith('.env') or name.endswith('.pyc'))
+def portable(p):
+    # The host checked_path rule: a name a checkpoint can hold and restore exactly.
+    try:size=len(p.encode())
+    except UnicodeEncodeError:return False
+    return 0<size<=1024 and all(x not in ('','.','..') and '\\' not in x and '\x00' not in x
+                                and len(x.encode())<=255 for x in p.split('/'))
 def checked(p):
-    parts=p.split('/')
-    assert p and all(x not in ('','.','..') and '\\' not in x and '\x00' not in x for x in parts)
-    assert not any(
-        x in ('.git','.ssh','.aws','.config','__pycache__','.cache','node_modules')
-        or x.startswith('.env') or x.endswith('.pyc') for x in parts
-    )
-    return parts
+    assert portable(p) and not any(secret(x) for x in p.split('/'))
+    return p.split('/')
 def parent(p,create=False):
-    fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     parts=checked(p)
+    fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     for part in parts[:-1]:
         if create:
             try: os.mkdir(part,mode=0o700,dir_fd=fd)
@@ -64,7 +68,8 @@ def get(p):
         finally:os.close(h)
     finally:os.close(fd)
 def put(p,data):
-    parts=checked(p)
+    try:parts=checked(p)
+    except AssertionError:raise Refused('unsafe path refused before any change')
     fd=os.open(root,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
     made=[];temp=None
     try:
@@ -104,7 +109,7 @@ if action=='chunk':
         h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
         try:
             s=os.fstat(h)
-            assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
+            assert stat.S_ISREG(s.st_mode) and s.st_dev==os.lstat(root).st_dev
             assert (s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(size,mtime,ctime)
             with os.fdopen(os.dup(h),'rb') as stream:
                 stream.seek(offset);piece=stream.read(length)
@@ -216,42 +221,53 @@ elif action in ('list','list3','quiescent'):
     if action=='quiescent':
         print('ok');sys.exit(0)
     result=[];excluded=[]
-    def secret(name):
-        return (name in ('.git','.ssh','.aws','.config','__pycache__','.cache','node_modules')
-                or name.startswith('.env') or name.endswith('.pyc'))
+    device=os.lstat(root).st_dev
     def omit(relative):
-        # Links, special files, secrets and caches are never read; the manifest records them.
-        assert len(relative.encode())<=1024
-        assert all(x not in ('','.','..') and '\\' not in x and '\x00' not in x
-                   for x in relative.split('/'))
-        excluded.append(relative)
-    for folder,dirs,files in os.walk(root,followlinks=False):
+        # Links, special files, secrets, caches, unreadable entries and names no archive can
+        # hold are never read. Each is reported as bounded portable text: U+FFFD replaces
+        # backslashes and undecodable bytes, and an over-long path ends in an ellipsis.
+        text=os.fsencode(relative).decode('utf-8','replace').replace('\\','\ufffd')
+        if len(text.encode())>1024:
+            text=text.encode()[:1000].decode('utf-8','ignore').rstrip('/')+'\u2026'
+        excluded.append(text)
+    def unlisted(error):
+        # A directory that cannot be listed is reported, never silently skipped.
+        if error.filename==root:raise error
+        omit(os.path.relpath(error.filename,root))
+    def status(full):
+        try:return os.lstat(full)
+        except PermissionError:return None
+    for folder,dirs,files in os.walk(root,onerror=unlisted,followlinks=False):
         dirs.sort();files.sort()
         for d in list(dirs):
             full=os.path.join(folder,d);relative=os.path.relpath(full,root)
-            if d=='.lake' or secret(d) or not stat.S_ISDIR(os.lstat(full).st_mode):
-                dirs.remove(d);omit(relative);continue
-            checked(relative)
+            s=None if d=='.lake' or secret(d) or not portable(relative) else status(full)
+            if s is None or not stat.S_ISDIR(s.st_mode):
+                dirs.remove(d);omit(relative)
         for f in files:
             full=os.path.join(folder,f);relative=os.path.relpath(full,root)
-            s=os.lstat(full)
-            if secret(f) or not (stat.S_ISREG(s.st_mode) and s.st_nlink==1):
+            s=None if secret(f) or not portable(relative) else status(full)
+            # Hard links cannot leave /work's own file system, so every name of a regular
+            # file there is ordinary workspace content.
+            if s is None or not stat.S_ISREG(s.st_mode) or s.st_dev!=device:
                 omit(relative);continue
-            checked(relative)
-            if action=='list3':
-                sha=hashlib.sha256()
-                fd,name=parent(relative)
+            fd,name=parent(relative)
+            try:
+                try:h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
+                except PermissionError:
+                    omit(relative);continue
                 try:
-                    h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
-                    try:
-                        observed=os.fstat(h)
-                        assert stat.S_ISREG(observed.st_mode) and observed.st_nlink==1
-                        assert (s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(
-                            observed.st_ino,observed.st_size,observed.st_mtime_ns,observed.st_ctime_ns)
+                    observed=os.fstat(h)
+                    assert stat.S_ISREG(observed.st_mode)
+                    assert (s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(
+                        observed.st_ino,observed.st_size,observed.st_mtime_ns,observed.st_ctime_ns)
+                    sha=hashlib.sha256()
+                    if action=='list3':
                         with os.fdopen(os.dup(h),'rb') as stream:
                             while part:=stream.read(1048576):sha.update(part)
-                    finally:os.close(h)
-                finally:os.close(fd)
+                finally:os.close(h)
+            finally:os.close(fd)
+            if action=='list3':
                 after=os.lstat(full)
                 assert (s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(
                     after.st_size,after.st_mtime_ns,after.st_ctime_ns)
@@ -262,7 +278,7 @@ elif action in ('list','list3','quiescent'):
 else:raise ValueError('invalid action')
 """
 # Isolated mode: agent files in the /work exec directory cannot shadow helper imports.
-_GUEST_ARGV = ("/usr/bin/python3", "-I", "-c", _GUEST)
+_GUEST_ARGV = (*GUEST_PYTHON, "-c", _GUEST)
 _GUEST_REFUSED = 3
 # These actions never write /work, so an oversized complete response is a definite refusal.
 _READ_ONLY_GUEST_ACTIONS = frozenset({"read", "slice", "chunk", "capture", "list", "list3"})

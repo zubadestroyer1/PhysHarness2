@@ -16,7 +16,6 @@ from sqlalchemy import func, select
 
 from .domain import Principal, canonical_json, digest_json
 from .errors import HarnessError
-from .service import next_cursor, scan_cursor
 from .storage import RecordRow, record_json_text
 
 FORMAT = "physharness.portable-context.v1"
@@ -633,12 +632,8 @@ class PortableMemory:
         """Page explicit canonical research links visible to one branch."""
         if type(limit) is not int or not 1 <= limit <= 100:
             raise _error("CONTEXT_INPUT_INVALID", "Graph page size must be 1–100.")
-        position = (None, 0)
-        if after is not None:
-            position = scan_cursor(after) if isinstance(after, str) and after else None
-            if position is None:
-                raise _error("CONTEXT_INPUT_INVALID", "Graph cursor must be a page cursor.")
-        anchor, skipped = position
+        if after is not None and (not isinstance(after, str) or not after):
+            raise _error("CONTEXT_INPUT_INVALID", "Graph cursor must be a page cursor.")
         if (
             type(max_bytes) is not int
             or not 1 <= max_bytes <= MAX_BYTES
@@ -669,19 +664,21 @@ class PortableMemory:
         kinds = tuple(HISTORY_KINDS) + ("branch",)
         with self.service.db.sessions() as session:
             _, reader = self._reader(session, branch_id, actor)
+            position = None
+            if after is not None:
+                # Only a cursor this reader received from this graph resumes it.
+                position = self.service.open_page_cursor(reader, ["graph"], after)
+                if position is None:
+                    raise _error("CONTEXT_INPUT_INVALID", "Graph cursor must be a page cursor.")
             query = select(RecordRow).where(
                 RecordRow.project_id == reader.project_id,
                 RecordRow.kind.in_(kinds),
                 record_json_text("experiment_id") == reader.experiment_id,
             )
-            if anchor:
-                query = query.where(RecordRow.id > anchor)
+            if position:
+                query = query.where(RecordRow.id > position)
             scan_limit = max(100, limit * 4)
-            rows = list(
-                session.scalars(
-                    query.order_by(RecordRow.id).offset(skipped or None).limit(scan_limit + 1)
-                )
-            )
+            rows = list(session.scalars(query.order_by(RecordRow.id).limit(scan_limit + 1)))
             nodes, edges, scanned, stopped = [], [], 0, False
             for row in rows[:scan_limit]:
                 scanned += 1
@@ -689,7 +686,7 @@ class PortableMemory:
                     row.kind == "artifact"
                     and row.payload.get("artifact_kind") in self.service._private_artifact_kinds
                 ):
-                    skipped += 1
+                    position = row.id
                     continue
                 if row.kind == "branch":
                     reference = {
@@ -734,7 +731,8 @@ class PortableMemory:
                 trial = {
                     "items": [*nodes, reference],
                     "edges": [*edges, *row_edges],
-                    "next_cursor": row.id,
+                    # Same size as the sealed cursor this page may return.
+                    "next_cursor": self.service.seal_page_cursor(reader, ["graph"], row.id),
                     "complete": False,
                     "scan_limited": False,
                     "authority": "canonical_records",
@@ -752,14 +750,16 @@ class PortableMemory:
                     break
                 nodes.append(reference)
                 edges.extend(row_edges)
-                anchor, skipped = row.id, 0
+                position = row.id
                 if len(nodes) >= limit:
                     break
             has_more = stopped or scanned < len(rows)
             result = {
                 "items": nodes,
                 "edges": edges,
-                "next_cursor": next_cursor(anchor, skipped) if has_more else None,
+                "next_cursor": (
+                    self.service.seal_page_cursor(reader, ["graph"], position) if has_more else None
+                ),
                 "complete": not has_more,
                 "scan_limited": scanned >= scan_limit,
                 "authority": "canonical_records",

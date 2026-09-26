@@ -23,7 +23,11 @@ _EXCLUDED = {".git", ".ssh", ".aws", ".config", "__pycache__", ".cache", "node_m
 
 
 def checked_path(path: str) -> str:
-    if not isinstance(path, str) or not path or len(path.encode("utf-8")) > 1024:
+    try:
+        size = len(path.encode("utf-8")) if isinstance(path, str) else 0
+    except UnicodeEncodeError:
+        size = 0  # Lone surrogates stand for undecodable guest bytes; no archive holds them.
+    if not size or size > 1024:
         raise ExecutionError("UNSAFE_PATH", "Workspace path must be a bounded relative path")
     parts = path.split("/")
     # Guest file systems reject longer names (NAME_MAX); refuse them before dispatch.

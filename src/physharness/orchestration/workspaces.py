@@ -36,6 +36,9 @@ _PURE_REQUEST_REJECTIONS = frozenset(
     {"UNSAFE_PATH", "WORKSPACE_EXCLUDED", "WORKSPACE_LIMIT", "UNSAFE_RUNTIME", "TIMEOUT_LIMIT"}
 )
 _READ_ONLY_COMMANDS = frozenset({"download", "read_range", "export"})
+_TRANSFER_REJECTIONS = frozenset({"WORKSPACE_TRANSFER_REJECTED", "WORKSPACE_LIMIT"})
+# Checkpoint results name a bounded sample of excluded paths; the manifest keeps them all.
+_REPORTED_EXCLUSIONS = 50
 
 
 def _definite_refusal(provider: str, command: str, exc: BaseException) -> bool:
@@ -44,7 +47,7 @@ def _definite_refusal(provider: str, command: str, exc: BaseException) -> bool:
         return False
     if command in _READ_ONLY_COMMANDS:
         # A helper refusal or a complete over-limit response cannot have written files.
-        return exc.code in {"WORKSPACE_TRANSFER_REJECTED", "WORKSPACE_LIMIT"}
+        return exc.code in _TRANSFER_REJECTIONS
     # A nonzero E2B helper exit may follow a partial write, so uploads stay uncertain
     # there; the local helper reports a write refusal only after undoing its effects.
     return exc.code == "WORKSPACE_TRANSFER_REJECTED" and (
@@ -834,11 +837,19 @@ class WorkspaceBroker:
                         ),
                     )
                     values["checkpoint_artifact_id"] = artifact["id"]
+                    excluded = (
+                        verified.manifest["excluded_paths"]
+                        if isinstance(verified, StreamedWorkspaceArchive)
+                        else verified.excluded_paths
+                    )
                     result = {
                         "artifact": artifact,
                         "archive_sha256": verified.sha256,
                         "workspace_id": workspace_id,
                         "execution_id": execution_id,
+                        # Excluded entries are not in the archive and do not survive a handoff.
+                        "excluded_count": len(excluded),
+                        "excluded_paths": excluded[:_REPORTED_EXCLUSIONS],
                     }
                 if command == "restore":
                     values.update(
@@ -1446,6 +1457,29 @@ class WorkspaceBroker:
             call,
         )
 
+    def rejected_transfer(self, workspace_id: str, operation_id: str) -> dict | None:
+        """Return a dispatched export durably recorded as a definite transfer refusal."""
+        require_role(self.actor, "operator")
+        identity = self._operation_id(workspace_id, operation_id)
+        with self.service.db.sessions() as session:
+            row = session.get(RecordRow, identity)
+            if (
+                row is None
+                or row.project_id != self.actor.project_id
+                or row.kind != "workspace_operation"
+            ):
+                return None
+            data = row.payload
+            if (
+                data["task_id"] != self.task_id
+                or data["workspace_id"] != workspace_id
+                or data["command"] != "export"
+                or data["status"] != "rejected"
+                or (data.get("result") or {}).get("code") not in _TRANSFER_REJECTIONS
+            ):
+                return None
+            return copy.deepcopy(data)
+
     async def destroy(
         self,
         workspace_id: str,
@@ -1453,15 +1487,20 @@ class WorkspaceBroker:
         expected_execution_id: str,
         operation_id: str,
         actual_cost_usd: str | None,
+        final_checkpoint: dict | None = None,
     ) -> dict:
         require_role(self.actor, "operator")
         actual = money_units(actual_cost_usd) if actual_cost_usd is not None else None
+        inputs = {"actual_cost_units": actual}
+        if final_checkpoint is not None:
+            # The teardown record names the archive (or refusal) that preceded it.
+            inputs["final_checkpoint"] = copy.deepcopy(final_checkpoint)
         return await self._perform(
             workspace_id,
             expected_execution_id,
             operation_id,
             "destroy",
-            {"actual_cost_units": actual},
+            inputs,
             lambda provider: provider.close(),
             cleanup=True,
             actual=actual,

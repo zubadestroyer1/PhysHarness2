@@ -22,6 +22,12 @@ def digest(value: Any) -> str:
     ).hexdigest()
 
 
+# Interpreter for harness-authored Python inside a workspace VM. An absolute path and
+# isolated mode keep agent files on PATH, in the working directory (/work) or in user
+# site-packages from replacing the interpreter or shadowing the script's imports.
+GUEST_PYTHON = ("/usr/bin/python3", "-I")
+
+
 class ExecutionError(Exception):
     """Safe public error; provider exception details remain in the exception chain."""
 

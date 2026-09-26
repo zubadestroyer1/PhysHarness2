@@ -48,7 +48,7 @@ The mandatory scientific core cannot be silently truncated. If it exceeds either
 
 Historical references are explicitly selected by canonical record IDs. Each reference includes the record's ID, kind, revision, digest and evidence-status fields; artifact references also bind content hashes, and their bytes are integrity-checked. An accepted status requires actual canonical acceptance bindings, not a status-shaped annotation. The history manifest always declares selection and never claims completeness. Selecting no optional history is valid because the mandatory scientific core remains present.
 
-`history_page(branch_id, actor, kind=..., limit=50, after=None)` returns `items` and `next_cursor` for artifacts, claims, tasks, verification records, sources, or programs. Continue until the cursor is `None`. A page may be empty while still returning a cursor if it contained only private runtime/checkpoint artifacts, which portable history excludes. Canonical records and artifact bytes remain retained regardless of selection.
+`history_page(branch_id, actor, kind=..., limit=50, after=None)` returns `items` and `next_cursor` for artifacts, claims, tasks, verification records, sources, or programs. Continue until the cursor is `None`. A page may be empty while still returning a cursor if it contained only private runtime/checkpoint artifacts, which portable history excludes. Canonical records and artifact bytes remain retained regardless of selection. History and research-graph cursors are opaque and bound to the reader and query; pass them back unchanged. A crafted, altered or foreign cursor fails (`INVALID_CURSOR` for history, `CONTEXT_INPUT_INVALID` for the graph) instead of resuming the scan.
 
 ## Visibility, fencing, and restoration
 
