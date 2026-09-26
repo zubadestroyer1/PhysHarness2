@@ -58,6 +58,29 @@ ALLOWED_TRANSITIONS = {
     "abandoned": set(),
 }
 LEAN_NAME = r"^[A-Za-z_][A-Za-z0-9_.']{0,199}$"
+# A local compile counts only on Lean's standard axioms; anything else (sorryAx, an added
+# axiom, Lean.ofReduceBool, a native_decide axiom) leaves the node where it is.
+STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
+MAX_AXIOM_REPORT = 32
+
+
+def axiom_refusal(axioms, lean_name):
+    """Why an axiom report cannot support compiles_locally, or None when it can.
+
+    Only the node's own theorem entry counts: a missing or malformed entry fails closed, and
+    other declarations' entries never stand in for it.
+    """
+    entry = axioms.get(lean_name) if isinstance(axioms, dict) else None
+    if not isinstance(entry, list) or not all(isinstance(name, str) for name in entry):
+        return {"recorded": False, "reason": "axioms_unreported"}
+    nonstandard = sorted(set(entry) - STANDARD_AXIOMS)
+    if nonstandard:
+        return {
+            "recorded": False,
+            "reason": "nonstandard_axioms",
+            "axioms": nonstandard[:MAX_AXIOM_REPORT],
+        }
+    return None
 
 
 class EdgeSpec(StrictModel):

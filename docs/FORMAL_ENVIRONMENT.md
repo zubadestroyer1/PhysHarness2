@@ -149,6 +149,19 @@ definition until v2 is rebuilt and qualified, and pilot freeze manifests referen
 On the v1 image, `run_computation` reports the new packages as `null`, and `lean_check`
 uses its one-shot fallback.
 
+On both images, a local compile (`lean_check` with `node_id`) also runs the harness
+statement check with the image's own `lake --offline env lean`. It needs no REPL. It
+compiles the file and a reference statement to `.olean` files. Then it runs
+`statement_check.lean` with `lean --run`, which reads both as data. The checker:
+
+- replays the file's declarations through the kernel;
+- compares the theorem's elaborated type with the reference's;
+- collects the theorem's axioms itself.
+
+That check, not the file's `#print axioms` output, is what `compiles_locally` rests on. It
+still runs in the agent-controlled VM, so it is VM-attested evidence, not an acceptance
+receipt.
+
 | Component | Route | Pin status |
 | --- | --- | --- |
 | numpy, scipy, sympy, mpmath, ripgrep | Debian snapshot (unchanged) | Snapshot; the 2026-09-23 build observed 1.24.2, 1.10.1, 1.11.1, 1.2.1 |

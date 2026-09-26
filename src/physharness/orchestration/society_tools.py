@@ -4,9 +4,10 @@ Twenty-six tools replace the 63 legacy ones for experiments with a society polic
 calls the same service or workspace method its legacy counterpart calls, so the legacy tools
 remain the adapters. Evidence that moves the commons ladder (Lean elaboration and local
 compile results) is assembled here from Lean session results and records this module reads
-itself; it never comes from model arguments. The Lean session runs in the agent-controlled
-workspace VM, so that evidence is VM-attested, not a trusted compile: only independent
-acceptance is trusted.
+itself; it never comes from model arguments. A local compile rests on the harness statement
+check (``LeanSession.verify_statement``), never on the file's own output. The Lean session
+and the check run in the agent-controlled workspace VM, so that evidence is VM-attested,
+not a trusted compile: only independent acceptance is trusted.
 
 String length limits are stated in each property's description and enforced here as
 recoverable ``INVALID_ARGUMENTS`` rejections. Strict provider schemas carry no string-length
@@ -30,6 +31,7 @@ from ..commons_models import (
     STATUSES,
     NodeCreate,
     NodePostCreate,
+    axiom_refusal,
 )
 from ..commons_review import REVIEW_VERDICTS, is_referee_task
 from ..domain import Principal
@@ -43,7 +45,9 @@ from ..workforce_models import RecruitResearcherRequest
 from .computation import MAX_ARG_CHARS, MAX_ARGS, MAX_TIMEOUT_SECONDS, ComputationRunner
 from .lean_session import (
     INFRASTRUCTURE_REASONS,
+    header_problem,
     lean_code,
+    signature_problem,
     split_header,
     top_level_declarations,
 )
@@ -130,10 +134,6 @@ MAX_WAIT_IDS = 100
 FOCUS_EXCERPT = 2000
 MAX_SKETCH_MESSAGES = 5
 MAX_TOOL_NAME = 100  # Of a model-supplied name echoed in a rejection.
-# A local compile counts only on Lean's standard axioms; anything else (sorryAx, an
-# added axiom, Lean.ofReduceBool from native_decide) leaves the node where it is.
-STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
-MAX_AXIOM_REPORT = 32
 POST_KINDS = ("question", "finding", "objection", "attempt_failed", "synthesis", "update")
 NODE_ACTIONS = ("create", "link", "set_lean_statement", "abandon", "request_review")
 # Fields each commons_node action reads; any other field must stay at its default.
@@ -343,7 +343,14 @@ def statement_found(source: str, lean_name: str, lean_statement: str) -> bool:
 
 def _compile_refusal(source, node):
     """Why a source cannot support a local compile of the node, before its statement is
-    looked for; None when it can."""
+    looked for; None when it can.
+
+    These textual gates only give early, specific feedback. What the statement means is the
+    statement check's judgement (``LeanSession.verify_statement``), which compares elaborated
+    types: text-level checks cannot see instances, macros or options that change it.
+    """
+    if header_problem(node.get("lean_header")) or signature_problem(node.get("lean_statement")):
+        return "invalid_lean_statement"  # recorded before statements were checked for shape
     if "#exit" in source:  # Lean stops there: later declarations and reports never run.
         return "exit_command"
     code = lean_code(source)
@@ -356,25 +363,6 @@ def _compile_refusal(source, node):
         return "header_mismatch"
     if any(keyword == "variable" for keyword, _, _ in top_level_declarations(code)):
         return "variable_command"
-    return None
-
-
-def _axiom_refusal(axioms, lean_name):
-    """Why a compile's axiom report cannot support compiles_locally, or None when it can.
-
-    Only the node's own theorem entry counts: the report comes from the agent-controlled
-    workspace, so a missing entry fails closed and other declarations' entries never stand in.
-    """
-    entry = axioms.get(lean_name) if isinstance(axioms, dict) else None
-    if not isinstance(entry, list) or not all(isinstance(name, str) for name in entry):
-        return {"recorded": False, "reason": "axioms_unreported"}
-    nonstandard = sorted(set(entry) - STANDARD_AXIOMS)
-    if nonstandard:
-        return {
-            "recorded": False,
-            "reason": "nonstandard_axioms",
-            "axioms": nonstandard[:MAX_AXIOM_REPORT],
-        }
     return None
 
 
@@ -612,11 +600,16 @@ def society_tools(
                 return result
             return {
                 **result,
-                "local_compile": local_compile(node, a["source"], result, k),
+                "local_compile": await local_compile(node, a["source"], result, k),
                 "claim_renewed": renew_claim(node["id"], k),
             }
 
-        def local_compile(node, source, result, key):
+        async def local_compile(node, source, result, key):
+            """Record a local compile only on the statement check's verdict.
+
+            The check's answer, not the session's ``axioms`` (the file's own ``#print axioms``
+            output, which the file can redefine), decides.
+            """
             name, statement = node.get("lean_name"), node.get("lean_statement")
             if not name or not statement:
                 return {"recorded": False, "reason": "no_lean_statement"}
@@ -630,15 +623,34 @@ def society_tools(
                     "reason": "The node's Lean statement was not found in the compiled source; "
                     "declare theorem <lean_name> <lean_statement> := ... exactly.",
                 }
-            axioms = result.get("axioms")
-            refusal = _axiom_refusal(axioms, name)
+            if not result["complete"]:
+                return {"recorded": False, "reason": "The compile was incomplete."}
+            try:
+                verdict = await lean().verify_statement(
+                    source,
+                    node.get("lean_header") or "",
+                    name,
+                    statement,
+                    operation_id=f"{key}:statement-check",
+                )
+            except HarnessError as error:
+                if error.code in FATAL_TOOL_CODES:
+                    raise
+                return {"recorded": False, "reason": error.code}
+            if not verdict["ok"]:
+                refused = {"recorded": False, "reason": verdict["reason"]}
+                if verdict.get("detail"):
+                    refused["detail"] = verdict["detail"]
+                return refused
+            axioms = {name: verdict["axioms"]}
+            refusal = axiom_refusal(axioms, name)
             if refusal is not None:
                 return refusal
             compile_result = {
-                "complete": result["complete"],
-                "backend": result["backend"],
+                "complete": True,
+                "backend": verdict["backend"],
                 "statement_found": True,
-                "axioms": {name: axioms[name]},
+                "axioms": axioms,
                 "lean_statement_sha256": _lean_digest(node.get("lean_header"), name, statement),
             }
             return _soft(
@@ -678,13 +690,18 @@ def society_tools(
                 },
                 lean_check,
                 "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
-                "automation on holes (automate=true) and #print axioms. With node_id, a "
-                "complete check records a local compile, which moves a formally_stated node to "
-                "compiles_locally, and renews your claim. It counts when the file header holds "
-                "the node's lean_header lines, the file has no variable or #exit command, it "
-                "declares theorem <lean_name> <lean_statement> := ... once, outside comments, "
-                "namespaces and sections, and that theorem's axioms are only propext, "
-                "Classical.choice and Quot.sound. Only the independent verifier accepts proofs.",
+                "automation on holes (automate=true) and the file's own #print axioms output. "
+                "With node_id, a complete check runs the platform's statement check and, when "
+                "it passes, records a local compile, which moves a formally_stated node to "
+                "compiles_locally; it also renews your claim. The file header must hold the "
+                "node's lean_header lines, the file must have no variable or #exit command, and "
+                "it must declare theorem <lean_name> <lean_statement> := ... once, outside "
+                "comments, namespaces and sections. The check then compiles the file, has the "
+                "kernel re-check every declaration in it, checks that the theorem's elaborated "
+                "type equals the node statement's (elaborated under lean_header alone), and "
+                "collects the theorem's axioms itself: only propext, Classical.choice and "
+                "Quot.sound count. It runs in your workspace VM; only the independent verifier "
+                "accepts proofs.",
                 defaults={"node_id": None, "automate": True},
             )
 
@@ -1071,9 +1088,12 @@ def society_tools(
         },
         commons_node,
         "Propose and relate commons nodes. create adds an informal node (status informal); "
-        "link adds a typed edge; set_lean_statement elaborates a Lean statement on the "
-        "platform and records it (author or live claimant); abandon closes your own node with "
-        "a reason; request_review asks the platform to assign an independent referee "
+        "link adds a typed edge; set_lean_statement elaborates theorem <lean_name> "
+        "<lean_statement> under lean_header in your workspace's Lean session and records the "
+        "statement with that result (author or live claimant): lean_header holds only import, "
+        "open, set_option and universe lines, and lean_statement is binders then ': type', "
+        "with no ':=' or 'where' outside brackets; abandon closes your own node with a "
+        "reason; request_review asks the platform to assign an independent referee "
         "(informal, or fidelity for an elaborated Lean statement). Agents never set status.",
         defaults=NODE_DEFAULTS,
     )
