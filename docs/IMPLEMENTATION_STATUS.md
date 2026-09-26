@@ -24,7 +24,11 @@ What exists (Tasks 1–10):
     refuted).
 - **Checks.**
   - Referees are platform-created, parentless, lab-less branches, isolated from other
-    branches and assigned a different model family when one exists.
+    branches. The first referee runs a model family other than the author's (for
+    fidelity, also other than every claimant's) when one exists, and a quorum spreads
+    over the configured families.
+    A standing `wrong` vetoes refereed and a standing `unfaithful` vetoes formally
+    stated; each text version gets a bounded referee panel (`REVIEW_LIMIT`).
   - Informal verdicts are sound, gaps or wrong; fidelity verdicts are faithful or
     unfaithful. Ladder moves are bound to evidence: the review quorum, Lean elaboration,
     and a complete local compile of the node's exact top-level statement using only
@@ -42,8 +46,10 @@ What exists (Tasks 1–10):
     blocklist and an overlap screen against the masked reference.
   - Ten technique skills, a constitution, check-ins and stagnation nudges.
   - The `workbench-v2` image **definition** (numerics and a pinned REPL). It is not built.
-- **Society tool profile.** Twenty-five tools in all: 24 for a worker at most, and a
-  read-and-check profile of 17 for a referee. The legacy tools remain as adapters. The
+- **Society tool profile.** Twenty-six tools in all: 25 for a worker at most, and a
+  read-and-check profile of 18 for a referee. `read_artifact` opens cited evidence in
+  bounded chunks through the scoped portable-memory read; a referee opens only its own
+  artifacts and those its assigned node or the node's thread cites. The legacy tools remain as adapters. The
   finite runner runs referee tasks, synthesis tasks without a parent branch, and the
   reviews those platform-rooted tasks request.
 - **Task 10.**
@@ -74,7 +80,9 @@ What exists (Tasks 1–10):
   - Referees get referee-specific norms, check-ins, nudges and skill lists, which name
     only the tools they have.
   - In society profiles, a call to an unregistered tool name is a recoverable rejection
-    rather than a fatal error. Repeating such a call trips the stagnation detector.
+    rather than a fatal error. Every such rejection counts toward stagnation for the rest
+    of the native session, whatever the name: the fourth warns, the eighth requests the
+    stagnation handoff, and eight more in the recovery session exhaust it.
 - **Tests.** The full suite passes 1,577 tests with 2 opt-in PostgreSQL skips (1,258
   before S1). Ruff check and format are clean.
 

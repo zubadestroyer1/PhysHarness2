@@ -457,3 +457,58 @@ def test_lab_roster_is_scoped_to_the_agents_experiment(lab):
     # A lab name from another experiment is not a lab here.
     foreign = rejected(lambda: service.lab_members(experiment["id"], other_root["lab"], worker_a))
     assert foreign.code == "LAB_NOT_FOUND"
+
+
+def test_agent_recruits_only_into_its_own_lab_or_a_new_one(lab):
+    service, author, experiment, (alpha, beta), (worker_a, worker_b) = society_lab(
+        lab, lab_size_max=2
+    )
+    # An outsider cannot fill another lab (which would turn its own members away).
+    squat = rejected(
+        lambda: recruit(
+            service, worker_b, experiment, beta, "squat", detached=True, lab=alpha["lab"]
+        )
+    )
+    assert (squat.code, squat.status) == ("LAB_MEMBERSHIP", 403)
+    assert "lab='new'" in squat.remediation
+    own = recruit(service, worker_a, experiment, alpha, "own", detached=True)
+    assert own["lab"] == alpha["lab"]
+    # Naming your own lab is the same as inheriting it; a new lab is always open.
+    full = rejected(
+        lambda: recruit(
+            service, worker_a, experiment, alpha, "more", detached=True, lab=alpha["lab"]
+        )
+    )
+    assert full.code == "LAB_FULL"
+    founder = recruit(service, worker_b, experiment, beta, "founder", detached=True, lab="new")
+    assert founder["lab"] == "lab-" + founder["id"][:8]
+    # An agent names only its own lab, so an unknown name is refused the same way.
+    missing = rejected(
+        lambda: recruit(service, worker_b, experiment, beta, "x", detached=True, lab="lab-0000")
+    )
+    assert missing.code == "LAB_MEMBERSHIP"
+    # Operators and researchers place branches in any lab (test_recruit_named_lab_must_exist).
+    placed = recruit(service, author, experiment, beta, "placed", lab=founder["lab"])
+    assert placed["lab"] == founder["lab"]
+
+
+def test_recruit_cannot_bridge_the_cross_lab_message_block(lab):
+    service, author, experiment, (alpha, beta), (worker_a, _) = society_lab(lab)
+    # Recruiting a child into beta's lab would let alpha relay through it to beta.
+    bridge = rejected(
+        lambda: recruit(
+            service, worker_a, experiment, alpha, "relay", detached=True, lab=beta["lab"]
+        )
+    )
+    assert bridge.code == "LAB_MEMBERSHIP"
+    child = recruit(service, worker_a, experiment, alpha, "child", detached=True, lab="new")
+    service.send_message(alpha["id"], child["id"], "relay to beta", [], worker_a, "to-child")
+    relay = rejected(
+        lambda: service.send_message(
+            child["id"], beta["id"], "from alpha", [], agent_for(child, author, "child"), "relay"
+        )
+    )
+    assert relay.code == "CROSS_LAB_MESSAGE"
+    assert not [
+        m for m in messages(service, author, experiment) if m["recipient_branch_id"] == beta["id"]
+    ]

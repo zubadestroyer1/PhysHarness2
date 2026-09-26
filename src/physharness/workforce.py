@@ -441,7 +441,7 @@ class WorkforceMixin:
                     "status": "open",
                     "execution_identity": new_id(),
                     "model_configuration": selected_model,
-                    **self._branch_lab(session, experiment, parent, branch_id, lab),
+                    **self._branch_lab(session, experiment, parent, branch_id, lab, actor),
                 },
                 branch_extra,
             ),
@@ -530,14 +530,17 @@ class WorkforceMixin:
             record_json_text("lab") == lab,
         )
 
-    def _branch_lab(self, session, experiment, parent, branch_id, lab="inherit"):
+    def _branch_lab(self, session, experiment, parent, branch_id, lab="inherit", actor=None):
         """Resolve a new branch's lab and admit it under the cap.
 
         Returns the payload fields to merge: ``{}`` for legacy experiments (their branch
         payloads carry no lab key) and ``{"lab": name_or_None}`` for society experiments.
         ``"inherit"`` joins the parent's lab (a root founds one), ``"new"`` founds
         ``"lab-" + branch_id[:8]``, a name joins that existing lab, and ``None`` records an
-        unaffiliated branch (e.g. an independent referee) that no lab counts.
+        unaffiliated branch (e.g. an independent referee) that no lab counts. An agent names
+        only its own lab (its recruiting branch's); operators and researchers place a branch
+        in any lab. Otherwise an outsider could fill a lab against its members, or plant a
+        child there to relay around the cross-lab message block.
         """
         policy = experiment.payload.get("society")
         if not policy:
@@ -556,6 +559,17 @@ class WorkforceMixin:
             return {"lab": "lab-" + branch_id[:8]}
         if not isinstance(lab, str) or not LAB_NAME.fullmatch(lab):
             raise HarnessError("INVALID_LAB", "Lab names match ^[a-z0-9-]{1,40}$.", status=422)
+        if (
+            actor is not None
+            and actor.role == "agent"
+            and (parent and parent.payload.get("lab")) != lab
+        ):
+            raise HarnessError(
+                "LAB_MEMBERSHIP",
+                "An agent recruits only into its own lab; only lab members add members.",
+                status=403,
+                remediation="Recruit into your lab (lab=null) or found a new one (lab='new').",
+            )
         # Serialize joins per lab so concurrent recruits cannot overshoot the cap.
         self.db.command_lock(session, self._digest(["lab", experiment.id, lab]))
         members = session.scalar(
