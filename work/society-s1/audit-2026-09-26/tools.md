@@ -124,7 +124,7 @@ TPM per worker). Cutting 30% of input lets the same limit run about 1.4× as man
 agents. Provider caching complicates the dollar saving (eliding mid-context invalidates the
 cached prefix after it), so elide in batches, for example every 20 turns.
 
-Unicode escaping adds more. `responses.py:1064` serializes tool outputs with
+Unicode escaping adds more. `ResponsesRuntime._loop` in `responses.py` serializes tool outputs with
 `json.dumps(visible_output)` and the default `ensure_ascii=True`, so every `∑ ι ℝ ≤ ∀ ᵥ*` in
 Lean output reaches the model as a 6-char `\uXXXX` escape. Upper estimate: ≤6.5M token-turns
 (≈3% of input, ≤$16).
@@ -291,13 +291,13 @@ guard; **AM** = agent mistake.
 
 ### F10. Unicode escaping in tool outputs (HB, inefficiency)
 See §2. ≤6.5M token-turns (≤$16). Fix (XS): `json.dumps(..., ensure_ascii=False)` in
-`execution/responses.py:1064`.
+`ResponsesRuntime._loop` (`execution/responses.py`), where it builds each `function_call_output`.
 
 ### F11. Hidden side effects and log lines without codes (observability)
 - lean_check with a `node_id` also renews the agent's claim. The renewal silently failed 62 of
   103 times (`claim_renewed: false`, CLAIM_NOT_HELD). Each failure writes a bare
   `command_rejected` line to `run-team.err`. The service logs `operation` and `error_code` as
-  `extra`, and the formatter drops them (`service.py:805-812`).
+  `extra`, but `run-team` never installs the JSON formatter (`configure_logging`), so only the message is printed.
 - The known list gives `command_rejected` as a rejection code, but it is not a code. It is the
   generic service log line: 125 across all arms. The model-visible rejections match
   `Research tool rejected: <CODE>` one-for-one (51 = 51). Most of the remaining lines are these

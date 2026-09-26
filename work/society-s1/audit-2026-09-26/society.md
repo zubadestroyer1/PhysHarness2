@@ -44,7 +44,7 @@ Conventions
 
 ### All arms (script `arm_table.py`)
 
-| arm | time to proof (min) | cost $ | roots | recruits | referee tasks | referee $ (share) | society share of agent time | society share of input tokens (pushed updates) | posts | pushed items | messages | nodes | peer waits |
+| arm | time to proof (min from experiment-record creation; 0.2–1.7 min longer than `time_to_root_seconds`) | cost $ | roots | recruits | referee tasks | referee $ (share) | society share of agent time | society share of input tokens (pushed updates) | posts | pushed items | messages | nodes | peer waits |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | S-r2 | 30.0 | 155.41 | 6 | 0 | 34 | 8.63 (6%) | 53% | 35% (16%) | 197 | 646 | 0 | 32 | 7 |
 | pilot-doeblin | 6.5 | 22.75 | 3 | 2 | 1 | 0.09 (0%) | 31% | 24% (8%) | 21 | 83 | 12 | 5 | 0 |
@@ -273,8 +273,8 @@ The chain that finished last was **stationary existence**; every other component
     piece.
 - **Pilot contrast** (3 roots, Doeblin target). R1 submitted at t=363 using R3's
   `stationary_exists_of_geometric_steps` (post at t=233) and its own recruit's lemmas (sent by
-  message). The time to proof was 6.5 min at $22.75, against 8.0 min at $10.54 for one root
-  (calibration-doeblin-r2): little speedup at 2.2× the cost.
+  message). The time to proof was 5.9 min at $22.75, against 6.3 min at $10.54 for one root
+  (calibration-doeblin-r2; `time_to_root_seconds`): little speedup at 2.2× the cost, one run each.
 
 ### F5. Society vs one-root runs
 

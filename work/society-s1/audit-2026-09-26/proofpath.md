@@ -90,7 +90,7 @@ In S-r2, 08bdcfc9 got uniqueness from the convergence bound itself (`uniqueness_
 
 Component columns give the minute of the first successful compile, and who compiled it: `R` is a root, `r` a recruit, and an apostrophe marks a successor session. "Written by" is the share of the final proof's characters that each session originated.
 
-| arm | verified (min) / cost | final proof written by | primitive power | Doeblin contraction | existence (route) | rate | target first written → submitted | path / dead-end, % turns (% cost) |
+| arm | verified (min from experiment-record creation) / cost | final proof written by | primitive power | Doeblin contraction | existence (route) | rate | target first written → submitted | path / dead-end, % turns (% cost) |
 |---|---|---|---|---|---|---|---|---|
 | calib-doeblin-r2 | 7.98 / $10.54 | root 54%, recruit 46% | n/a | 4.11 r | 4.16 R (Cauchy) | 5.70 R | 7.3 → 7.58 | 38 (41) / 4 (5) |
 | calib-aperiodic | 17.85 / $34.61 | root lineage 88%, recruit 12% | 2.45 r | 3.79 R | Cesàro abandoned at 11.41; 14.44 R' (Cauchy) | 10.21 R | 16.6 → 17.43 | 13 (18) / 6 (7) |

@@ -21,14 +21,14 @@ Five parallel analyses produced the dimension reports this summary draws on. The
 
 ## 1. The short answer
 
-The society idea was not what held the society back. Its costs came from **plumbing that grows faster than the number of agents**, and from **coordination rules that added work without deciding anything**. The agents themselves self-organized quickly and shared real work.
+This run cannot say whether the society idea pays off: there was one society run (S-r2), on a target one agent proves in about 14 minutes. What it shows [I] is that much of S-r2's overhead came from **plumbing that grows faster than the number of agents** and from **coordination rules that added work without deciding anything**, while the agents self-organized quickly and shared real work.
 
-In S-r2 (6 roots, 8 workers) the society took 29.7 min and $155. The independent one-root runs took a median of 14 min and $36. That gap breaks down as follows:
+In S-r2 (6 roots, 8 workers) the society took 29.7 min and $155. The independent one-root runs took a median of 14 min and $36. The main contributors, which overlap and do not add up to the gap, were:
 
 | Where S-r2's time and money went | Evidence |
 |---|---|
-| **Provider rate limit.** 39% of all agent time was spent throttled [M]. The prover lost about 13 of its 29 min; unthrottled, it would have finished in about 16 min, like the independent runs [E]. | The org limit is 2M tokens/min and it **counts cached tokens**. One agent wants about 0.5M TPM, so only about 4 agents fit. |
-| **Roots kept spending after their part was done.** $56 (36% of the arm) [M]. | No idle or yield policy; one long-pole component; one assembler. |
+| **Provider rate limit.** 39% of all agent time was spent throttled [E, inferred from turn timing]. The prover lost about 13 of its 29 min; unthrottled, it would have finished in about 16 min, like the independent runs [E]. | The org limit is 2M tokens/min and it **counts cached tokens**. One agent wants about 0.5M TPM, so only about 4 agents fit. |
+| **Roots kept spending after their part was done.** $56–67 (36–43% of the arm), depending on how a root's last contribution is dated (society.md vs proofpath.md) [M]. | No idle or yield policy; one long-pole component; one assembler. |
 | **Integration by copy and paste.** 71% of the final proof was written by other roots, but it moved as pasted post text. One agent spent 14 min assembling it [M]. | No shared, importable lemma store. The dependency graph recorded only 1 cross-branch dependency. |
 | **Broadcast context rent.** Coordination took 35% of root input tokens and 53% of root turn time [M]. | Every post to the goal thread is pushed to everyone (O(n²)). 20% of pushed items were the reader's own posts, and only 8% were ever opened in full. |
 | **Referee machinery that gated nothing.** 34 of 40 task slots; 85% of reviewed lemmas had already compiled before the verdict [M]. | The node "compiles locally" rung never worked because of a harness bug (below), so fidelity reviews filled the gap and decided nothing. |
@@ -61,8 +61,8 @@ In S-r2 (6 roots, 8 workers) the society took 29.7 min and $155. The independent
 ## 3. Bottlenecks, ranked by what they cost at scale
 
 ### A. Throughput ceiling: the provider's tokens-per-minute limit (binds first)
-- S-r2 ran at a flat 1.9–2.1M TPM from minute 4 to minute 28. Throttle excess was 4.6 s per turn (39%) [M].
-- The limiter counts cached input. Only about 60k TPM of it was uncached, yet requests were throttled [M].
+- S-r2 ran at a flat 1.9–2.1M TPM from minute 4 to minute 28. Throttle excess was 4.6 s per turn (39%) [E, inferred from turn timing].
+- The limiter counts cached input. Only about 60k TPM of it was uncached, yet requests were throttled [E].
 - Demand grows linearly with agents while the cap is fixed. At 2M TPM the harness supports **about 4 agents of this profile**. Past that, every agent slows proportionally [E].
 - The current wait behaviour is silent back-off sleeps. It is invisible in the logs and does not prioritise the critical path.
 
@@ -77,9 +77,9 @@ In S-r2 (6 roots, 8 workers) the society took 29.7 min and $155. The independent
 - Because the TPM limit counts these tokens, **context rent is also the throughput limit**.
 
 ### C. Idle and long-lived sessions
-- Cost tracks how long sessions stay alive, not how fast the work goes (r = 0.82 across the one-root runs) [M].
-- In S-r2, roots spent $56 after their last contribution [M]. Peer waits never woke (7 of 7 timed out) because they wake only on a direct message, and cross-lab messages are blocked [M].
-- In five one-root runs, a broad "librarian" recruit became a second full prover. It took 47–51% of run cost and bought no speed. The fastest and cheapest run used a narrow recruit that returned in 3 min for $2.95 [M].
+- Across the 9 one-root runs, arm cost correlates with total recruit lifetime (r = 0.82, n = 9) [M]. Long-lived sessions, not faster work, drove cost [I].
+- In S-r2, roots spent $56–67 after their last contribution, depending on how that is dated (society.md vs proofpath.md) [M]. Peer waits never woke (7 of 7 timed out) because they wake only on a direct message from the peer or when all the peer's tasks end, and cross-lab messages are blocked [M].
+- In five one-root runs, a broad "librarian" recruit became a second full prover. It took 47–51% of run cost [M], with no sign that it sped those runs up [I]. The fastest and cheapest run used a narrow recruit that returned in 3 min for $2.95 [M].
 
 ### D. Integration by transcription
 - There is no shared file or import path between workspaces, and nothing tells agents their workspace is private. They find out by trial, 2.3–11.4 min in [M].
@@ -89,7 +89,7 @@ In S-r2 (6 roots, 8 workers) the society took 29.7 min and $155. The independent
 
 ### E. Coordination rules that decide nothing (scaffolding debt)
 - **The node status ladder never worked.**
-  - **Bug [M, verified in code]:** the workbench runs `--read-only` with a tmpfs only at `/work`. The statement checker stages itself with `mkdir /tmp/physharness`, which fails, so 168 of 168 checker runs exited 97. No node in any arm reached `compiles_locally`.
+  - **Bug [M, verified in code]:** the workbench runs `--read-only` with a tmpfs only at `/work`. The statement checker stages itself with `mkdir /tmp/physharness`, which fails. All 84 checks failed: 168 of 168 runs (each retried once after a re-upload) exited 97, and agents saw only `statement_check_unavailable`. No node in any arm reached `compiles_locally`. This affects `local_docker` only; E2B has a writable `/tmp`.
   - Yet the ladder drove 42 of 69 referee tasks, 91 failed local-compile attempts and about $22 of S-r2 root turns. 57 agent calls blamed a "platform glitch" or similar.
 - **Referees** changed no Lean artifact [M].
 - **Task-count caps** starved reviews: 41% of I-arm review requests hit TASK_TOTAL_CAP [M]. Caps are reported as input errors.
@@ -108,7 +108,7 @@ In S-r2 (6 roots, 8 workers) the society took 29.7 min and $155. The independent
   - 179 of 741 `#check` probes named declarations that don't exist.
 - `search_library` returned nothing 50% of the time, while shell `rg` found hits 92% of the time [M]. Whole-file `read_source` of 16 distinct files flooded the context.
 - `lake` is not on the PATH in login shells: `bash -lc 'lake …'` failed 37 of 38 times with exit 127, once in every session that tried it, across all 15 arms [M]. That cost 55–114 calls and $8–17.
-- `automate=true` is the default and ran out of memory in the 2 GiB container 14 of 14 times [M, verified].
+- Every `lean_check` with `automate=true` on a file with holes ran out of memory in the 2 GiB container: 14 of 14, all with `automate` passed explicitly [M, verified]. Strict tool schemas make the registered default inert.
 - Each Lean check takes a flat 2.4 s because the local_docker backend starts a fresh REPL, and so a fresh Mathlib import, for every check (by design) [M].
 
 ### G. Harness overhead per turn (caps agents per process)
@@ -116,7 +116,7 @@ In S-r2 (6 roots, 8 workers) the society took 29.7 min and $155. The independent
   - This limits one runner process to about 12 active agents [E].
 - **Token-count preflight:** `input_tokens.count` before every generation re-uploads the whole context. It costs 0.4–1.2 s per turn, 8–9% of agent time [M].
 - **Pricing and reservations:**
-  - cached input is charged at the full rate [M]. If cached input is billed at 10% (the gpt-6-sol rate is unconfirmed), the 13 completed arms would have cost about $78 instead of $542, and S-r2 about $22 [E];
+  - cached input is charged at the full rate, by design (`pricing.py`: "conservatively omitted"), so the ledger is an upper bound [M]. If cached input is billed at 10% (the gpt-6-sol rate is unconfirmed), the 13 completed arms would have cost about $78 instead of $542, and S-r2 about $22 [E];
   - each turn reserves $1.28 against an actual median of $0.13. At 100 agents that ties up about 10× the budget needed [M].
 
 ---
@@ -140,17 +140,17 @@ In S-r2 (6 roots, 8 workers) the society took 29.7 min and $155. The independent
 These are ordered by payoff for scaling and by effort. Tiers 0–1 are plumbing. Tier 2 replaces rules with substrate. Tier 3 removes scaffolding. Tier 4 is research process.
 
 **Tier 0: bugs and one-line fixes (XS, do first)**
-1. **Make the statement checker work.** Give the workbench a writable `/tmp` tmpfs, or stage the checker under `/work`. Add a checker self-test at provision, and alarm on `statement_check_unavailable`. *(Restores a machine-checked "compiles" signal, which can replace fidelity referees.)*
-2. **Put `lake`/`lean` on the PATH in login shells**, or run the shell tool with `bash -c`.
-3. **Change the `lean_check` default to `automate=false`**, or bound automation to cheap tactics under its own memory limit.
-4. **Price cached input correctly** in `prices.json`, the ledger and reservations. Size each reservation from the last usage instead of 256k + 64k.
+1. **Make the statement checker work.** Give the workbench a writable `/tmp` tmpfs, or stage the checker under `/work`. Add a checker self-test at provision, and alarm on `statement_check_unavailable`. *(Restores a machine-checked "compiles" signal. It replaces fidelity referees only together with item 17, because `compiles_locally` currently requires a faithful fidelity review.)*
+2. **Put `lake`/`lean` on the PATH in login shells**, for example by symlinking them into `/usr/local/bin`. Say in the `shell` description to use `sh -c` or direct argv; the harness runs the agent's argv as given.
+3. **Bound `lean_check` automation**: drop `exact?` and `aesop`, or run automation under its own memory limit. Changing the default alone does nothing, because strict schemas make the model always send `automate`.
+4. **Optionally price cached input** in `prices.json`, the ledger and reservations. This is a design change: plumb `native_usage.input_tokens_details.cached_tokens` into settlement. Size each reservation from the last usage instead of 256k + 64k.
 5. **Clearer errors:**
    - caps as "budget, not input: limit N, used N";
    - pass through the provider reason for workspace transfers;
    - name the offending kind for `CONTEXT_EVIDENCE_KIND`;
    - accept unique 8-hex id prefixes everywhere;
    - `ensure_ascii=False` in tool outputs.
-6. **Log every 429 wait** (count and seconds) as a runtime event.
+6. **Log every 429 wait** (count and seconds) as a runtime event. PR #32 already resends refused token-count preflights too, and releases the reservation when it gives up.
 
 **Tier 1: throughput and context (the biggest scale lever)**
 
@@ -238,6 +238,7 @@ The substrate changes in Tiers 1–2 are prerequisites for testing the society i
   - there is no per-request HTTP log, so 429 waits are inferred from timing (±1 s);
   - reservation waits cannot be separated out;
   - reasoning content is encrypted, so only its size is known.
+- **Code:** every arm ran the `src/` tree of `d9a9179` (main after #31). S-r2, the I arms and single also carried the first version of PR #32's 429 resend; the calibrations, the pilot and S attempt 1 did not.
 - **Scope of the results:** single model family (`gpt-6-sol`), one society run, two easy targets. The throttle-excess model was fitted on the unthrottled arms, with an error of −2% to +2.5% on those arms.
 - **Constraint deviation:** one analyst downloaded a public tokenizer vocabulary file (tiktoken, about 3.6 MB). No data was sent.
 - **Privacy:** every analysis stayed read-only on the run data and never read credentials. The OpenAI org id that appears in one error log was not copied.
