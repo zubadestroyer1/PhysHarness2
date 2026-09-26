@@ -9,9 +9,17 @@ import pytest
 from sqlalchemy import create_engine, event
 
 from physharness.artifacts import LocalArtifactStore
-from physharness.domain import CampaignCreate, ExperimentCreate, Principal, ProblemCreate
+from physharness.domain import (
+    BranchCreate,
+    CampaignCreate,
+    ExperimentCreate,
+    Principal,
+    ProblemCreate,
+    TaskCreate,
+)
 from physharness.service import HarnessService
 from physharness.storage import Database, EventRow
+from physharness.worker_authority import worker_effects
 from physharness.workforce_models import ConfigureWorkforceRequest, SeedPortfolioRequest
 
 
@@ -221,3 +229,44 @@ def test_postgres_lower_sequence_committing_late_is_still_delivered(pg_lab):
             experiment["id"], batch["delivery_id"], reader, f"ack-{attempt}"
         )
     assert sorted(delivered) == sorted([sent["late"], sent["early"]])
+
+
+@pytest.mark.integration
+def test_postgres_peer_wait_wakes_on_reply_sent_before_registration(pg_lab):
+    service, operator, experiment = pg_lab
+    researcher = Principal(id="researcher", project_id="network-pg", role="researcher")
+    agents = []
+    for name in ("alpha", "beta"):
+        branch = service.create_branch(
+            experiment["id"], BranchCreate(title=name, objective=name), researcher, name
+        )
+        agents.append(
+            Principal(
+                id=f"worker-{name}",
+                role="agent",
+                project_id="network-pg",
+                experiment_id=experiment["id"],
+                branch_id=branch["id"],
+            )
+        )
+    alpha, beta = agents
+    a_task = service.create_task(
+        TaskCreate(branch_id=alpha.branch_id, objective="A"), researcher, "a"
+    )
+    b_task = service.create_task(
+        TaskCreate(branch_id=beta.branch_id, objective="B"), researcher, "b"
+    )
+    lease_a = service.acquire_task(a_task["id"], "ha", 60, operator, "lease-a")
+    lease_b = service.acquire_task(b_task["id"], "hb", 60, operator, "lease-b")
+    with worker_effects(alpha, a_task["id"], "ha", lease_a["fence"]):
+        service.send_message(alpha.branch_id, beta.branch_id, "Question?", [], alpha, "q")
+    with worker_effects(beta, b_task["id"], "hb", lease_b["fence"]):
+        reply = service.send_message(beta.branch_id, alpha.branch_id, "Answer", [], beta, "r")
+    with worker_effects(alpha, a_task["id"], "ha", lease_a["fence"]):
+        wait = service.request_peer_wait(a_task["id"], beta.branch_id, 3600, alpha, "wait")
+    # The JSON-payload join between message events and records must match on PostgreSQL.
+    assert service.peer_wait_status(wait["intent"]["peer_wait"], alpha) == {
+        "ready": True,
+        "reason": "message_received",
+        "message_id": reply["id"],
+    }
