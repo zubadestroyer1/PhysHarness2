@@ -678,10 +678,11 @@ def test_direct_message_rejects_attachment_recipient_cannot_read(lab):
     secret = service.create_artifact(
         ArtifactCreate(
             experiment_id=experiment["id"],
+            branch_id=alpha.branch_id,
             kind="checkpoint",
             content="private state",
         ),
-        alpha,
+        author.model_copy(update={"role": "operator"}),
         "private-checkpoint",
     )
     with pytest.raises(HarnessError) as error:
@@ -729,10 +730,11 @@ def test_auto_return_omits_private_attachment_without_poisoning_parent(lab):
     private = service.create_artifact(
         ArtifactCreate(
             experiment_id=experiment["id"],
+            branch_id=child_agent.branch_id,
             kind="checkpoint",
             content="private state",
         ),
-        child_agent,
+        controller,
         "child-checkpoint",
     )
     child_lease = service.acquire_task(child["id"], "child-holder", 60, controller, "child-lease")
