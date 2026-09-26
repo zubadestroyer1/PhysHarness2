@@ -21,10 +21,11 @@ from physharness.errors import HarnessError
 from physharness.execution.e2b import E2BSandboxProvider
 from physharness.execution.local_docker import _GUEST, LocalDockerWorkspaceProvider
 from physharness.execution.types import CommandRequest, ExecutionError
-from physharness.execution.workspace_archive import checked_path
+from physharness.execution.workspace_archive import StreamedWorkspaceArchive, checked_path
 from physharness.orchestration.research_worker import research_tools
 from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
 from physharness.orchestration.workspaces import WorkspaceBroker
+from physharness.storage import LeaseRow
 
 IMAGE = "sha256:" + "a" * 64
 HOST = "unix:///tmp/physharness-failure-classification/docker.sock"
@@ -84,7 +85,7 @@ class GuestDocker:
         return any(call[0] == "rm" for call in self.calls)
 
 
-def local_broker(lab, tmp_path, **transport):
+def local_broker(lab, tmp_path, *, quota=None, **transport):
     _, service, experiment, _, _, args = setup(lab)
     root = tmp_path / "work"
     root.mkdir()
@@ -98,6 +99,7 @@ def local_broker(lab, tmp_path, **transport):
             timeout_seconds=timeout_seconds,
             runner=runner,
             journal=journal,
+            **({"workspace_quota_bytes": quota} if quota is not None else {}),
         )
         made.append(provider)
         return provider
@@ -428,20 +430,77 @@ async def test_hardlinked_files_are_checkpointed_under_every_name(lab, tmp_path)
     archive = broker.load_handoff_archive(
         exported["artifact"]["id"], exported["archive_sha256"], workspace["execution_id"]
     )
-    assert [(entry["path"], entry["sha256"]) for entry in archive.manifest["files"]] == [
-        ("Proof.backup.lean", hashlib.sha256(source).hexdigest()),
-        ("Proof.lean", hashlib.sha256(source).hexdigest()),
+    digest = hashlib.sha256(source).hexdigest()
+    # Stored once under the first name; the other name records the link.
+    assert archive.manifest["files"] == [
+        {"path": "Proof.backup.lean", "size": len(source), "sha256": digest, "chunks": [digest]},
+        {"path": "Proof.lean", "size": len(source), "sha256": digest, "link": "Proof.backup.lean"},
     ]
     assert archive.manifest["excluded_paths"] == [] and exported["excluded_count"] == 0
     assert_available(broker, service, experiment, workspace, runner)
 
 
-async def test_restore_writes_hardlinked_content_as_independent_files(tmp_path):
+# Defect: every name of a hard-linked file was charged against the checkpoint quota.
+
+
+async def test_hard_links_count_once_against_the_checkpoint_quota(lab, tmp_path):
+    broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path, quota=1_000_000)
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "data.bin", "content": "x" * 600_000}, "w1")
+    os.link(root / "data.bin", root / "data.backup")  # agent `ln data.bin data.backup`
+    result = await tools.checkpoint({}, "cp")
+    assert result["excluded_count"] == 0
+    archive = broker.load_handoff_archive(
+        result["artifact"]["id"], result["archive_sha256"], tools.workspace["execution_id"]
+    )
+    assert [(entry["path"], entry.get("link")) for entry in archive.manifest["files"]] == [
+        ("data.backup", None),
+        ("data.bin", "data.backup"),
+    ]
+    # The archive validator charges the linked data once, as tmpfs stores it once.
+    StreamedWorkspaceArchive.from_bytes(archive.data, quota_bytes=1_000_000)
+    await tools.close()
+    [teardown] = _operations(broker, service, experiment, "destroy")
+    assert teardown["inputs"]["final_checkpoint"]["status"] == "completed"
+
+
+async def test_hard_linked_files_are_readable_but_not_promotable(lab, tmp_path):
+    broker, service, experiment, runner, root, made = local_broker(lab, tmp_path)
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
+    os.link(root / "Proof.lean", root / "Proof.backup.lean")
+    os.symlink("Proof.lean", root / "Alias.lean")
+    read = await tools.read({"path": "Proof.backup.lean", "offset": 0, "length": 7}, "r1")
+    assert read["text"] == "theorem" and read["size_bytes"] == 28
+    workspace = tools.workspace
+    assert (
+        await broker.download_file(
+            workspace["id"],
+            expected_execution_id=workspace["execution_id"],
+            path="Proof.backup.lean",
+            operation_id="d1",
+        )
+    )["size_bytes"] == 28
+    with pytest.raises(HarnessError) as symlinked:  # Symlinks are still never followed.
+        await tools.read({"path": "Alias.lean", "offset": 0, "length": 7}, "r2")
+    assert symlinked.value.code == "WORKSPACE_TRANSFER_REJECTED"
+    with pytest.raises(ExecutionError) as promoted:  # Promotion keeps its single-link rule.
+        await made[0].capture_file(
+            "Proof.backup.lean", expected_execution_id=workspace["execution_id"], max_bytes=100
+        )
+    assert promoted.value.code == "WORKSPACE_TRANSFER_REJECTED"
+    assert_available(broker, service, experiment, workspace, runner)
+
+
+async def test_restore_recreates_hard_links(tmp_path):
     source_root, target_root = tmp_path / "source", tmp_path / "target"
     source_root.mkdir()
     target_root.mkdir()
     (source_root / "Proof.lean").write_bytes(b"proof")
+    (source_root / "nested").mkdir()
     os.link(source_root / "Proof.lean", source_root / "Copy.lean")
+    os.link(source_root / "Proof.lean", source_root / "nested" / "Deep.lean")
+    (source_root / "Twin.lean").write_bytes(b"proof")  # Equal bytes, separate file.
     archive, store = await _stream_export(_provider(source_root))
 
     async def read_chunk(chunk):
@@ -450,9 +509,78 @@ async def test_restore_writes_hardlinked_content_as_independent_files(tmp_path):
     await _provider(target_root).restore_workspace_stream(
         archive, expected_execution_id="container-abcdef", read_chunk=read_chunk
     )
-    assert sorted(os.listdir(target_root)) == ["Copy.lean", "Proof.lean"]
-    assert (target_root / "Copy.lean").read_bytes() == b"proof"
-    assert os.stat(target_root / "Copy.lean").st_nlink == 1  # The link itself is not restored.
+    names = ["Copy.lean", "Proof.lean", "nested/Deep.lean"]
+    inodes = {os.stat(target_root / name).st_ino for name in names}
+    assert len(inodes) == 1 and os.stat(target_root / "Proof.lean").st_nlink == 3
+    assert os.stat(target_root / "Twin.lean").st_ino not in inodes
+    assert all((target_root / name).read_bytes() == b"proof" for name in [*names, "Twin.lean"])
+
+
+async def test_inconsistent_hard_link_listing_is_refused(tmp_path):
+    provider = _provider(tmp_path)
+    empty = hashlib.sha256(b"").hexdigest()
+    listing = {  # Two names claim one inode but report different contents.
+        "files": [["A.lean", 0, empty, 1, 1, 7], ["B.lean", 0, "b" * 64, 1, 1, 7]],
+        "excluded_paths": [],
+    }
+
+    async def guest(action, *args, **kwargs):
+        assert action == "list3"
+        return json.dumps(listing).encode()
+
+    provider._guest = guest
+    with pytest.raises(ExecutionError, match="Hard link listing") as error:
+        await provider.export_workspace_stream(
+            expected_execution_id="container-abcdef", accept_chunk=None
+        )
+    assert error.value.code == "CHECKPOINT_MISMATCH"
+
+
+def test_link_entries_must_name_an_earlier_identical_file():
+    digest = hashlib.sha256(b"proof").hexdigest()
+    primary = {"path": "A.lean", "size": 5, "sha256": digest, "chunks": [digest]}
+    chunks = [{"sha256": digest, "size": 5, "artifact_id": "chunk"}]
+    link = {"path": "B.lean", "size": 5, "sha256": digest, "link": "A.lean"}
+    archive = StreamedWorkspaceArchive.build([primary, link], chunks, quota_bytes=5)
+    assert archive.manifest["files"][1]["link"] == "A.lean"
+    for bad in (
+        {**link, "link": "C.lean"},  # Names no file.
+        {**link, "link": "B.lean"},  # Names itself.
+        {**link, "size": 4},  # Differs from its target.
+        {**link, "sha256": "0" * 64},
+        {**link, "chunks": [digest]},  # Links carry no data of their own.
+    ):
+        with pytest.raises(ExecutionError):
+            StreamedWorkspaceArchive.build([primary, bad], chunks)
+    chained = {"path": "C.lean", "size": 5, "sha256": digest, "link": "B.lean"}
+    with pytest.raises(ExecutionError):  # Only a stored file can be a link target.
+        StreamedWorkspaceArchive.build([primary, link, chained], chunks)
+    earlier = {"path": "0.lean", "size": 5, "sha256": digest, "link": "A.lean"}
+    with pytest.raises(ExecutionError):  # The target precedes every other name.
+        StreamedWorkspaceArchive.build([earlier, primary], chunks)
+
+
+def test_guest_link_refuses_to_replace_or_follow(tmp_path):
+    root = tmp_path / "work"
+    root.mkdir()
+    (root / "Proof.lean").write_bytes(b"proof")
+    (root / "Taken.lean").write_bytes(b"other")
+    os.symlink("Proof.lean", root / "Alias.lean")
+
+    def link(path, target):
+        return subprocess.run(
+            [sys.executable, "-I", "-c", local_guest(root), "link", path, target],
+            capture_output=True,
+            cwd=root,
+        )
+
+    assert link("Taken.lean", "Proof.lean").returncode != 0
+    assert (root / "Taken.lean").read_bytes() == b"other"
+    assert link("Via.lean", "Alias.lean").returncode != 0
+    assert not (root / "Via.lean").exists()
+    done = link("sub/Copy.lean", "Proof.lean")
+    assert done.returncode == 0 and done.stdout == b"ok\n"
+    assert os.stat(root / "sub" / "Copy.lean").st_ino == os.stat(root / "Proof.lean").st_ino
 
 
 @pytest.mark.parametrize("occupant", ["symlink", "hardlink", "backslash"])
@@ -705,38 +833,64 @@ def _stop(service, broker, experiment, stop):
 
 
 @pytest.mark.parametrize("stop", ["pause", "cancel", "deadline"])
-async def test_close_keeps_vm_when_final_checkpoint_is_refused_before_dispatch(lab, tmp_path, stop):
+async def test_close_after_stop_takes_final_checkpoint_under_cleanup_authority(lab, tmp_path, stop):
     broker, service, experiment, runner, root, _ = local_broker(lab, tmp_path)
     tools = workspace_tools(broker, service, experiment)
     await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
     code = _stop(service, broker, experiment, stop)
+    with pytest.raises(HarnessError) as error:  # The model's own checkpoint stays refused.
+        await tools.checkpoint({}, "agent-checkpoint")
+    assert error.value.code == code
+    await tools.close()
+    closed = broker.inspect(tools.workspace["id"])
+    assert closed["status"] == "destroyed" and runner.removed()
+    assert service.ledger(experiment["id"], broker.actor)["active_workers"] == 0
+    archive = broker.load_handoff_archive(
+        closed["checkpoint_artifact_id"],
+        service.get_record("artifact", closed["checkpoint_artifact_id"], broker.actor)["sha256"],
+        closed["execution_id"],
+    )
+    assert [entry["path"] for entry in archive.manifest["files"]] == ["Proof.lean"]
+    [export] = _operations(broker, service, experiment, "export")
+    assert export["inputs"]["final_checkpoint"] is True
+    [teardown] = _operations(broker, service, experiment, "destroy")
+    assert teardown["inputs"]["final_checkpoint"]["artifact_id"] == closed["checkpoint_artifact_id"]
+    assert tools.cleanup_report["status"] == "destroyed"
+
+
+@pytest.mark.parametrize("oversized", [(), ("list3",)])
+async def test_close_after_lost_lease_keeps_vm_for_operator_reconciliation(
+    lab, tmp_path, oversized
+):
+    broker, service, experiment, runner, root, _ = local_broker(
+        lab, tmp_path, oversized=set(oversized)
+    )
+    tools = workspace_tools(broker, service, experiment)
+    await tools.write({"path": "Proof.lean", "content": "theorem x : True := trivial\n"}, "w1")
+    with service.db.transaction() as session:
+        session.get(LeaseRow, broker.task_id).expires_at = 0
     for _ in range(2):  # Repeated cleanup attempts never escalate to destruction.
         with pytest.raises(HarnessError) as error:
             await tools.close()
-        assert error.value.code == code
+        assert error.value.code == "WORKSPACE_RECONCILIATION_REQUIRED"
     assert not runner.removed() and (root / "Proof.lean").exists()
+    assert not any("list3" in call for call in runner.calls)  # Nothing was dispatched.
     workspace = broker.inspect(tools.workspace["id"])
-    assert workspace["status"] == "ready" and workspace["active_operation_id"] is None
-    assert _operations(broker, service, experiment, "export") == []
+    [export] = _operations(broker, service, experiment, "export")
+    assert workspace["status"] == "reconciliation_required"
+    assert workspace["active_operation_id"] == export["id"]
+    assert export["status"] == "reconciliation_required"
+    assert export["result"]["code"] == "STALE_LEASE"
     assert _operations(broker, service, experiment, "destroy") == []
-    assert tools.unresolved()  # The shared worker slot stays held for reconciliation.
-    if stop == "pause":
-        # Pause is resumable: once resumed, cleanup takes the final checkpoint first.
-        current = service.get_record("experiment", experiment["id"], broker.actor)
-        service.transition_experiment(
-            experiment["id"], "resume", current["revision"], broker.actor, "resume"
-        )
-        await tools.close()
-        closed = broker.inspect(tools.workspace["id"])
-        assert closed["status"] == "destroyed" and runner.removed()
-        archive = broker.load_handoff_archive(
-            closed["checkpoint_artifact_id"],
-            service.get_record("artifact", closed["checkpoint_artifact_id"], broker.actor)[
-                "sha256"
-            ],
-            closed["execution_id"],
-        )
-        assert [entry["path"] for entry in archive.manifest["files"]] == ["Proof.lean"]
+    assert service.ledger(experiment["id"], broker.actor)["uncertain_operations"] == 1
+    assert tools.cleanup_report == {
+        "workspace_id": workspace["id"],
+        "execution_id": workspace["execution_id"],
+        "status": "reconciliation_required",
+        "final_checkpoint": None,
+        "code": "WORKSPACE_RECONCILIATION_REQUIRED",
+        "operation_id": export["id"],
+    }
 
 
 # Defect: an unsafe promotion path escaped the tool envelope as ExecutionError.

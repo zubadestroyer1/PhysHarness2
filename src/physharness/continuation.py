@@ -85,8 +85,11 @@ class ContinuationMixin:
                 raise HarnessError(
                     "RECOVERY_SCOPE", "Pause or cancel the attempt before retirement."
                 )
-            if task.payload.get("status") not in {"blocked", "failed"}:
-                raise HarnessError("RECOVERY_SCOPE", "Only terminal failed tasks qualify.")
+            # A worker that lost its lease cannot mark the task terminal, so a running
+            # task qualifies as an abandoned attempt only when the original lease checked
+            # below has expired; no worker can commit under it again.
+            if task.payload.get("status") not in {"blocked", "failed", "running"}:
+                raise HarnessError("RECOVERY_SCOPE", "Only failed or abandoned attempts qualify.")
             if (
                 task.payload.get("experiment_id") != data["experiment_id"]
                 or task.payload.get("branch_id") != data["branch_id"]

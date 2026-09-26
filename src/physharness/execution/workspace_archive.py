@@ -333,25 +333,28 @@ class StreamedWorkspaceArchive:
             paths = set()
             used = set()
             references = 0
+            stored = {}
             for entry in files:
-                if not isinstance(entry, dict) or set(entry) != {
-                    "path",
-                    "size",
-                    "sha256",
-                    "chunks",
-                }:
+                if not isinstance(entry, dict) or set(entry) not in (
+                    {"path", "size", "sha256", "chunks"},
+                    {"path", "size", "sha256", "link"},
+                ):
                     raise ValueError("Invalid file entry")
-                path, size, digest, refs = (
-                    entry["path"],
-                    entry["size"],
-                    entry["sha256"],
-                    entry["chunks"],
-                )
+                path, size, digest = entry["path"], entry["size"], entry["sha256"]
                 checked_path(path)
                 if path in paths or type(size) is not int or not 0 <= size <= quota_bytes:
                     raise ValueError("Invalid or duplicate file")
                 if not isinstance(digest, str) or not _DIGEST.fullmatch(digest):
                     raise ValueError("Invalid file digest")
+                if "link" in entry:
+                    # Another name (hard link) of an earlier stored file: the same data,
+                    # stored and charged against the quota once, as the guest holds it.
+                    target = entry["link"]
+                    if not isinstance(target, str) or stored.get(target) != (size, digest):
+                        raise ValueError("Invalid hard link")
+                    paths.add(path)
+                    continue
+                refs = entry["chunks"]
                 if not isinstance(refs, list) or len(refs) > max_refs:
                     raise ValueError("Invalid file chunks")
                 if any(not isinstance(ref, str) or ref not in chunk_map for ref in refs):
@@ -363,6 +366,7 @@ class StreamedWorkspaceArchive:
                 if total > quota_bytes or references > max_refs:
                     raise ExecutionError("WORKSPACE_LIMIT", "Workspace checkpoint exceeds quota")
                 paths.add(path)
+                stored[path] = (size, digest)
                 used.update(refs)
             if files != sorted(files, key=lambda entry: entry["path"]) or used != set(chunk_map):
                 raise ValueError("Noncanonical file or unused chunk")

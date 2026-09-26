@@ -42,6 +42,8 @@ class WorkspacePolicy(StrictModel):
 class WorkspaceTools:
     def __init__(self, broker, policy: WorkspacePolicy):
         self.broker, self.policy, self.workspace = broker, policy, None
+        # Set by close(): the VM's resulting status and any final checkpoint or refusal.
+        self.cleanup_report: dict | None = None
         task = broker.service.get_record("task", broker.task_id, broker.actor)
         experiment = broker.service.get_record("experiment", task["experiment_id"], broker.actor)
         target = broker.service.get_record("problem", experiment["problem_id"], broker.actor)
@@ -451,33 +453,55 @@ print(json.dumps({
             and row["status"] != "destroyed"
         ]
 
+    def _report(self, observed, final_checkpoint=None, error=None):
+        """Record what cleanup did to the VM, for the controller's failure evidence."""
+        current = self.broker.inspect(observed["id"])
+        self.cleanup_report = {
+            "workspace_id": observed["id"],
+            "execution_id": observed["execution_id"],
+            "status": current["status"],
+            "final_checkpoint": final_checkpoint,
+            "code": getattr(error, "code", None),
+            **(
+                {"operation_id": current.get("active_operation_id")}
+                if current["status"] not in {"ready", "destroyed"}
+                else {}
+            ),
+        }
+
     async def close(self):
         # Cleanup precedes lease release and never fabricates a provider invoice.
         if self.workspace is not None:
             observed = self.broker.inspect(self.workspace["id"])
             if observed["status"] != "destroyed":
                 if observed["status"] != "ready":
-                    raise HarnessError(
+                    error = HarnessError(
                         "WORKSPACE_RECONCILIATION_REQUIRED",
                         "Uncertain workspace cannot be destroyed during automatic cleanup.",
                     )
+                    self._report(observed, error=error)
+                    raise error
                 final_checkpoint = None
                 if self.broker.provider_spec["provider"] == "local_docker":
                     operation_id = f"final-checkpoint:{self.broker.holder}"
                     try:
+                        # A read of the agent's own workspace for preservation: it needs
+                        # the current lease and slot, not an active experiment or task.
                         exported = await self.broker.export_workspace(
                             observed["id"],
                             expected_execution_id=observed["execution_id"],
                             operation_id=operation_id,
+                            final=True,
                         )
-                    except HarnessError:
+                    except HarnessError as error:
                         # Teardown without an archive needs a dispatched final checkpoint
                         # durably recorded as a definite refusal of the transfer itself.
-                        # Guard refusals (paused or cancelled experiment, deadline, lost
-                        # lease) record nothing and keep the VM, as do uncertain outcomes.
+                        # A lost lease records the VM for operator reconciliation, and
+                        # uncertain outcomes are already recorded; both keep the VM.
                         rejected = self.broker.rejected_transfer(observed["id"], operation_id)
                         current = self.broker.inspect(observed["id"])["status"]
                         if rejected is None or current != "ready":
+                            self._report(observed, error=error)
                             raise
                         final_checkpoint = {
                             "status": "rejected",
@@ -492,15 +516,20 @@ print(json.dumps({
                             "excluded_count": exported.get("excluded_count"),
                             "excluded_paths": exported.get("excluded_paths"),
                         }
-                await self.broker.destroy(
-                    observed["id"],
-                    expected_execution_id=observed["execution_id"],
-                    operation_id=f"cleanup:{self.broker.holder}",
-                    actual_cost_usd="0"
-                    if self.broker.provider_spec["provider"] == "local_docker"
-                    else None,
-                    final_checkpoint=final_checkpoint,
-                )
+                try:
+                    await self.broker.destroy(
+                        observed["id"],
+                        expected_execution_id=observed["execution_id"],
+                        operation_id=f"cleanup:{self.broker.holder}",
+                        actual_cost_usd="0"
+                        if self.broker.provider_spec["provider"] == "local_docker"
+                        else None,
+                        final_checkpoint=final_checkpoint,
+                    )
+                except HarnessError as error:
+                    self._report(observed, final_checkpoint, error)
+                    raise
+                self._report(observed, final_checkpoint)
         if self.unresolved():
             raise HarnessError(
                 "WORKSPACE_RECONCILIATION_REQUIRED",

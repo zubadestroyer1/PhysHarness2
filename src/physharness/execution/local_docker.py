@@ -58,12 +58,16 @@ def parent(p,create=False):
         nxt=os.open(part,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=fd)
         os.close(fd);fd=nxt
     return fd,parts[-1]
+def inside(s):
+    # Hard links cannot leave /work's own file system, so a regular file there, under any
+    # of its names, is workspace content. Symlinks are never followed (O_NOFOLLOW).
+    return stat.S_ISREG(s.st_mode) and s.st_dev==os.lstat(root).st_dev
 def get(p):
     fd,name=parent(p)
     try:
         h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
         try:
-            s=os.fstat(h);assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
+            s=os.fstat(h);assert inside(s)
             with os.fdopen(os.dup(h),'rb') as f:return f.read()
         finally:os.close(h)
     finally:os.close(fd)
@@ -159,6 +163,17 @@ elif action=='commit_stage':
         finally:os.close(h)
     finally:os.close(fd)
     print('ok')
+elif action=='link':
+    # Restore another name of an already restored regular file; never replace an entry.
+    tfd,tname=parent(sys.argv[3])
+    try:
+        fd,name=parent(path,True)
+        try:
+            assert inside(os.stat(tname,dir_fd=tfd,follow_symlinks=False))
+            os.link(tname,name,src_dir_fd=tfd,dst_dir_fd=fd,follow_symlinks=False)
+        finally:os.close(fd)
+    finally:os.close(tfd)
+    print('ok')
 elif action=='capture':
     try:
         limit=int(sys.argv[3]);assert 0<limit<=4000000
@@ -199,7 +214,7 @@ elif action=='slice':
     try:
         h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
         try:
-            s=os.fstat(h);assert stat.S_ISREG(s.st_mode) and s.st_nlink==1
+            s=os.fstat(h);assert inside(s)
             sha=hashlib.sha256()
             with os.fdopen(os.dup(h),'rb') as stream:
                 while chunk:=stream.read(1048576):sha.update(chunk)
@@ -220,7 +235,7 @@ elif action in ('list','list3','quiescent'):
     assert not live, 'Checkpoint requires a quiescent workspace'
     if action=='quiescent':
         print('ok');sys.exit(0)
-    result=[];excluded=[]
+    result=[];excluded=[];hashed={}
     device=os.lstat(root).st_dev
     def omit(relative):
         # Links, special files, secrets, caches, unreadable entries and names no archive can
@@ -248,9 +263,11 @@ elif action in ('list','list3','quiescent'):
             full=os.path.join(folder,f);relative=os.path.relpath(full,root)
             s=None if secret(f) or not portable(relative) else status(full)
             # Hard links cannot leave /work's own file system, so every name of a regular
-            # file there is ordinary workspace content.
+            # file there is ordinary workspace content. list3 reports the inode so the
+            # host stores and charges linked data once and restores the link itself.
             if s is None or not stat.S_ISREG(s.st_mode) or s.st_dev!=device:
                 omit(relative);continue
+            identity=(s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)
             fd,name=parent(relative)
             try:
                 try:h=os.open(name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=fd)
@@ -259,19 +276,20 @@ elif action in ('list','list3','quiescent'):
                 try:
                     observed=os.fstat(h)
                     assert stat.S_ISREG(observed.st_mode)
-                    assert (s.st_ino,s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(
+                    assert identity==(
                         observed.st_ino,observed.st_size,observed.st_mtime_ns,observed.st_ctime_ns)
-                    sha=hashlib.sha256()
-                    if action=='list3':
+                    if action=='list3' and identity not in hashed:
+                        sha=hashlib.sha256()
                         with os.fdopen(os.dup(h),'rb') as stream:
                             while part:=stream.read(1048576):sha.update(part)
+                        hashed[identity]=sha.hexdigest()
                 finally:os.close(h)
             finally:os.close(fd)
             if action=='list3':
                 after=os.lstat(full)
-                assert (s.st_size,s.st_mtime_ns,s.st_ctime_ns)==(
-                    after.st_size,after.st_mtime_ns,after.st_ctime_ns)
-                result.append([relative,s.st_size,sha.hexdigest(),s.st_mtime_ns,s.st_ctime_ns])
+                assert identity==(after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns)
+                result.append([relative,s.st_size,hashed[identity],s.st_mtime_ns,s.st_ctime_ns,
+                               s.st_ino])
             else:result.append([relative,s.st_size])
     result.sort(key=lambda row:row[0])
     print(json.dumps({'files':result,'excluded_paths':excluded},separators=(',',':')))
@@ -780,16 +798,29 @@ class LocalDockerWorkspaceProvider:
         self._identity(expected_execution_id)
         before = json.loads(await self._guest("list3", max_output=4_000_000))
         listing = before["files"]
+        # The first (sorted) name of each inode stores its data; tmpfs holds it only once.
+        stored = {}
+        for row in listing:
+            stored.setdefault(row[5], row)
         if (
             len(listing) > 10_000
             or len(before["excluded_paths"]) > 10_000
-            or sum(row[1] for row in listing) > self.workspace_quota_bytes
+            or sum(row[1] for row in stored.values()) > self.workspace_quota_bytes
         ):
             raise ExecutionError("WORKSPACE_LIMIT", "Workspace exceeds checkpoint quota")
         files = []
         chunks = {}
-        for path, size, expected_hash, mtime, ctime in listing:
+        for path, size, expected_hash, mtime, ctime, inode in listing:
             checked_path(path)
+            first = stored[inode]
+            if first[0] != path:
+                # Another name of a file already read: record the link, not a second copy.
+                if first[1:5] != [size, expected_hash, mtime, ctime]:
+                    raise ExecutionError("CHECKPOINT_MISMATCH", "Hard link listing is inconsistent")
+                files.append(
+                    {"path": path, "size": size, "sha256": expected_hash, "link": first[0]}
+                )
+                continue
             file_hash = hashlib.sha256()
             refs = []
             for offset in range(0, size, CHUNK_SIZE):
@@ -829,6 +860,10 @@ class LocalDockerWorkspaceProvider:
         declarations = {entry["sha256"]: entry for entry in archive.manifest["chunks"]}
         for entry in archive.manifest["files"]:
             path, total = entry["path"], entry["size"]
+            if "link" in entry:
+                # Its target sorts first, so it is already restored and verified below.
+                await self._guest("link", path, arguments=[checked_path(entry["link"])])
+                continue
             token = uuid4().hex
             digest = hashlib.sha256()
             offset = 0
@@ -851,9 +886,14 @@ class LocalDockerWorkspaceProvider:
             await self._guest("commit_stage", path, arguments=[str(total), entry["sha256"], token])
         observed = json.loads(await self._guest("list3", max_output=4_000_000))
         expected = [
-            [entry["path"], entry["size"], entry["sha256"]] for entry in archive.manifest["files"]
+            [entry["path"], entry["size"], entry["sha256"], entry.get("link", entry["path"])]
+            for entry in archive.manifest["files"]
         ]
-        actual = [[row[0], row[1], row[2]] for row in observed["files"]]
+        first = {}
+        for row in observed["files"]:
+            first.setdefault(row[5], row[0])
+        # Each restored name must also share exactly the recorded file (hard link) or none.
+        actual = [[row[0], row[1], row[2], first[row[5]]] for row in observed["files"]]
         if actual != expected:
             raise ExecutionError(
                 "CHECKPOINT_MISMATCH", "Restored workspace differs from checkpoint"
