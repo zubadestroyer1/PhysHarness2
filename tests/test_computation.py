@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -388,7 +389,7 @@ PLACEHOLDER = "TODO(pin-at-rebuild)"
 
 
 def test_workbench_definition_gates_unpinned_builds(tmp_path):
-    """The image definition cannot build while any pin is a placeholder (no Docker used)."""
+    """The pinned definition passes its gate; any placeholder fails it (no Docker used)."""
     dockerfile = (ROOT / "formal/workbench-v2.Dockerfile").read_text()
     lock = (ROOT / "formal/workbench-requirements.lock").read_text()
     start = dockerfile.index("RUN if grep -v '^[[:space:]]*#' /opt/workbench/requirements.lock")
@@ -404,14 +405,17 @@ def test_workbench_definition_gates_unpinned_builds(tmp_path):
         }
         return subprocess.run(["/bin/sh", "-c", gate], env=environment, capture_output=True)
 
-    pinned = lock.replace("==" + PLACEHOLDER, "==1.0").replace(
-        "sha256:" + PLACEHOLDER, "sha256:" + "b" * 64
-    )
-    assert f'ARG LEAN_REPL_REVISION="{PLACEHOLDER}"' in dockerfile
-    assert gate_status(lock, "d" * 40, "c" * 64).returncode == 1
-    assert gate_status(pinned, PLACEHOLDER, PLACEHOLDER).returncode == 1
-    assert gate_status(pinned, "d" * 40, "C" * 64).returncode == 1
-    assert gate_status(pinned, "d" * 40, "c" * 64).returncode == 0
+    revision = re.search(r'^ARG LEAN_REPL_REVISION="([^"]*)"$', dockerfile, re.M).group(1)
+    digest = re.search(r'^ARG LEAN_REPL_SHA256="([^"]*)"$', dockerfile, re.M).group(1)
+    version = re.search(r"^cvxpy==(\S+)", lock, re.M).group(1)
+    wheel = re.search(r"--hash=sha256:([0-9a-f]{64})", lock).group(1)
+    assert gate_status(lock, revision, digest).returncode == 0
+    unpinned_version = lock.replace("cvxpy==" + version, "cvxpy==" + PLACEHOLDER, 1)
+    assert gate_status(unpinned_version, revision, digest).returncode == 1
+    assert gate_status(lock.replace(wheel, PLACEHOLDER, 1), revision, digest).returncode == 1
+    assert gate_status(lock, PLACEHOLDER, digest).returncode == 1
+    assert gate_status(lock, revision, PLACEHOLDER).returncode == 1
+    assert gate_status(lock, revision, digest.upper()).returncode == 1
 
     import_check = next(line for line in dockerfile.splitlines() if "import numpy," in line)
     imported = import_check.split("import ", 1)[1].split(";", 1)[0].split(",")

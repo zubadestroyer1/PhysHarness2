@@ -76,7 +76,7 @@ EVENTS = [
 ]
 
 
-def society_export(*, accepted=True):
+def society_export(*, accepted=True, events=EVENTS):
     """A small society run: five nodes, duplicated claims, reviews, fetches and a receipt."""
     problem = {
         "id": "problem",
@@ -116,7 +116,7 @@ def society_export(*, accepted=True):
             "artifact_kind": "runtime_event",
             "sha256": sha(content),
         }
-        for index, content in enumerate(EVENTS)
+        for index, content in enumerate(events)
     ]
     return {
         "format": "physharness.reproduction.v1",
@@ -253,6 +253,10 @@ def test_metrics_over_a_society_export_directory(tmp_path):
     buckets = ("commons_society", "math_lean_computation", "other", "unclassified")
     assert tuple(mix[bucket] for bucket in buckets) == (4, 3, 1, 1)
     assert mix["commons_society_share"] == pytest.approx(4 / 9, abs=1e-6)
+    # Lean formalization: the two lean_check calls; run_computation is mathematics only.
+    assert mix["lean_formalization"] == 2
+    assert mix["lean_formalization_share"] == pytest.approx(2 / 9, abs=1e-6)
+    assert mix["lean_formalization_share_of_math"] == pytest.approx(2 / 3, abs=1e-6)
     assert mix["by_tool"]["lean_check"] == 2 and mix["stagnation_warnings"] == 1
     assert mix["runtime_events"] == mix["runtime_events_read"] == len(EVENTS)
     assert metrics["lean_checks_per_accepted_result"] == 2.0
@@ -269,6 +273,16 @@ def test_bare_manifest_reports_the_tool_mix_unavailable(tmp_path):
     assert metrics["accepted_root"] is False and metrics["time_to_root_seconds"] is None
     assert metrics["cost_per_accepted_result_usd"] is None
     assert metrics["stale_claim_count"] == 0 and metrics["live_claim_count"] == 4
+
+
+def test_lean_share_of_math_is_null_without_math_calls(tmp_path):
+    events = [event("tool_completed", "commons_post"), event("tool_completed", "load_skill")]
+    directory = write_export(tmp_path / "export", society_export(events=events), events)
+    manifest, read_artifact = metrics_tool.load_export(directory)
+    mix = metrics_tool.compute_metrics(manifest, read_artifact, as_of=T0)["tool_call_mix"]
+    assert mix["total"] == 2 and mix["math_lean_computation"] == 0
+    assert mix["lean_formalization"] == 0 and mix["lean_formalization_share"] == 0.0
+    assert mix["lean_formalization_share_of_math"] is None
 
 
 def test_tampered_runtime_event_bytes_are_rejected(tmp_path):
@@ -376,3 +390,10 @@ def test_every_catalog_tool_has_a_documented_bucket():
     plan = (ROOT / "work/society-s1/RUN_PLAN.md").read_text()
     section = plan.split("## 7.", 1)[1].split("## 8.", 1)[0]
     assert all(f"`{name}`" in section for name in metrics_tool.OTHER)
+
+
+def test_lean_formalization_is_catalogued_mathematics():
+    lean = metrics_tool.LEAN_FORMALIZATION
+    assert lean < metrics_tool.MATH_LEAN_COMPUTATION
+    assert lean <= set(SOCIETY_TOOL_NAMES) | legacy_tool_names()
+    assert metrics_tool.LEAN_CHECKS <= lean

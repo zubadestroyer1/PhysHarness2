@@ -155,6 +155,23 @@ BUCKETS = {
     "other": OTHER,
 }
 LEAN_CHECKS = frozenset({"lean_check", "lean_sketch", "run_lean_scratch", "check_lean_type"})
+# The part of MATH_LEAN_COMPUTATION that writes, checks or looks up Lean. Runtime events
+# carry only tool names, so `shell` calls that run `lake` or `lean` are not attributed.
+LEAN_FORMALIZATION = frozenset(
+    {
+        # Society profile.
+        "lean_check",
+        "lean_sketch",
+        "search_library",
+        "read_source",
+        # Legacy profile.
+        "run_lean_scratch",
+        "check_lean_type",
+        "lookup_library_declaration",
+        "lookup_library_source",
+        "search_library_source",
+    }
+)
 
 
 def _epoch(stamp):
@@ -381,6 +398,7 @@ def _tool_calls(records, read_artifact):
     for name, count in tools.items():
         bucket = next((key for key, names in BUCKETS.items() if name in names), None)
         groups[bucket or "unclassified"] += count
+    lean = sum(count for name, count in tools.items() if name in LEAN_FORMALIZATION)
     mix = {
         "available": True,
         "runtime_events": len(events),
@@ -390,7 +408,10 @@ def _tool_calls(records, read_artifact):
         "math_lean_computation": groups["math_lean_computation"],
         "other": groups["other"],
         "unclassified": groups["unclassified"],
+        "lean_formalization": lean,
         "commons_society_share": _share(groups["commons_society"], total),
+        "lean_formalization_share": _share(lean, total),
+        "lean_formalization_share_of_math": _share(lean, groups["math_lean_computation"]),
         "by_tool": _sorted(tools),
         "stagnation_warnings": stagnation,
     }

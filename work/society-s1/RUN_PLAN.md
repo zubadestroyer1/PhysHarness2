@@ -325,7 +325,7 @@ proof and transcript bytes, so keep them private.
 | Cost per accepted node | `cost_per_accepted_result_usd`, `spent_cost_usd`, `tokens_spent` | Canonical ledger. |
 | Duplicated-work fraction | `duplicate_claim_fraction`, `claimed_nodes`, `duplicate_claimed_nodes` | An upper bound: a claim record keeps only its first claim and last expiry. There is no claim-based baseline for the last run, so compare against the audited overlap in the arm reports. |
 | Idle and waiting fraction; post-acceptance spend | Not computed | Needs event timelines, which the export does not contain. Use the database event log, as the earlier pilot evaluators did. |
-| Coordination versus mathematics | `tool_call_mix` (`commons_society`, `math_lean_computation`, `other`, `unclassified`, `by_tool`) | Counts calls, not tokens. It needs the runtime-event artifact bytes in the export directory; otherwise `available` is false. The buckets are listed below the table. |
+| Coordination versus mathematics | `tool_call_mix` (`commons_society`, `math_lean_computation`, `other`, `unclassified`, `by_tool`; Lean effort: `lean_formalization`, `lean_formalization_share`, `lean_formalization_share_of_math`) | Counts calls, not tokens. It needs the runtime-event artifact bytes in the export directory; otherwise `available` is false. The buckets are listed below the table. |
 | Citation and reuse rate | `citations`, `cross_branch_citations`, `cross_branch_dependencies` | Confirm lemma reuse in the accepted proof by manual audit, as in the Duffing report. |
 | Retrieval hit rate | Not computed | S1 has no accepted non-root nodes to retrieve. |
 | Live approach families | `branches.labs`, `nodes_by_type` | Proxies. The count over time needs periodic exports. |
@@ -342,7 +342,8 @@ exactly one bucket; `tests/test_society_metrics.py` enforces this. A tool in no 
 - `commons_society`: commons, inbox, messaging, recruitment, waiting, delegation,
   discussion, return and review tools.
 - `math_lean_computation`: shell, file, Lean, library, computation, candidate and
-  verification tools.
+  verification tools. The Lean and library tools also count as `lean_formalization`;
+  `shell` calls that run `lake` or `lean` do not, because events carry only tool names.
 - `other` (memory, knowledge, literature and skills): society `search_literature`,
   `fetch_source`, `notebook`, `load_skill`, `read_artifact`; legacy `checkpoint_context`,
   `checkpoint_research_notes`, `history_page`, `index_page`, `read_artifact`,

@@ -1,20 +1,18 @@
 # Research workbench v2 derived from the measured physics image. Build this only on
 # the dedicated Linux Docker endpoint, then record and use the resulting digest.
 #
-# Workbench v2 is a definition only: rebuild and qualification are pending user
-# approval. formal/workbench.Dockerfile (v1) stays the qualified definition until
-# then. The build context is exactly this file plus workbench-requirements.lock (see
-# docs/FORMAL_ENVIRONMENT.md, "Workbench v2 (pending rebuild)"). Replace every
-# TODO(pin-at-rebuild) in this file and in the lock first. The pin gate below fails
-# the build while any placeholder or malformed pin remains.
+# Every pin was resolved on 2026-09-25. formal/workbench.Dockerfile (v1) stays the
+# qualified definition until v2 is requalified. The build context is exactly this file
+# plus workbench-requirements.lock (see docs/FORMAL_ENVIRONMENT.md, "Workbench v2").
+# The pin gate below fails the build while any placeholder or malformed pin remains.
 ARG BASE_IMAGE=sha256:84deccc518a7aa5ce916d15236dac5ae416a5288449bd8620a2c8bb374c24b67
 FROM ${BASE_IMAGE}
 USER root
 # The leanprover-community/repl commit whose lean-toolchain is exactly the image's
-# leanprover/lean4:v4.33.0, and the SHA256 of that commit's codeload tarball.
+# leanprover/lean4:v4.33.0 (tag v4.33.0), and the SHA256 of that commit's codeload tarball.
 # Edit these defaults instead of passing --build-arg, so this file identifies the image.
-ARG LEAN_REPL_REVISION="TODO(pin-at-rebuild)"
-ARG LEAN_REPL_SHA256="TODO(pin-at-rebuild)"
+ARG LEAN_REPL_REVISION="bbeedf38e0898869fc3b7c009e1ea877b46204e4"
+ARG LEAN_REPL_SHA256="399e80f48ba3f76b2baa35e1c8693415047611073e09610cc575cf146bf5f14e"
 COPY workbench-requirements.lock /opt/workbench/requirements.lock
 RUN if grep -v '^[[:space:]]*#' /opt/workbench/requirements.lock | grep 'TODO(pin-at-rebuild)'; then \
         echo 'Unpinned workbench-requirements.lock: resolve every TODO(pin-at-rebuild).' >&2; \
@@ -29,7 +27,7 @@ RUN if grep -v '^[[:space:]]*#' /opt/workbench/requirements.lock | grep 'TODO(pi
 # are resolved from that snapshot; the resulting image digest pins actual bytes.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-numpy python3-scipy python3-sympy python3-mpmath ripgrep \
-    python3-networkx python3-matplotlib python3-z3 python3-pip && \
+    python3-networkx python3-matplotlib python3-z3 python3-pip python3-cffi && \
     rm -rf /var/lib/apt/lists/*
 # Wheels the snapshot does not package, pinned by exact version and SHA256. --no-deps:
 # every runtime dependency is a Debian package above or its own pinned lock line, and
