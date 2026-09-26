@@ -137,12 +137,15 @@ chmod; it has passed Buildx's nonexecuting check but was not rebuilt end to end 
 these changes. Exact observed recovery Dockerfiles, their inputs and evidence hashes are
 in [physics evidence](../formal/evidence/physics/index.json).
 
-## Workbench v2 (pending rebuild)
+## Workbench v2
 
 `formal/workbench-v2.Dockerfile` defines the next research workbench. It is v1 plus
 numerics packages for `run_computation` and a persistent Lean REPL for `lean_check`.
-**It has not been built or qualified.** Rebuilding it on the dedicated Colima/Linux
-builder and requalifying the workbench both need user approval.
+Its pins were resolved on 2026-09-25. It was then built on the `physharness-pilot`
+builder as
+`sha256:1830c99e8c5abc0ade48d98860d541f7f50eb6f1cdfefde2395315e1290debc5`, and the
+opt-in real-image workbench tests passed against it. **Capacity requalification is
+still pending.** Until it passes, no workspace template or worker image digest uses v2.
 
 `formal/workbench.Dockerfile` (v1) is unchanged. It remains the qualified workbench
 definition until v2 is rebuilt and qualified, and pilot freeze manifests reference it.
@@ -169,35 +172,27 @@ files the checker trusts. So the result is VM-attested evidence, not an acceptan
 | Component | Route | Pin status |
 | --- | --- | --- |
 | numpy, scipy, sympy, mpmath, ripgrep | Debian snapshot (unchanged) | Snapshot; the 2026-09-23 build observed 1.24.2, 1.10.1, 1.11.1, 1.2.1 |
-| networkx, matplotlib, z3 | Debian snapshot: `python3-networkx`, `python3-matplotlib`, `python3-z3` | Snapshot resolves versions; confirm the packages at rebuild |
+| networkx, matplotlib, z3, cffi | Debian snapshot: `python3-networkx`, `python3-matplotlib`, `python3-z3`, `python3-cffi` (clarabel needs cffi) | Snapshot; the 2026-09-25 build resolved 2.8.8, 3.6.3, 4.8.12, 1.15.1 |
 | pip (installer only) | Debian snapshot: `python3-pip` | Snapshot |
-| python-flint, cvxpy, clarabel, scs, osqp | pip wheels from `formal/workbench-requirements.lock` (`--no-deps --require-hashes --only-binary=:all:`, then `pip check`) | **TODO(pin-at-rebuild)**: versions and hashes |
-| Lean REPL | `leanprover-community/repl` commit tarball, SHA256-verified, built by the image's `lake` into `/opt/lean-repl` | **TODO(pin-at-rebuild)**: commit and tarball SHA256 |
+| python-flint, cvxpy, clarabel, scs, osqp, qdldl | pip wheels from `formal/workbench-requirements.lock` (`--no-deps --require-hashes --only-binary=:all:`, then `pip check`) | Pinned: 0.9.0, 1.6.0, 0.11.1, 3.3.1, 0.6.7.post3, 0.1.9.post1, with aarch64 and x86_64 wheel hashes |
+| Lean REPL | `leanprover-community/repl` commit tarball, SHA256-verified, built by the image's `lake` into `/opt/lean-repl` | Pinned: tag `v4.33.0` = `bbeedf38e0898869fc3b7c009e1ea877b46204e4`, whose `lean-toolchain` is `leanprover/lean4:v4.33.0` |
 
-The five pip packages use pip because, as far as could be determined offline, bookworm
-does not package them. The snapshot itself could not be queried offline. The same goes
-for the three new apt packages: their names are believed correct but were not checked.
-Before building, confirm both inside the base image, for example with
-`apt-cache policy python3-networkx python3-matplotlib python3-z3 python3-flint python3-cvxpy python3-osqp python3-scs python3-clarabel`.
-If the snapshot does package any of the five pip packages, move it to the apt line and
-delete its lock line.
+`apt-cache policy` in the base image confirmed the apt names. It found no bookworm
+package for python-flint, cvxpy, clarabel, scs, osqp or qdldl, so those stay pip wheels.
+Two constraints shape the lock:
 
-Every remaining placeholder is `TODO(pin-at-rebuild)`. These values could not be
-determined offline:
+- scipy 1.10.1 caps cvxpy at 1.6.0, because 1.6.1 and later require scipy>=1.11.0.
+- cvxpy 1.6.0 reads OSQP 0.6 status codes. osqp 1.x renumbers them, and a preflight with
+  osqp 1.1.3 misreported infeasible and unbounded QPs. osqp therefore stays on 0.6.x,
+  with its qdldl dependency pinned.
 
-- `LEAN_REPL_REVISION` and `LEAN_REPL_SHA256` (`ARG` defaults in the v2 Dockerfile). The only
-  local REPL checkout reaches tag `v4.33.0-rc1` (`1d238373119fa7cdb72ed7c24f6723d135b5b5fc`).
-  That commit declares `leanprover/lean4:v4.33.0-rc1`, so it would fail the build's
-  exact-toolchain check. Use the upstream `v4.33.0` tag commit instead.
-- In `formal/workbench-requirements.lock`, the exact version and the aarch64 and x86_64
-  wheel SHA256 values for python-flint, cvxpy, clarabel, scs and osqp. Add a pinned line
-  for any dependency that Debian does not provide.
+The lock header records the full resolution.
 
 The v2 Dockerfile has a pin gate that runs before anything is installed. It fails the build
 while the lock contains `TODO(pin-at-rebuild)`, or while either REPL pin is not an exact
 hex commit or hex SHA256. An unpinned image therefore cannot be built by accident.
 
-After approval, rebuild as follows:
+To rebuild, follow these steps:
 
 1. Pin the REPL. Resolve the tag with
    `git ls-remote https://github.com/leanprover-community/repl refs/tags/v4.33.0`. Download
@@ -217,6 +212,9 @@ After approval, rebuild as follows:
    tar -C formal -cf - workbench-v2.Dockerfile workbench-requirements.lock | \
      docker build --file workbench-v2.Dockerfile --tag physharness-workbench:v2 -
    ```
+
+   On macOS, add `--no-mac-metadata --no-xattrs` to `tar`. Otherwise the daemon rejects
+   the context with `lsetxattr ... com.apple.provenance: operation not supported`.
 
 4. Record the measured image digest. Requalify the workbench, including the pinned
    REPL path `/opt/lean-repl/.lake/build/bin/repl`, before switching any workspace
