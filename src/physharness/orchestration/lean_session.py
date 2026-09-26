@@ -8,7 +8,8 @@ Backends, chosen once per workspace:
 
 A check's ``axioms`` are the file's own ``#print axioms`` output, which the file can redefine.
 ``verify_statement`` is the separate judgement a local compile rests on, on every backend: a
-harness-authored checker that reads the compiled file as data.
+harness-authored checker that loads the compiled file as data. Compiling the file runs its
+compile-time code in the VM, which can tamper with the check like any shell command.
 
 Every result is evidence only: ``proof_status`` stays ``not_accepted``.
 """
@@ -327,13 +328,77 @@ def lean_code(source: str) -> str:
 _BRACKETS = {"(": ")", "[": "]", "{": "}", "⟨": "⟩", "⦃": "⦄"}
 _CLOSERS = frozenset(_BRACKETS.values())
 _WHERE = re.compile(r"(?<![\w.'!?])where(?![\w'!?])")
-_HEADER_COMMAND = re.compile(
-    r"(?:public\s+)?(?:meta\s+)?import\s+[A-Za-z_][\w.']*"
-    r"|open(?:\s+scoped)?(?:\s+[A-Z][\w.']*)+(?:\s*\(\s*[\w.'!?]+(?:\s+[\w.'!?]+)*\s*\))?"
-    r"|set_option\s+[A-Za-z_][\w.]*\s+(?:true|false|[0-9]+|\x00[0-9A-F]{16}\x00)"
-    r"|universe(?:\s+[a-z](?:_?[0-9]+|[₀-₉]+)?)+"
+_END_MARK = "\x01"
+# Lean identifiers (Lean's isIdFirst and isIdRest): ASCII letters, `_`, Greek but λ, Π and Σ,
+# Coptic, polytonic Greek, letter-like symbols and mathematical alphanumerics; then also
+# digits, `'` and subscripts. `!` and `?` are left out: no namespace or universe name needs
+# them, and a keyword may end in one (Mathlib's `variable?`).
+_ID_FIRST = (
+    "A-Za-z_\u03b1-\u03ba\u03bc-\u03c9\u0391-\u039f\u03a1\u03a4-\u03a9\u03ca-\u03fb"
+    "\u1f00-\u1ffe\u2100-\u214f\U0001d49c-\U0001d59f"
 )
-_OPEN_CONTINUATION = re.compile(r"[A-Z][\w.']*(?:\s+[A-Z][\w.']*)*")
+_ATOM = f"[{_ID_FIRST}][{_ID_FIRST}0-9'\u2080-\u2089\u2090-\u209c\u1d62-\u1d6a]*"
+_IDENT = rf"{_ATOM}(?:\.{_ATOM})*"
+_GAP = "[ \t]+"
+_IMPORT = re.compile(r"(?:public\s+)?(?:meta\s+)?import\s+[A-Za-z_][\w.']*")
+_OPEN = re.compile(
+    rf"open(?:{_GAP}scoped)?(?P<names>(?:{_GAP}{_IDENT})+)"
+    r"(?:[ \t]*\([ \t]*[\w.'!?]+(?:[ \t]+[\w.'!?]+)*[ \t]*\))?"
+)
+_UNIVERSE = re.compile(rf"universe(?P<names>(?:{_GAP}{_ATOM})+)")
+_SET_OPTION = re.compile(
+    rf"set_option{_GAP}(?P<option>{_IDENT}){_GAP}"
+    r"(?P<value>true|false|[0-9]+|\x00[0-9A-F]{16}\x00)"  # a string is an opaque token
+)
+_OPEN_CONTINUATION = re.compile(rf"{_IDENT}(?:{_GAP}{_IDENT})*")
+# An identifier-shaped word Lean reads as a keyword ends an open or universe command and may
+# start another command (`open Real set_option ...`, `universe u in`). These are Lean 4.33's
+# command keywords without an underscore, `in` and open's modifiers, and Mathlib's
+# underscore-free commands. Every other Lean and Mathlib command keyword is snake_case, which
+# no namespace or universe name is, so a snake_case word is refused too; a dotted name is
+# never a keyword (Lean reads `end.x` as one identifier). Any other keyword there is a parse
+# error, which fails closed.
+_COMMAND_WORDS = frozenset(
+    "abbrev alias attribute axiom class coinductive def deriving dsimproc elab end example "
+    "export hiding import in include inductive infix infixl infixr initialize instance lemma "
+    "local macro meta module mutual namespace noncomputable nonrec notation notation3 omit "
+    "opaque open partial postfix prefix prelude private protected public recall renaming "
+    "reprove scoped seal section simproc structure syntax theorem universe unsafe unseal "
+    "variable".split()
+)
+_SNAKE_CASE = re.compile(r"[a-z_]*_[a-z_]*")
+# The options a header may set: elaboration limits, auto-bound implicits, display and
+# linters. Each only bounds or reports elaboration; others can write files
+# (`trace.profiler.output`), skip the kernel (`debug.skipKernelTC`), change code generation
+# or turn the harness's own `sorry` into an error (`warningAsError`).
+HEADER_OPTIONS = (
+    "maxHeartbeats",
+    "maxRecDepth",
+    "maxSynthPendingDepth",
+    "synthInstance.maxHeartbeats",
+    "synthInstance.maxSize",
+    "exponentiation.threshold",
+    "autoImplicit",
+    "relaxedAutoImplicit",
+)
+HEADER_OPTION_PREFIXES = ("pp.", "linter.")
+HEADER_RULES = (
+    "A header holds only import, open, set_option and universe lines, one command per line "
+    "(an open may continue on indented lines); set_option only for "
+    + ", ".join(HEADER_OPTIONS)
+    + " and pp.* or linter.* options, with a true, false or number value."
+)
+
+
+def _unterminated(text: str) -> bool:
+    """Whether ``text`` ends inside a block comment, literal or quotation, which Lean would
+    continue into the text the harness appends (the signature, or ``:= sorry``)."""
+    code = _scanned(text + "\n" + _END_MARK)
+    return code is None or not code.endswith(_END_MARK)
+
+
+def _command_word(name: str) -> bool:
+    return name in _COMMAND_WORDS or bool(_SNAKE_CASE.fullmatch(name))
 
 
 def signature_problem(signature) -> str | None:
@@ -342,15 +407,18 @@ def signature_problem(signature) -> str | None:
     The harness elaborates ``theorem <name> <signature> := ...``, which must stay one
     declaration whose value is the harness's. A declaration value starts only at ``:=``, at
     ``| pattern => value`` alternatives or at ``where``. Outside comments, literals and
-    brackets the signature may hold none of them, and its brackets must balance, so no text
-    in it can end the declaration and run commands of its own (``#exit``, say). A ``let``,
-    ``match`` or ``fun`` with alternatives in the type goes in parentheses.
+    brackets the signature may hold none of them, its brackets must balance, and it may not
+    end inside a comment or literal, so no text in it can end the declaration and run
+    commands of its own (``#exit``, say). A ``let``, ``match`` or ``fun`` with alternatives
+    in the type goes in parentheses.
     """
     if not isinstance(signature, str) or not signature.strip():
         return "empty"
     code = _scanned(signature)
     if not code or not code.strip():
         return "unreadable"
+    if _unterminated(signature):
+        return "unterminated"
     stack, bar = [], False
     for index, character in enumerate(code):
         if character in _BRACKETS:
@@ -376,8 +444,12 @@ def header_problem(header) -> str | None:
     None.
 
     Each non-blank line must be one whole such command (an ``open`` may continue on
-    indented lines of namespaces), so no header text can run other commands (``#exit``, an
-    instance, a macro). ``open ... in``, ``hiding`` and ``renaming`` are not header lines.
+    indented lines of namespaces), none of whose names is a command keyword, and the header
+    may not end inside a comment or literal. So no header text can run other commands
+    (``#exit``, an instance, a macro, ``namespace``). ``open ... in`` and ``set_option ...
+    in`` (which would scope the header line to whichever command follows it, the reference
+    theorem in one file and a helper in another), ``hiding`` and ``renaming`` are not header
+    lines. Only the ``HEADER_OPTIONS`` and ``HEADER_OPTION_PREFIXES`` options may be set.
     """
     if header is None:
         return None
@@ -386,16 +458,36 @@ def header_problem(header) -> str | None:
     code = _scanned(header)
     if code is None:
         return "unreadable"
+    if _unterminated(header):
+        return "unterminated"
     opened = False
     for line in code.split("\n"):
         text = line.strip()
         if not text:
             continue
-        if opened and line[:1].isspace() and _OPEN_CONTINUATION.fullmatch(text):
-            continue
-        if not _HEADER_COMMAND.fullmatch(text):
+        command = _OPEN.fullmatch(text) or _UNIVERSE.fullmatch(text)
+        option = _SET_OPTION.fullmatch(text)
+        continued = False
+        if command is not None:
+            names = command["names"].split()
+        elif option is not None or _IMPORT.fullmatch(text):
+            names = []
+        elif opened and line[:1].isspace() and _OPEN_CONTINUATION.fullmatch(text):
+            names, continued = text.split(), True
+        else:
             return "header_line"
-        opened = text.startswith("open")
+        if any(_command_word(name) for name in names):
+            return "header_line"
+        if option is not None and (
+            option["value"].startswith("\x00")  # a string
+            or not (
+                option["option"] in HEADER_OPTIONS
+                or option["option"].startswith(HEADER_OPTION_PREFIXES)
+            )
+        ):
+            return "set_option_not_allowed"
+        if not continued:
+            opened = text.startswith("open")
     return None
 
 
@@ -436,9 +528,9 @@ def _require_statement_shape(header: str, signature: str) -> None:
             "INVALID_ARGUMENTS",
             f"The Lean {subject} is not a plain {subject} ({problem}).",
             status=422,
-            remediation="A header holds only import, open, set_option and universe lines; a "
-            "signature is binders then ': type', with any let, match or fun alternatives "
-            "in parentheses and no ':=' or 'where' outside brackets.",
+            remediation=f"{HEADER_RULES} A signature is binders then ': type', with any "
+            "let, match or fun alternatives in parentheses, no ':=' or 'where' outside "
+            "brackets, and no unclosed comment or literal.",
         )
 
 
@@ -820,11 +912,16 @@ class LeanSession:
         harness checker (``formal_tools/statement_check.lean``) judges it.
 
         The source, and the reference ``<header> theorem <name> <signature> := sorry``, are
-        compiled to .olean files in the workspace. The checker reads both as data and runs
-        none of the source's code: it replays the source's declarations through the kernel,
-        compares the theorem's elaborated type and universe parameters with the reference's,
-        and collects the theorem's axioms itself. This is the same on every backend, so what
-        the source prints (``#print axioms`` included) never enters the judgement.
+        compiled to .olean files in the workspace. The checker process loads both as data and
+        runs none of the source's code: it replays the source's declarations through the
+        kernel, compares the theorem's elaborated type and universe parameters with the
+        reference's (each with its own file's definitions, such as ``match`` matchers,
+        unfolded), and collects the theorem's axioms itself. This is the same on every
+        backend, so what the source prints (``#print axioms`` included) and how it elaborates
+        (instances, macros, options) never enter the judgement. Compiling the source does run
+        its compile-time code (``#eval``, ``run_cmd``) in the agent-controlled VM, which can
+        tamper with the checker, the reference or imported .olean files like any shell
+        command: the verdict is VM-attested evidence, never acceptance.
 
         Returns ``{ok, reason, axioms, detail, backend}``; anything but a well-formed
         success, an unreadable answer included, is ``ok: False``.
