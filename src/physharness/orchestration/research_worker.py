@@ -1777,6 +1777,19 @@ class ResearchTaskExecutor:
                 f"task-output:{task_id}:{result.session.id}",
             )
             await cleanup()
+            teardown = getattr(workspace_tools, "cleanup_report", None) or {}
+            if (
+                teardown.get("status") == "destroyed"
+                and (teardown.get("final_checkpoint") or {}).get("status") == "rejected"
+            ):
+                # The workspace is gone without an archive: report it as a failure with
+                # evidence rather than completing as if nothing were lost.
+                raise HarnessError(
+                    "WORKSPACE_CHECKPOINT_UNSAVED",
+                    "The VM was destroyed after its final checkpoint was refused.",
+                    remediation="Inspect the refused final checkpoint recorded in the "
+                    "failure evidence and on the workspace destroy operation.",
+                )
             finish_status = "completed"
             if result.completion_reason == "target_verified":
                 joined = self.service.joined_task_statuses(task_id, agent)
@@ -1821,6 +1834,9 @@ class ResearchTaskExecutor:
                 if current_task.get("research_progress_status") == "recovery_exhausted"
                 else getattr(error, "code", "EXECUTION_FAILED")
             )
+            # What cleanup did to the VM: a saved final checkpoint, a teardown after a
+            # refused one, or a VM kept for operator reconciliation.
+            workspace_cleanup = getattr(workspace_tools, "cleanup_report", None)
             failure_artifact = self.service.create_artifact(
                 ArtifactCreate(
                     experiment_id=experiment["id"],
@@ -1835,8 +1851,17 @@ class ResearchTaskExecutor:
                             "message": (
                                 str(error)
                                 if getattr(error, "code", None)
-                                in {"TOKEN_BUDGET_EXCEEDED", "BUDGET_EXCEEDED"}
+                                in {
+                                    "TOKEN_BUDGET_EXCEEDED",
+                                    "BUDGET_EXCEEDED",
+                                    "WORKSPACE_CHECKPOINT_UNSAVED",
+                                }
                                 else "Inspect logs; external calls may need reconciliation."
+                            ),
+                            **(
+                                {"workspace_cleanup": workspace_cleanup}
+                                if workspace_cleanup is not None
+                                else {}
                             ),
                         }
                     ),

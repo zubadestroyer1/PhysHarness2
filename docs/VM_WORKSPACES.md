@@ -139,7 +139,7 @@ Provision requires a positive, conservative, operator-supplied USD cost bound wi
 
 **The controller must keep a shared worker slot held while any workspace referencing it is live, pending, or uncertain.** Destroying a VM settles only its cost reservation, never the parent slot. Before settling the parent in worker cleanup, inspect every canonical workspace with the same `shared_worker_slot_id`; anything except confirmed `destroyed` requires holding that slot and reconciliation. This dependency is a controller integration requirement; a separate operator call to the generic ledger can still bypass it.
 
-Every dispatch and successful completion validates operator authority, project/task scope, experiment state, current holder/fence, workspace ownership, exact execution ID, and shared-slot binding. Cancellation blocks execution/upload/export. Destruction checks the same identity and current lease, but permits a cancelled experiment so its current worker can clean up before ending its lease. Lost leases cannot commit successful outcomes or settle reservations. No claim is made that SQL fencing can stop a remote process instantaneously: a lease lost during a provider call produces `reconciliation_required`, and the reservation remains held.
+Every dispatch and successful completion validates operator authority, project/task scope, experiment state, current holder/fence, workspace ownership, exact execution ID, and shared-slot binding. Cancellation blocks execution, upload and ordinary export. Destruction, and the final checkpoint that local cleanup takes immediately before it, check the same identity, current lease and shared-slot binding but permit a paused, cancelled or deadline-expired experiment and a cancelled task, so the current worker can preserve its workspace and clean up before ending its lease. Lost leases cannot commit successful outcomes or settle reservations. No claim is made that SQL fencing can stop a remote process instantaneously: a lease lost during a provider call produces `reconciliation_required`, and the reservation remains held.
 
 Operation fingerprints bind the exact command, content hash, cost inputs, provider specification, task holder/fence and shared-slot ID. Canonical pending records are not automatically retried. Repeated successful commands replay their stored results; provision replay returns the workspace's **current** canonical state, including `destroyed`. Missing local handles after restart require reconciliation rather than automatic reconnect/allocation. `inspect(workspace_id)` is an operator-only read of current canonical state; it grants no mutation authority and can be used after lease loss.
 
@@ -195,17 +195,39 @@ isolation within the VM; generated programs can access their authorized guest en
 Checkpoints capture regular files under the configured root only. Outputs deliberately written
 elsewhere must be copied or published explicitly before cleanup.
 
-On the local Docker workbench every name of a hard-linked regular file under `/work` is saved as
-an ordinary file (the link itself is not restored). Symlinks, special files, secret or cache
-names, unreadable entries, and names no archive can hold (a backslash, a component over 255
-bytes, a path over 1,024 bytes, or undecodable bytes) are excluded without refusing the
-checkpoint. The manifest lists them in `excluded_paths`; the checkpoint result reports
-`excluded_count` and a bounded `excluded_paths` sample, with U+FFFD for backslashes and
-undecodable bytes and a trailing ellipsis on over-long paths. Automatic cleanup takes a final
-checkpoint and records it on the destroy operation as `final_checkpoint`. It destroys the VM only
-after that checkpoint completed or was dispatched and recorded as a definite transfer refusal;
-an authority refusal before dispatch (paused or cancelled experiment, deadline, lost lease)
-leaves the VM ready for reconciliation.
+On the local Docker workbench a hard-linked regular file under `/work` is stored once, under
+its first name in path order. Each other name is a manifest entry whose `link` names that file;
+it carries the same `size` and `sha256` but no chunks, and restore recreates it as a hard link.
+Linked data counts once against the checkpoint quota, as tmpfs stores it once, so a workspace
+that fits its tmpfs checkpoints and restores within the same quota. `read_workspace_file` reads
+any name of a regular file on `/work`'s own file system and never follows a symlink;
+`store_workspace_artifact` and `submit_workspace_candidate` still accept only a file with a
+single link. Symlinks, special files, secret or cache names, unreadable entries, and names no
+archive can hold (a backslash, a component over 255 bytes, a path over 1,024 bytes, or
+undecodable bytes) are excluded without refusing the checkpoint. The manifest lists them in
+`excluded_paths`; the checkpoint result reports `excluded_count` and a bounded `excluded_paths`
+sample, with U+FFFD for backslashes and undecodable bytes and a trailing ellipsis on over-long
+paths.
+
+Automatic cleanup takes a final checkpoint under cleanup authority: like destruction, it needs
+only the task's current lease, fence and worker slot, so a paused or cancelled experiment, an
+exhausted runtime deadline or a cancelled task does not block it (the model's own
+`checkpoint_workspace` stays refused then). Its export operation records
+`final_checkpoint: true`, and the destroy operation records the result as `final_checkpoint`.
+Cleanup destroys the VM, and the Responses worker then settles its worker slot, only after that
+checkpoint completed or was dispatched and durably recorded as a definite transfer refusal
+(`WORKSPACE_TRANSFER_REJECTED` or `WORKSPACE_LIMIT`). A refusal tears the workspace down without
+an archive: the workbench container is ephemeral (it exits at its lifetime), and keeping it
+would let an unarchivable agent-made workspace hold the experiment's slot until an operator
+intervened. That teardown is reported, not silent: the worker records the cleanup outcome as
+`workspace_cleanup` in the task's `execution_failure` evidence, and a task that would otherwise
+complete ends `blocked` with code `WORKSPACE_CHECKPOINT_UNSAVED`. If the lease or worker slot is
+already lost when the final checkpoint would start, nothing is dispatched or destroyed: the
+workspace and an undispatched final `export` operation (its `result.code` names the lost
+authority) become `reconciliation_required`, the VM reservation is held as uncertain and the
+worker slot stays held, so [local workspace recovery](LOCAL_WORKSPACE_RECOVERY.md) applies. A
+final checkpoint whose outcome is uncertain, such as a lease lost mid-transfer, is recorded in
+the same state by ordinary uncertainty handling.
 
 Qualified templates must precreate the configured workspace directory for command-first use.
 The upload helper creates it when uploading the first file. Commands do not inject hidden
