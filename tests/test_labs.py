@@ -512,3 +512,32 @@ def test_recruit_cannot_bridge_the_cross_lab_message_block(lab):
     assert not [
         m for m in messages(service, author, experiment) if m["recipient_branch_id"] == beta["id"]
     ]
+
+
+def test_orchestrator_forks_into_no_lab_it_does_not_belong_to(lab):
+    """create_branch applies the recruitment lab rule: an agent joins only its own lab."""
+    service, author, experiment, (alpha, beta), (worker_a, _) = society_lab(lab)
+    orchestrator = Principal(
+        id="orchestration-agent",
+        role="agent",
+        project_id=author.project_id,
+        experiment_id=experiment["id"],
+        agent_orchestrator=True,
+    )
+    fork = BranchCreate(title="f", objective="f", parent_id=beta["id"])
+    error = rejected(lambda: service.create_branch(experiment["id"], fork, orchestrator, "fork"))
+    assert (error.code, error.status) == ("LAB_MEMBERSHIP", 403)
+    # A root it creates founds its own lab; a scoped worker still forks into its own lab.
+    root = service.create_branch(
+        experiment["id"], BranchCreate(title="r", objective="r"), orchestrator, "root"
+    )
+    assert root["lab"] == "lab-" + root["id"][:8]
+    own = service.create_branch(
+        experiment["id"],
+        BranchCreate(title="o", objective="o", parent_id=alpha["id"]),
+        worker_a,
+        "own-fork",
+    )
+    assert own["lab"] == alpha["lab"]
+    # Operators and researchers place forks as before.
+    assert service.create_branch(experiment["id"], fork, author, "placed")["lab"] == beta["lab"]

@@ -122,7 +122,9 @@ tools, the prompts and the delivery shapes.
   - Only platform code moves a node. A sound referee quorum makes it refereed, unless a
     standing `wrong` verdict vetoes it or gap reports match the sound verdicts. A
     faithful fidelity review of a statement that elaborates makes it formally stated,
-    unless a standing `unfaithful` verdict vetoes that Lean statement.
+    unless a standing `unfaithful` verdict vetoes that Lean statement. A standing
+    `wrong` vetoes every promotion above informal: refereed, formally stated and a local
+    compile alike.
     A node's Lean header may hold only import, open, set_option and universe lines, one
     command per line and with no command keyword among their names. It may set only
     elaboration limits, auto-bound implicits and `pp.*` or `linter.*` options: others can
@@ -163,6 +165,11 @@ tools, the prompts and the delivery shapes.
     acceptance is trusted: the independent receipt on the exact target accepts the goal.
   - Changing a Lean statement moves the node back down. The statement digest encodes the
     header, name and statement unambiguously (a canonical JSON array).
+  - The author sets or replaces a node's Lean statement. A branch holding a live claim
+    sets one only on a node below formally stated whose statement is missing, does not
+    elaborate, or is its own (the node records its `lean_writer`). So no claimant voids
+    another writer's fidelity reviews or demotes a formal node; it proposes a change on
+    the thread instead.
   - In S1 no platform path refutes a node or accepts a non-root node.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL
   (default 900 s) unless renewed by activity. Several branches may hold one claim, and
@@ -187,10 +194,25 @@ tools, the prompts and the delivery shapes.
     once the others are used; `cross_model` reports whether each referee avoided them;
   - unreachable by direct message or delegation from other branches.
 
-  A node cannot shop for verdicts: each text version gets at most the positive verdicts
-  it needs plus two referees (`REVIEW_RETRIES`), so `referee_quorum + 2` informal
-  referees in all and three per Lean statement, and at most nine fidelity referees per
-  node (`REVIEW_LIMIT`). A referee that ends without a verdict does not count.
+  A node cannot shop for verdicts:
+  - Each text version gets at most the positive verdicts it needs plus two referees
+    (`REVIEW_RETRIES`): `referee_quorum + 2` informal referees and three per Lean
+    statement. Each branch that writes a node's Lean statements gets at most nine
+    fidelity referees for them (`REVIEW_LIMIT`), so a claimant never spends the author's.
+    A referee that ends without a verdict does not count.
+  - A gap report is not a veto and uses no retry budget: the author answers it on the
+    thread and asks again, and a sound majority outvotes it. Only when the gap reports
+    alone reach `referee_quorum + 2`, so no sound majority fits the budget, is the panel
+    closed; a revised claim is then a new node.
+  - A standing verdict ends the panel (`REVIEW_VETOED`): a `wrong` one refuses further
+    referees of either scope, an `unfaithful` one further fidelity referees for that Lean
+    statement.
+  - Reviews follow the normalized statement text (statement and assumptions, NFKC,
+    case-folded, whitespace collapsed, assumptions in any order). The earliest-created
+    node with a text that is open or has drawn a referee holds its reviews; a later
+    node restating it draws none (`DUPLICATE_STATEMENT`, naming that node). So a
+    re-post after a veto inherits it, and a later copy never takes an earlier node's
+    reviews. A node closed before any review leaves the text to the next one.
 
   The referee submits one verdict. Negative verdicts stay on the thread as objections.
   Its tool profile only reads and checks: no `commons_node`, `commons_claim`,
@@ -199,7 +221,9 @@ tools, the prompts and the delivery shapes.
   objections only on the assigned node's thread.
 - **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
   (`lab="new"`), up to `lab_size_max`. An agent cannot recruit into another lab, so no
-  outsider fills a lab or plants a child in it to relay messages across labs. `message(to="lab")` fans out to the lab. Direct
+  outsider fills a lab or plants a child in it to relay messages across labs. Forks
+  (`create_branch`) follow the same rule, so a branchless orchestrator agent cannot fork
+  another branch into that branch's lab. `message(to="lab")` fans out to the lab. Direct
   messages across labs are refused unless the policy allows them, so cross-lab
   discourse goes through the commons.
 
@@ -222,17 +246,24 @@ The prompt carries the constitution (community norms and an optional playbook), 
 frontier, the lab roster and the agent's claimed nodes. A referee gets a referee
 constitution instead, with no playbook, and its notes name only referee-profile tools.
 Its frontier's node titles and statements arrive fenced as untrusted author data, like
-its review packet, since they may come from the author of the node it reviews.
+its review packet, since they may come from the author of the node it reviews. So does
+everything its `commons_read`, `commons_query`, `inbox` and `read_artifact` return,
+except platform-written cursors, offsets and delivery ids. `read_artifact` opens the
+referee's own artifacts and those that the node, or another branch's post on its thread,
+cites: the referee's own posts never widen that scope, and the thread search reads the
+earliest posts first and fails closed past its bound.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
 that lists the available tools. Rejections count per native session whatever the name,
 so a model that keeps inventing names reaches the stagnation warning after four and the
-stagnation handoff after eight. Optional check-ins and stagnation nudges are switched
+stagnation handoff after eight. That warning is separate from the repeated-read warning,
+so neither silences the other. Optional check-ins and stagnation nudges are switched
 per campaign. The finite supervisor runs the referee tasks its own lineages request,
 and synthesis tasks that have no parent branch. A platform-rooted task it runs (a
 referee, or a parentless synthesis) adds its lineage to the run's own, so a review
 that such a task requests runs in the same run. Every society run adopts a queued
 parentless synthesis, so two concurrent runs may pick the same one; the run that finds
-it already leased skips it without recording an outcome.
+it already leased skips it without recording an outcome. A lease conflict on a synthesis
+the run scheduled itself is still recorded as its outcome.
 
 Operators prepare a society arm from a run plan with a `society` block. See
 `work/society-s1/run-plan.example.json` and the

@@ -27,8 +27,12 @@ What exists (Tasks 1–10):
     branches. The first referee runs a model family other than the author's (for
     fidelity, also other than every claimant's) when one exists, and a quorum spreads
     over the configured families.
-    A standing `wrong` vetoes refereed and a standing `unfaithful` vetoes formally
-    stated; each text version gets a bounded referee panel (`REVIEW_LIMIT`).
+    A standing `wrong` vetoes every promotion above informal and a standing
+    `unfaithful` vetoes formally stated; either ends its panel. Each text version gets a
+    bounded referee panel (`REVIEW_LIMIT`) that gap reports do not use up, each Lean
+    statement writer a bounded fidelity budget, and reviews follow the normalized
+    statement text, so a restated node draws no fresh panel. Only the author replaces
+    another writer's elaborated Lean statement or a formal node's.
   - Informal verdicts are sound, gaps or wrong; fidelity verdicts are faithful or
     unfaithful. Ladder moves are bound to evidence: the review quorum, Lean elaboration,
     and a local compile that passes the harness statement check. That check replays the
