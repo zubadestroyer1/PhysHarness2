@@ -12,6 +12,7 @@ from test_sharing import approaches
 
 from physharness.domain import canonical_json
 from physharness.errors import HarnessError
+from physharness.execution.types import GUEST_PYTHON
 from physharness.orchestration.computation import PACKAGES, PROBE, ComputationRunner
 
 SCRIPT_SHA = "a" * 64
@@ -77,7 +78,7 @@ async def test_run_records_reproducibility_artifact(lab):
     )
 
     (probe_args, probe_op), (run_args, run_op) = tools.calls
-    assert probe_args["argv"] == ["python3", "-c", PROBE, "sim/run.py"]
+    assert probe_args["argv"] == [*GUEST_PYTHON, "-c", PROBE, "sim/run.py"]
     assert probe_args["cwd"] == "."
     assert probe_args["timeout_seconds"] <= 600
     assert run_args == {
