@@ -114,13 +114,17 @@ class StreamVM:
     async def create(self):
         return self
 
-    async def export_workspace_stream(self, *, expected_execution_id, accept_chunk):
+    async def export_workspace_stream(
+        self, *, expected_execution_id, accept_chunk, before_read=None
+    ):
         assert expected_execution_id == self.execution_id
         self.export_calls += 1
         entries, chunks = [], {}
         for path, data in sorted(self.files.items()):
             refs = []
             for offset in range(0, len(data), CHUNK_SIZE):
+                if before_read is not None:  # The broker's hook precedes each guest read.
+                    await before_read()
                 piece = data[offset : offset + CHUNK_SIZE]
                 ref = digest(piece)
                 refs.append(ref)

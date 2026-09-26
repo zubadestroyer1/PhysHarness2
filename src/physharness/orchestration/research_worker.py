@@ -1960,18 +1960,45 @@ class ResearchTaskExecutor:
             )
             await cleanup()
             teardown = getattr(workspace_tools, "cleanup_report", None) or {}
+            evidence_ids, warnings = [artifact["id"]], []
             if (
                 teardown.get("status") == "destroyed"
                 and (teardown.get("final_checkpoint") or {}).get("status") == "rejected"
             ):
-                # The workspace is gone without an archive: report it as a failure with
-                # evidence rather than completing as if nothing were lost.
-                raise HarnessError(
-                    "WORKSPACE_CHECKPOINT_UNSAVED",
-                    "The VM was destroyed after its final checkpoint was refused.",
-                    remediation="Inspect the refused final checkpoint recorded in the "
+                unsaved = {
+                    "code": "WORKSPACE_CHECKPOINT_UNSAVED",
+                    "message": "The VM was destroyed after its final checkpoint was refused.",
+                    "remediation": "Inspect the refused final checkpoint recorded in the "
                     "failure evidence and on the workspace destroy operation.",
+                }
+                if result.completion_reason != "target_verified":
+                    # The workspace is gone without an archive: report it as a failure
+                    # with evidence rather than completing as if nothing were lost.
+                    raise HarnessError(
+                        unsaved["code"], unsaved["message"], remediation=unsaved["remediation"]
+                    )
+                # The target is independently verified, so the outcome stands; the lost
+                # workspace is attached to it as warning evidence instead.
+                warning = self.service.create_artifact(
+                    ArtifactCreate(
+                        experiment_id=experiment["id"],
+                        branch_id=branch["id"],
+                        kind="execution_failure",
+                        content=canonical_json(
+                            {
+                                "task_id": task_id,
+                                "severity": "warning",
+                                "outcome": "target_verified",
+                                **unsaved,
+                                "workspace_cleanup": teardown,
+                            }
+                        ),
+                    ),
+                    actor,
+                    f"checkpoint-warning:{holder}",
                 )
+                evidence_ids.append(warning["id"])
+                warnings.append({"code": unsaved["code"], "artifact_id": warning["id"]})
             finish_status = "completed"
             if result.completion_reason == "target_verified":
                 joined = self.service.joined_task_statuses(task_id, agent)
@@ -1981,7 +2008,7 @@ class ResearchTaskExecutor:
                 task_id,
                 holder,
                 lease["fence"],
-                [artifact["id"]],
+                evidence_ids,
                 finish_status,
                 actor,
                 f"task-complete:{task_id}:{result.session.id}",
@@ -1990,6 +2017,7 @@ class ResearchTaskExecutor:
                 "task_id": task_id,
                 "status": completed["status"],
                 "artifact_id": artifact["id"],
+                **({"warnings": warnings} if warnings else {}),
             }
         except BaseException as error:
             if running is not None:
