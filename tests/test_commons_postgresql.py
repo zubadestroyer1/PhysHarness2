@@ -185,13 +185,14 @@ def test_commons_queries_compile_for_postgresql():
         "scope": "fidelity",
         "statement_sha256": "s",
         "lean_statement_sha256": "l",
+        "lean_writer": "w",
     }
     node = SimpleNamespace(project_id="p", id="n", payload={"experiment_id": "e"})
     CommonsReviewMixin._open_review_task(session, experiment, assignment)
     list(CommonsDiscourseMixin._live_claim_rows(session, "p", "e", 1.0, node_id="n"))
     CommonsMixin._experiment_dependencies(session, experiment)
     CommonsMixin._commons_edges(session, "p", "e", {"n"})
-    # The referee panel bound (per Lean statement, then per node) and claimant families.
+    # The referee panel bound (per Lean statement, then per writer) and claimant families.
     assert CommonsReviewMixin._review_panel(session, experiment, assignment) == []
     assert CommonsReviewMixin._claimant_families(session, node, [{}]) == set()
     compiled = [
@@ -201,3 +202,16 @@ def test_commons_queries_compile_for_postgresql():
     assert "NOT (EXISTS" in compiled[0]
     assert all(" OR (EXISTS" in text for text in compiled[4:6])
     assert " IN (SELECT" in compiled[6]
+    # The earlier same-statement node search orders by the node-creation event sequence.
+    owner = _Capture()
+    owner.scalar = lambda statement: owner.statements.append(statement) or 1
+    row = SimpleNamespace(
+        project_id="p",
+        id="n",
+        payload={"experiment_id": "e", "statement_key": "k", "statement": "S", "assumptions": []},
+    )
+    assert CommonsReviewMixin._statement_owner(owner, row) is None
+    compiled = [
+        str(statement.compile(dialect=postgresql.dialect())) for statement in owner.statements
+    ]
+    assert len(compiled) == 2 and all("min(events.sequence)" in text for text in compiled)

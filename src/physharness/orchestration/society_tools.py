@@ -33,7 +33,12 @@ from ..commons_models import (
     NodePostCreate,
     axiom_refusal,
 )
-from ..commons_review import REVIEW_VERDICTS, is_referee_task
+from ..commons_review import (
+    REFEREE_DATA_NOTE,
+    REVIEW_VERDICTS,
+    fence_author_data,
+    is_referee_task,
+)
 from ..domain import Principal
 from ..errors import HarnessError
 from ..execution import ToolDispatcher
@@ -436,6 +441,25 @@ def _node_view(record):
     }
     if "auto_subscribed" in record:
         view["auto_subscribed"] = record["auto_subscribed"]
+    return view
+
+
+def _referee_view(result, keep=(), *, items=False):
+    """A tool result as a referee reads it: the ``keep`` fields, which only the platform
+    writes (cursors, offsets, delivery ids), as they are, and every other field fenced as
+    untrusted author data the way its review packet is (``fence_author_data``). With
+    ``items`` each item of ``items`` is fenced on its own."""
+    view = {key: result[key] for key in keep if key in result}
+    view["note"] = REFEREE_DATA_NOTE
+    if items:
+        view["items"] = [fence_author_data(item) for item in result["items"]]
+    rest = {
+        key: value
+        for key, value in result.items()
+        if key not in keep and not (items and key == "items")
+    }
+    if rest:
+        view["data"] = fence_author_data(rest)
     return view
 
 
@@ -924,6 +948,10 @@ def society_tools(
         )
 
     # Commons -------------------------------------------------------------------------
+    def commons_query(a, k):
+        found = service.query_nodes(experiment_id, agent, **a)
+        return _referee_view(found, ("next_cursor",), items=True) if referee else found
+
     add(
         "commons_query",
         {
@@ -938,7 +966,7 @@ def society_tools(
             "after": text(ID, "Cursor from next_cursor (not with frontier).", nullable=True),
             "limit": integer(1, 20, "Page size."),
         },
-        lambda a, k: service.query_nodes(experiment_id, agent, **a),
+        commons_query,
         "Search the commons blueprint of nodes, or rank its open frontier.",
         defaults={
             "text": None,
@@ -955,10 +983,13 @@ def society_tools(
         if len(given) != 1:
             raise invalid("Supply exactly one of node_id, post_id or message_id.")
         if given[0] == "node_id":
-            return service.read_node(a["node_id"], agent)
-        if given[0] == "post_id":
-            return service.read_discussion_post(a["post_id"], agent)
-        return service.read_research_message(a["message_id"], agent)
+            record = service.read_node(a["node_id"], agent)
+        elif given[0] == "post_id":
+            record = service.read_discussion_post(a["post_id"], agent)
+        else:
+            record = service.read_research_message(a["message_id"], agent)
+        # Author text reaches a referee only fenced, like its review packet.
+        return _referee_view(record) if referee else record
 
     add(
         "commons_read",
@@ -985,9 +1016,14 @@ def society_tools(
                 remediation="Read the node and its thread with commons_read for cited ids.",
             )
         # The scoped portable-memory read: every existing visibility rule applies.
-        return memory.read_artifact_chunk(
+        chunk = memory.read_artifact_chunk(
             branch_id, agent, artifact_id=a["artifact_id"], offset=a["offset"]
         )
+        if referee:
+            return _referee_view(
+                chunk, ("offset", "next_offset", "total_bytes", "encoding", "complete")
+            )
+        return chunk
 
     add(
         "read_artifact",
@@ -1090,11 +1126,13 @@ def society_tools(
         "Propose and relate commons nodes. create adds an informal node (status informal); "
         "link adds a typed edge; set_lean_statement elaborates theorem <lean_name> "
         "<lean_statement> under lean_header in your workspace's Lean session and records the "
-        "statement with that result (author or live claimant): lean_header holds only import, "
-        "open, set_option and universe lines, and lean_statement is binders then ': type', "
-        "with no ':=' or 'where' outside brackets; abandon closes your own node with a "
-        "reason; request_review asks the platform to assign an independent referee "
-        "(informal, or fidelity for an elaborated Lean statement). Agents never set status.",
+        "statement with that result (the author; or a live claimant, below formally_stated, "
+        "when the statement is missing, does not elaborate or is its own): lean_header holds "
+        "only import, open, set_option and universe lines, and lean_statement is binders "
+        "then ': type', with no ':=' or 'where' outside brackets; abandon closes your own "
+        "node with a reason; request_review asks the platform to assign an independent "
+        "referee (informal, or fidelity for an elaborated Lean statement). Agents never set "
+        "status.",
         defaults=NODE_DEFAULTS,
     )
 
@@ -1158,10 +1196,14 @@ def society_tools(
         acknowledged = a["ack_delivery_id"]
         if acknowledged is not None:
             service.acknowledge_discussion_updates(experiment_id, acknowledged, agent, k)
-        return {
+        delivery = {
             "acknowledged_delivery_id": acknowledged,
             **service.discussion_updates(experiment_id, agent, limit=10),
         }
+        if referee:
+            platform = ("acknowledged_delivery_id", "delivery_id", "next_cursor", "redelivered")
+            return _referee_view(delivery, platform, items=True)
+        return delivery
 
     add(
         "inbox",
