@@ -213,6 +213,26 @@ def _ident_before(source: str, index: int) -> bool:
     return bool(previous) and (previous.isalnum() or previous in "_'!?.")
 
 
+# Lean 4.33 makes a string interpolated only after the ``s!``/``m!``/``f!`` notation tokens.
+# Any other identifier ending in ``!`` (``x!``, ``Array.get!``) is an ordinary identifier
+# followed by a *plain* string, where ``{`` is a literal character. Reading such a string as
+# interpolated would let its ``{`` swallow the ``:=`` and any commands after it (which Lean
+# runs after the ensuing parse error). Restricting interpolation to the three real tokens is
+# the sound direction: an ``!`` string we misjudge as plain only ends the scan earlier than
+# Lean might, which the shape checks then reject -- it fails closed.
+_INTERP_LETTERS = frozenset("fms")
+
+
+def _interpolation_prefix(source: str, index: int) -> bool:
+    """Whether the string opening at ``index`` follows an ``s!``/``m!``/``f!`` token."""
+    return (
+        index >= 2
+        and source[index - 1] == "!"
+        and source[index - 2] in _INTERP_LETTERS
+        and not _ident_before(source, index - 2)
+    )
+
+
 def _block_comment_end(source: str, index: int) -> int:
     """The index after the ``-/`` that closes the (nested) block comment opened at index."""
     depth, index = 1, index + 2
@@ -267,10 +287,7 @@ def _scan(source: str, index: int, out: list, close: str | None) -> int:
             end = _block_comment_end(source, index)
             out.append(" " + "\n" * source.count("\n", index, end))
         elif character == '"':
-            interpolated = (
-                index >= 2 and source[index - 1] == "!" and _ident_before(source, index - 1)
-            )
-            end = _string_end(source, index, interpolated)
+            end = _string_end(source, index, _interpolation_prefix(source, index))
             out.append(_opaque(source[index:end]))
         elif (
             character == "r"
@@ -401,6 +418,18 @@ def _command_word(name: str) -> bool:
     return name in _COMMAND_WORDS or bool(_SNAKE_CASE.fullmatch(name))
 
 
+# Belt-and-braces, independent of the lexer approximation: a token that could open a command
+# at column 0 on a continuation line. Lean recovers from a parse error in a signature by
+# resuming at the next column-0 command, so such a line lets an author run a command
+# (``#eval``, ``#exit``, a declaration, an attribute) whatever a lexer mismatch made the
+# preceding text look like. Refusing these fails closed; a genuine signature never needs one.
+_SIGNATURE_COMMAND = re.compile(
+    r"#[a-zA-Z]|@\[|(?:"
+    + "|".join(re.escape(word) for word in sorted(_COMMAND_WORDS | {"set_option"}))
+    + r")(?![\w'!?.])"
+)
+
+
 def signature_problem(signature) -> str | None:
     """Why ``signature`` is not one declaration signature (binders, then ``: type``), or None.
 
@@ -436,7 +465,12 @@ def signature_problem(signature) -> str | None:
             return "match_alternatives"
         elif _WHERE.match(code, index):
             return "where_clause"
-    return "unbalanced_brackets" if stack else None
+    if stack:
+        return "unbalanced_brackets"
+    for line in signature.split("\n")[1:]:
+        if not line[:1].isspace() and _SIGNATURE_COMMAND.match(line):
+            return "command_line"
+    return None
 
 
 def header_problem(header) -> str | None:
