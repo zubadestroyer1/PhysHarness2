@@ -438,14 +438,20 @@ class CommonsReviewMixin:
         return node.get("branch_id") or f"actor:{node.get('origin_actor_id')}"
 
     @staticmethod
-    def _statement_owner(session, row):
-        """The earlier node that holds reviews of this node's (normalized) statement, or None.
+    def _statement_owner(session, row, scope):
+        """The earlier node that holds reviews of this node's statement for ``scope``, or None.
 
         Reviews follow the text: the earliest-created same-text node that is open or has
         drawn a referee holds them, so a later copy (a re-post after a veto, or a copy of
         another agent's node) draws no referees of its own and never takes an earlier node's
         reviews. A node closed before any review leaves the text to the next one. Past the
         search bound the check fails closed.
+
+        Informal review keys on the normalized informal statement alone. Fidelity review also
+        keys on the Lean statement digest, since a restated node with a *different* Lean
+        statement is a distinct formal object owed its own fidelity panel (hole nodes share
+        an informal text -- the pretty-printed goal, which elides numeral types -- yet differ
+        in Lean); the lock still catches an identical informal+Lean re-post (anti-shopping).
         """
         node = row.payload
 
@@ -464,22 +470,24 @@ class CommonsReviewMixin:
         if mine is None:
             return None
         order = created(RecordRow.id)
+        filters = [
+            RecordRow.project_id == row.project_id,
+            RecordRow.kind == "commons_node",
+            record_json_text("experiment_id") == node["experiment_id"],
+            record_json_text("statement_key")
+            == (node.get("statement_key") or statement_key(node["statement"], node["assumptions"])),
+            record_json_text("node_type") != "goal",
+            RecordRow.id != row.id,
+            order < mine,
+        ]
+        if scope == "fidelity":
+            filters.append(
+                record_json_text("lean_statement_sha256") == node["lean_statement_sha256"]
+            )
         earlier = list(
             session.scalars(
                 select(RecordRow)
-                .where(
-                    RecordRow.project_id == row.project_id,
-                    RecordRow.kind == "commons_node",
-                    record_json_text("experiment_id") == node["experiment_id"],
-                    record_json_text("statement_key")
-                    == (
-                        node.get("statement_key")
-                        or statement_key(node["statement"], node["assumptions"])
-                    ),
-                    record_json_text("node_type") != "goal",
-                    RecordRow.id != row.id,
-                    order < mine,
-                )
+                .where(*filters)
                 .order_by(order, RecordRow.id)
                 .limit(MAX_SAME_TEXT_NODES)
             )
@@ -608,7 +616,7 @@ class CommonsReviewMixin:
             row, experiment = self._review_node(session, node_id, actor)
             node = row.payload
             self._review_precondition(node, scope)
-            owner = self._statement_owner(session, row)
+            owner = self._statement_owner(session, row, scope)
             if owner is not None:
                 raise HarnessError(
                     "DUPLICATE_STATEMENT",
