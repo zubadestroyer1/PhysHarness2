@@ -560,6 +560,23 @@ def test_statement_check_files_are_packaged_and_fit_one_upload():
         assert 0 < len(data) < 32_768  # E2B's per-file workspace upload limit
 
 
+def test_statement_check_imports_only_the_modules_it_uses():
+    """Lean maps an .olean from its file only on its first load in a process, so every module
+    both the checker and the source import is read again onto the checker's heap. With
+    ``import Lean`` that was all of Lean (1.6 GB) for an ``import Lean`` source, which the
+    2 GiB workbench OOM-killed; these modules' closure is a quarter of it."""
+    checker = resources.files("physharness.formal_tools").joinpath("statement_check.lean")
+    lines = checker.read_text("utf-8").splitlines()
+    assert [line.split()[1] for line in lines if line.startswith("import ")] == [
+        "Lean.CoreM",
+        "Lean.Data.Json",
+        "Lean.Replay",
+        "Lean.Util.CollectAxioms",
+        "Lean.Util.FoldConsts",
+        "Lean.Util.Path",
+    ]
+
+
 class CheckTools:
     """Records uploads and answers each statement-check run with a scripted result."""
 

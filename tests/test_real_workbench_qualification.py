@@ -1,18 +1,20 @@
 """Opt-in qualification against the dedicated Linux Docker endpoint.
 
 Set PHYSHARNESS_WORKBENCH_DOCKER_HOST and PHYSHARNESS_WORKBENCH_IMAGE_DIGEST.
-This test allocates and removes two local containers; it makes no paid model calls.
+These tests allocate and remove local containers; they make no paid model calls.
 """
 
 import base64
 import hashlib
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from physharness.execution.local_docker import LocalDockerWorkspaceProvider
 from physharness.execution.types import CommandRequest, ExecutionError
+from physharness.orchestration.lean_session import LeanSession
 
 
 @pytest.mark.integration
@@ -173,5 +175,57 @@ async def test_real_login_shell_path():
             {"argv": ["ls", "-A", "/etc/profile.d"], "cwd": ".", "timeout_seconds": 30}, "ls"
         )
         assert listed["stdout"].split() == ["physharness-path.sh"]
+    finally:
+        await provider.close()
+
+
+@pytest.mark.integration
+async def test_real_statement_check_end_to_end():
+    """The statement check completes in one 2 GiB workbench: an ``import Lean`` source (it was
+    OOM-killed), a Mathlib source, and a mismatched statement."""
+    host = os.environ.get("PHYSHARNESS_WORKBENCH_DOCKER_HOST")
+    image = os.environ.get("PHYSHARNESS_WORKBENCH_IMAGE_DIGEST")
+    if not host or not image:
+        pytest.skip("Dedicated workbench endpoint and image digest are required")
+    provider = LocalDockerWorkspaceProvider(
+        docker_host=host, image_digest=image, timeout_seconds=900
+    )
+
+    async def run(arguments, operation_id):
+        request = CommandRequest(operation_id=operation_id, max_output_bytes=65536, **arguments)
+        return (await provider.run(request)).model_dump()
+
+    async def write(arguments, operation_id):
+        data = arguments["content"].encode()
+        await provider.upload_file(
+            arguments["path"], data, expected_execution_id=provider.execution_id
+        )
+        return {"path": arguments["path"]}
+
+    session = LeanSession(
+        SimpleNamespace(policy=SimpleNamespace(timeout_seconds=300), run=run, write=write)
+    )
+    real = "import Mathlib.Data.Real.Basic"
+    cases = [  # header, name, the node's signature, and what the source proves
+        ("import Lean", "physharness_checker_self_test", ": True", ": True := trivial"),
+        (real, "physharness_real_check", "(x : ℝ) : x + 0 = x", "(x : ℝ) : x + 0 = x := by simp"),
+        (real, "physharness_real_check", "(x : ℝ) : x + 0 = x", "(x : ℝ) : 0 + x = x := by simp"),
+    ]
+    try:
+        await provider.create()
+        verdicts = []
+        for index, (header, name, signature, proof) in enumerate(cases):
+            source = f"{header}\n\ntheorem {name} {proof}\n"
+            verdicts.append(
+                await session.verify_statement(
+                    source, header, name, signature, operation_id=f"real-check-{index}"
+                )
+            )
+            assert provider.last_command_diagnostics["oom_delta"] == 0, verdicts[-1]
+        lean, mathlib, mismatch = verdicts
+        assert lean["ok"] is True and lean["axioms"] == [], lean
+        assert mathlib["ok"] is True, mathlib
+        assert set(mathlib["axioms"]) <= {"propext", "Classical.choice", "Quot.sound"}
+        assert mismatch["ok"] is False and mismatch["reason"] == "statement_mismatch", mismatch
     finally:
         await provider.close()

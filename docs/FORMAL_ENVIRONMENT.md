@@ -190,6 +190,20 @@ workspace a handoff restores is already provisioned before `society_tools()` set
 `checker_self_test`, so its self-test is skipped for that workspace's lifetime; this is
 accepted (rare, and the checker it inherited was already self-tested once).
 
+The checker imports only the Lean modules it uses (`Lean.CoreM`, `Lean.Replay` and four
+utilities), not `Lean`. Lean maps a module's `.olean` from its file only on the module's
+first load in a process. The file's imports load after the checker's own, so every module
+in both is copied onto the heap. With `import Lean`, an `import Lean` file copied all of
+Lean (1.6 GB of `.olean` data), and the 2 GiB workbench OOM-killed the checker. The narrow
+imports' closure is 555 modules (397 MiB). This was measured on `physharness-pilot` with
+the workbench-v2 digest. The checker step's anonymous memory used to reach 1.9 GiB (then
+the kill) for an `import Lean` file. It now peaks at 0.65–0.75 GiB for `import Lean`,
+`import Mathlib.Data.Real.Basic` and `import Mathlib` files, and no step is OOM-killed. A
+file that imports all of Mathlib still exceeds the check's 240-second budget at 2 GiB.
+Each of its three Lean steps takes about 80 seconds, because Mathlib's `.olean` working set
+does not fit in the workbench's page cache. A plain `lake env lean` on that file takes as
+long; with a 3 GiB or 4 GiB limit it takes 46 or 28 seconds.
+
 | Component | Route | Pin status |
 | --- | --- | --- |
 | numpy, scipy, sympy, mpmath, ripgrep | Debian snapshot (unchanged) | Snapshot; the 2026-09-23 build observed 1.24.2, 1.10.1, 1.11.1, 1.2.1 |
