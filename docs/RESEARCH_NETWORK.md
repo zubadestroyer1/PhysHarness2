@@ -190,7 +190,13 @@ tools, the prompts and the delivery shapes.
 - **Lemma store.** Every node is a Lean module, `Commons.N<8 hex>` (8 hex of its id, or
   12 or 16 when an experiment node already holds that name). `commons_query` reports it
   (`module`) with the node's source rank (`source`); `commons_read` shows the node's
-  `lean_module` and published `lean_source`.
+  `lean_module` and published `lean_source`. Nothing imports the goal, so it lists no
+  module.
+  - Published modules are experiment-public commons content for every role, referees
+    included. Only private workspaces and unpublished artifacts are private: no other
+    agent can read an agent's workspace. An agent shares Lean by publishing it on its
+    node (`lean_check` with `node_id`), and others import it as `import Commons.N…`. The
+    `shell`, `read_file` and `write_file` descriptions say so.
   - A clean `lean_check` with `node_id` (no Lean errors, no `#exit`, no `end` of a scope
     the file never opened, and for a node with a Lean statement the local-compile gates
     above) publishes the file as the node's module, a `lean_source` artifact ranked
@@ -205,8 +211,9 @@ tools, the prompts and the delivery shapes.
     that would close a cycle is skipped). A node with an elaborated Lean statement and no
     source reports `stub`; `commons_query(source=…)` filters by rank, and its text also
     matches Lean and module names.
-  - A node module is that node's lemma, not the branch's submission candidate: the
-    working context's active source skips it.
+  - A node module is that node's lemma, and a flattened submission is the platform's
+    copy; neither is the branch's own source, so the working context's active source
+    skips both.
   - A file imports node modules with `import Commons.N…`. The platform inlines them into
     one self-contained file: environment imports first, then each module in dependency
     order inside its own `section` (its open scopes closed), then the file's own lines.
@@ -220,6 +227,14 @@ tools, the prompts and the delivery shapes.
     published source stays the caller's own text, and its direct imports are recorded. A
     file whose imports reach the node's own module is not published
     (`imports_own_module`): the module would import itself and fail every importer.
+    Publication repeats the check on the stored sources' imports under the experiment
+    lock, so two concurrent publications cannot store a cycle between them.
+  - `commons_fetch` (a builder with a workspace) brings commons Lean into the workspace:
+    `node_ids` writes each node's module, its source or `sorry` stub, to
+    `Commons/N….lean`; `expand_path` writes `<file>.flat.lean` with the file's commons
+    imports inlined, for `lake env lean` in the shell. That file is bounded by the
+    verifier's 2,000,000 bytes (and an E2B workspace's per-file limit), not `lean_check`'s
+    30,000.
   - `submit_for_verification` flattens an importing file the same way, so the verifier
     still checks one `Solution.lean`. The flattened artifact's provenance lists the
     inlined modules (descriptive only). The receipt's `commons_modules`, which only this
@@ -387,7 +402,7 @@ widest catalog has 25 (all but `submit_review`), and a referee's has 18:
 | Workspace and computation | `shell`, `read_file`, `write_file`, `run_computation` |
 | Lean | `lean_check` |
 | Library and literature | `find_declaration`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
-| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim` |
+| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `commons_fetch` (with a workspace; not a referee's) |
 | Society | `recruit`, `message` (a branch or a node's workers), `wait` |
 | Evidence | `read_artifact`, `submit_for_verification`, `verification_status` |
 | Memory | `notebook` |

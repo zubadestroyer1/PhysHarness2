@@ -14,12 +14,14 @@ self-contained file (``inline_commons``) that ``lean_check`` checks and the veri
 """
 
 import re
+from collections import deque
 from dataclasses import dataclass
 
 from .commons_models import CLOSED_STATUSES
 from .domain import utcnow
 from .errors import HarnessError
 from .orchestration.lean_session import _ID_FIRST, _command_word, lean_code
+from .storage import RecordRow
 from .worker_authority import current_worker_effects
 
 RANKS = {"partial": 1, "complete": 2, "verified": 3}
@@ -307,6 +309,26 @@ def remap(result, expansion):
     }
 
 
+def _imports_reach(session, node_id, imports):
+    """Whether ``node_id`` is reachable from ``imports`` along the stored sources' imports.
+
+    Each row is read afresh, never a copy the session cached before the caller's lock, and
+    at most ``MAX_COMMONS_MODULES`` are read: a larger closure cannot be inlined anyway.
+    """
+    queue, seen = deque(entry["node_id"] for entry in imports), set()
+    while queue:
+        current = queue.popleft()
+        if current == node_id:
+            return True
+        if current in seen or len(seen) >= MAX_COMMONS_MODULES:
+            continue
+        seen.add(current)
+        row = session.get(RecordRow, current, populate_existing=True)
+        source = (row.payload.get("lean_source") if row is not None else None) or {}
+        queue.extend(entry["node_id"] for entry in source.get("imports", ()))
+    return False
+
+
 class CommonsSourceMixin:
     def _module_node(self, session, module, actor, experiment_id):
         """The experiment's node whose module is ``module``."""
@@ -356,6 +378,30 @@ class CommonsSourceMixin:
             "elaborated Lean statement to import it as a sorry stub.",
         )
 
+    def commons_module(self, node_id, actor) -> dict:
+        """A node's module as an importer inlines it, for ``commons_fetch``."""
+        self._research_role(actor)
+        with self.db.sessions() as session:
+            row = self._get(session, "commons_node", node_id, actor)
+            if row.payload["node_type"] == "goal":
+                raise HarnessError(
+                    "COMMONS_MODULE_NOT_FOUND",
+                    "The goal node has no module: nothing imports the target.",
+                    status=404,
+                    details={"node_id": row.id},
+                    remediation="Fetch the modules of the nodes the goal depends on.",
+                )
+            found = self._module(
+                session, node_module(row.payload), actor, row.payload["experiment_id"]
+            )
+        return {
+            "node_id": found.node_id,
+            "module": found.name,
+            "source": found.source,
+            "rank": found.rank,
+            "sha256": found.sha256,
+        }
+
     def expand_commons(self, experiment_id, source, actor, *, max_bytes) -> Expansion:
         """``source`` with its ``import Commons.N…`` inlined from the experiment's live node
         modules; a source that names no module is returned unchanged, without a read."""
@@ -374,6 +420,8 @@ class CommonsSourceMixin:
         ``record`` is platform evidence assembled by ``lean_check``: ``rank``, ``bytes``,
         ``statement_check``, ``lean_statement_sha256`` (the statement the file was checked
         against) and ``imports`` (``[{module, node_id, sha256}]``, each a depends_on edge).
+        A source whose imports reach the node through the stored sources' imports is refused
+        (``imports_own_module``): published, the module would import itself.
         """
         self._research_role(actor)
         if not isinstance(record, dict) or record.get("rank") not in RANKS:
@@ -408,6 +456,10 @@ class CommonsSourceMixin:
             held = blocking_rank(node, rank, actor.branch_id)
             if held is not None:
                 return {"recorded": False, "module": module, "reason": "lower_rank", "rank": held}
+            if _imports_reach(session, row.id, record["imports"]):
+                # lean_check refuses this before the check; under the experiment lock the
+                # stored graph also covers a concurrent publication it could not see.
+                return {"recorded": False, "module": module, "reason": "imports_own_module"}
             binding = current_worker_effects.get()
             source = {
                 "artifact_id": artifact.id,

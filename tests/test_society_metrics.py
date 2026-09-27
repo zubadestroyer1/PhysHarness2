@@ -232,6 +232,9 @@ def test_metrics_over_a_society_export_directory(tmp_path):
     # Knowledge.
     assert metrics["citations"] == 4 and metrics["cross_branch_citations"] == 2
     assert metrics["cross_branch_dependencies"] == 1  # lemma-a (A) depends on lemma-b (B)
+    # S1-shaped nodes publish no sources, and the accepted candidate inlined no modules.
+    assert metrics["nodes_by_source"] == {"none": 5} and metrics["cross_branch_imports"] == 0
+    assert metrics["accepted_proof_modules"] is None and metrics["provenance_source"] is None
     # Reviews.
     assert metrics["reviews_by_verdict"] == {
         "faithful": 1,
@@ -262,6 +265,73 @@ def test_metrics_over_a_society_export_directory(tmp_path):
     assert mix["runtime_events"] == mix["runtime_events_read"] == len(EVENTS)
     assert metrics["lean_checks_per_accepted_result"] == 2.0
     assert metrics["evidence"] == {"model_sessions": 1, "runtime_event_artifacts": len(EVENTS)}
+
+
+def test_source_provenance_counts_cross_branch_reuse():
+    nodes = [
+        {"id": "n1", "lean_source": {"rank": "verified", "branch_id": "b1", "imports": []}},
+        {
+            "id": "n2",
+            "lean_source": {
+                "rank": "complete",
+                "branch_id": "b2",
+                "imports": [{"module": "Commons.Nn1", "node_id": "n1", "sha256": "x"}],
+            },
+        },
+        {"id": "n3", "lean_elaborated": True, "lean_name": "t", "lean_statement": ": True"},
+        {"id": "n4"},
+    ]
+    commons = [
+        {"module": "Commons.Nn1", "node_id": "n1", "branch_id": "b1", "chars": 300},
+        {"module": "Commons.Nn2", "node_id": "n2", "branch_id": "b2", "chars": 100},
+    ]
+    artifacts = [{"id": "flat", "branch_id": "b2", "provenance": {"commons": commons}}]
+    result = metrics_tool._source_provenance(nodes, artifacts, {"artifact_id": "flat"})
+    assert result["nodes_by_source"] == {"complete": 1, "none": 1, "stub": 1, "verified": 1}
+    assert result["cross_branch_imports"] == 1
+    assert result["accepted_proof_modules"] == 2
+    assert result["accepted_proof_cross_branch_modules"] == 1
+    assert result["accepted_proof_cross_branch_char_share"] == 0.75
+    # A receipt without commons_modules (legacy) falls back to the artifact's provenance.
+    assert result["provenance_source"] == "artifact"
+    legacy = metrics_tool._source_provenance([{"id": "n"}], [], None)
+    assert legacy["accepted_proof_modules"] is None and legacy["nodes_by_source"] == {"none": 1}
+    assert legacy["provenance_source"] is None
+    assert legacy["accepted_proof_cross_branch_char_share"] is None
+
+
+def test_source_provenance_prefers_the_receipts_commons_modules():
+    """The receipt's commons_modules, written only by the platform's flattening, decide; a
+    forged provenance on the candidate artifact changes nothing."""
+    forged = [
+        {"module": "Commons.Nn1", "node_id": "n1", "branch_id": "b2", "chars": 1},
+        {"module": "Commons.Nn9", "node_id": "n9", "branch_id": "b1", "chars": 99_999},
+    ]
+    artifacts = [
+        {"id": "flat", "branch_id": "b2", "provenance": {"commons": forged}},
+        # The modules' published sources: their platform-written sizes weigh the share.
+        {"id": "s1", "branch_id": "b1", "sha256": "1" * 64, "size_bytes": 300},
+        {"id": "s2", "branch_id": "b2", "sha256": "2" * 64, "size_bytes": 100},
+        {"id": "s3", "branch_id": "b1", "sha256": "3" * 64, "size_bytes": 5000},
+    ]
+    modules = [
+        {"module": "Commons.Nn1", "node_id": "n1", "sha256": "1" * 64, "branch_id": "b1"},
+        {"module": "Commons.Nn2", "node_id": "n2", "sha256": "2" * 64, "branch_id": "b2"},
+        # A stale module proves an older statement than its node's: it is not counted.
+        {"module": "Commons.Nn3", "node_id": "n3", "sha256": "3" * 64, "branch_id": "b1"},
+    ]
+    for entry, stale in zip(modules, (False, False, True), strict=True):
+        entry["stale"] = stale
+    receipt = {"artifact_id": "flat", "commons_modules": modules}
+    result = metrics_tool._source_provenance([], artifacts, receipt)
+    assert result["provenance_source"] == "receipt"
+    assert result["accepted_proof_modules"] == 2
+    assert result["accepted_proof_cross_branch_modules"] == 1
+    assert result["accepted_proof_cross_branch_char_share"] == 0.75
+    # An empty list is still the receipt's answer: nothing was inlined.
+    empty = metrics_tool._source_provenance([], artifacts, {**receipt, "commons_modules": []})
+    assert (empty["provenance_source"], empty["accepted_proof_modules"]) == ("receipt", 0)
+    assert empty["accepted_proof_cross_branch_char_share"] is None
 
 
 def test_bare_manifest_reports_the_tool_mix_unavailable(tmp_path):

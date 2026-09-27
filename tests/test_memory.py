@@ -456,6 +456,29 @@ def test_working_context_skips_node_modules_for_the_active_source_candidate(lab)
     assert active["reference"]["id"] == candidate["id"] and active["content"] == "candidate"
 
 
+def test_working_context_skips_the_platforms_flattened_submission(lab):
+    """submit_for_verification's flattened copy is the platform's file, not the agent's."""
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    own = service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="lean_source", content="import Commons.N"),
+        alpha,
+        "own",
+    )
+    service.create_artifact(
+        ArtifactCreate(
+            experiment_id=exp["id"],
+            kind="lean_source",
+            content="flattened",
+            provenance={"expanded_from": own["id"], "commons": []},
+        ),
+        alpha,
+        "flat",
+    )
+    view = PortableMemory(service).working_context(alpha.branch_id, alpha, page_size=0)
+    active = view["readable_work"]["active_source"]
+    assert active["reference"]["id"] == own["id"] and active["content"] == "import Commons.N"
+
+
 def test_working_context_finds_the_candidate_behind_many_node_modules(lab):
     """Every node-bound lean_check stores a module; they never push the candidate out."""
     service, _, exp, _, (alpha, _) = society_lab(lab)

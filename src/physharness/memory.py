@@ -518,8 +518,10 @@ class PortableMemory:
                         record_json_text("branch_id") == branch_id,
                         record_json_text("artifact_kind") == "lean_source",
                         # A node module (provenance names a commons node) is that node's
-                        # lemma, not the branch's own submission candidate.
+                        # lemma, and a flattened submission (provenance names the file it
+                        # expanded) is the platform's copy: neither is the branch's own source.
                         RecordRow.payload[("provenance", "node_id")].as_string().is_(None),
+                        RecordRow.payload[("provenance", "expanded_from")].as_string().is_(None),
                     )
                     .order_by(record_json_text("created_at").desc(), RecordRow.id.desc())
                     .limit(1)

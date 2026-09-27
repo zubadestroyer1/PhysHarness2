@@ -16,6 +16,7 @@ fatal schema failure. Arrays keep ``maxItems``.
 """
 
 import asyncio
+import base64
 import hashlib
 import inspect
 import logging
@@ -91,6 +92,7 @@ SOCIETY_TOOL_NAMES = (
     "commons_node",
     "commons_post",
     "commons_claim",
+    "commons_fetch",
     "recruit",
     "message",
     "wait",
@@ -145,6 +147,13 @@ MAX_WAIT_IDS = 100
 FOCUS_EXCERPT = 2000
 MAX_SKETCH_MESSAGES = 5
 MAX_TOOL_NAME = 100  # Of a model-supplied name echoed in a rejection.
+FETCH_PAGE = 65536  # commons_fetch reads a file to expand in pages of this many bytes.
+# Appended to the workspace tools' descriptions; a referee publishes nothing.
+PRIVATE_WORKSPACE = " Your workspace is private: no other agent can read it."
+SHARE_LEAN = (
+    " Share Lean by publishing it on its node (lean_check with node_id); others import it as "
+    "`import Commons.N…`."
+)
 POST_KINDS = ("question", "finding", "objection", "attempt_failed", "synthesis", "update")
 # Statement-check verdicts that the file does not prove the node's statement: no publication.
 STATEMENT_REJECTIONS = frozenset({"statement_mismatch", "kernel_rejected", "theorem_missing"})
@@ -671,6 +680,7 @@ def society_tools(
     # Workspace and computation ----------------------------------------------------------
     if workspace_tools is not None:
         write_bytes = _write_limit_bytes(workspace_tools)
+        private = PRIVATE_WORKSPACE if referee else PRIVATE_WORKSPACE + SHARE_LEAN
 
         def write_file(a, k):
             size = len(a["content"].encode("utf-8"))
@@ -698,7 +708,7 @@ def society_tools(
             "Run a command in the offline workspace VM (python3, lake, lean, ...). Pass argv "
             "directly (['lake', 'env', 'lean', '/work/F.lean']) or through bash -c; login "
             "shells work too. For Lean use cwd='/opt/sources/physlib' and pass files by their "
-            "/work paths. Exit status and output are evidence, never proof acceptance.",
+            "/work paths. Exit status and output are evidence, never proof acceptance." + private,
         )
         add(
             "read_file",
@@ -708,7 +718,7 @@ def society_tools(
                 "length": {"type": "integer", "minimum": 1, "maximum": 65536},
             },
             lambda a, k: workspace_tools.read(a, k),
-            "Read an exact byte range of a workspace file, with its whole-file digest.",
+            "Read an exact byte range of a workspace file, with its whole-file digest." + private,
         )
         add(
             "write_file",
@@ -723,7 +733,7 @@ def society_tools(
                 ),
             },
             write_file,
-            "Write a file in the workspace.",
+            "Write a file in the workspace." + private,
         )
         add(
             "run_computation",
@@ -1342,6 +1352,92 @@ def society_tools(
         "co-claimants. A claim is attention, never authority.",
         defaults={"route": None, "time_box_minutes": None},
     )
+    if workspace_tools is not None:
+
+        def writable(path, content):
+            """The write arguments for a file, refused past an E2B per-file limit."""
+            size = len(content.encode("utf-8"))
+            if write_bytes is not None and size > write_bytes:
+                raise invalid(
+                    f"{path[:PATH]} would be {size:,} UTF-8 bytes; E2B workspaces accept at most "
+                    f"{write_bytes:,} bytes per file."
+                )
+            return {"path": path, "content": content}
+
+        async def commons_fetch(a, k):
+            if bool(a["node_ids"]) == (a["expand_path"] is not None):
+                raise invalid("Supply node_ids or expand_path.")
+            if a["expand_path"] is not None:
+                return await fetch_expanded(a["expand_path"], k)
+            fetched, files = [], []
+            for node_id in a["node_ids"]:  # every module resolves before anything is written
+                module = service.commons_module(node_id, agent)
+                path = "Commons/" + module["module"].split(".", 1)[1] + ".lean"
+                files.append(writable(path, module["source"]))
+                entry = {key: module[key] for key in ("node_id", "module", "rank", "sha256")}
+                fetched.append({**entry, "path": path})
+            for index, file in enumerate(files):
+                await workspace_tools.write(file, f"{k}:write-{index}")
+            return {"fetched": fetched}
+
+        async def fetch_expanded(path, key):
+            """Write ``path`` with its commons imports inlined to ``<stem>.flat.lean``."""
+            data, index, remaining = b"", 0, 1
+            while remaining:
+                page = await workspace_tools.read(
+                    {"path": path, "offset": len(data), "length": FETCH_PAGE},
+                    f"{key}:read-{index}",
+                )
+                # Decoded once, from the exact bytes: a page may end inside a character.
+                chunk = base64.b64decode(page["exact_base64"])
+                data, index = data + chunk, index + 1
+                remaining = page.get("remaining_bytes", 0) if chunk else 0
+                if len(data) + remaining > MAX_CANDIDATE_CHARACTERS:
+                    raise HarnessError(
+                        "COMMONS_EXPANSION_TOO_LARGE",
+                        f"{path[:PATH]} is {len(data) + remaining:,} bytes; commons_fetch "
+                        f"expands at most {MAX_CANDIDATE_CHARACTERS:,}, the verifier's bound.",
+                        status=422,
+                        details={"bytes": len(data) + remaining, "limit": MAX_CANDIDATE_CHARACTERS},
+                        remediation="Expand a smaller file.",
+                    )
+            expansion = service.expand_commons(
+                experiment_id,
+                data.decode("utf-8", errors="replace"),
+                agent,
+                max_bytes=MAX_CANDIDATE_CHARACTERS,
+            )
+            flat = path.removesuffix(".lean") + ".flat.lean"
+            await workspace_tools.write(writable(flat, expansion.source), f"{key}:write")
+            return {
+                "path": flat,
+                "sha256": hashlib.sha256(expansion.source.encode("utf-8")).hexdigest(),
+                "modules": [module.name for module in expansion.modules],
+                "closure_complete": expansion.closure_complete,
+                "stubs": list(expansion.stubs),
+            }
+
+        add(
+            "commons_fetch",
+            {
+                "node_ids": array(
+                    ident("A commons node.", ("commons_node",)),
+                    20,
+                    "Nodes whose modules to write to Commons/N….lean.",
+                ),
+                "expand_path": text(
+                    PATH,
+                    "A workspace .lean file whose Commons imports to inline into <stem>.flat.lean.",
+                    nullable=True,
+                ),
+            },
+            commons_fetch,
+            "Bring commons Lean into your private workspace: node_ids writes each node's module "
+            "(or its sorry stub) to Commons/N….lean; expand_path writes <file>.flat.lean with "
+            "every `import Commons.N…` inlined, for `lake env lean` in the shell (no "
+            "30,000-byte bound).",
+            defaults={"node_ids": [], "expand_path": None},
+        )
 
     # Society ---------------------------------------------------------------------------
 

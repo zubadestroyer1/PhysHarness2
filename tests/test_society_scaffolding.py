@@ -36,6 +36,8 @@ NORMS = [
     "Recruit for one narrow deliverable (a named lemma with its signature, or a lookup); "
     "recruits end when they return.",
     "Ask for a referee before investing heavily in formalization.",
+    "Publish Lean on its node (lean_check with node_id) and import peers' modules instead of "
+    "copying their code.",
 ]
 WARNING = (
     "Repeated unchanged terminal results; perform substantive new work or revise the approach."

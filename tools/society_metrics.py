@@ -51,6 +51,7 @@ COMMONS_SOCIETY = frozenset(
         "commons_node",
         "commons_post",
         "commons_claim",
+        "commons_fetch",
         "inbox",
         "recruit",
         "message",
@@ -426,6 +427,66 @@ def _tool_calls(records, read_artifact):
     return mix, sum(count for name, count in tools.items() if name in LEAN_CHECKS)
 
 
+def _source_state(node):
+    """``physharness.commons_sources.source_state`` on the stored rank: the published
+    source's rank, else ``stub`` for an elaborated Lean statement, else ``none``."""
+    if node.get("lean_source"):
+        return node["lean_source"]["rank"]
+    if node.get("lean_statement") is not None and node.get("lean_elaborated"):
+        return "stub"
+    return "none"
+
+
+def _source_provenance(nodes, artifacts, receipt):
+    """Reuse by provenance (S1 audit #12): nodes by source state, cross-branch imports and
+    the modules inlined into the accepted proof.
+
+    An import is cross-branch when different branches published the importing source and
+    the imported node's source. The accepted proof's modules are the receipt's
+    ``commons_modules``, which only the platform's flattening writes, each weighed by its
+    published source's ``size_bytes``; a receipt without that key (legacy) falls back to the
+    candidate artifact's ``provenance.commons`` and its ``chars``. Stale modules (a source of
+    an older statement) are left out. A module is cross-branch when a branch other than the
+    candidate's published it. ``provenance_source`` names the record read; the accepted-
+    proof figures are None when neither lists modules.
+    """
+    publisher = {node["id"]: (node.get("lean_source") or {}).get("branch_id") for node in nodes}
+    cross_imports = sum(
+        1
+        for node in nodes
+        for entry in (node.get("lean_source") or {}).get("imports") or []
+        if publisher.get(entry["node_id"]) not in (None, node["lean_source"].get("branch_id"))
+    )
+    wanted = receipt["artifact_id"] if receipt else None
+    candidate = next((artifact for artifact in artifacts if artifact["id"] == wanted), None)
+    provenance = (candidate or {}).get("provenance") or {}
+    listed = source = None
+    if receipt is not None and "commons_modules" in receipt:
+        sizes = {a["sha256"]: a.get("size_bytes") for a in artifacts if a.get("sha256")}
+        listed = [{**m, "size": sizes.get(m["sha256"])} for m in receipt["commons_modules"]]
+        source = "receipt"
+    elif provenance.get("commons"):
+        listed = [{**m, "size": m.get("chars")} for m in provenance["commons"]]
+        source = "artifact"
+    modules = cross = share = None
+    if listed is not None:
+        live = [m for m in listed if not m.get("stale")]
+        home = candidate.get("branch_id") if candidate else None
+        cross_sizes = [m["size"] for m in live if m.get("branch_id") != home]
+        sizes = [m["size"] for m in live]
+        modules, cross = len(live), len(cross_sizes)
+        if sizes and all(isinstance(size, int) for size in sizes) and sum(sizes):
+            share = round(sum(cross_sizes) / sum(sizes), 4)
+    return {
+        "nodes_by_source": _sorted(Counter(_source_state(node) for node in nodes)),
+        "cross_branch_imports": cross_imports,
+        "accepted_proof_modules": modules,
+        "accepted_proof_cross_branch_modules": cross,
+        "accepted_proof_cross_branch_char_share": share,
+        "provenance_source": source,
+    }
+
+
 def compute_metrics(manifest, read_artifact=None, *, as_of=None):
     """PLAN §9 metrics from one export manifest.
 
@@ -483,6 +544,7 @@ def compute_metrics(manifest, read_artifact=None, *, as_of=None):
         "citations": citations,
         "cross_branch_citations": cross_citations,
         "cross_branch_dependencies": _cross_branch_dependencies(edges, nodes),
+        **_source_provenance(nodes, records.get("artifact", []), receipt),
         # Society health.
         **_reviews(records.get("commons_review", [])),
         "branches": {

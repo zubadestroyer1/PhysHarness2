@@ -193,12 +193,53 @@ def test_import_edges_are_depends_on_and_skip_cycles(lab):
     ]
     edges = service.read_node(first["id"], alpha)["edges_out"]
     assert [(e["relation"], e["node_id"]) for e in edges] == [("depends_on", second["id"])]
-    # A cycle (second -> first -> second) and a self import are skipped, not raised.
-    cyclic = publish(service, second["id"], beta, "complete", "p2", imports=imports(first, second))
-    assert cyclic["recorded"] is True
+    # An import edge that would close a cycle with a linked depends_on edge is skipped.
+    third = lemma(service, exp, alpha, "Third", "third")
+    service.link_nodes(exp["id"], third["id"], "depends_on", first["id"], alpha, "link")
+    closing = publish(service, second["id"], beta, "complete", "p2", imports=imports(third))
+    assert closing["recorded"] is True
     assert service.read_node(second["id"], alpha)["edges_out"] == []
     stored = service.read_node(second["id"], alpha)["node"]["lean_source"]
-    assert [entry["node_id"] for entry in stored["imports"]] == [first["id"], second["id"]]
+    assert [entry["node_id"] for entry in stored["imports"]] == [third["id"]]
+
+
+def test_a_source_whose_stored_imports_reach_its_node_is_refused(lab):
+    """The stored import graph is re-walked under the experiment lock, so two publications
+    racing past lean_check's own-module check cannot store an import cycle."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    a, b, c = (lemma(service, exp, alpha, title, title) for title in ("A", "B", "C"))
+
+    def imports(*nodes):
+        return [{"module": n["lean_module"], "node_id": n["id"], "sha256": "0" * 64} for n in nodes]
+
+    assert publish(service, b["id"], beta, "complete", "b", imports=imports(a))["recorded"]
+    assert publish(service, c["id"], beta, "complete", "c", imports=imports(b))["recorded"]
+    refused = {"recorded": False, "module": a["lean_module"], "reason": "imports_own_module"}
+    # A -> B -> A, A -> C -> B -> A, and A -> A.
+    for key, targets in (("ab", (b,)), ("ac", (c,)), ("aa", (a,))):
+        assert publish(service, a["id"], beta, "complete", key, imports=imports(*targets)) == (
+            refused
+        )
+    assert service.read_node(a["id"], alpha)["node"]["lean_source"] is None
+    # An acyclic source still publishes.
+    assert publish(service, a["id"], beta, "complete", "free")["recorded"] is True
+
+
+def test_the_goal_lists_no_module(lab):
+    """Nothing imports the goal, so neither a page nor the frontier names a module for it."""
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = lemma(service, exp, alpha, "L", "l")
+    pages = (
+        service.query_nodes(exp["id"], alpha)["items"],
+        service.query_nodes(exp["id"], alpha, frontier=True)["items"],
+    )
+    for items in pages:
+        modules = {item["node_type"]: item["module"] for item in items}
+        assert modules == {"goal": None, "lemma": node["lean_module"]}
+    goal = next(item for item in pages[0] if item["node_type"] == "goal")
+    with pytest.raises(HarnessError) as error:
+        service.commons_module(goal["id"], alpha)
+    assert (error.value.code, error.value.status) == ("COMMONS_MODULE_NOT_FOUND", 404)
 
 
 def test_query_matches_lean_name_and_filters_by_source(lab):

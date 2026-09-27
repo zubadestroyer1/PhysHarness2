@@ -1,5 +1,6 @@
 """Society tool profile and worker wiring; the legacy 63-tool profile stays byte-identical."""
 
+import base64
 import hashlib
 import json
 import re
@@ -49,6 +50,7 @@ from physharness.orchestration.research_worker import (
 from physharness.orchestration.society_brief import society_prompt_view
 from physharness.orchestration.society_prompt import constitution, referee_constitution
 from physharness.orchestration.society_tools import (
+    REFEREE_TOOL_NAMES,
     SOCIETY_TOOL_NAMES,
     STATEMENT_REJECTIONS,
     _publication_refusal,
@@ -60,6 +62,7 @@ from physharness.orchestration.society_tools import (
 from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
 from physharness.orchestration.workspaces import WorkspaceBroker
 from physharness.storage import RecordRow
+from physharness.verification.boundary import MAX_CANDIDATE_CHARACTERS
 from physharness.workforce_models import ConfigureWorkforceRequest, RecruitResearcherRequest
 
 # Recorded from the pre-change code (research_worker.research_tools before Task 9).
@@ -448,8 +451,9 @@ def test_society_catalog_widest():
     assert tuple(names(dispatcher)) == tuple(n for n in SOCIETY_TOOL_NAMES if n != "submit_review")
     assert tuple(names(referee)) == REFEREE_TOOLS
     assert set(names(dispatcher)) | set(names(referee)) == set(SOCIETY_TOOL_NAMES)
-    # 23 tools in all: 22 for a worker at most, and 15 for a referee.
-    assert (len(SOCIETY_TOOL_NAMES), len(names(dispatcher)), len(REFEREE_TOOLS)) == (23, 22, 15)
+    assert len(names(dispatcher)) == len(SOCIETY_TOOL_NAMES) - 1 and len(REFEREE_TOOLS) == len(
+        REFEREE_TOOL_NAMES
+    )
     for item in dispatcher.definitions + referee.definitions:
         schema = item["parameters"]
         assert item["strict"] is True and schema["additionalProperties"] is False
@@ -642,10 +646,11 @@ def test_note_and_prompt_tool_names_exist_in_catalog():
         "submit_for_verification",
     }
     assert required <= set(SOCIETY_TOOL_NAMES)
-    # The constitution names no tool today (skills, check-ins and nudges are gone); any it
-    # names must exist.
+    # Any tool the constitution names must exist; it also names tool arguments (node_id).
     mentioned = mentioned_tools([constitution(policy_dict(), literature_enabled=True)])
-    assert mentioned <= set(SOCIETY_TOOL_NAMES), mentioned - set(SOCIETY_TOOL_NAMES)
+    arguments = {key for item in widest().definitions for key in item["parameters"]["properties"]}
+    assert "lean_check" in mentioned
+    assert mentioned - arguments <= set(SOCIETY_TOOL_NAMES), mentioned - set(SOCIETY_TOOL_NAMES)
 
 
 # Tools every referee profile has; workspace tools need a workspace, literature its policy.
@@ -1596,6 +1601,108 @@ async def test_submit_refuses_an_incomplete_closure(lab):
     assert refused["error"]["code"] == "COMMONS_CLOSURE_INCOMPLETE"
     assert refused["error"]["details"] == {"modules": [{"module": module, "rank": "stub"}]}
     assert service.list_records("verification", author, exp["id"]) == []
+
+
+async def test_commons_fetch_writes_modules_and_a_flat_file(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace()
+    tools = profile(service, agent, context, workspace=workspace)
+    created = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **LEAN}
+    )
+    fetched = await call(tools, "commons_fetch", {"node_ids": [created["id"][:8]]})
+    [entry] = fetched["fetched"]
+    assert entry["rank"] == "stub" and entry["path"] == "Commons/N" + created["id"][:8] + ".lean"
+    [write] = [args for name, args in workspace.calls if name == "write"]
+    assert write["content"].endswith("theorem trace_add : (1 : Nat) + 1 = 2 := sorry\n")
+    for description in ("shell", "read_file", "write_file"):
+        assert "Your workspace is private" in definition(widest(), description)["description"]
+
+
+class PagedWorkspace(FakeWorkspace):
+    """Serves one workspace file in byte ranges, the way WorkspaceTools.read pages it."""
+
+    def __init__(self, text, provider=None):
+        super().__init__(provider=provider)
+        self.data = text.encode()
+
+    async def read(self, arguments, operation_id):
+        await self._record("read", arguments)
+        start = arguments["offset"]
+        page = self.data[start : start + arguments["length"]]
+        return {
+            "text": page.decode("utf-8", errors="replace"),
+            "exact_base64": base64.b64encode(page).decode(),
+            "remaining_bytes": max(0, len(self.data) - start - len(page)),
+        }
+
+
+async def test_commons_fetch_expands_a_paged_file_and_fetches_published_modules(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    _, lemma_id, module = await published_lemma(service, author, exp, alpha.branch_id)
+    agent, context = running(service, author, exp, beta.branch_id)
+    # Over one 64 KiB page, with a three-byte character across the page boundary.
+    head = f"import Mathlib\nimport {module}\n\ntheorem uses : (1 : Nat) + 1 = 2 := trace_add\n"
+    padding = "-- " + "x" * (65535 - len(head) - 3) + "ℝ\n"
+    text = head + padding
+    workspace = PagedWorkspace(text)
+    tools = profile(service, agent, context, workspace=workspace)
+    fetched = await call(tools, "commons_fetch", {"expand_path": "work/Uses.lean"})
+    [write] = [args for name, args in workspace.calls if name == "write"]
+    flat = write["content"]
+    assert fetched == {
+        "path": "work/Uses.flat.lean",
+        "sha256": sha(flat),
+        "modules": [module],
+        "closure_complete": True,
+        "stubs": [],
+    }
+    assert write["path"] == "work/Uses.flat.lean"
+    assert "theorem trace_add" in flat and "import Commons" not in flat
+    assert padding in flat and "�" not in flat
+    assert [args["offset"] for name, args in workspace.calls if name == "read"] == [0, 65536]
+    # A published module is written as its source, under its module's path.
+    used = service.read_node(lemma_id, agent)["node"]["lean_source"]
+    fetched = await call(tools, "commons_fetch", {"node_ids": [lemma_id]})
+    path = "Commons/" + module.removeprefix("Commons.") + ".lean"
+    assert fetched == {
+        "fetched": [
+            {
+                "node_id": lemma_id,
+                "module": module,
+                "rank": "verified",
+                "sha256": used["sha256"],
+                "path": path,
+            }
+        ]
+    }
+    assert workspace.calls[-1] == ("write", {"path": path, "content": PROOF})
+    # Exactly one of node_ids and expand_path.
+    for arguments in ({}, {"node_ids": [lemma_id], "expand_path": "work/Uses.lean"}):
+        refused = await call(tools, "commons_fetch", arguments)
+        assert refused["error"]["code"] == "INVALID_ARGUMENTS"
+    # A file past the verifier's bound is refused after its first page.
+    large = PagedWorkspace("-" * (MAX_CANDIDATE_CHARACTERS + 1))
+    refused = await call(
+        profile(service, agent, context, workspace=large),
+        "commons_fetch",
+        {"expand_path": "Big.lean"},
+    )
+    assert refused["error"]["code"] == "COMMONS_EXPANSION_TOO_LARGE"
+    assert [name for name, _ in large.calls] == ["read"]
+    # An E2B workspace takes no file over its per-file limit.
+    e2b = PagedWorkspace(f"import {module}\n-- {'y' * 33_000}\n", provider="e2b")
+    refused = await call(
+        profile(service, agent, context, workspace=e2b), "commons_fetch", {"expand_path": "E.lean"}
+    )
+    assert refused["error"]["code"] == "INVALID_ARGUMENTS"
+    assert [name for name, _ in e2b.calls] == ["read"]
+    # A referee's workspace is private too, but it publishes nothing.
+    for description in ("shell", "read_file", "write_file"):
+        referee_text = definition(referee_catalog(), description)["description"]
+        assert "Your workspace is private" in referee_text and "node_id" not in referee_text
 
 
 def test_publication_refusals_and_source_ranks():
@@ -2830,6 +2937,7 @@ async def test_every_society_tool_dispatches_without_tool_failure(lab):
             "commons_node",
             "commons_post",
             "commons_claim",
+            "commons_fetch",
             "recruit",
             "message",
         }

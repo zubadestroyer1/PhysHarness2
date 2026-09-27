@@ -659,7 +659,8 @@ class CommonsMixin:
             for key in ("id", "node_type", "title", "status", "lean_name", "citation_count")
         }
         item["statement"] = node["statement"][:300]
-        item["module"] = node_module(node)
+        # Nothing imports the goal: it has no module to list.
+        item["module"] = None if node["node_type"] == "goal" else node_module(node)
         item["source"] = source_state(node)
         if node.get("status_derived"):
             item["status_derived"] = True
