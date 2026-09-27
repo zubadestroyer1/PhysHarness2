@@ -425,8 +425,8 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 7. **Operator stop** at the user's request.
 8. **Idle society (`SOCIETY_IDLE`, automatic after the S1 remediation).** The runner
    stops when every agent waits and only the waits' own timeouts could still wake them:
-   no task of the experiment is running or queued (this runner's, another runner's or a
-   worker's), every pending society task waits (on events, at least one, or on a recruit
+   no other task of the experiment is running or queued (this runner's, another runner's or
+   a worker's), every pending society task waits (on events, at least one, or on a recruit
    that is still live), each event wait found nothing at the current wake-event head,
    which has not moved since (model-turn accounting never moves it), no parked scoped
    recruit's node is proved, closed or restated, and no verification receipt is queued.

@@ -24,7 +24,7 @@
 - **Task 20:** project-scoped library notes per Mathlib pin (migration `0004`), a `library_notes` tool, and a seed from the S1 audit's findings.
 - **Task 21:** the final tool counts (24 in all, 23 for the widest worker, 15 for a referee), this documentation pass, and the last audit fixes: referee branches cannot be watched, and `recall_output` has a metrics bucket.
 - **Integration audits:** three audits over the lane. Their fixes quote peer text in recruit briefs, keep author-written library notes and inlined-module output away from referees, and let a check claim a node afresh only when it publishes.
-- **Tests:** the full suite passes 2,331 tests with 6 opt-in skips. With `-m "integration or lean"`, 9 more pass and 23 skip without their infrastructure. Ruff check and format are clean.
+- **Tests:** the full suite passes 2,363 tests with 6 opt-in skips. With `-m "integration or lean"`, 10 more pass and 23 skip without their infrastructure. Ruff check and format are clean.
 
 Next steps:
 - a harder target (audit #25);
