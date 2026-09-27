@@ -9,6 +9,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
@@ -117,6 +118,25 @@ def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
         state.get("cumulative_input_offset", 0) + checkpoint.session.input_tokens,
         state.get("cumulative_output_offset", 0) + checkpoint.session.output_tokens,
     )
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Prepared:
+    """A counted request with its reservation, not yet sent."""
+
+    params: dict[str, Any]
+    input_tokens: int
+    input_reservation: int
+    output_reservation: int
+    remaining: int | None
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Sent:
+    """A provider response and the generation operation that produced it."""
+
+    response: Any
+    operation_id: str
 
 
 class ToolDispatcher:
@@ -751,142 +771,13 @@ class ResponsesRuntime:
                 raise ExecutionError("BUDGET_EXHAUSTED", "Session exhausted provider-turn budget")
             await self._receive_updates(session, state)
             await self._receive_turn_note(session, state)
-            params = dict(session.model.parameters)
-            count_params = {
-                k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
-            }
-            try:
-                count = await _resend_rate_limited(
-                    partial(
-                        client.responses.input_tokens.count,
-                        model=session.model.model,
-                        input=state["input"],
-                        tools=self.dispatcher.definitions,
-                        parallel_tool_calls=False,
-                        **count_params,
-                    ),
-                    deadline,
-                )
-            except Exception as exc:
-                if getattr(exc, "status_code", None) != 400:
-                    raise
-                provider_code = _safe_provider_field(getattr(exc, "code", None), maximum=80)
-                provider_param = _safe_provider_field(getattr(exc, "param", None), maximum=160)
-                tool_schema = provider_code == "invalid_function_parameters" or bool(
-                    provider_param and provider_param.startswith("tools")
-                )
-                code = "PROVIDER_TOOL_SCHEMA_INVALID" if tool_schema else "MODEL_REQUEST_INVALID"
-                preflight_id = identifier()
-                state["preflight_error"] = {
-                    "stage": "input_token_count",
-                    "operation_id": preflight_id,
-                    "provider_code": provider_code,
-                    "provider_param": provider_param,
-                }
-                await self._save(session, state)
-                raise ExecutionError(
-                    code,
-                    "Provider rejected the model request before generation",
-                    operation_id=preflight_id,
-                    remediation=(
-                        "Inspect the bounded preflight provider code and parameter "
-                        "in the durable runtime checkpoint."
-                    ),
-                ) from exc
-            remaining = (
-                session.limits.max_total_tokens
-                - state.get("cumulative_input_offset", 0)
-                - state.get("cumulative_output_offset", 0)
-                - session.input_tokens
-                - session.output_tokens
-                - count.input_tokens
-                if session.limits.max_total_tokens is not None
-                else None
-            )
-            if remaining is not None and remaining <= 0:
-                raise ExecutionError(
-                    "BUDGET_EXHAUSTED", "Token preflight leaves no generation budget"
-                )
-            if (
-                session.limits.max_context_tokens is not None
-                and count.input_tokens + session.limits.max_output_tokens
-                > session.limits.max_context_tokens
-            ):
-                if (
-                    self.boundary_hook is not None
-                    and session.turns > 0
-                    and state.get("settled_boundary") is True
-                    and not state.get("pending_operation")
-                    and not state.get("pending_tool_call")
-                ):
-                    state["context_pressure"] = {
-                        "input_tokens": count.input_tokens,
-                        "max_context_tokens": session.limits.max_context_tokens,
-                        "max_output_tokens": session.limits.max_output_tokens,
-                    }
-                    await self._save(session, state)
-                    handoff = await self._maybe_handoff(session, state, {"output": []})
-                    if handoff is not None:
-                        return handoff
-                raise ExecutionError("CONTEXT_LIMIT", "Active request exceeds context token limit")
-            input_reservation = (
-                session.limits.max_context_tokens
-                if params.get("context_management")
-                else count.input_tokens
-            )
-            output_reservation = (
-                min(session.limits.max_output_tokens, remaining)
-                if remaining is not None
-                else session.limits.max_output_tokens
-            )
-            if self.pre_generation_guard is not None and await self.pre_generation_guard():
-                return await self._complete_verified(session, state)
-            operation_id = identifier()
-            state["pending_operation"] = operation_id
-            await self._save(session, state)
-            if asyncio.get_running_loop().time() >= deadline:
-                state["pending_operation"] = None
-                raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
-            try:
-                await self._emit(
-                    "generation_started",
-                    session,
-                    operation_id,
-                    model=session.model.model,
-                    input_tokens_reserved=input_reservation,
-                    output_tokens_reserved=output_reservation,
-                )
-            except BaseException:
-                # The provider request has not been sent. A reservation hook
-                # owns any local compensation; do not mark remote work uncertain.
-                state["pending_operation"] = None
-                await self._save(session, state)
-                raise
-            if asyncio.get_running_loop().time() >= deadline:
-                # asyncio.timeout cannot interrupt synchronous event persistence.
-                # The request has not been sent, so release its reservation at zero.
-                state["pending_operation"] = None
-                await self._emit("generation_aborted", session, operation_id, reason="timeout")
-                raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
-            # A rate-limit refusal did no work, so the same operation and reservation
-            # are resent; giving up releases the reservation at zero instead.
-            response = await _resend_rate_limited(
-                partial(
-                    client.responses.create,
-                    model=session.model.model,
-                    input=state["input"],
-                    tools=self.dispatcher.definitions,
-                    parallel_tool_calls=False,
-                    max_output_tokens=output_reservation,
-                    store=False,
-                    include=["reasoning.encrypted_content"],
-                    extra_headers={"X-Client-Request-Id": operation_id},
-                    **params,
-                ),
-                deadline,
-                operation_id=operation_id,
-                abandon=partial(self._abandon_refused, session, state, operation_id),
-            )
+            prepared = await self._prepare_request(session, state, client, deadline)
+            if isinstance(prepared, RuntimeResult):
+                return prepared
+            sent = await self._send(session, state, client, prepared, deadline)
+            if isinstance(sent, RuntimeResult):
+                return sent
+            response, operation_id = sent.response, sent.operation_id
             native = response.model_dump(mode="json", exclude_none=True)
             if native.get("model") != session.model.model:
                 # Retain exact provider evidence and the unsettled reservation.
@@ -934,8 +825,8 @@ class ResponsesRuntime:
                 "operation_id": operation_id,
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
-                "input_reserved": input_reservation,
-                "output_reserved": output_reservation,
+                "input_reserved": prepared.input_reservation,
+                "output_reserved": prepared.output_reservation,
             }
             state.pop("compaction_replay_pending", None)
             await self._save(session, state)
@@ -952,8 +843,8 @@ class ResponsesRuntime:
                     "Provider reported consumption beyond preflight token reservation",
                 )
             if (
-                response.usage.input_tokens > input_reservation
-                or response.usage.output_tokens > output_reservation
+                response.usage.input_tokens > prepared.input_reservation
+                or response.usage.output_tokens > prepared.output_reservation
             ):
                 raise ExecutionError(
                     "PROVIDER_LIMIT_VIOLATION",
@@ -1045,93 +936,262 @@ class ResponsesRuntime:
                     artifacts=[artifact],
                     native_items=native["output"],
                 )
-            for call in calls:
-                tool_operation = f"{session.id}:{call['call_id']}"
-                try:
-                    arguments = json.loads(call["arguments"])
-                    if not isinstance(arguments, dict):
-                        raise ValueError("object required")
-                except (ValueError, TypeError) as exc:
-                    raise ExecutionError(
-                        "INVALID_TOOL_ARGUMENTS", "Provider tool arguments are not a JSON object"
-                    ) from exc
-                identity = digest({"name": call["name"], "arguments": arguments})
-                results = state.setdefault("tool_results", {})
-                previous = results.get(tool_operation)
-                if previous is None:
-                    for archive_id in reversed(state.get("archives", [])):
-                        archive = await self.store.load_archive(session.id, archive_id)
-                        previous = archive["tool_results"].get(tool_operation)
-                        if previous is not None:
-                            break
-                if previous is None:
-                    for ref in reversed(state.get("archive_refs", [])):
-                        archive = await self.store.load_archive(
-                            ref["session_id"], ref["archive_id"]
-                        )
-                        previous = archive["tool_results"].get(tool_operation)
-                        if previous is not None:
-                            break
-                if previous is not None:
-                    if previous["identity"] != identity:
-                        raise ExecutionError(
-                            "COMMAND_MISMATCH",
-                            "Reused tool call ID changed its arguments",
-                            operation_id=tool_operation,
-                        )
-                    result = previous["result"]
-                    visible_output = previous.get("visible_output", result)
-                    signal = None
-                else:
-                    state["pending_operation"] = tool_operation
-                    await self._save(session, state)
-                    result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
-                    signal = observe_stagnation(
-                        state.setdefault("stagnation", {}), call["name"], arguments, result
-                    )
-                    visible_output = result
-                    if signal is not None:
-                        visible_output = {
-                            **result,
-                            "_research_runtime_signal": {
-                                "kind": signal,
-                                "message": signal_message(
-                                    signal,
-                                    self.stagnation_suggestions
-                                    if signal == "stagnation_warning"
-                                    else None,
-                                ),
-                            },
-                        }
-                    results[tool_operation] = {
-                        "identity": identity,
-                        "result": result,
-                        "visible_output": visible_output,
-                    }
-                state["input"].append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call["call_id"],
-                        "output": json.dumps(visible_output, allow_nan=False),
-                    }
-                )
-                state["pending_operation"] = None
-                await self._save(session, state)
-                await self._emit("tool_completed", session, tool_operation, name=call["name"])
-                if signal is not None:
-                    await self._emit(
-                        signal,
-                        session,
-                        tool_operation,
-                        stagnation_state=dict(state["stagnation"]),
-                    )
-
+            await self._run_calls(session, state, native, calls)
             await self._advance_active_input(session, state, native)
             state["settled_boundary"] = True
             await self._save(session, state)
             handoff = await self._maybe_handoff(session, state, native)
             if handoff is not None:
                 return handoff
+
+    async def _prepare_request(
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        client: Any,
+        deadline: float,
+    ) -> _Prepared | RuntimeResult:
+        """Count the active input, check the budgets and size the reservation."""
+        params = dict(session.model.parameters)
+        count_params = {
+            k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
+        }
+        try:
+            count = await _resend_rate_limited(
+                partial(
+                    client.responses.input_tokens.count,
+                    model=session.model.model,
+                    input=state["input"],
+                    tools=self.dispatcher.definitions,
+                    parallel_tool_calls=False,
+                    **count_params,
+                ),
+                deadline,
+            )
+        except Exception as exc:
+            if getattr(exc, "status_code", None) != 400:
+                raise
+            provider_code = _safe_provider_field(getattr(exc, "code", None), maximum=80)
+            provider_param = _safe_provider_field(getattr(exc, "param", None), maximum=160)
+            tool_schema = provider_code == "invalid_function_parameters" or bool(
+                provider_param and provider_param.startswith("tools")
+            )
+            code = "PROVIDER_TOOL_SCHEMA_INVALID" if tool_schema else "MODEL_REQUEST_INVALID"
+            preflight_id = identifier()
+            state["preflight_error"] = {
+                "stage": "input_token_count",
+                "operation_id": preflight_id,
+                "provider_code": provider_code,
+                "provider_param": provider_param,
+            }
+            await self._save(session, state)
+            raise ExecutionError(
+                code,
+                "Provider rejected the model request before generation",
+                operation_id=preflight_id,
+                remediation=(
+                    "Inspect the bounded preflight provider code and parameter "
+                    "in the durable runtime checkpoint."
+                ),
+            ) from exc
+        input_tokens = count.input_tokens
+        remaining = (
+            session.limits.max_total_tokens
+            - state.get("cumulative_input_offset", 0)
+            - state.get("cumulative_output_offset", 0)
+            - session.input_tokens
+            - session.output_tokens
+            - input_tokens
+            if session.limits.max_total_tokens is not None
+            else None
+        )
+        if remaining is not None and remaining <= 0:
+            raise ExecutionError("BUDGET_EXHAUSTED", "Token preflight leaves no generation budget")
+        if (
+            session.limits.max_context_tokens is not None
+            and input_tokens + session.limits.max_output_tokens > session.limits.max_context_tokens
+        ):
+            if (
+                self.boundary_hook is not None
+                and session.turns > 0
+                and state.get("settled_boundary") is True
+                and not state.get("pending_operation")
+                and not state.get("pending_tool_call")
+            ):
+                state["context_pressure"] = {
+                    "input_tokens": input_tokens,
+                    "max_context_tokens": session.limits.max_context_tokens,
+                    "max_output_tokens": session.limits.max_output_tokens,
+                }
+                await self._save(session, state)
+                handoff = await self._maybe_handoff(session, state, {"output": []})
+                if handoff is not None:
+                    return handoff
+            raise ExecutionError("CONTEXT_LIMIT", "Active request exceeds context token limit")
+        input_reservation = (
+            session.limits.max_context_tokens if params.get("context_management") else input_tokens
+        )
+        output_reservation = (
+            min(session.limits.max_output_tokens, remaining)
+            if remaining is not None
+            else session.limits.max_output_tokens
+        )
+        return _Prepared(
+            params=params,
+            input_tokens=input_tokens,
+            input_reservation=input_reservation,
+            output_reservation=output_reservation,
+            remaining=remaining,
+        )
+
+    async def _send(
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        client: Any,
+        prepared: _Prepared,
+        deadline: float,
+    ) -> _Sent | RuntimeResult:
+        """Mark the generation pending, announce its reservation and send it."""
+        if self.pre_generation_guard is not None and await self.pre_generation_guard():
+            return await self._complete_verified(session, state)
+        operation_id = identifier()
+        state["pending_operation"] = operation_id
+        await self._save(session, state)
+        if asyncio.get_running_loop().time() >= deadline:
+            state["pending_operation"] = None
+            raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
+        try:
+            await self._emit(
+                "generation_started",
+                session,
+                operation_id,
+                model=session.model.model,
+                input_tokens_reserved=prepared.input_reservation,
+                output_tokens_reserved=prepared.output_reservation,
+            )
+        except BaseException:
+            # The provider request has not been sent. A reservation hook
+            # owns any local compensation; do not mark remote work uncertain.
+            state["pending_operation"] = None
+            await self._save(session, state)
+            raise
+        if asyncio.get_running_loop().time() >= deadline:
+            # asyncio.timeout cannot interrupt synchronous event persistence.
+            # The request has not been sent, so release its reservation at zero.
+            state["pending_operation"] = None
+            await self._emit("generation_aborted", session, operation_id, reason="timeout")
+            raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
+        # A rate-limit refusal did no work, so the same operation and reservation
+        # are resent; giving up releases the reservation at zero instead.
+        response = await _resend_rate_limited(
+            partial(
+                client.responses.create,
+                model=session.model.model,
+                input=state["input"],
+                tools=self.dispatcher.definitions,
+                parallel_tool_calls=False,
+                max_output_tokens=prepared.output_reservation,
+                store=False,
+                include=["reasoning.encrypted_content"],
+                extra_headers={"X-Client-Request-Id": operation_id},
+                **prepared.params,
+            ),
+            deadline,
+            operation_id=operation_id,
+            abandon=partial(self._abandon_refused, session, state, operation_id),
+        )
+        return _Sent(response=response, operation_id=operation_id)
+
+    async def _run_calls(
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        native: dict[str, Any],
+        calls: list[dict[str, Any]],
+    ) -> None:
+        """Dispatch each call in order, replaying any committed result for its ID."""
+        for call in calls:
+            tool_operation = f"{session.id}:{call['call_id']}"
+            try:
+                arguments = json.loads(call["arguments"])
+                if not isinstance(arguments, dict):
+                    raise ValueError("object required")
+            except (ValueError, TypeError) as exc:
+                raise ExecutionError(
+                    "INVALID_TOOL_ARGUMENTS", "Provider tool arguments are not a JSON object"
+                ) from exc
+            identity = digest({"name": call["name"], "arguments": arguments})
+            results = state.setdefault("tool_results", {})
+            previous = await self._find_tool_result(session, state, tool_operation)
+            if previous is not None:
+                if previous["identity"] != identity:
+                    raise ExecutionError(
+                        "COMMAND_MISMATCH",
+                        "Reused tool call ID changed its arguments",
+                        operation_id=tool_operation,
+                    )
+                result = previous["result"]
+                visible_output = previous.get("visible_output", result)
+                signal = None
+            else:
+                state["pending_operation"] = tool_operation
+                await self._save(session, state)
+                result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
+                signal = observe_stagnation(
+                    state.setdefault("stagnation", {}), call["name"], arguments, result
+                )
+                visible_output = result
+                if signal is not None:
+                    visible_output = {
+                        **result,
+                        "_research_runtime_signal": {
+                            "kind": signal,
+                            "message": signal_message(
+                                signal,
+                                self.stagnation_suggestions
+                                if signal == "stagnation_warning"
+                                else None,
+                            ),
+                        },
+                    }
+                results[tool_operation] = {
+                    "identity": identity,
+                    "result": result,
+                    "visible_output": visible_output,
+                }
+            state["input"].append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call["call_id"],
+                    "output": json.dumps(visible_output, allow_nan=False),
+                }
+            )
+            state["pending_operation"] = None
+            await self._save(session, state)
+            await self._emit("tool_completed", session, tool_operation, name=call["name"])
+            if signal is not None:
+                await self._emit(
+                    signal,
+                    session,
+                    tool_operation,
+                    stagnation_state=dict(state["stagnation"]),
+                )
+
+    async def _find_tool_result(
+        self, session: RuntimeSession, state: dict[str, Any], key: str
+    ) -> dict[str, Any] | None:
+        """A committed tool result: active state, then own archives, then inherited ones."""
+        found = state.get("tool_results", {}).get(key)
+        for archive_id in reversed(state.get("archives", [])) if found is None else ():
+            found = (await self.store.load_archive(session.id, archive_id))["tool_results"].get(key)
+            if found is not None:
+                break
+        for ref in reversed(state.get("archive_refs", [])) if found is None else ():
+            archive = await self.store.load_archive(ref["session_id"], ref["archive_id"])
+            if (found := archive["tool_results"].get(key)) is not None:
+                break
+        return found
 
     async def _complete_verified(self, session, state):
         session.status = "completed"

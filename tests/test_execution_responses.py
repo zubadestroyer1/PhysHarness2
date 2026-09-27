@@ -570,3 +570,88 @@ async def test_rate_limited_token_count_is_resent(tmp_path):
         "responses",
     ]
     await client.close()
+
+
+DOUBLE_SCHEMA = {
+    "type": "object",
+    "properties": {"value": {"type": "integer"}},
+    "required": ["value"],
+    "additionalProperties": False,
+}
+
+
+def double_dispatcher(seen=None):
+    dispatcher = ToolDispatcher()
+
+    async def double(arguments, operation_id):
+        if seen is not None:
+            seen.append(operation_id)
+        return {"value": arguments["value"] * 2}
+
+    dispatcher.register("double", DOUBLE_SCHEMA, double)
+    return dispatcher
+
+
+def double_call(call_id="call_1", value=2):
+    return {
+        "id": "fc_" + call_id,
+        "type": "function_call",
+        "call_id": call_id,
+        "name": "double",
+        "arguments": json.dumps({"value": value}),
+        "status": "completed",
+    }
+
+
+class RecordingStore(SQLiteRuntimeStore):
+    """Records every committed save: its pending operation and its shape."""
+
+    def __init__(self, path):
+        super().__init__(path)
+        self.pending, self.shapes = [], []
+
+    async def save(self, checkpoint):
+        await super().save(checkpoint)
+        state = checkpoint.native_state
+        pending = state.get("pending_operation")
+        self.pending.append(pending)
+        kind = None if pending is None else "tool" if ":" in pending else "generation"
+        self.shapes.append((kind, state.get("settled_boundary"), checkpoint.session.status))
+
+
+TODAY_SAVE_SHAPES = [  # one tool turn, then a final turn
+    (None, True, "ready"),
+    (None, True, "running"),
+    ("generation", True, "running"),
+    ("generation", False, "running"),
+    (None, False, "running"),
+    ("tool", False, "running"),
+    (None, False, "running"),
+    (None, True, "running"),
+    ("generation", True, "running"),
+    ("generation", False, "running"),
+    (None, False, "running"),
+    (None, True, "running"),
+    (None, True, "running"),
+    (None, True, "completed"),
+]
+
+
+async def test_tool_turn_save_sequence_is_pinned(tmp_path):
+    requests = []
+    client = client_for(
+        [response([double_call()]), response([message("4")], response_id="resp_2")], requests
+    )
+    store = RecordingStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, dispatcher=double_dispatcher(), client=client)
+    assert (
+        await runtime.start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
+    ).output_text == "4"
+    assert store.shapes == TODAY_SAVE_SHAPES
+    assert [u.rsplit("/", 1)[-1] for u, _ in requests] == [
+        "input_tokens",
+        "responses",
+        "input_tokens",
+        "responses",
+    ]
+    await client.close()
