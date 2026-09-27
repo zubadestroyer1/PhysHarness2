@@ -17,6 +17,7 @@ from physharness.execution import (
     ToolDispatcher,
 )
 from physharness.execution.responses import STORED_RESPONSE_FIELDS
+from physharness.execution.stagnation import observe as observe_stagnation
 
 
 def response(items, text="", response_id="resp_1"):
@@ -745,17 +746,48 @@ async def test_tool_turn_save_sequence_is_pinned(tmp_path):
     await client.close()
 
 
+class OutputCounting(RecordingStore):
+    """Also records how many tool outputs the latest committed save holds."""
+
+    async def save(self, checkpoint):
+        await super().save(checkpoint)
+        self.outputs = sum(
+            item.get("type") == "function_call_output" for item in checkpoint.native_state["input"]
+        )
+
+
+def read_dispatcher():
+    dispatcher = ToolDispatcher()
+
+    async def read(arguments, operation_id):
+        return {"text": "unchanged"}
+
+    dispatcher.register(
+        "read_file",
+        {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        read,
+    )
+    return dispatcher
+
+
+def read_call(call_id, path):
+    return {
+        "id": "fc_" + call_id,
+        "type": "function_call",
+        "call_id": call_id,
+        "name": "read_file",
+        "arguments": json.dumps({"path": path}),
+        "status": "completed",
+    }
+
+
 async def test_multi_call_turn_saves_one_marker_per_call_and_announces_after_saving(tmp_path):
     completed_at = []
-
-    class OutputCounting(RecordingStore):
-        async def save(self, checkpoint):
-            await super().save(checkpoint)
-            self.outputs = sum(
-                item.get("type") == "function_call_output"
-                for item in checkpoint.native_state["input"]
-            )
-
     store = OutputCounting(tmp_path / "s.db")
 
     async def emit(event):
@@ -790,42 +822,109 @@ async def test_batched_stagnation_signal_reports_the_state_at_its_call(tmp_path)
         if event.kind == "stagnation_warning":
             signals.append(deepcopy(event.payload["stagnation_state"]))
 
-    dispatcher = ToolDispatcher()
-
-    async def read(arguments, operation_id):
-        return {"text": "unchanged"}
-
-    dispatcher.register(
-        "read_file",
-        {
-            "type": "object",
-            "properties": {"path": {"type": "string"}},
-            "required": ["path"],
-            "additionalProperties": False,
-        },
-        read,
-    )
-
-    def read_call(call_id, path):
-        return {
-            "id": "fc_" + call_id,
-            "type": "function_call",
-            "call_id": call_id,
-            "name": "read_file",
-            "arguments": json.dumps({"path": path}),
-            "status": "completed",
-        }
-
     # The fourth identical read warns; the fifth, a new read, is announced after it.
     calls = [read_call(f"call_{i}", "a") for i in range(4)] + [read_call("call_4", "b")]
     client = client_for([response(calls), response([message("done")], response_id="resp_2")], [])
     await ResponsesRuntime(
         store=SQLiteRuntimeStore(tmp_path / "s.db"),
-        dispatcher=dispatcher,
+        dispatcher=read_dispatcher(),
         client=client,
         event_sink=emit,
     ).start("x", ModelConfig(model="exact-model"), RuntimeLimits())
     assert [sorted(state["read_counts"].values()) for state in signals] == [[4]]
+    await client.close()
+
+
+async def test_batch_failing_before_a_marker_announces_earlier_results_after_the_failure_save(
+    tmp_path,
+):
+    seed = {}
+    for _ in range(3):  # the batch's first read is then the fourth, which warns
+        observe_stagnation(seed, "read_file", {"path": "a"}, {"text": "unchanged"})
+    announced = []
+    store = OutputCounting(tmp_path / "s.db")
+
+    async def emit(event):
+        if event.kind in {"tool_completed", "stagnation_warning"}:
+            call_id = event.operation_id.rsplit(":", 1)[-1]
+            announced.append((event.kind, call_id, store.shapes[-1], store.outputs))
+
+    malformed = {**read_call("call_2", "b"), "arguments": "not json"}
+    client = client_for([response([read_call("call_1", "a"), malformed])], [])
+    runtime = ResponsesRuntime(
+        store=store,
+        dispatcher=read_dispatcher(),
+        client=client,
+        event_sink=emit,
+        stagnation_state=seed,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert error.value.code == "INVALID_TOOL_ARGUMENTS"
+    failure_save = (None, False, "failed")
+    assert announced == [
+        ("tool_completed", "call_1", failure_save, 1),
+        ("stagnation_warning", "call_1", failure_save, 1),
+    ]
+    await client.close()
+
+
+class RefusingSettledSaves(RecordingStore):
+    """Refuses the next ``refusals`` saves of a settled first turn: F, then the failure save."""
+
+    def __init__(self, path, refusals):
+        super().__init__(path)
+        self.refusals = refusals
+
+    async def save(self, checkpoint):
+        state = checkpoint.native_state
+        if (
+            self.refusals
+            and checkpoint.session.turns == 1
+            and state.get("settled_boundary") is True
+            and state.get("pending_operation") is None
+        ):
+            self.refusals -= 1
+            raise RuntimeError("disk full")
+        await super().save(checkpoint)
+
+
+async def test_failed_settled_save_announces_the_last_result_after_the_failure_save(tmp_path):
+    announced = []
+    store = RefusingSettledSaves(tmp_path / "s.db", refusals=1)
+
+    async def emit(event):
+        if event.kind == "tool_completed":
+            announced.append(store.shapes[-1])
+            raise RuntimeError("sink down")  # must not mask the original failure
+
+    client = client_for([response([double_call()])], [])
+    runtime = ResponsesRuntime(
+        store=store, dispatcher=double_dispatcher(), client=client, event_sink=emit
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert error.value.code == "PROVIDER_FAILED"
+    assert announced == [(None, True, "failed")]
+    await client.close()
+
+
+async def test_failed_failure_save_announces_nothing(tmp_path):
+    announced = []
+    store = RefusingSettledSaves(tmp_path / "s.db", refusals=2)
+
+    async def emit(event):
+        if event.kind == "tool_completed":
+            announced.append(store.shapes[-1])
+
+    client = client_for([response([double_call()])], [])
+    runtime = ResponsesRuntime(
+        store=store, dispatcher=double_dispatcher(), client=client, event_sink=emit
+    )
+    with pytest.raises(RuntimeError, match="disk full"):
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert store.refusals == 0
+    assert announced == []
     await client.close()
 
 

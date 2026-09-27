@@ -190,7 +190,9 @@ acknowledgement, and a compaction adds its marker and prune saves. Settlement af
 saved on its own: until the next save the durable state is B, which holds the generation marker,
 so a crash stays uncertain. A fatal tool error, a cancellation or a failed settlement is recorded
 by `_run`'s failure save. `tool_completed` and any stagnation signal are emitted after the save
-that made the call's output durable.
+that made the call's output durable. When that is `_run`'s failure save, they follow it
+best-effort, in call order, and a sink error is only logged so the original failure propagates. If
+the failure save itself fails, nothing is announced.
 
 The controller's store verifies each checkpoint's digest once, then encodes it into
 content-addressed chunks; encoding stays on the event loop by design. A save first stores its new

@@ -418,6 +418,9 @@ class ResponsesRuntime:
         self._saved: dict[str, RuntimeCheckpoint] = {}
         # Each running session's previous request, for the P1 input bound; never persisted.
         self._last_request: dict[str, dict[str, Any]] = {}
+        # Each running session's tool results awaiting announcement, in call order: (operation,
+        # name, signal, stagnation snapshot). Announced only after a save that holds them.
+        self._unannounced: dict[str, list[tuple[str, str, str | None, dict[str, Any] | None]]] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -927,11 +930,11 @@ class ResponsesRuntime:
         except asyncio.CancelledError:
             # Cancelling an HTTP request cannot prove the remote generation stopped.
             session.status = "uncertain" if state.get("pending_operation") else "interrupted"
-            await self._save(session, state)
+            await self._save_failure(session, state)
             raise
         except TimeoutError as exc:
             session.status = "uncertain" if state.get("pending_operation") else "failed"
-            await self._save(session, state)
+            await self._save_failure(session, state)
             raise ExecutionError(
                 "TIMEOUT",
                 "Runtime exceeded wall-clock limit",
@@ -939,11 +942,11 @@ class ResponsesRuntime:
             ) from exc
         except ExecutionError:
             session.status = "uncertain" if state.get("pending_operation") else "failed"
-            await self._save(session, state)
+            await self._save_failure(session, state)
             raise
         except Exception as exc:
             session.status = "uncertain" if state.get("pending_operation") else "failed"
-            await self._save(session, state)
+            await self._save_failure(session, state)
             raise ExecutionError(
                 "PROVIDER_FAILED",
                 "Provider or persistence hook failed; inspect correlated internal error",
@@ -952,6 +955,18 @@ class ResponsesRuntime:
         finally:
             self._active.pop(session.id, None)
             self._last_request.pop(session.id, None)
+            self._unannounced.pop(session.id, None)
+
+    async def _save_failure(self, session: RuntimeSession, state: dict[str, Any]) -> None:
+        """`_run`'s failure save, then a best-effort announcement of the tool results it made
+        durable. A sink error is only logged, so the original failure still propagates."""
+        await self._save(session, state)
+        for tool_operation, name, signal, snapshot in self._unannounced.pop(session.id, []):
+            await self._emit_telemetry("tool_completed", session, tool_operation, name=name)
+            if signal is not None:
+                await self._emit_telemetry(
+                    signal, session, tool_operation, stagnation_state=snapshot
+                )
 
     async def _loop(
         self, session: RuntimeSession, state: dict[str, Any], deadline: float
@@ -1165,11 +1180,11 @@ class ResponsesRuntime:
                     artifacts=[artifact],
                     native_items=native["output"],
                 )
-            completed = await self._run_calls(session, state, native, calls)
+            await self._run_calls(session, state, native, calls)
             await self._advance_active_input(session, state, native)
             state["settled_boundary"] = True
             checkpoint = await self._save(session, state)
-            await self._emit_completed(session, completed)
+            await self._emit_completed(session)
             handoff = await self._maybe_handoff(session, state, native, checkpoint=checkpoint)
             if handoff is not None:
                 return handoff
@@ -1409,13 +1424,13 @@ class ResponsesRuntime:
         state: dict[str, Any],
         native: dict[str, Any],
         calls: list[dict[str, Any]],
-    ) -> list[tuple[str, str, str | None, dict[str, Any] | None]]:
+    ) -> None:
         """Dispatch each call in order, replaying any committed result for its ID.
 
-        Returns the calls whose outputs no save holds yet, for `_emit_completed` after the
-        next save; each call's marker save announces the calls before it.
+        Each result waits in `_unannounced` for the next save: the next call's marker save,
+        the settled save or `_run`'s failure save.
         """
-        unsaved = []
+        unannounced = self._unannounced.setdefault(session.id, [])
         for call in calls:
             tool_operation = f"{session.id}:{call['call_id']}"
             try:
@@ -1442,8 +1457,7 @@ class ResponsesRuntime:
             else:
                 state["pending_operation"] = tool_operation
                 await self._save(session, state)
-                await self._emit_completed(session, unsaved)
-                unsaved = []
+                await self._emit_completed(session)
                 result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
                 signal = observe_stagnation(
                     state.setdefault("stagnation", {}), call["name"], arguments, result
@@ -1474,7 +1488,7 @@ class ResponsesRuntime:
                 }
             )
             state["pending_operation"] = None
-            unsaved.append(
+            unannounced.append(
                 (
                     tool_operation,
                     call["name"],
@@ -1482,15 +1496,12 @@ class ResponsesRuntime:
                     dict(state["stagnation"]) if signal is not None else None,
                 )
             )
-        return unsaved
 
-    async def _emit_completed(
-        self,
-        session: RuntimeSession,
-        completed: list[tuple[str, str, str | None, dict[str, Any] | None]],
-    ) -> None:
+    async def _emit_completed(self, session: RuntimeSession) -> None:
         """Announce tool results only after the save that made them durable."""
-        for tool_operation, name, signal, snapshot in completed:
+        unannounced = self._unannounced.get(session.id, [])
+        while unannounced:
+            tool_operation, name, signal, snapshot = unannounced.pop(0)
             await self._emit("tool_completed", session, tool_operation, name=name)
             if signal is not None:
                 await self._emit(signal, session, tool_operation, stagnation_state=snapshot)
