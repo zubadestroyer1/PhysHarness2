@@ -239,7 +239,7 @@ def test_the_waiters_own_moves_do_not_wake_it_and_a_peers_do(lab):
     assert [e for e in events if e["kind"] == "commons.node_status"][-1]["payload"] == {
         "experiment_id": exp["id"],
         "node_id": mine["id"],
-        "from": "informal",
+        "from": "open",
         "to": "abandoned",
         "reason": "platform test",
         "branch_id": None,

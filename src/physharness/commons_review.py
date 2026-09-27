@@ -1,64 +1,59 @@
-"""Platform-assigned referee reviews and evidence-bound commons ladder transitions.
+"""Plan reviews by platform-assigned referees, Lean statements and proof-driven acceptance.
 
 A referee is an isolated branch the platform creates for one review: it has no parent, and no
 other branch may message it or delegate work into it. When the experiment records
-several models, the first referee runs one distinct from the author's (and, for a fidelity
-review, from every branch that may have written the Lean statement), and a panel spreads over
+several models, the first referee runs one distinct from the author's, and a panel spreads over
 the model families. Each referee task submits exactly one verdict, and a node gets a bounded
-panel of referees per text version, so it cannot shop for verdicts: a standing wrong or
-unfaithful verdict ends the panel, and a later node restating an earlier one's (normalized)
-statement draws no referees of its own. Verdicts, Lean elaboration results, local compiles and
-independent kernel receipts become ladder moves only here, through ``_set_node_status``.
+panel of referees per text version, so it cannot shop for verdicts; a later node restating an
+earlier one's (normalized) statement draws no referees of its own. Referees check plans and
+arguments; a compiled node needs none. A verdict is recorded, and a negative one is posted as
+an objection, but it moves no status: the independent verifier is the only arbiter, and its
+receipt of the target accepts the goal (S1 audit #17).
 """
 
 import copy
 import json
 from collections import Counter
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import Field, StrictBool, ValidationError, model_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
 
-from .commons import PLATFORM, _lean_digest, _platform, _writer, statement_key
-from .commons_models import ALLOWED_TRANSITIONS, CLOSED_STATUSES, LEAN_NAME, axiom_refusal
+from .commons import DEPENDS_ON, PLATFORM, _lean_digest, _platform, _writer, statement_key
+from .commons_models import ALLOWED_TRANSITIONS, CLOSED_STATUSES, LEAN_NAME, public_status
+from .commons_sources import COMPLETE_RANKS, MAX_COMMONS_MODULES, source_state
 from .domain import StrictModel, digest_json, new_id
 from .errors import HarnessError
 from .orchestration.lean_session import HEADER_RULES, header_problem, signature_problem
-from .storage import EventRow, RecordRow, record_json_text
+from .storage import EdgeRow, EventRow, RecordRow, record_json_text
 from .worker_authority import current_worker_effects
 
+# Every review is a plan review, stored with scope "informal". "fidelity" stays only so a
+# fidelity task stored before the S1 remediation can still submit its verdict.
 REVIEW_VERDICTS = {"informal": ("sound", "gaps", "wrong"), "fidelity": ("faithful", "unfaithful")}
+PLAN_REVIEW = "informal"
+REVIEWABLE_TYPES = ("approach", "conjecture", "lemma")
 NEGATIVE_VERDICTS = frozenset({"gaps", "wrong", "unfaithful"})
-FORMAL_STATUSES = frozenset({"formally_stated", "compiles_locally"})
 TERMINAL_TASK_STATUSES = ("completed", "failed", "blocked")
 REFEREE_HAT = "referee"
-MAX_EVIDENCE_REVIEWS = 20  # Review ids cited in one status evidence record.
-# Review shopping bound: referees one text version may be given beyond the positive verdicts a
-# promotion needs (referee_quorum sound, or one faithful). A gap report does not use it (gaps
-# is not a veto): the author answers it on the thread and asks again, until the gap reports
-# alone fill the bound, when no sound majority can outvote them. The informal statement never
-# changes, so this bounds a node's informal referees; a new Lean statement is a new object to
-# judge and gets a fresh fidelity panel, up to MAX_FIDELITY_REVIEWS for each branch that
-# writes the node's Lean statements (so no claimant spends the author's).
+# Assignment keys naming one text version: what makes a review stale.
+VERSION_KEYS = ("node_id", "scope", "statement_sha256")
+# Review shopping bound: a text version gets referee_quorum + REVIEW_RETRIES referees. A gap
+# report does not use it: the author answers it on the thread and asks again, until the gap
+# reports alone fill the bound. The informal statement never changes, so this bounds a node's
+# referees.
 REVIEW_RETRIES = 2
-MAX_FIDELITY_REVIEWS = 9
+MAX_INTERFACE = 20  # Imported Lean statements a plan review lists.
+MAX_PROOF_RECEIPTS = 20  # Receipt ids one node's in_verified_proof keeps.
 MAX_THREAD_EVIDENCE_POSTS = 5000  # Node-thread posts searched for evidence a referee opens.
 MAX_SAME_TEXT_NODES = 20  # Earlier same-statement nodes searched for the one holding reviews.
 MAX_OBJECTIVE = 20_000  # The task objective bound shared with recruitment and task creation.
 # Encoded-size budgets for author fields, applied only when the full objective would exceed
 # MAX_OBJECTIVE (the node keeps the exact text). Sized so the worst case fits with margin.
 OBJECTIVE_BUDGETS = {
-    "informal": {"title": 400, "statement": 12000, "assumptions": 5000},
-    "fidelity": {
-        "title": 400,
-        "statement": 7000,
-        "assumptions": 1500,
-        "lean_header": 1000,
-        "lean_statement": 7000,
-    },
+    "informal": {"title": 400, "statement": 9000, "assumptions": 4000, "interface": 4000},
 }
-MAX_AXIOMS_BYTES = 8000
 SHA256 = r"^[0-9a-f]{64}$"
 NODE_DATA_BEGIN = "<<<NODE_DATA_BEGIN>>>"
 NODE_DATA_END = "<<<NODE_DATA_END>>>"
@@ -73,19 +68,11 @@ _REFEREE_PREAMBLE = (
 REFEREE_OBJECTIVE = {
     "informal": _REFEREE_PREAMBLE
     + (
-        "The data holds the node's title, informal statement and assumptions.\n"
-        "Task: judge whether the argument or claim is sound and complete. List concrete gaps: "
+        "The data holds the node's title, informal statement and assumptions; it may list "
+        "the Lean interface the plan imports (statements, no proofs).\n"
+        "Task: judge whether the plan or argument is sound and complete. List concrete gaps: "
         "each missing step, unjustified inference or unstated hypothesis, located precisely. "
         "Answer sound, gaps or wrong.\n"
-        "Call submit_review exactly once. Your verdict is recorded; it is not a proof."
-    ),
-    "fidelity": _REFEREE_PREAMBLE
-    + (
-        "The data holds the node's title, informal statement and assumptions, and its Lean "
-        "header, name and statement (theorem <lean_name> <lean_statement>).\n"
-        "Task: translate the Lean statement back to English and compare it with the informal "
-        "statement and its assumptions. Probe vacuity: are the hypotheses satisfiable, and can "
-        "False be derived from them with automation? Answer faithful or unfaithful.\n"
         "Call submit_review exactly once. Your verdict is recorded; it is not a proof."
     ),
 }
@@ -138,29 +125,26 @@ def _fit(text, budget):
     return text[:low]
 
 
-def referee_objective(scope, node_id, node):
-    """Platform instructions around one fenced JSON block holding every author-written field."""
+def referee_objective(scope, node_id, node, interface=None):
+    """Platform instructions around one fenced JSON block holding every author-written field:
+    the node's text and, when given, the Lean ``interface`` its plan imports."""
     data = {
         "title": node["title"],
         "statement": node["statement"],
         "assumptions": list(node["assumptions"]),
     }
-    if scope == "fidelity":
-        data.update(
-            lean_header=node.get("lean_header"),
-            lean_name=node.get("lean_name"),
-            lean_statement=node.get("lean_statement"),
-        )
+    if interface:
+        data["interface"] = list(interface)
     template = REFEREE_OBJECTIVE[scope]
     objective = template.format(node_id=node_id, node_data=_encode_node_data(data), clipped="")
     if len(objective) <= MAX_OBJECTIVE:
         return objective
     clipped = []
     for field, budget in OBJECTIVE_BUDGETS[scope].items():
-        value = data[field]
+        value = data.get(field)
         if value is None or len(_encode_node_data(value)) <= budget:
             continue
-        if field == "assumptions":
+        if isinstance(value, list):
             # An even share per item, less the list's indentation and separators.
             share = budget // len(value) - 8
             data[field] = [_fit(item, share) for item in value]
@@ -180,12 +164,6 @@ def referee_objective(scope, node_id, node):
 
 def _model_family(configuration):
     return (configuration.get("runtime"), configuration.get("model"))
-
-
-def _version_keys(scope):
-    """Assignment keys naming one text version: what makes each kind of review stale."""
-    keys = ("node_id", "scope", "statement_sha256")
-    return (*keys, "lean_statement_sha256") if scope == "fidelity" else keys
 
 
 def _submitted_review(experiment, verdict=None):
@@ -230,7 +208,7 @@ def _referee_isolated():
 
 
 def _stale(assignment, node):
-    """An informal review judged the statement; a fidelity review also judged the Lean text."""
+    """A review judged the statement; a stored fidelity review also judged the Lean text."""
     if assignment["statement_sha256"] != statement_digest(node):
         return True
     return (
@@ -269,26 +247,6 @@ class _LeanStatement(StrictModel):
         return self
 
 
-class _CompileResult(StrictModel):
-    complete: StrictBool
-    backend: str = Field(min_length=1, max_length=200)
-    statement_found: StrictBool
-    axioms: dict[str, Any]
-    # _lean_digest of the header/name/statement the platform found in the compiled source.
-    lean_statement_sha256: str = Field(pattern=SHA256)
-
-    @model_validator(mode="after")
-    def bounded(self):
-        if len(json.dumps(self.axioms, ensure_ascii=False).encode("utf-8")) > MAX_AXIOMS_BYTES:
-            raise ValueError(f"Axiom report exceeds {MAX_AXIOMS_BYTES} bytes")
-        return self
-
-
-class _LocalCompile(StrictModel):
-    source_sha256: str = Field(pattern=SHA256)
-    compile_result: _CompileResult
-
-
 def _validated(model, code, message, **values):
     try:
         return model.model_validate(values)
@@ -313,23 +271,23 @@ class CommonsReviewMixin:
     # Requests ------------------------------------------------------------------
 
     @staticmethod
-    def _review_precondition(node, scope):
-        status = node["status"]
-        if scope == "fidelity":
-            if not node.get("lean_statement") or not node.get("lean_elaborated"):
-                raise HarnessError(
-                    "LEAN_STATEMENT_REQUIRED",
-                    "A fidelity review needs a Lean statement that elaborates.",
-                    remediation="Record an elaborated Lean statement with set_lean_statement.",
-                )
-            allowed = {"informal", "refereed"}
-        else:
-            allowed = {"informal"}
-        if status not in allowed:
+    def _review_precondition(node):
+        """A referee checks a plan or argument: an open approach, conjecture or lemma without
+        a complete source (the verifier checks compiled Lean)."""
+        status, node_type = public_status(node["status"]), node["node_type"]
+        if status != "open" or node_type not in REVIEWABLE_TYPES:
             raise HarnessError(
                 "REVIEW_PRECONDITION",
-                f"A {scope} review does not apply to a {status} node.",
-                details={"status": status, "scope": scope},
+                f"A referee reviews an open approach, conjecture or lemma, not a {status} "
+                f"{node_type}.",
+                details={"status": status, "node_type": node_type},
+            )
+        if source_state(node) in COMPLETE_RANKS:
+            raise HarnessError(
+                "REVIEW_UNNEEDED",
+                "A compiled node needs no referee; the verifier checks it.",
+                remediation="Build on it, or ask a referee about a plan (an approach or "
+                "skeleton) instead.",
             )
 
     @staticmethod
@@ -349,12 +307,9 @@ class CommonsReviewMixin:
     def _open_review_task(session, experiment, assignment):
         """The live, not yet submitted referee task for the same review, in one query.
 
-        Informal requests match on (node, scope, statement digest); fidelity requests also on
-        the Lean digest, mirroring what makes each kind of review stale.
+        Requests match on (node, scope, statement digest), mirroring what makes a review stale.
         """
-        filters, submitted = _referee_tasks(
-            experiment, assignment, _version_keys(assignment["scope"])
-        )
+        filters, submitted = _referee_tasks(experiment, assignment, VERSION_KEYS)
         return session.scalar(
             select(RecordRow)
             .where(
@@ -371,26 +326,25 @@ class CommonsReviewMixin:
         """The referees this text version already has, within the review-shopping bound.
 
         A referee counts once it submitted a verdict or while its task is live; one that
-        ended without a verdict does not, and neither does a gap report (gaps is not a veto).
-        Raises ``REVIEW_LIMIT`` when the version's panel is full, when its gap reports alone
-        fill the bound (no sound majority can outvote them), or when the fidelity panels of
-        the Lean statements this writer recorded on the node are full.
+        ended without a verdict does not, and neither does a gap report. Raises
+        ``REVIEW_LIMIT`` when the version's panel is full or when its gap reports alone fill
+        the bound.
         """
         scope = assignment["scope"]
-        required = experiment.payload["society"]["referee_quorum"] if scope == "informal" else 1
-        limit = required + REVIEW_RETRIES
+        limit = experiment.payload["society"]["referee_quorum"] + REVIEW_RETRIES
 
-        def full(counted, what="referees", bound=limit, whose="This text version has"):
+        def full(counted, what="referees"):
             return HarnessError(
                 "REVIEW_LIMIT",
-                f"{whose} {counted} {scope} {what.replace('_', ' ')}; the limit is {bound}.",
+                f"This text version has {counted} {scope} {what.replace('_', ' ')}; the limit is "
+                f"{limit}.",
                 status=409,
-                details={"scope": scope, what: counted, "limit": bound},
-                remediation="Answer the referees' objections on the node thread; a new Lean "
-                "statement gets a fresh fidelity panel, and a revised claim is a new node.",
+                details={"scope": scope, what: counted, "limit": limit},
+                remediation="Answer the referees' objections on the node thread; a revised claim "
+                "is a new node.",
             )
 
-        filters, submitted = _referee_tasks(experiment, assignment, _version_keys(scope))
+        filters, submitted = _referee_tasks(experiment, assignment, VERSION_KEYS)
         given = or_(record_json_text("status").not_in(TERMINAL_TASK_STATUSES), submitted.exists())
         gap = _submitted_review(experiment, "gaps").exists().label("gap")
         # Neither count may reach the limit, so twice the limit reads the whole panel.
@@ -402,27 +356,6 @@ class CommonsReviewMixin:
             raise full(len(rows) - gaps)
         if gaps >= limit:
             raise full(gaps, "gap_reports")
-        if scope == "fidelity":
-            filters, submitted = _referee_tasks(
-                experiment, assignment, ("node_id", "scope", "lean_writer")
-            )
-            given = or_(
-                record_json_text("status").not_in(TERMINAL_TASK_STATUSES), submitted.exists()
-            )
-            written = list(
-                session.scalars(
-                    select(RecordRow.id)
-                    .where(*filters, given)
-                    .order_by(RecordRow.id)
-                    .limit(MAX_FIDELITY_REVIEWS)
-                )
-            )
-            if len(written) >= MAX_FIDELITY_REVIEWS:
-                raise full(
-                    len(written),
-                    bound=MAX_FIDELITY_REVIEWS,
-                    whose="This writer's Lean statements on the node have",
-                )
         return [row for row, _ in rows]
 
     @staticmethod
@@ -433,20 +366,14 @@ class CommonsReviewMixin:
         return node.get("branch_id") or f"actor:{node.get('origin_actor_id')}"
 
     @staticmethod
-    def _statement_owner(session, row, scope):
-        """The earlier node that holds reviews of this node's statement for ``scope``, or None.
+    def _statement_owner(session, row):
+        """The earlier node that holds reviews of this node's statement, or None.
 
-        Reviews follow the text: the earliest-created same-text node that is open or has
-        drawn a referee holds them, so a later copy (a re-post after a veto, or a copy of
-        another agent's node) draws no referees of its own and never takes an earlier node's
-        reviews. A node closed before any review leaves the text to the next one. Past the
-        search bound the check fails closed.
-
-        Informal review keys on the normalized informal statement alone. Fidelity review also
-        keys on the Lean statement digest, since a restated node with a *different* Lean
-        statement is a distinct formal object owed its own fidelity panel (hole nodes share
-        an informal text -- the pretty-printed goal, which elides numeral types -- yet differ
-        in Lean); the lock still catches an identical informal+Lean re-post (anti-shopping).
+        Reviews follow the normalized informal text: the earliest-created same-text node that
+        is open or has drawn a referee holds them, so a later copy (a re-post after a negative
+        verdict, or a copy of another agent's node) draws no referees of its own and never
+        takes an earlier node's reviews. A node closed before any review leaves the text to
+        the next one. Past the search bound the check fails closed.
         """
         node = row.payload
 
@@ -475,10 +402,6 @@ class CommonsReviewMixin:
             RecordRow.id != row.id,
             order < mine,
         ]
-        if scope == "fidelity":
-            filters.append(
-                record_json_text("lean_statement_sha256") == node["lean_statement_sha256"]
-            )
         earlier = list(
             session.scalars(
                 select(RecordRow)
@@ -503,18 +426,6 @@ class CommonsReviewMixin:
                 return other
         return earlier[0] if len(earlier) >= MAX_SAME_TEXT_NODES else None
 
-    def _standing_veto(self, session, row, scope):
-        """The standing verdict that ends every panel of this scope, or None.
-
-        A non-stale wrong vetoes every promotion above informal; a non-stale unfaithful vetoes
-        formally_stated for the current Lean statement.
-        """
-        if self._review_tally(session, row, "informal")[0]["wrong"]:
-            return "wrong"
-        if scope == "fidelity" and self._review_tally(session, row, "fidelity")[0]["unfaithful"]:
-            return "unfaithful"
-        return None
-
     @staticmethod
     def _author_model(session, node, models):
         """The author branch's model index and effective configuration."""
@@ -526,32 +437,6 @@ class CommonsReviewMixin:
         if index is None:
             index = models.index(configuration) if configuration in models else 0
         return index, configuration
-
-    @staticmethod
-    def _claimant_families(session, row, models):
-        """Model families of every branch that has claimed the node, live or not.
-
-        A live claimant may write the node's Lean statement (``_may_formalize``), and an
-        earlier version by another claimant may shape the current one, so a fidelity referee
-        avoids them all, not only the current ``lean_writer``.
-        """
-        claimants = select(record_json_text("branch_id")).where(
-            RecordRow.project_id == row.project_id,
-            RecordRow.kind == "commons_claim",
-            record_json_text("experiment_id") == row.payload["experiment_id"],
-            record_json_text("node_id") == row.id,
-        )
-        branches = session.scalars(
-            select(RecordRow).where(
-                RecordRow.project_id == row.project_id,
-                RecordRow.kind == "branch",
-                RecordRow.id.in_(claimants.scalar_subquery()),
-            )
-        )
-        return {
-            _model_family(branch.payload.get("model_configuration") or models[0])
-            for branch in branches
-        }
 
     @staticmethod
     def _referee_model(models, author_index, avoided, author, used):
@@ -595,13 +480,33 @@ class CommonsReviewMixin:
         if recipient.payload.get("hat") == REFEREE_HAT and sender.id != recipient.id:
             raise _referee_isolated()
 
-    def request_review(self, node_id, scope, actor, key) -> dict:
-        """Assign an isolated referee: a detached, parentless platform branch."""
+    @staticmethod
+    def _plan_interface(session, row):
+        """The Lean interface a node's published source imports: ``module: theorem name
+        statement`` for each directly imported node with a Lean statement (never a proof)."""
+        lines = []
+        for entry in (row.payload.get("lean_source") or {}).get("imports") or []:
+            imported = session.get(RecordRow, entry["node_id"])
+            if (
+                imported is None
+                or imported.kind != "commons_node"
+                or imported.project_id != row.project_id
+                or imported.payload.get("experiment_id") != row.payload["experiment_id"]
+            ):
+                continue
+            node = imported.payload
+            if node.get("lean_name") and node.get("lean_statement"):
+                lines.append(
+                    f"{entry['module']}: theorem {node['lean_name']} {node['lean_statement']}"
+                )
+                if len(lines) == MAX_INTERFACE:
+                    break
+        return lines
+
+    def request_review(self, node_id, actor, key) -> dict:
+        """Assign an isolated referee to a plan or argument: a detached, parentless platform
+        branch."""
         self._research_role(actor)
-        if scope not in REVIEW_VERDICTS:
-            raise HarnessError(
-                "INVALID_REVIEW_SCOPE", "Use scope informal or fidelity.", status=422
-            )
         if actor.role == "agent" and not actor.branch_id:
             raise HarnessError(
                 "BRANCH_AUTHORITY", "A branch identity is required to request reviews.", status=403
@@ -610,8 +515,8 @@ class CommonsReviewMixin:
         def action(session, op):
             row, experiment = self._review_node(session, node_id, actor)
             node = row.payload
-            self._review_precondition(node, scope)
-            owner = self._statement_owner(session, row, scope)
+            self._review_precondition(node)
+            owner = self._statement_owner(session, row)
             if owner is not None:
                 raise HarnessError(
                     "DUPLICATE_STATEMENT",
@@ -621,28 +526,12 @@ class CommonsReviewMixin:
                     remediation=f"Request reviews of node {owner.id}, build on it, or link this "
                     "node to it with duplicates; a revised claim is a new node with its own text.",
                 )
-            veto = self._standing_veto(session, row, scope)
-            if veto is not None:
-                raise HarnessError(
-                    "REVIEW_VETOED",
-                    f"A standing {veto} verdict vetoes this node's "
-                    f"{'claim' if veto == 'wrong' else 'Lean statement'}; no further {scope} "
-                    "referee is assigned.",
-                    status=409,
-                    details={"scope": scope, "verdict": veto},
-                    remediation="Answer the objection on the node thread. A wrong verdict holds "
-                    "for this statement text (a revised claim is a new node); an unfaithful "
-                    "one until the Lean statement changes.",
-                )
             assignment = {
                 "node_id": row.id,
-                "scope": scope,
+                "scope": PLAN_REVIEW,
                 "statement_sha256": statement_digest(node),
                 "lean_statement_sha256": node["lean_statement_sha256"],
             }
-            if scope == "fidelity":
-                # Fidelity panels are budgeted per writer: no claimant spends the author's.
-                assignment["lean_writer"] = self._lean_writer(node)
             models = experiment.payload["models"]
             existing = self._open_review_task(session, experiment, assignment)
             if existing is not None:
@@ -662,13 +551,8 @@ class CommonsReviewMixin:
             )
             author_index, author_configuration = self._author_model(session, node, models)
             author = _model_family(author_configuration)
-            # An informal referee judges the author's text; a fidelity referee also judges
-            # the Lean statement, written by the author or a claimant.
-            avoided = {author}
-            if scope == "fidelity":
-                avoided |= self._claimant_families(session, row, models)
             model_index, cross_model = self._referee_model(
-                models, author_index, avoided, author, used
+                models, author_index, {author}, author, used
             )
             # The requester's admission, by dollars and outside the count caps; the platform
             # owns the branch, so the requester gets no delegation or parent/child messaging
@@ -680,8 +564,10 @@ class CommonsReviewMixin:
                 op,
                 experiment,
                 _platform(experiment.project_id),
-                title=f"Referee {scope}: {node['title']}"[:200],
-                objective=referee_objective(scope, row.id, node),
+                title=f"Referee {PLAN_REVIEW}: {node['title']}"[:200],
+                objective=referee_objective(
+                    PLAN_REVIEW, row.id, node, self._plan_interface(session, row)
+                ),
                 parent_id=None,
                 relation="helper",
                 model_index=model_index,
@@ -705,9 +591,7 @@ class CommonsReviewMixin:
                 "deduplicated": False,
             }
 
-        return self._execute(
-            actor, key, "commons.review_request", {"node_id": node_id, "scope": scope}, action
-        )
+        return self._execute(actor, key, "commons.review_request", {"node_id": node_id}, action)
 
     def referee_may_read_artifact(self, node_id, artifact_id, actor) -> bool:
         """Whether a referee of this node may open an artifact: one its own branch stored, the
@@ -773,73 +657,6 @@ class CommonsReviewMixin:
             raise _not_assigned()
         return task
 
-    def _review_tally(self, session, row, scope):
-        """Verdict counts and positive review ids among non-stale reviews of the current text.
-
-        Informal reviews count for the current statement digest; fidelity reviews also for the
-        current Lean digest. Negative verdicts keep counting until that text changes.
-        """
-        filters = [
-            RecordRow.project_id == row.project_id,
-            RecordRow.kind == "commons_review",
-            record_json_text("experiment_id") == row.payload["experiment_id"],
-            record_json_text("node_id") == row.id,
-            record_json_text("scope") == scope,
-            record_json_text("statement_sha256") == statement_digest(row.payload),
-            RecordRow.payload["stale"].as_boolean().is_(False),
-        ]
-        if scope == "fidelity":
-            filters.append(
-                record_json_text("lean_statement_sha256") == row.payload["lean_statement_sha256"]
-            )
-        verdict = record_json_text("verdict")
-        found = dict(
-            session.execute(select(verdict, func.count()).where(*filters).group_by(verdict)).all()
-        )
-        counts = {name: found.get(name, 0) for name in REVIEW_VERDICTS[scope]}
-        positive = REVIEW_VERDICTS[scope][0]
-        ids = session.scalars(
-            select(RecordRow.id)
-            .where(*filters, verdict == positive)
-            .order_by(RecordRow.id)
-            .limit(MAX_EVIDENCE_REVIEWS)
-        ).all()
-        return counts, list(ids)
-
-    def _refereed_evidence(self, session, row, quorum):
-        """Evidence for refereed: a sound quorum, no wrong verdict, and more sound than gaps.
-
-        The S1 plan vetoes on any non-stale wrong; a gap report is outvoted only by a sound
-        majority of the bounded panel (``REVIEW_RETRIES``).
-        """
-        counts, ids = self._review_tally(session, row, "informal")
-        sound = counts["sound"]
-        if counts["wrong"] or sound < quorum or sound <= counts["gaps"]:
-            return None
-        return {
-            "review_ids": ids,
-            "counts": counts,
-            "statement_sha256": statement_digest(row.payload),
-        }
-
-    def _formally_stated_evidence(self, session, row):
-        """Evidence for formally_stated: a faithful verdict, no unfaithful one and no wrong one.
-
-        An unfaithful verdict vetoes this Lean statement until it changes (making the
-        verdict stale); more faithful verdicts never outvote it. A standing wrong verdict on
-        the informal statement vetoes every promotion above informal.
-        """
-        counts, ids = self._review_tally(session, row, "fidelity")
-        if counts["unfaithful"] or counts["faithful"] < 1:
-            return None
-        if self._review_tally(session, row, "informal")[0]["wrong"]:
-            return None
-        return {
-            "review_ids": ids,
-            "counts": counts,
-            "lean_statement_sha256": row.payload["lean_statement_sha256"],
-        }
-
     def _review_objection(self, session, op, row, review_id, review, verdict, stale, actor):
         """Post a negative verdict as the referee's objection on the node thread."""
         if not row.payload.get("topic_id"):
@@ -874,44 +691,9 @@ class CommonsReviewMixin:
             actor,
         )
 
-    def _apply_review(self, session, op, row, experiment, review):
-        """Move the ladder for a non-stale review of an open node, when its evidence suffices."""
-        status = row.payload["status"]
-        if review["scope"] == "informal":
-            if review["verdict"] != "sound" or status != "informal":
-                return
-            quorum = experiment.payload["society"]["referee_quorum"]
-            evidence = self._refereed_evidence(session, row, quorum)
-            if evidence is not None:
-                self._set_node_status(
-                    session,
-                    row,
-                    "refereed",
-                    reason=f"referee quorum met ({evidence['counts']['sound']} sound, "
-                    f"{quorum} required)",
-                    evidence=evidence,
-                    op=op,
-                )
-            return
-        if (
-            review["verdict"] != "faithful"
-            or not row.payload.get("lean_elaborated")
-            or status not in {"informal", "refereed"}
-        ):
-            return
-        evidence = self._formally_stated_evidence(session, row)
-        if evidence is not None:
-            self._set_node_status(
-                session,
-                row,
-                "formally_stated",
-                reason="fidelity review: faithful",
-                evidence=evidence,
-                op=op,
-            )
-
     def submit_review(self, task_id, verdict, summary, objections, actor, key) -> dict:
-        """The assigned referee's single verdict; the platform decides what it moves."""
+        """The assigned referee's single verdict: recorded, a negative one posted as an
+        objection on an open node; it moves no status."""
         self._research_role(actor)
         text = _validated(
             _ReviewText,
@@ -994,10 +776,8 @@ class CommonsReviewMixin:
                 },
             )
             if open_node:
-                if not stale:
-                    self._apply_review(session, op, row, experiment, record)
                 self._touch_node(session, row, actor, op)
-            return {**record, "node_status": row.payload["status"]}
+            return {**record, "node_status": public_status(row.payload["status"])}
 
         return self._execute(actor, key, "commons.review_submit", inputs, action)
 
@@ -1005,10 +785,9 @@ class CommonsReviewMixin:
 
     def _may_formalize(self, session, row, actor):
         """The author sets or replaces the Lean statement. A branch holding a live claim sets
-        one only on a node below formally_stated whose statement is missing, does not
-        elaborate, or is its own: a claimant never replaces another writer's elaborated
-        statement (whose fidelity reviews and standing it would void), and never moves a
-        formal node's statement.
+        one only when the statement is missing, does not elaborate, or is its own: a claimant
+        never replaces another writer's elaborated statement, and never changes one that a
+        verified source proves.
         """
         node = row.payload
         author_branch = node.get("branch_id")
@@ -1018,7 +797,7 @@ class CommonsReviewMixin:
             else node.get("origin_actor_id") == actor.id
         ):
             return True
-        if node["status"] in FORMAL_STATUSES or (
+        if source_state(node) == "verified" or (
             node.get("lean_statement") is not None
             and node.get("lean_elaborated")
             and self._lean_writer(node) != _writer(actor)
@@ -1072,8 +851,8 @@ class CommonsReviewMixin:
                 raise HarnessError(
                     "NODE_AUTHORITY",
                     "Only the author may replace another writer's elaborated Lean statement or "
-                    "a formal node's; a live claimant sets a missing or non-elaborating one, "
-                    "or revises its own below formally_stated.",
+                    "one a verified source proves; a live claimant sets a missing or "
+                    "non-elaborating one, or revises its own.",
                     status=403,
                     remediation="Claim the node first (claims lapse after the policy TTL); to "
                     "change another writer's statement, propose it on the node thread.",
@@ -1092,7 +871,7 @@ class CommonsReviewMixin:
                 else previous
             )
             elaborated = request.elaboration.ok
-            # An unchanged re-record keeps its writer, whose fidelity budget it draws on.
+            # An unchanged re-record keeps its writer.
             writer = (
                 _writer(actor) if changed or previous is None else self._lean_writer(row.payload)
             )
@@ -1123,116 +902,32 @@ class CommonsReviewMixin:
                     "diagnostics_sha256": request.elaboration.diagnostics_sha256,
                 },
             )
-            if row.payload["status"] in FORMAL_STATUSES and (changed or not elaborated):
-                quorum = experiment.payload["society"]["referee_quorum"]
-                self._set_node_status(
-                    session,
-                    row,
-                    "refereed" if self._refereed_evidence(session, row, quorum) else "informal",
-                    reason="Lean statement changed"
-                    if changed
-                    else "Lean statement no longer elaborates",
-                    evidence={
-                        "lean_statement_sha256": digest,
-                        "previous_lean_statement_sha256": previous,
-                    },
-                    op=op,
-                    branch_id=actor.branch_id,
-                )
             self._touch_node(session, row, actor, op)
-            return copy.deepcopy(row.payload)
+            # How many nodes depend on this one: the writer's cue that a change reaches them.
+            dependents = session.scalar(
+                select(func.count())
+                .select_from(EdgeRow)
+                .where(
+                    EdgeRow.project_id == row.project_id,
+                    EdgeRow.target_id == row.id,
+                    EdgeRow.relation == DEPENDS_ON,
+                )
+            )
+            return {**copy.deepcopy(row.payload), "dependents": dependents}
 
         return self._execute(
             actor, key, "commons.lean_statement", {"node_id": node_id, **data}, action
         )
 
-    # Local compiles ------------------------------------------------------------
-
-    def record_local_compile(self, node_id, source_sha256, compile_result, actor, key) -> dict:
-        """Move a formally stated node to compiles_locally on a complete workspace compile.
-
-        The compile ran in the agent-controlled workspace VM: this is attested evidence,
-        never acceptance, which only the independent verifier grants. Whoever the caller,
-        the result must name the node's current statement (its canonical digest, recomputed
-        here from the node's fields) and report the node theorem's own axioms, all of them
-        standard (propext, Classical.choice, Quot.sound).
-        """
-        self._research_role(actor)
-        if actor.role == "agent" and not actor.branch_id:
-            raise HarnessError(
-                "BRANCH_AUTHORITY", "A branch identity is required to record compiles.", status=403
-            )
-        request = _validated(
-            _LocalCompile,
-            "INVALID_COMPILE_RESULT",
-            "Supply a source SHA-256 and the platform compile result "
-            "{complete, backend, statement_found, axioms, lean_statement_sha256}.",
-            source_sha256=source_sha256,
-            compile_result=compile_result,
-        )
-        data = request.model_dump(mode="json")
-        compiled = request.compile_result
-
-        def action(session, op):
-            row, _ = self._review_node(session, node_id, actor)
-            status = row.payload["status"]
-            name = row.payload.get("lean_name")
-            if row.payload.get("lean_statement") is None or not name:
-                return {"recorded": False, "reason": "no_lean_statement"}
-            current = _lean_digest(
-                row.payload.get("lean_header"), name, row.payload["lean_statement"]
-            )
-            if compiled.lean_statement_sha256 != current:
-                # The compiled statement is no longer the node's statement.
-                return {"recorded": False, "reason": "statement_changed"}
-            if status != "formally_stated":
-                reason = f"The node is {status}; a local compile counts only when formally_stated."
-                return {"recorded": False, "reason": reason}
-            if self._review_tally(session, row, "informal")[0]["wrong"]:
-                # A standing wrong verdict vetoes every promotion above informal.
-                return {"recorded": False, "reason": "wrong_verdict"}
-            if not compiled.complete:
-                return {"recorded": False, "reason": "The compile was incomplete."}
-            if not compiled.statement_found:
-                return {
-                    "recorded": False,
-                    "reason": "The node's Lean statement was not found in the compiled source.",
-                }
-            refusal = axiom_refusal(compiled.axioms, name)
-            if refusal is not None:
-                return refusal
-            record = self._set_node_status(
-                session,
-                row,
-                "compiles_locally",
-                reason="complete local compile",
-                evidence={
-                    "source_sha256": request.source_sha256,
-                    "backend": compiled.backend,
-                    "axioms": {name: data["compile_result"]["axioms"][name]},
-                },
-                op=op,
-                branch_id=actor.branch_id,
-            )
-            self._touch_node(session, row, actor, op)
-            return {
-                "recorded": True,
-                "node_id": row.id,
-                "status": record["status"],
-                "status_evidence": record["status_evidence"],
-            }
-
-        return self._execute(
-            actor, key, "commons.local_compile", {"node_id": node_id, **data}, action
-        )
-
     # Goal acceptance -----------------------------------------------------------
 
     def _commons_goal_accepted(self, session, experiment, receipt_id, op):
-        """Persist goal acceptance from a canonical independent-kernel receipt of the target.
+        """Persist goal acceptance from a canonical independent-kernel receipt of the target,
+        and record the receipt on the nodes whose sources the proof imported.
 
-        Called inside the verification commit for society experiments only. A goal that is
-        already accepted (a later receipt) is left alone.
+        Called inside the verification commit for society experiments only. A later receipt
+        leaves an accepted goal alone but still records its provenance. The verifier
+        certifies the target's axioms, not each imported lemma's, so only the goal is accepted.
         """
         if not experiment.payload.get("society"):
             return None
@@ -1246,13 +941,42 @@ class CommonsReviewMixin:
         self._goal_node(session, experiment, op)
         goal = self._goal_row(session, experiment)
         session.refresh(goal)
-        if "accepted" not in ALLOWED_TRANSITIONS[goal.payload["status"]]:
-            return None
-        return self._set_node_status(
-            session,
-            goal,
-            "accepted",
-            reason="independent kernel receipt",
-            evidence={"receipt_id": receipt_id},
-            op=op,
-        )
+        accepted = None
+        if "accepted" in ALLOWED_TRANSITIONS[goal.payload["status"]]:
+            accepted = self._set_node_status(
+                session,
+                goal,
+                "accepted",
+                reason="independent kernel receipt",
+                evidence={"receipt_id": receipt_id},
+                op=op,
+            )
+        self._record_proof_imports(session, experiment, receipt)
+        return accepted
+
+    def _record_proof_imports(self, session, experiment, receipt):
+        """Append the receipt to ``in_verified_proof`` on each node whose current source the
+        verified proof imported: provenance only, with no status move and no announcement.
+
+        Only ``commons_modules`` counts, which the platform's flattened submission alone
+        writes; the candidate artifact's provenance is caller-written and never read. An
+        entry is skipped when it is stale, when its node is outside the experiment, or when
+        the node's source has changed since. A node keeps its first MAX_PROOF_RECEIPTS ids.
+        """
+        for entry in (receipt.payload.get("commons_modules") or [])[:MAX_COMMONS_MODULES]:
+            if entry.get("stale") or not entry.get("sha256"):
+                continue
+            row = session.get(RecordRow, entry.get("node_id") or "")
+            if (
+                row is None
+                or row.kind != "commons_node"
+                or row.project_id != experiment.project_id
+                or row.payload.get("experiment_id") != experiment.id
+            ):
+                continue
+            session.refresh(row)
+            if (row.payload.get("lean_source") or {}).get("sha256") != entry["sha256"]:
+                continue
+            receipts = list(row.payload.get("in_verified_proof") or [])
+            if receipt.id not in receipts and len(receipts) < MAX_PROOF_RECEIPTS:
+                self._replace(session, row, {"in_verified_proof": [*receipts, receipt.id]})

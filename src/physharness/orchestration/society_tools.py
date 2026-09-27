@@ -2,11 +2,11 @@
 
 Twenty-six tools replace the 63 legacy ones for experiments with a society policy. Each handler
 calls the same service or workspace method its legacy counterpart calls, so the legacy tools
-remain the adapters. Evidence that moves the commons ladder (Lean elaboration and local
-compile results) is assembled here from Lean session results and records this module reads
-itself; it never comes from model arguments. A local compile rests on the harness statement
-check (``LeanSession.verify_statement``), never on the file's own output. The Lean session
-and the check run in the agent-controlled workspace VM, so that evidence is VM-attested,
+remain the adapters. Commons evidence (Lean elaboration results and published source ranks)
+is assembled here from Lean session results and records this module reads itself; it never
+comes from model arguments. A verified rank rests on the harness statement check
+(``LeanSession.verify_statement``), never on the file's own output. The Lean session and the
+check run in the agent-controlled workspace VM, so that evidence is VM-attested and advisory,
 not a trusted compile: only independent acceptance is trusted.
 
 String length limits are stated in each property's description and enforced here as
@@ -35,6 +35,7 @@ from ..commons_models import (
     NodeCreate,
     NodePostCreate,
     axiom_refusal,
+    public_status,
 )
 from ..commons_review import (
     REFEREE_DATA_NOTE,
@@ -175,7 +176,7 @@ ACTION_FIELDS = {
     "link": {"node_id", "relation", "target_id"},
     "set_lean_statement": {"node_id", "lean_header", "lean_name", "lean_statement"},
     "abandon": {"node_id", "reason"},
-    "request_review": {"node_id", "scope"},
+    "request_review": {"node_id"},
 }
 NODE_DEFAULTS = {
     "node_id": None,
@@ -191,14 +192,13 @@ NODE_DEFAULTS = {
     "relation": None,
     "target_id": None,
     "reason": None,
-    "scope": None,
 }
 ACTION_REQUIRED = {
     "create": ("node_type", "title", "statement"),
     "link": ("node_id", "relation", "target_id"),
     "set_lean_statement": ("node_id", "lean_name", "lean_statement"),
     "abandon": ("node_id", "reason"),
-    "request_review": ("node_id", "scope"),
+    "request_review": ("node_id",),
 }
 
 
@@ -414,7 +414,7 @@ def statement_found(source: str, lean_name: str, lean_statement: str) -> bool:
 
 
 def _compile_refusal(source, node):
-    """Why a source cannot support a local compile of the node, before its statement is
+    """Why a source cannot be published for the node's statement, before the statement is
     looked for; None when it can.
 
     These textual gates only give early, specific feedback. What the statement means is the
@@ -543,8 +543,10 @@ def _node_view(record):
             "lean_statement_sha256",
         )
     }
-    if "auto_subscribed" in record:
-        view["auto_subscribed"] = record["auto_subscribed"]
+    view["status"] = public_status(view["status"])
+    for key in ("auto_subscribed", "dependents"):
+        if key in record:
+            view[key] = record[key]
     return view
 
 
@@ -581,7 +583,8 @@ def _recruit_objective(brief, focus, hat, *, detached, scope=None):
     parts = [brief.strip()]
     if focus is not None:
         lines = [
-            f"Focus node {focus['id']} ({focus['node_type']}, status {focus['status']}): "
+            f"Focus node {focus['id']} ({focus['node_type']}, status "
+            f"{public_status(focus['status'])}): "
             f"{focus['title']}",
             f"Statement: {focus['statement'][:FOCUS_EXCERPT]}",
         ]
@@ -779,25 +782,19 @@ def society_tools(
             result, expansion = await expanded_check(a["source"], a["automate"], k)
             if node is None:
                 return result
-            published, verdict = await publish(node, a["source"], expansion, result, k)
-            return {
-                **result,
-                "published": published,
-                "local_compile": local_compile(node, a["source"], result, verdict, k),
-                "claimed": claim(node["id"], k),
-            }
+            published = await publish(node, a["source"], expansion, result, k)
+            return {**result, "published": published, "claimed": claim(node["id"], k)}
 
         async def publish(node, source, expansion, result, key):
-            """Publish a clean check as the node's ranked module; returns the publication and
-            the statement check's verdict (None when it did not run). The statement check
-            reads the flattened file; the published source is the caller's own text."""
+            """Publish a clean check as the node's ranked module. The statement check reads
+            the flattened file; the published source is the caller's own text."""
             module = node_module(node)
             refusal = _publication_refusal(source, node, result)
             if refusal is None and module in {imported.name for imported in expansion.modules}:
                 # Published, the module would import itself and fail every importer.
                 refusal = "imports_own_module"
             if refusal is not None:
-                return {"recorded": False, "module": module, "reason": refusal}, None
+                return {"recorded": False, "module": module, "reason": refusal}
             header, name, statement = (
                 node.get("lean_header"),
                 node.get("lean_name"),
@@ -819,15 +816,18 @@ def society_tools(
                     verdict = {"ok": False, "reason": error.code, "axioms": None}
             rank = _source_rank(node, result, verdict)
             if rank is None:
-                return {"recorded": False, "module": module, "reason": verdict["reason"]}, verdict
+                refused = {"recorded": False, "module": module, "reason": verdict["reason"]}
+                if verdict.get("detail"):
+                    refused["detail"] = verdict["detail"]
+                return refused
             # Refused before any artifact is stored, so a refusal leaves none behind;
             # record_lean_source repeats these checks under the node's lock.
             refusal, held = node_refusal(node), blocking_rank(node, rank, agent.branch_id)
             if refusal is not None:
-                return {"recorded": False, "module": module, "reason": refusal}, verdict
+                return {"recorded": False, "module": module, "reason": refusal}
             if held is not None:
                 refused = {"recorded": False, "module": module, "reason": "lower_rank"}
-                return {**refused, "rank": held}, verdict
+                return {**refused, "rank": held}
             modules = {imported.name: imported for imported in expansion.modules}
             direct = [modules[imported] for imported in split_imports(source)[0]]
             record = {
@@ -858,53 +858,7 @@ def society_tools(
                     node["id"], artifact["id"], record, agent, f"{key}:publish"
                 )
 
-            return _soft(store), verdict
-
-        def local_compile(node, source, result, verdict, key):
-            """Record a local compile only on the statement check's verdict (``publish`` runs
-            the check once for both).
-
-            The check's answer, not the session's ``axioms`` (the file's own ``#print axioms``
-            output, which the file can redefine), decides.
-            """
-            name, statement = node.get("lean_name"), node.get("lean_statement")
-            if not name or not statement:
-                return {"recorded": False, "reason": "no_lean_statement"}
-            refusal = _compile_refusal(source, node)
-            if refusal is not None:
-                return {"recorded": False, "reason": refusal}
-            if not statement_found(source, name, statement):
-                return {
-                    "recorded": False,
-                    "statement_found": False,
-                    "reason": "The node's Lean statement was not found in the compiled source; "
-                    "declare theorem <lean_name> <lean_statement> := ... exactly.",
-                }
-            if not result["complete"]:
-                return {"recorded": False, "reason": "The compile was incomplete."}
-            if verdict is None:
-                return {"recorded": False, "reason": "statement_check_not_run"}
-            if not verdict["ok"]:
-                refused = {"recorded": False, "reason": verdict["reason"]}
-                if verdict.get("detail"):
-                    refused["detail"] = verdict["detail"]
-                return refused
-            axioms = {name: verdict["axioms"]}
-            refusal = axiom_refusal(axioms, name)
-            if refusal is not None:
-                return refusal
-            compile_result = {
-                "complete": True,
-                "backend": verdict["backend"],
-                "statement_found": True,
-                "axioms": axioms,
-                "lean_statement_sha256": _lean_digest(node.get("lean_header"), name, statement),
-            }
-            return _soft(
-                lambda: service.record_local_compile(
-                    node["id"], result["source_sha256"], compile_result, agent, f"{key}:compile"
-                )
-            )
+            return _soft(store)
 
         def claim(node_id, key):
             """Claim the node; a live claim is renewed instead, so its route and box stand."""
@@ -928,7 +882,7 @@ def society_tools(
                 result, _ = await expanded_check(a["source"], a["automate"], k)
                 return result
 
-            # A referee checks Lean but never records local compiles.
+            # A referee checks Lean but never publishes sources.
             add(
                 "lean_check",
                 {"source": source_property, "automate": BOOLEAN},
@@ -961,8 +915,7 @@ def society_tools(
                 "Commons.N<8 hex>, ranked verified (the statement check passed on standard "
                 "axioms), complete (no sorry; the check could not judge) or partial; a higher "
                 "rank replaces a lower one, and publishing claims the node. A complete check "
-                "runs the platform's statement check and, when it passes, also records a local "
-                "compile, which moves a formally_stated node to compiles_locally. The file "
+                "runs the platform's statement check. The file "
                 "header must hold the node's lean_header lines, the file must have no variable "
                 "or #exit command, and "
                 "it must declare theorem <lean_name> <lean_statement> := ... once, outside "
@@ -1204,7 +1157,7 @@ def society_tools(
         if action == "abandon":
             return _node_view(service.abandon_node(a["node_id"], a["reason"], agent, k))
         if action == "request_review":
-            return service.request_review(a["node_id"], a["scope"], agent, k)
+            return service.request_review(a["node_id"], agent, k)
         result = await lean().elaborate_statement(
             a["lean_header"] or "",
             a["lean_name"],
@@ -1212,7 +1165,7 @@ def society_tools(
             operation_id=f"{k}:elaborate",
         )
         if _infrastructure_failure(result):
-            # Not evidence: recording it would demote a formal node for a lost session.
+            # Not evidence: recording it would mark the statement as not elaborating.
             raise _infrastructure_error(result)
         record = service.set_lean_statement(
             a["node_id"],
@@ -1263,19 +1216,19 @@ def society_tools(
             "relation": choice(EDGE_RELATIONS, "link: the relation.", nullable=True),
             "target_id": ident("link: the target node.", ("commons_node",), nullable=True),
             "reason": text(2000, "abandon: why the node is abandoned.", nullable=True),
-            "scope": choice(tuple(REVIEW_VERDICTS), "request_review: scope.", nullable=True),
         },
         commons_node,
-        "Propose and relate commons nodes. create adds an informal node (status informal); "
+        "Propose and relate commons nodes. create adds a node (status open); "
         "link adds a typed edge; set_lean_statement elaborates theorem <lean_name> "
         "<lean_statement> under lean_header in your workspace's Lean session and records the "
-        "statement with that result (the author; or a live claimant, below formally_stated, "
-        "when the statement is missing, does not elaborate or is its own): lean_header holds "
+        "statement with that result (the author; or a live claimant when the statement is "
+        "missing, does not elaborate or is its own, and no verified source proves it): "
+        "lean_header holds "
         "only import, open, universe and allowlisted set_option lines, and lean_statement is "
         "binders then ': type', with no ':=' or 'where' outside brackets; abandon closes your own "
-        "node with a reason; request_review asks the platform to assign an independent "
-        "referee (informal, or fidelity for an elaborated Lean statement). Agents never set "
-        "status.",
+        "node with a reason; request_review asks the platform for an independent referee of a "
+        "plan or argument (approach, conjecture or lemma); a compiled node needs none. Agents "
+        "never set status.",
         defaults=NODE_DEFAULTS,
     )
 
@@ -1852,7 +1805,7 @@ def society_tools(
             lambda a, k: service.submit_review(
                 task_context["task_id"], a["verdict"], a["summary"], a["objections"], agent, k
             ),
-            "Submit your one referee verdict for the assigned node. The platform decides "
-            "what it moves; a review is not a proof.",
+            "Submit your one referee verdict for the assigned node. It is recorded and moves "
+            "no status; a review is not a proof.",
         )
     return dispatcher

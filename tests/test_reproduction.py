@@ -219,7 +219,7 @@ def test_society_export_adds_commons_records_edges_and_fetches(lab):
     )
     service.link_nodes(exp["id"], goal["id"], "depends_on", lemma["id"], alpha, "link")
     service.claim_node(lemma["id"], "claim", beta, "claim")
-    requested = service.request_review(lemma["id"], "informal", alpha, "review")
+    requested = service.request_review(lemma["id"], alpha, "review")
     referee = Principal(
         id="referee",
         role="agent",

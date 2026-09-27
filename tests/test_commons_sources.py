@@ -1,7 +1,7 @@
 """The lemma store: node modules and ranked lean_source publication (S1 audit #12)."""
 
 import pytest
-from commons_helpers import society_lab
+from commons_helpers import publish, society_lab
 from test_commons_review import referee
 
 from physharness import commons
@@ -28,33 +28,6 @@ LEAN = {
     "lean_statement": ": (1 : Nat) + 1 = 2",
 }
 ELABORATED = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
-
-
-def publish(service, node_id, agent, rank, key, content="theorem x : True := trivial", **record):
-    artifact = service.create_artifact(
-        ArtifactCreate(
-            experiment_id=agent.experiment_id,
-            branch_id=agent.branch_id,
-            kind="lean_source",
-            content=content,
-        ),
-        agent,
-        key + ":a",
-    )
-    return service.record_lean_source(
-        node_id,
-        artifact["id"],
-        {
-            "rank": rank,
-            "bytes": len(content),
-            "statement_check": None,
-            "lean_statement_sha256": None,
-            "imports": [],
-            **record,
-        },
-        agent,
-        key,
-    )
 
 
 def lemma(service, exp, agent, title, key, **fields):
@@ -338,12 +311,12 @@ def test_publication_is_scoped_and_announced_on_the_node(lab):
 def test_a_referee_may_read_the_nodes_published_source(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
     node = lemma(service, exp, alpha, "Trace", "n")
-    publish(service, node["id"], beta, "complete", "p")
+    publish(service, node["id"], beta, "partial", "p")  # a skeleton, which a referee checks
     source = service.read_node(node["id"], alpha)["node"]["lean_source"]
     scratch = service.create_artifact(
         ArtifactCreate(experiment_id=exp["id"], kind="lean_source", content="y"), beta, "scratch"
     )
-    ref = referee(service.request_review(node["id"], "informal", alpha, "review"), exp)
+    ref = referee(service.request_review(node["id"], alpha, "review"), exp)
     assert service.referee_may_read_artifact(node["id"], source["artifact_id"], ref) is True
     assert service.referee_may_read_artifact(node["id"], scratch["id"], ref) is False
 

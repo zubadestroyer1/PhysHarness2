@@ -22,50 +22,30 @@ AuthoredNodeType = Literal[
 # The goal node mirrors the reviewed target and is created only by the platform.
 NODE_TYPES = ("goal", *get_args(AuthoredNodeType))
 EDGE_RELATIONS = get_args(EdgeRelation)
-STATUSES = (
-    "informal",
-    "refereed",
-    "formally_stated",
-    "compiles_locally",
-    "accepted",
-    "refuted",
-    "abandoned",
-)
+STATUSES = ("open", "accepted", "refuted", "abandoned")
+# Ladder values stored before the S1 remediation; every reader treats them as open.
+LEGACY_OPEN_STATUSES = ("informal", "refereed", "formally_stated", "compiles_locally")
+# A node is open exactly when its status is not closed (``public_status`` reads "open").
 CLOSED_STATUSES = frozenset({"accepted", "refuted", "abandoned"})
-# Downward moves (to informal/refereed/formally_stated) happen only when a Lean
-# statement changes. Only platform code applies any transition except author abandonment.
+# Only author abandonment and platform acceptance or refutation move a node (S1 audit #17).
 ALLOWED_TRANSITIONS = {
-    "informal": {"refereed", "formally_stated", "refuted", "abandoned"},
-    "refereed": {"informal", "formally_stated", "refuted", "abandoned"},
-    "formally_stated": {
-        "informal",
-        "refereed",
-        "compiles_locally",
-        "accepted",
-        "refuted",
-        "abandoned",
-    },
-    "compiles_locally": {
-        "informal",
-        "refereed",
-        "formally_stated",
-        "accepted",
-        "refuted",
-        "abandoned",
-    },
-    "accepted": set(),
-    "refuted": set(),
-    "abandoned": set(),
+    **{status: {"accepted", "refuted", "abandoned"} for status in ("open", *LEGACY_OPEN_STATUSES)},
+    **{status: set() for status in CLOSED_STATUSES},
 }
 LEAN_NAME = r"^[A-Za-z_][A-Za-z0-9_.']{0,199}$"
-# A local compile counts only on Lean's standard axioms; anything else (sorryAx, an added
-# axiom, Lean.ofReduceBool, a native_decide axiom) leaves the node where it is.
+# A source ranks verified or complete only on Lean's standard axioms; anything else
+# (sorryAx, an added axiom, Lean.ofReduceBool, a native_decide axiom) ranks it partial.
 STANDARD_AXIOMS = frozenset({"propext", "Classical.choice", "Quot.sound"})
 MAX_AXIOM_REPORT = 32
 
 
+def public_status(status):
+    """The status every read shows: a legacy ladder value reads as open."""
+    return "open" if status in LEGACY_OPEN_STATUSES else status
+
+
 def axiom_refusal(axioms, lean_name):
-    """Why an axiom report cannot support compiles_locally, or None when it can.
+    """Why an axiom report cannot support a verified or complete rank, or None when it can.
 
     Only the node's own theorem entry counts: a missing or malformed entry fails closed, and
     other declarations' entries never stand in for it.

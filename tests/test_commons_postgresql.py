@@ -119,8 +119,8 @@ def test_commons_smoke(backend_lab):
     assert batch["items"][0]["id"] == objection["id"] and batch["items"][0]["urgent"] is True
     service.acknowledge_discussion_updates(exp["id"], batch["delivery_id"], alpha, "ack")
     # Review requests deduplicate on an open, unsubmitted referee task (NOT EXISTS).
-    first = service.request_review(lemma["id"], "informal", beta, "review-1")
-    again = service.request_review(lemma["id"], "informal", alpha, "review-2")
+    first = service.request_review(lemma["id"], beta, "review-1")
+    again = service.request_review(lemma["id"], alpha, "review-2")
     assert again["deduplicated"] is True and again["review_task_id"] == first["review_task_id"]
     referee = Principal(
         id="referee",
@@ -132,7 +132,7 @@ def test_commons_smoke(backend_lab):
     service.submit_review(
         first["review_task_id"], "gaps", "Step 2 is missing.", ["Step 2."], referee, "gaps"
     )
-    fresh = service.request_review(lemma["id"], "informal", beta, "review-3")
+    fresh = service.request_review(lemma["id"], beta, "review-3")
     assert fresh["deduplicated"] is False and fresh["review_task_id"] != first["review_task_id"]
     # A node message reaches the live claimant; the per-sender window counts JSON timestamps.
     sent = service.send_society_message(alpha.branch_id, lemma["id"], "Step 2?", [], alpha, "m1")
@@ -246,26 +246,22 @@ def test_commons_queries_compile_for_postgresql():
     experiment = SimpleNamespace(project_id="p", id="e", payload={"society": {"referee_quorum": 1}})
     assignment = {
         "node_id": "n",
-        "scope": "fidelity",
+        "scope": "informal",
         "statement_sha256": "s",
         "lean_statement_sha256": "l",
-        "lean_writer": "w",
     }
-    node = SimpleNamespace(project_id="p", id="n", payload={"experiment_id": "e"})
     CommonsReviewMixin._open_review_task(session, experiment, assignment)
     list(CommonsDiscourseMixin._live_claim_rows(session, "p", "e", 1.0, node_id="n"))
     CommonsMixin._experiment_dependencies(session, experiment)
     CommonsMixin._commons_edges(session, "p", "e", {"n"})
-    # The referee panel bound (per Lean statement, then per writer) and claimant families.
+    # The referee panel bound per text version.
     assert CommonsReviewMixin._review_panel(session, experiment, assignment) == []
-    assert CommonsReviewMixin._claimant_families(session, node, [{}]) == set()
     compiled = [
         str(statement.compile(dialect=postgresql.dialect())) for statement in session.statements
     ]
-    assert len(compiled) == 7
+    assert len(compiled) == 5
     assert "NOT (EXISTS" in compiled[0]
-    assert all(" OR (EXISTS" in text for text in compiled[4:6])
-    assert " IN (SELECT" in compiled[6]
+    assert " OR (EXISTS" in compiled[4]
     # The earlier same-statement node search orders by the node-creation event sequence.
     owner = _Capture()
     owner.scalar = lambda statement: owner.statements.append(statement) or 1
@@ -280,14 +276,8 @@ def test_commons_queries_compile_for_postgresql():
             "lean_statement_sha256": "f" * 64,
         },
     )
-    assert CommonsReviewMixin._statement_owner(owner, row, "informal") is None
+    assert CommonsReviewMixin._statement_owner(owner, row) is None
     compiled = [
         str(statement.compile(dialect=postgresql.dialect())) for statement in owner.statements
     ]
     assert len(compiled) == 2 and all("min(events.sequence)" in text for text in compiled)
-    # The fidelity search adds one Lean-digest filter; it must also compile for PostgreSQL.
-    owner.statements.clear()
-    assert CommonsReviewMixin._statement_owner(owner, row, "fidelity") is None
-    fidelity = str(owner.statements[-1].compile(dialect=postgresql.dialect()))
-    assert "min(events.sequence)" in fidelity
-    assert fidelity.count(" AND ") == compiled[1].count(" AND ") + 1

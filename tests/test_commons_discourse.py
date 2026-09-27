@@ -264,7 +264,7 @@ def test_claim_closed_node_rejected(lab, clock):
     # A holder may still let go of work on a closed node.
     assert service.claim_node(node["id"], "release", beta, "release")["released"] is True
     accepted = service.create_node(exp["id"], lemma("Done"), alpha, "done")
-    set_status(service, accepted["id"], "formally_stated", "accepted")
+    set_status(service, accepted["id"], "accepted")
     with pytest.raises(HarnessError) as err:
         service.claim_node(accepted["id"], "claim", beta, "accepted-claim")
     assert err.value.code == "NODE_CLOSED"
@@ -558,34 +558,30 @@ def test_status_change_posts_platform_update_to_subscribers(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
     service.claim_node(node["id"], "claim", beta, "claim")
-    set_status(service, node["id"], "refereed", reason="quorum met")
-    long = set_status(service, node["id"], "formally_stated", reason="r" * 2000)
-    assert long["status"] == "formally_stated"
-    # Non-urgent statuses are posted on the thread but not pushed (S1 audit #13).
-    for reader in (alpha, beta):
-        assert drain(service, exp["id"], reader)["items"] == []
     set_status(service, node["id"], "refuted", reason="counterexample")
     for reader in (alpha, beta):
         (item,) = drain(service, exp["id"], reader)["items"]
         assert item["attributed_to"] == PLATFORM and item["post_kind"] == "update"
-        assert item["excerpt"] == "Status formally_stated → refuted: counterexample"
+        assert item["excerpt"] == "Status open → refuted: counterexample"
         assert item["node_id"] == node["id"] and item["urgent"] is True
         assert item["branch_id"] is None
     full = service.read_discussion_post(item["id"], beta)
-    assert full["platform_status"] == {
-        "from": "formally_stated",
-        "to": "refuted",
-        "reason": "counterexample",
-    }
+    assert full["platform_status"] == {"from": "open", "to": "refuted", "reason": "counterexample"}
     assert full["topic_id"] == node["topic_id"] and full["node_id"] == node["id"]
     assert full["abstract"] == full["content"] == item["excerpt"]
+    # Non-urgent statuses are posted on the thread but not pushed (S1 audit #13).
+    other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
+    service.claim_node(other["id"], "claim", beta, "claim-other")
+    long = set_status(service, other["id"], "abandoned", reason="r" * 2000)
+    assert long["status"] == "abandoned"
+    for reader in (alpha, beta):
+        assert drain(service, exp["id"], reader)["items"] == []
     statuses = {
         post["platform_status"]["to"]: post
         for post in service.list_records("discussion_post", author, exp["id"])
         if post.get("platform_status")
     }
-    assert statuses["refereed"]["abstract"] == "Status informal → refereed: quorum met"
-    assert len(statuses["formally_stated"]["abstract"]) == 600
+    assert len(statuses["abandoned"]["abstract"]) == 600
 
 
 def test_objection_on_own_node_is_urgent_and_first(lab):
@@ -614,11 +610,10 @@ def test_accepted_dependency_is_urgent(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
     lemma_a = service.create_node(exp["id"], lemma("A"), alpha, "a")
     service.create_node(exp["id"], lemma("B", edges=depends(lemma_a["id"])), beta, "b")
-    set_status(service, lemma_a["id"], "formally_stated", "accepted", reason="kernel receipt")
-    # The non-urgent informal → formally_stated post is not pushed (S1 audit #13).
+    set_status(service, lemma_a["id"], "accepted", reason="kernel receipt")
     items = drain(service, exp["id"], beta)["items"]
     assert [(i["excerpt"], i["urgent"]) for i in items] == [
-        ("Status formally_stated → accepted: kernel receipt", True),
+        ("Status open → accepted: kernel receipt", True),
     ]
     refuted = service.create_node(exp["id"], lemma("C"), alpha, "c")
     drain(service, exp["id"], alpha)

@@ -206,7 +206,7 @@ async def simulate(society, export_directory):
         },
     )
     L = lemma["id"]
-    assert lemma["status"] == "informal" and lemma["auto_subscribed"] is True
+    assert lemma["status"] == "open" and lemma["auto_subscribed"] is True
     linked = await call(
         A,
         "commons_node",
@@ -255,8 +255,8 @@ async def simulate(society, export_directory):
         "reason": "withheld_contamination_risk",
     }
 
-    # 3. A posts a finding and requests an informal review; the platform creates a referee
-    # task on the other model family, isolated from A.
+    # 3. A posts a finding and requests a review of its argument; the platform creates a
+    # referee task on the other model family, isolated from A.
     finding = await call(
         A,
         "commons_post",
@@ -268,9 +268,7 @@ async def simulate(society, export_directory):
         },
     )
     assert finding["post_id"]
-    informal = await call(
-        A, "commons_node", {"action": "request_review", "node_id": L, "scope": "informal"}
-    )
+    informal = await call(A, "commons_node", {"action": "request_review", "node_id": L})
     assert informal["cross_model"] is True and informal["deduplicated"] is False
     referee_branch = service.get_record("branch", informal["branch_id"], society.author)
     assert referee_branch["hat"] == "referee" and referee_branch["parent_id"] is None
@@ -281,9 +279,9 @@ async def simulate(society, export_directory):
     isolated = await call(A, "message", {"to": informal["branch_id"], "content": "Be kind."})
     assert isolated["error"]["code"] == "REFEREE_ISOLATED"
 
-    # 4. The referee submits sound: L becomes refereed. The status post is on L's thread, but
-    # neither it (not urgent) nor A's own finding is pushed to A's update delivery (S1 audit
-    # #13).
+    # 4. The referee submits sound: the verdict is recorded and L stays open. Nothing reaches
+    # A's update delivery: no status moved, and A's own finding is never pushed back to it
+    # (S1 audit #13).
     referee = society.referee(informal)
     # The referee reads the node as fenced, untrusted author data.
     read = await call(referee, "commons_read", {"node_id": L})
@@ -294,15 +292,14 @@ async def simulate(society, export_directory):
         "submit_review",
         {"verdict": "sound", "summary": "The mean value theorem step is valid.", "objections": []},
     )
-    assert verdict["node_status"] == "refereed" and verdict["cross_model"] is True
+    assert verdict["node_status"] == "open" and verdict["cross_model"] is True
     source, _ = society.updates["A"]
     delivered = await source(None)
     assert delivered["items"] == [] and delivered["delivery_id"] is None
-    thread = (await call(A, "commons_read", {"node_id": L}))["recent_posts"]
-    (status,) = [line for line in thread if "Status informal → refereed" in line]
+    (line,) = (await call(A, "commons_read", {"node_id": L}))["recent_posts"]
     # A digest line's 8-hex id reads the full post.
-    post = await call(A, "commons_read", {"post_id": status.split(" ")[0]})
-    assert post["platform_status"]["to"] == "refereed"
+    post = await call(A, "commons_read", {"post_id": line.split(" ")[0]})
+    assert post["id"] == finding["post_id"]
 
     # 5. B cites L in its own work.
     cited = await call(
@@ -318,36 +315,22 @@ async def simulate(society, export_directory):
     assert cited["auto_subscribed"] is True
     assert society.node(L)["citation_count"] == 1
 
-    # 6. A records the Lean statement (elaborated by the platform through the fake session)
-    # and requests a fidelity review; the referee answers faithful: L is formally_stated.
+    # 6. A records the Lean statement (elaborated by the platform through the fake session).
     stated = await call(A, "commons_node", {"action": "set_lean_statement", "node_id": L, **LEMMA})
     assert stated["lean_elaborated"] is True and stated["elaboration"]["ok"] is True
     assert society.lean["A"].calls[-1] == ("elaborate", *LEMMA.values())
     assert society.node(L)["lean_statement_sha256"] == _lean_digest(*LEMMA.values())
-    fidelity = await call(
-        A, "commons_node", {"action": "request_review", "node_id": L, "scope": "fidelity"}
-    )
-    assert fidelity["cross_model"] is True
-    faithful = await call(
-        society.referee(fidelity),
-        "submit_review",
-        {
-            "verdict": "faithful",
-            "summary": "The Lean statement says exactly this.",
-            "objections": [],
-        },
-    )
-    assert faithful["node_status"] == "formally_stated"
 
-    # 7. A checks a complete proof of L: L compiles locally (still not accepted).
+    # 7. A checks a complete proof of L: L's module is published verified, but L is not
+    # accepted and stays open; a compiled node needs no referee.
     checked = await call(A, "lean_check", {"source": PROOF, "node_id": L})
     assert checked["proof_status"] == "not_accepted"
-    assert checked["local_compile"]["recorded"] is True
-    assert checked["local_compile"]["status_evidence"]["axioms"] == {
-        LEMMA["lean_name"]: ["propext"]
-    }
+    assert checked["published"]["rank"] == "verified"
+    assert society.node(L)["lean_source"]["statement_check"]["axioms"] == ["propext"]
     assert checked["claimed"] is True
-    assert society.node(L)["status"] == "compiles_locally"
+    assert society.node(L)["status"] == "open"
+    unneeded = await call(A, "commons_node", {"action": "request_review", "node_id": L})
+    assert unneeded["error"]["code"] == "REVIEW_UNNEEDED"
 
     # 8. A splits the rest of the goal into two stated lemma nodes the goal depends_on.
     steps = []
@@ -385,11 +368,9 @@ async def simulate(society, export_directory):
         *steps,
     }
 
-    # 9. A referee objection on B's node arrives urgent in B's update delivery; the earlier
-    # status posts on L, which B follows since citing it, are not urgent and were not pushed.
-    gaps = await call(
-        B, "commons_node", {"action": "request_review", "node_id": M, "scope": "informal"}
-    )
+    # 9. A referee objection on B's node arrives urgent in B's update delivery; nothing on L,
+    # which B follows since citing it, was pushed.
+    gaps = await call(B, "commons_node", {"action": "request_review", "node_id": M})
     assert gaps["cross_model"] is True
     objection = await call(
         society.referee(gaps),
@@ -400,7 +381,7 @@ async def simulate(society, export_directory):
             "objections": ["Step 2 assumes εm ≤ γ/2 without proof."],
         },
     )
-    assert objection["node_status"] == "informal" and objection["objection_post_id"]
+    assert objection["node_status"] == "open" and objection["objection_post_id"]
     source, acknowledge = society.updates["B"]
     delivered = await source(None)
     (first,) = delivered["items"]
@@ -424,21 +405,17 @@ async def simulate(society, export_directory):
     assert metrics["claims_as_of_source"] == "run_end"
     assert metrics["claims_as_of"] <= time.time()
     assert metrics["society"] is True
-    assert metrics["nodes_by_status"] == {
-        "compiles_locally": 1,
-        "formally_stated": 1,
-        "informal": 3,
-    }
+    assert metrics["nodes_by_status"] == {"open": 5}
     assert metrics["nodes_by_type"] == {"goal": 1, "lemma": 4}
     assert metrics["accepted_root"] is False and metrics["accepted_nodes"] == 0
     assert metrics["claimed_nodes"] == 2 and metrics["duplicate_claim_fraction"] == 0.5
     assert metrics["cross_branch_citations"] == 1
-    assert metrics["reviews_by_verdict"] == {"faithful": 1, "gaps": 1, "sound": 1}
+    assert metrics["reviews_by_verdict"] == {"gaps": 1, "sound": 1}
     assert metrics["cross_model_share"] == 1.0
     assert metrics["stale_claim_count"] == 0 and metrics["live_claim_count"] == 2
     # An hour later the two unreleased claims are stale; C's released claim is not.
     later = society_metrics.compute_metrics(manifest, as_of=metrics["claims_as_of"] + 3600)
     assert later["stale_claim_count"] == 2 and later["live_claim_count"] == 0
     assert metrics["literature_fetches"] == 2 and metrics["contamination_flags"] == 1
-    assert metrics["branches"] == {"agents": 3, "referees": 3, "labs": 0}
+    assert metrics["branches"] == {"agents": 3, "referees": 2, "labs": 0}
     assert metrics["tool_call_mix"] == {"available": False}

@@ -72,7 +72,7 @@ def test_society_admission_is_by_dollars_and_caps_ignore_referees(lab):
         exp["id"], NodeCreate(node_type="lemma", title="L", statement="L."), alpha, "l"
     )
     # Outside the caps.
-    assert service.request_review(node["id"], "informal", beta, "review")["review_task_id"]
+    assert service.request_review(node["id"], beta, "review")["review_task_id"]
     with pytest.raises(HarnessError) as capped:
         service.recruit_researcher(
             exp["id"], helper.model_copy(update={"title": "Two"}), alpha, "recruit-2"
@@ -89,7 +89,7 @@ def test_research_caps_do_not_count_existing_referees(lab, cap, code):
     node = service.create_node(
         exp["id"], NodeCreate(node_type="lemma", title="L", statement="L."), alpha, "l"
     )
-    service.request_review(node["id"], "informal", beta, "review")  # a queued referee task
+    service.request_review(node["id"], beta, "review")  # a queued referee task
     service.configure_workforce(exp["id"], ConfigureWorkforceRequest(**{cap: 1}), OPERATOR, "cap")
     service.recruit_researcher(exp["id"], helper_request(alpha), alpha, "recruit")
     with pytest.raises(HarnessError) as capped:
@@ -250,7 +250,7 @@ def slot_route(service, author, experiment, *, hold_seconds):
         elif name == requester and phase == 0:
             items = [tool_call("commons_node", lemma_args(), "create-1")]
         elif name == requester and phase == 1:
-            review = {"action": "request_review", "node_id": outputs[0]["id"], "scope": "informal"}
+            review = {"action": "request_review", "node_id": outputs[0]["id"]}
             items = [tool_call("commons_node", review, "review-1")]
         else:
             with suppress(TimeoutError):
@@ -316,7 +316,7 @@ async def test_runner_task_limit_ignores_referee_attempts(lab):
         if phase == 0:
             return [tool_call("commons_node", lemma_args(), "create-1")]
         if phase == 1:
-            request = {"action": "request_review", "node_id": outputs[0]["id"], "scope": "informal"}
+            request = {"action": "request_review", "node_id": outputs[0]["id"]}
             return [tool_call("commons_node", request, "review-1")]
         return [message("Root done.")]
 

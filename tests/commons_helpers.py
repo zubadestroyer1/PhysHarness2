@@ -2,7 +2,14 @@
 
 from test_core import setup_experiment
 
-from physharness.domain import BranchCreate, ExperimentCreate, Principal, SocietyPolicy, new_id
+from physharness.domain import (
+    ArtifactCreate,
+    BranchCreate,
+    ExperimentCreate,
+    Principal,
+    SocietyPolicy,
+    new_id,
+)
 from physharness.storage import RecordRow
 
 
@@ -60,7 +67,7 @@ def society_lab(lab, *, models=1, configurations=None, prefix="society", concurr
 
 
 def set_status(service, node_id, *statuses, reason="platform test"):
-    """Drive the platform-only ladder the way referee/verifier code will."""
+    """Move a node the way platform code does (acceptance, refutation or abandonment)."""
     record = None
     for status in statuses:
         with service.db.transaction() as session:
@@ -73,3 +80,31 @@ def set_status(service, node_id, *statuses, reason="platform test"):
                 op=new_id(),
             )
     return record
+
+
+def publish(service, node_id, agent, rank, key, content="theorem x : True := trivial", **record):
+    """Publish ``content`` as the node's source at ``rank``, as ``lean_check`` does."""
+    artifact = service.create_artifact(
+        ArtifactCreate(
+            experiment_id=agent.experiment_id,
+            branch_id=agent.branch_id,
+            kind="lean_source",
+            content=content,
+        ),
+        agent,
+        key + ":a",
+    )
+    return service.record_lean_source(
+        node_id,
+        artifact["id"],
+        {
+            "rank": rank,
+            "bytes": len(content),
+            "statement_check": None,
+            "lean_statement_sha256": None,
+            "imports": [],
+            **record,
+        },
+        agent,
+        key,
+    )

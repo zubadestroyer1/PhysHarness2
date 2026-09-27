@@ -87,7 +87,7 @@ def test_society_policy_names_removed_lab_fields(field):
 def test_referee_is_unreachable_directly_and_through_a_node(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
     node = lemma(service, exp, alpha, "trace")
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     service.claim_node(node["id"], "claim", referee(requested, exp), "referee-claims")
     with pytest.raises(HarnessError) as direct:
         service.send_society_message(

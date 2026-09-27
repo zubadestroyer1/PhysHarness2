@@ -1,9 +1,9 @@
-"""Blueprint commons: society policy, attributed nodes, typed edges and the platform ladder."""
+"""Blueprint commons: society policy, attributed nodes, typed edges and open statuses."""
 
 from datetime import timedelta
 
 import pytest
-from commons_helpers import set_status, society_lab
+from commons_helpers import publish, set_status, society_lab
 from pydantic import ValidationError
 from sqlalchemy import event, select
 from test_core import setup_experiment
@@ -96,7 +96,7 @@ def test_create_node_attribution_and_event(lab):
         alpha,
         "node",
     )
-    assert node["status"] == "informal"
+    assert node["status"] == "open"
     assert node["lean_elaborated"] is False
     assert node["branch_id"] == alpha.branch_id == branches[0]["id"]
     assert node["origin_actor_id"] == alpha.id
@@ -168,7 +168,7 @@ def test_tangent_requires_motivation(lab):
             "relation": "motivated_by",
             "node_id": root["id"],
             "title": root["title"],
-            "status": "informal",
+            "status": "open",
         }
     ]
 
@@ -327,7 +327,7 @@ def test_goal_node_idempotent(lab):
     assert first["id"] == second["id"]
     assert first["node_type"] == "goal" and first["branch_id"] is None
     assert first["origin_actor_id"] == PLATFORM
-    assert first["status"] == "formally_stated" and first["status_reason"] == "reviewed target"
+    assert first["status"] == "open" and first["status_reason"] == "reviewed target"
     assert first["formal_target"] is True and first["lean_statement"] is None
     problem = service.get_record("problem", exp["problem_id"], author)
     assert first["problem_revision_id"] == problem["id"]
@@ -353,7 +353,7 @@ def test_goal_node_idempotent(lab):
 def test_query_creates_goal_lazily_without_status_writes(lab):
     service, _, exp, _, (alpha, _) = society_lab(lab)
     items = service.query_nodes(exp["id"], alpha)["items"]
-    assert [(n["node_type"], n["status"]) for n in items] == [("goal", "formally_stated")]
+    assert [(n["node_type"], n["status"]) for n in items] == [("goal", "open")]
 
 
 def test_goal_node_accepted_when_target_receipt_exists(lab, monkeypatch):
@@ -369,9 +369,10 @@ def test_goal_node_accepted_when_target_receipt_exists(lab, monkeypatch):
     read = service.read_node(goal["id"], alpha)["node"]
     assert read["status"] == "accepted" and read["status_derived"] is True
     assert read["status_evidence"] == {"receipt_id": "receipt"}
+    # rests_on counts source ranks: the goal has no source of its own.
     assert service.read_node(a["id"], alpha)["rests_on"] == {
-        "counts": {"accepted": 1},
-        "conditional": False,
+        "counts": {"none": 1},
+        "conditional": True,
         "truncated": False,
     }
     listed = service.query_nodes(exp["id"], alpha, node_type="goal")["items"]
@@ -380,40 +381,47 @@ def test_goal_node_accepted_when_target_receipt_exists(lab, monkeypatch):
     frontier = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
     assert goal["id"] not in [n["id"] for n in frontier]
     # Reads never persist the derived status.
-    assert service.get_record("commons_node", goal["id"], author)["status"] == "formally_stated"
+    assert service.get_record("commons_node", goal["id"], author)["status"] == "open"
     assert not events(service, author, "commons.node_status")
 
 
-def test_rests_on_counts_dependency_statuses(lab):
+def test_rests_on_counts_sources(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
-    c = service.create_node(exp["id"], lemma("C"), alpha, "c")
-    b = service.create_node(
-        exp["id"], lemma("B", edges=[{"relation": "depends_on", "target_id": c["id"]}]), alpha, "b"
-    )
-    a = service.create_node(
-        exp["id"], lemma("A", edges=[{"relation": "depends_on", "target_id": b["id"]}]), beta, "a"
-    )
-    set_status(service, c["id"], "formally_stated", "accepted")
-    set_status(service, b["id"], "refereed")
-    read = service.read_node(a["id"], alpha)
+    ids = chain(service, exp["id"], alpha, 6, "s")  # each node depends on the one before
+    elaborated = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
+    service.set_lean_statement(ids[1], None, "s1", ": True", elaborated, alpha, "stub")
+    for identifier, rank in zip(ids[2:5], ("partial", "complete", "verified"), strict=True):
+        publish(service, identifier, alpha, rank, f"src-{rank}")
+    read = service.read_node(ids[5], beta)
     assert read["rests_on"] == {
-        "counts": {"refereed": 1, "accepted": 1},
+        "counts": {"verified": 1, "complete": 1, "partial": 1, "stub": 1, "none": 1},
         "conditional": True,
         "truncated": False,
     }
     assert read["claimants"] == []
     assert read["edges_out"] == [
-        {"relation": "depends_on", "node_id": b["id"], "title": "B", "status": "refereed"}
+        {"relation": "depends_on", "node_id": ids[4], "title": "s 4", "status": "open"}
     ]
-    assert service.read_node(b["id"], beta)["rests_on"] == {
-        "counts": {"accepted": 1},
+    assert service.read_node(ids[4], beta)["edges_in"] == [
+        {"relation": "depends_on", "node_id": ids[5], "title": "s 5", "status": "open"}
+    ]
+    # Resting only on complete and verified sources is unconditional.
+    proved = []
+    for rank in ("complete", "verified"):
+        proved.append(service.create_node(exp["id"], lemma(rank), alpha, rank)["id"])
+        publish(service, proved[-1], alpha, rank, f"proved-{rank}")
+    top = service.create_node(
+        exp["id"],
+        lemma("Top", edges=[{"relation": "depends_on", "target_id": i} for i in proved]),
+        beta,
+        "top",
+    )
+    assert service.read_node(top["id"], alpha)["rests_on"] == {
+        "counts": {"verified": 1, "complete": 1},
         "conditional": False,
         "truncated": False,
     }
-    assert service.read_node(b["id"], beta)["edges_in"] == [
-        {"relation": "depends_on", "node_id": a["id"], "title": "A", "status": "informal"}
-    ]
-    assert service.read_node(c["id"], beta)["rests_on"] == {
+    assert service.read_node(ids[0], beta)["rests_on"] == {
         "counts": {},
         "conditional": False,
         "truncated": False,
@@ -424,30 +432,35 @@ def test_illegal_transition_rejected(lab):
     service, author, exp, _, (alpha, _) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
     with pytest.raises(HarnessError) as err:
-        set_status(service, node["id"], "accepted")
+        set_status(service, node["id"], "open")
     assert err.value.code == "ILLEGAL_STATUS_TRANSITION"
-    accepted = set_status(service, node["id"], "formally_stated", "accepted")
+    accepted = set_status(service, node["id"], "accepted")
     assert accepted["status"] == "accepted"
     assert accepted["status_reason"] == "platform test"
     assert accepted["status_evidence"] == {"fixture": True}
     with pytest.raises(HarnessError) as err:
-        set_status(service, node["id"], "informal")
+        set_status(service, node["id"], "refuted")
     assert err.value.code == "ILLEGAL_STATUS_TRANSITION"
+    # An S1 ladder value is open, and closes like any open node.
+    legacy = service.create_node(exp["id"], lemma("Legacy"), alpha, "legacy")
+    with service.db.transaction() as session:
+        service._replace(session, session.get(RecordRow, legacy["id"]), {"status": "refereed"})
+    set_status(service, legacy["id"], "refuted")
     moves = [e["payload"] for e in events(service, author, "commons.node_status")]
     assert moves == [
         {
             "experiment_id": exp["id"],
             "node_id": node["id"],
-            "from": "informal",
-            "to": "formally_stated",
+            "from": "open",
+            "to": "accepted",
             "reason": "platform test",
             "branch_id": None,  # a platform move
         },
         {
             "experiment_id": exp["id"],
-            "node_id": node["id"],
-            "from": "formally_stated",
-            "to": "accepted",
+            "node_id": legacy["id"],
+            "from": "refereed",
+            "to": "refuted",
             "reason": "platform test",
             "branch_id": None,  # a platform move
         },
@@ -582,7 +595,7 @@ def test_the_long_pole_skips_the_parts_of_closed_routes(lab):
     ):
         service.link_nodes(exp["id"], source, "depends_on", target, beta, f"{source}-{target}")
     service.abandon_node(ids["Dead"], "A dead route.", alpha, "abandon")
-    set_status(service, ids["Proved"], "formally_stated", "accepted")
+    set_status(service, ids["Proved"], "accepted")
     pole = service.query_nodes(exp["id"], beta, frontier=True)["long_pole"]
     assert [item["id"] for item in pole] == [ids["Live"]]
 
@@ -664,7 +677,7 @@ def test_read_node_statement_count_is_independent_of_closure_size(lab):
         event.listen(service.db.engine, "before_cursor_execute", count)
         read = service.read_node(ids[-1], beta)
         event.remove(service.db.engine, "before_cursor_execute", count)
-        assert read["rests_on"]["counts"] == {"informal": size - 1}
+        assert read["rests_on"]["counts"] == {"none": size - 1}
         assert [e["node_id"] for e in read["edges_out"]] == [ids[-2]]
         costs[size] = len(statements)
         statements.clear()
@@ -675,10 +688,10 @@ def test_truncated_rests_on_is_conditional(lab, monkeypatch):
     service, _, exp, _, (alpha, _) = society_lab(lab)
     ids = chain(service, exp["id"], alpha, 4, "t")
     for identifier in ids[:3]:
-        set_status(service, identifier, "formally_stated", "accepted")
+        publish(service, identifier, alpha, "complete", f"src-{identifier}")
     monkeypatch.setattr(commons, "MAX_RESTS_ON", 2)
     assert service.read_node(ids[-1], alpha)["rests_on"] == {
-        "counts": {"accepted": 2},
+        "counts": {"complete": 2},
         "conditional": True,
         "truncated": True,
     }

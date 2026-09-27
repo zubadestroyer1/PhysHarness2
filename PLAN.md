@@ -63,13 +63,14 @@ Every unit of research is a **node** in one graph rooted at the target. Nodes ex
   - A `tangent` must name at least one `motivated_by` target (what it might help). It does not have to prove relevance upfront.
 - **Negative results are first-class.** An `obstacle` node ("approach X fails because Y") or an abandoned node with its reason prevents the society from repeating dead ends.
 
-### 2.2 Status ladder
+### 2.2 Status
 
-`informal` → `refereed` → `formally_stated` (fidelity-checked) → `compiles_locally` → **`accepted`** (independent kernel receipt), plus the side exits `refuted` and `abandoned` (each with a reason).
+A node is `open` until its author abandons it (`abandoned`, with a reason) or the platform accepts or refutes it (`accepted`, `refuted`). The S1 remediation removed the status ladder (audit #17): S1's agents spent much of their effort climbing a referee-driven ladder. S1's ladder values read as open.
 
-- **Only platform checkers move a node up the ladder** (§5). Agents cannot set status.
+- **The verifier is the only arbiter.** An independent kernel receipt on the exact target accepts the goal. A node imported by an independently verified proof records that proof in `in_verified_proof`; its status stays open. Source ranks (`verified`, `complete`, `partial`) are advisory, since the VM computes them; only verifier receipts are authority, and the verifier certifies the target's axioms, not each imported lemma's.
+- Agents cannot set status, apart from an author abandoning its own node. Referees check plans and never move a status (§5.2).
 - Agents may build on a node at any status.
-- **Dependency status propagates.** Every node shows what it ultimately rests on (for example "uses 2 conjectures, 1 refereed lemma"). A root proof resting on anything below `accepted` is visibly conditional.
+- **Dependency sources propagate.** Every node shows what it ultimately rests on, by source rank (for example "rests on 2 stubs and 1 verified lemma"). A root proof resting on anything below a complete source is visibly conditional.
 
 ### 2.3 Claims on work
 
@@ -111,13 +112,13 @@ Addressed messages, discussions, the component registry, research profiles, team
   - Post failures.
   - Cite what you use.
   - Recruit for one narrow deliverable (a named lemma with its signature, or a lookup); recruits end when they return.
-  - Ask for a referee before investing heavily in formalization.
+  - Ask a referee to check a plan before a long formalization; compiled Lean needs no referee.
 - **Episodes.** An agent works in episodes around one or a few focus nodes. At each safe pause it gets its digest and chooses what to do next:
   - continue working;
   - post a finding;
   - claim or switch to another node;
   - recruit help;
-  - request a referee;
+  - ask a referee to check a plan;
   - formalize;
   - wait, which releases its worker slot until a relevant event (a routed post or message, a watched node or branch, a long-pole change) or a timeout.
 
@@ -196,10 +197,9 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
   1. Orient: restate the goal, and note known techniques and relevant library results.
   2. Explore: special cases, numerical experiments, literature.
   3. Conjecture and argue informally.
-  4. Get a referee.
-  5. Sketch the Lean proof with holes.
-  6. Fill the holes.
-  7. Submit.
+  4. Sketch the Lean proof with holes.
+  5. Fill the holes.
+  6. Submit.
 - **Technique skills** were removed after S1 (never loaded).
 - Check-ins and stagnation nudges were removed after S1 (acted on 20% of the time; nudges never fired). The stagnation detector remains the loop guard.
 - **Sketch-then-fill formalization** (the draft–sketch–prove pattern):
@@ -290,13 +290,14 @@ The principle is **informal first, progressive formalization, and strict verific
 
 The final root proof is always checked against this fixed statement. Agent-invented intermediate definitions therefore cannot fake the root.
 
-### 5.2 Node-level checks (these move nodes up the ladder)
+### 5.2 Node-level checks
 
-1. **Referee.** An informal argument gets independent referee reviews, cross-model where possible. Objections stay attached to the node.
-2. **Statement fidelity.** Adding a Lean statement triggers back-translation and judging, vacuity probes, and numerical or example testing where applicable.
-3. **Local compile** in the agent's workspace.
-4. **Independent acceptance**, using the existing Comparator + Lean + nanoda pipeline: axiom audit, no `sorry`, exact statement binding.
-5. **Composition.** When dependencies are accepted, the consuming proof is rebuilt and re-checked against the consistent dependency closure (existing integration rule).
+The independent verifier is the only arbiter; referees check plans (S1 audit #17).
+
+1. **Referee.** A plan or informal argument (an open approach, conjecture or lemma) gets independent referee reviews, cross-model where possible, with the Lean interface a skeleton imports. Verdicts are recorded and objections stay attached to the node; no verdict moves a status. A compiled node needs no referee (`REVIEW_UNNEEDED`). Fidelity reviews were removed after S1.
+2. **Statement check.** A source published from the agent's workspace (`lean_check` with `node_id`) ranks `verified` only when the harness statement check passes: the kernel replays the file, the theorem's elaborated type equals the node statement's, and only standard axioms appear. Ranks are VM-attested and advisory.
+3. **Independent acceptance**, using the existing Comparator + Lean + nanoda pipeline: axiom audit, no `sorry`, exact statement binding. A receipt on the target accepts the goal; the nodes its proof imported record the receipt (`in_verified_proof`) and stay open, since the verifier certifies the target's axioms, not each imported lemma's.
+4. **Composition.** When dependencies are accepted, the consuming proof is rebuilt and re-checked against the consistent dependency closure (existing integration rule).
 
 ### 5.3 Formalization economy
 

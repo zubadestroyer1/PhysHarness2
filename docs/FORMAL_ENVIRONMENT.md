@@ -166,8 +166,8 @@ definition until v2 is rebuilt and qualified, and pilot freeze manifests referen
 On the v1 image, `run_computation` reports the new packages as `null`, and `lean_check`
 uses its one-shot fallback.
 
-On both images, a local compile (`lean_check` with `node_id`) also runs the harness
-statement check with the image's own `lake --offline env lean`. It needs no REPL. It
+On both images, publishing a node's source (`lean_check` with `node_id`) also runs the
+harness statement check with the image's own `lake --offline env lean`. It needs no REPL. It
 compiles the file and a reference statement to `.olean` files. Then it runs
 `statement_check.lean` with `lean --run`, which loads both only as data. The checker:
 
@@ -176,12 +176,13 @@ compiles the file and a reference statement to `.olean` files. Then it runs
   definitions and theorems (such as `match` matchers) unfolded;
 - collects the theorem's axioms itself.
 
-That check, not the file's `#print axioms` output, is what `compiles_locally` rests on. It
-defeats elaboration-level tricks in the file (instances, macros, `#print axioms`
+That check, not the file's `#print axioms` output, is what a `verified` source rank rests
+on. It defeats elaboration-level tricks in the file (instances, macros, `#print axioms`
 overrides, skipped kernel checks). But compiling the file runs its compile-time code
 (`#eval`, `run_cmd`, its own elaborators and tactics) in the agent-controlled VM, where,
 like any shell command, it can alter the checker, the reference or the imported `.olean`
-files the checker trusts. So the result is VM-attested evidence, not an acceptance receipt.
+files the checker trusts. So the result is VM-attested evidence, not an acceptance
+receipt.
 
 The checker runs from its upload in the workspace (`.physharness/`); the workbench root,
 `/tmp` included, is read-only. A society task self-tests it once per process and image

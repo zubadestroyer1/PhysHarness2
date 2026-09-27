@@ -131,15 +131,19 @@ tools, the prompts and the delivery shapes.
     `specializes` and `duplicates`.
   - The frontier ranks open nodes by root path, waiting dependents, neglect and live
     claims. The score is attention, never proof.
-- **Status ladder.** `informal` → `refereed` → `formally_stated` → `compiles_locally` →
-  `accepted`, with `abandoned` (the author, with a reason) and `refuted` as exits.
-  - Only platform code moves a node. A sound referee quorum makes it refereed, unless a
-    standing `wrong` verdict vetoes it or gap reports match the sound verdicts. A
-    faithful fidelity review of a statement that elaborates makes it formally stated,
-    unless a standing `unfaithful` verdict vetoes that Lean statement. A standing
-    `wrong` vetoes every promotion above informal: refereed, formally stated and a local
-    compile alike.
-    A node's Lean header may hold only import, open, set_option and universe lines, one
+- **Status.** A node is `open` until its author abandons it (`abandoned`, with a reason) or
+  the platform accepts or refutes it (`accepted`, `refuted`); nothing else moves a node
+  (S1 audit #17). The independent verifier is the only arbiter: its receipt on the exact
+  target accepts the goal. A node imported by an independently verified proof records
+  that proof's receipt in `in_verified_proof` (shown by `commons_read`, and as a count on
+  the frontier); its status stays open. Source ranks are advisory and only verifier
+  receipts are authority: the verifier certifies the target's axioms, not each imported
+  lemma's. Only the receipt's platform-written `commons_modules` count, never the
+  candidate artifact's provenance, and stale entries, nodes outside the experiment and
+  sources replaced since are skipped. S1's ladder values (`informal`, `refereed`,
+  `formally_stated`, `compiles_locally`) stay in stored records and exports and read as
+  open everywhere else.
+  - A node's Lean header may hold only import, open, set_option and universe lines, one
     command per line and with no command keyword among their names. It may set only
     elaboration limits, auto-bound implicits and `pp.*` or `linter.*` options: others can
     write files (`trace.profiler.output`) or skip the kernel. Its Lean statement must be
@@ -147,8 +151,8 @@ tools, the prompts and the delivery shapes.
     end inside a comment or literal. So no text in either can end the elaborated
     declaration early (with `#exit`, say). The commons service enforces this whoever
     calls it.
-  - A local compile makes a formally stated node compile locally only when the harness
-    statement check passes; the file's own output never decides. After a complete
+  - A source ranks `verified` only when the harness statement check passes; the file's
+    own output never decides. After a complete
     `lean_check` with `node_id`, the platform compiles the file, and a reference
     `<lean_header> theorem <lean_name> <lean_statement> := sorry`, to `.olean` files.
     A harness-authored Lean checker (`formal_tools/statement_check.lean`) then loads
@@ -164,10 +168,10 @@ tools, the prompts and the delivery shapes.
     - collects the theorem's axioms itself, so a redefined `#print axioms` cannot forge
       them.
 
-    Only `propext`, `Classical.choice` and `Quot.sound` count. The commons service
-    enforces that rule, and that the compile names the node's current statement,
-    whoever calls it. Every backend (REPL daemon, inline REPL, one-shot) runs the same
-    check, and any failure to run it records nothing. A society task self-tests it once
+    Only `propext`, `Classical.choice` and `Quot.sound` count. A publication must name
+    the node's current statement, whoever calls it. Every backend (REPL daemon, inline
+    REPL, one-shot) runs the same check, and a check that cannot run leaves the source at
+    most `complete`. A society task self-tests it once
     per process and image when it first provisions a workspace, and a failed self-test
     stops the task with `STATEMENT_CHECK_UNAVAILABLE`.
   - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
@@ -176,17 +180,18 @@ tools, the prompts and the delivery shapes.
     like any `shell` command: the checker, the reference, and the imported `.olean` files
     the checker trusts (it replays only the file's own declarations). So the check defeats
     elaboration-level tricks (instances, macros, `#print axioms` overrides, skipped kernel
-    checks), but a file or command that tampers with the VM can still reach
-    `compiles_locally`. It is VM-attested evidence, never acceptance. Only independent
-    acceptance is trusted: the independent receipt on the exact target accepts the goal.
-  - Changing a Lean statement moves the node back down. The statement digest encodes the
-    header, name and statement unambiguously (a canonical JSON array).
+    checks), but a file or command that tampers with the VM can still reach a `verified`
+    rank. It is VM-attested evidence, never acceptance. Only independent acceptance is
+    trusted: the independent receipt on the exact target accepts the goal.
+  - Changing a Lean statement moves no status; `set_lean_statement` reports how many
+    nodes depend on the node (`dependents`). The statement digest encodes the header,
+    name and statement unambiguously (a canonical JSON array).
   - The author sets or replaces a node's Lean statement. A branch holding a live claim
-    sets one only on a node below formally stated whose statement is missing, does not
-    elaborate, or is its own (the node records its `lean_writer`). So no claimant voids
-    another writer's fidelity reviews or demotes a formal node; it proposes a change on
-    the thread instead.
-  - In S1 no platform path refutes a node or accepts a non-root node.
+    sets one only when the statement is missing, does not elaborate, or is its own (the
+    node records its `lean_writer`), and never once a verified source proves the current
+    statement. So no claimant replaces another writer's statement or unseats a verified
+    source; it proposes a change on the thread instead.
+  - No platform path refutes a node yet, and none accepts a node other than the goal.
 - **Lemma store.** Every node is a Lean module, `Commons.N<8 hex>` (8 hex of its id, or
   12 or 16 when an experiment node already holds that name). `commons_query` reports it
   (`module`) with the node's source rank (`source`); `commons_read` shows the node's
@@ -198,8 +203,8 @@ tools, the prompts and the delivery shapes.
     node (`lean_check` with `node_id`), and others import it as `import Commons.N…`. The
     `shell`, `read_file` and `write_file` descriptions say so.
   - A clean `lean_check` with `node_id` (no Lean errors, no `#exit`, no `end` of a scope
-    the file never opened, and for a node with a Lean statement the local-compile gates
-    above) publishes the file as the node's module, a `lean_source` artifact ranked
+    the file never opened, and for a node with a Lean statement the textual gates of the
+    statement check above) publishes the file as the node's module, a `lean_source` artifact ranked
     `verified` (the statement check passed with standard axioms), `complete` (no
     `sorry`, but the check could not judge; a node with no Lean statement ranks on the
     file's own axiom report) or `partial`. A statement check that rejects the file
@@ -279,14 +284,20 @@ tools, the prompts and the delivery shapes.
     another route compiling a node you claim.
     It never delivers the reader's own posts or non-urgent platform statuses.
   - Status moves are posted by the platform.
-- **Referees.** `request_review` makes the platform create an isolated referee:
+- **Referees.** Referees check plans, not compiled Lean. `request_review(node_id)` asks
+  for a referee of an open approach, conjecture or lemma (else `REVIEW_PRECONDITION`); a
+  node with a complete or verified source needs none (`REVIEW_UNNEEDED`), since the
+  verifier checks it. The referee's packet holds the node's text and, for a skeleton, the
+  Lean interface its source imports (at most 20 statements, no proofs). A verdict (`sound`,
+  `gaps` or `wrong`) is recorded, and a negative one is posted as an objection on the
+  node's thread; no verdict moves a status, vetoes further referees or reviews a Lean
+  statement's fidelity. The platform creates an isolated referee:
   - a detached branch with no parent, marked `hat="referee"`;
   - on the model family the node's earlier referees (for its current text) used least,
-    preferring one other than the author's (for a fidelity review, also other than
-    every branch that has claimed the node, since any of them may have written the Lean
-    statement). The first referee is cross-model whenever a family allows it, and a
-    quorum spans distinct families when several are configured, the author's included
-    once the others are used; `cross_model` reports whether each referee avoided them;
+    preferring one other than the author's. The first referee is cross-model whenever a
+    family allows it, and a panel spreads over distinct families when several are
+    configured, the author's included once the others are used; `cross_model` reports
+    whether each referee avoided it;
   - unreachable by direct message or delegation from other branches;
   - run in their own pool of `referee_slots` (default 2) inside the run's
     `max_concurrency`, capped at `max_concurrency - 1` so research always keeps a slot.
@@ -296,31 +307,25 @@ tools, the prompts and the delivery shapes.
     `max_concurrency`. A stored S1 policy without the field, or a concurrency of 1, keeps
     one shared pool. The runner's `max_tasks` counts research tasks only.
 
-  A node cannot shop for verdicts:
-  - Each text version gets at most the positive verdicts it needs plus two referees
-    (`REVIEW_RETRIES`): `referee_quorum + 2` informal referees and three per Lean
-    statement. Each branch that writes a node's Lean statements gets at most nine
-    fidelity referees for them (`REVIEW_LIMIT`), so a claimant never spends the author's.
-    A referee that ends without a verdict does not count.
-  - A gap report is not a veto and uses no retry budget: the author answers it on the
-    thread and asks again, and a sound majority outvotes it. Only when the gap reports
-    alone reach `referee_quorum + 2`, so no sound majority fits the budget, is the panel
+  The panel is bounded:
+  - Each text version gets at most `referee_quorum + 2` referees (`REVIEW_RETRIES`;
+    `REVIEW_LIMIT`). A referee that ends without a verdict does not count.
+  - A gap report uses no retry budget: the author answers it on the thread and asks
+    again. Only when the gap reports alone reach `referee_quorum + 2` is the panel
     closed; a revised claim is then a new node.
-  - A standing verdict ends the panel (`REVIEW_VETOED`): a `wrong` one refuses further
-    referees of either scope, an `unfaithful` one further fidelity referees for that Lean
-    statement.
   - Reviews follow the normalized statement text (statement and assumptions, NFKC,
     case-folded, whitespace collapsed, assumptions in any order). The earliest-created
     node with a text that is open or has drawn a referee holds its reviews; a later
     node restating it draws none (`DUPLICATE_STATEMENT`, naming that node). So a
-    re-post after a veto inherits it, and a later copy never takes an earlier node's
-    reviews. A node closed before any review leaves the text to the next one.
+    re-post after a negative verdict inherits it, and a later copy never takes an
+    earlier node's reviews. A node closed before any review leaves the text to the next
+    one.
 
-  The referee submits one verdict. Negative verdicts stay on the thread as objections.
-  Its tool profile only reads and checks: no `commons_node`, `commons_claim`,
-  `recruit`, `message`, `wait` or `submit_for_verification`. Its
-  `lean_check` records no local compiles, and it posts questions, findings and
-  objections only on the assigned node's thread.
+  The referee submits one verdict. A fidelity task stored before the S1 remediation can
+  still submit `faithful` or `unfaithful`; it moves nothing either. Its tool profile only
+  reads and checks: no `commons_node`, `commons_claim`, `recruit`, `message`, `wait` or
+  `submit_for_verification`. Its `lean_check` publishes no sources, and it posts
+  questions, findings and objections only on the assigned node's thread.
 - **Recruits.** `recruit` takes one narrow deliverable (a named lemma with its Lean
   signature, or a specific lookup), since in S1 broad recruits drifted into attempting the
   whole target (S1 audit #23). The librarian hat looks up library names, signatures and

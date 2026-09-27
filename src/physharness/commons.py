@@ -1,7 +1,8 @@
-"""Blueprint commons: attributed research nodes, typed edges and a platform-only ladder.
+"""Blueprint commons: attributed research nodes and typed edges.
 
-Agents propose nodes and relationships. Status moves only through ``_set_node_status``,
-which platform code calls; the single author-initiated move is abandonment with a reason.
+Agents propose nodes and relationships. A node is open until it closes through
+``_set_node_status``: platform acceptance or refutation, or abandonment by its author with a
+reason (S1 audit #17). Stored S1 ladder values read as open (``public_status``).
 """
 
 import copy
@@ -20,8 +21,9 @@ from .commons_models import (
     NODE_TYPES,
     STATUSES,
     NodeCreate,
+    public_status,
 )
-from .commons_sources import SOURCE_STATES, node_module, source_state
+from .commons_sources import COMPLETE_RANKS, SOURCE_STATES, node_module, source_state
 from .domain import Principal, digest_json, new_id, utcnow
 from .errors import HarnessError
 from .knowledge.index import tokens
@@ -231,7 +233,7 @@ class CommonsMixin:
                     title=problem["title"],
                     statement=problem["informal_statement"][:8000],
                     assumptions=[a[:512] for a in problem.get("assumptions", [])[:32]],
-                    status="formally_stated",
+                    status="open",
                     status_reason="reviewed target",
                     status_evidence={"review_id": problem.get("review_id")},
                 ),
@@ -269,14 +271,16 @@ class CommonsMixin:
         self.ensure_goal_node(experiment_id, actor)
 
     def _goal_receipt(self, experiment_id, actor, items):
-        if any(i["node_type"] == "goal" and i["status"] != "accepted" for i in items):
+        if any(i["node_type"] == "goal" and public_status(i["status"]) == "open" for i in items):
             return self.verified_target_receipt(experiment_id, actor)
         return None
 
     @staticmethod
     def _goal_view(item, receipt):
-        """Report (never persist) acceptance evidenced by a current independent receipt."""
-        if receipt is None or item["node_type"] != "goal" or item["status"] == "accepted":
+        """The item with its public status, reporting (never persisting) acceptance evidenced
+        by a current independent receipt."""
+        item = {**item, "status": public_status(item["status"])}
+        if receipt is None or item["node_type"] != "goal" or item["status"] != "open":
             return item
         return {
             **item,
@@ -345,7 +349,7 @@ class CommonsMixin:
                     **self._node_payload(
                         experiment,
                         **{k: data[k] for k in data if k != "edges"},
-                        status="informal",
+                        status="open",
                         status_reason="proposed",
                         lean_writer=_writer(actor) if request.lean_statement else None,
                         lean_module=self._new_module(session, experiment, node_id),
@@ -488,12 +492,18 @@ class CommonsMixin:
         ]
 
     def _node_summaries(self, session, experiment, actor, identifiers):
-        """Type, title and status of visible same-experiment nodes, in one statement."""
+        """Type, title, public status and source rank of visible same-experiment nodes, in
+        one statement."""
         if not identifiers:
             return {}
         rows = session.scalars(select(RecordRow).where(RecordRow.id.in_(sorted(identifiers))))
         return {
-            row.id: {key: row.payload[key] for key in ("node_type", "title", "status")}
+            row.id: {
+                "node_type": row.payload["node_type"],
+                "title": row.payload["title"],
+                "status": public_status(row.payload["status"]),
+                "source": source_state(row.payload),
+            }
             for row in rows
             if row.kind == "commons_node"
             and row.project_id == actor.project_id
@@ -569,14 +579,14 @@ class CommonsMixin:
                 if identifier in views
             ]
 
-        statuses = [views[i]["status"] for i in rests_on if i in views]
+        sources = [views[i]["source"] for i in rests_on if i in views]
         return {
             "node": self._goal_view(node, receipt),
             "edges_out": edges(edges_out),
             "edges_in": edges(edges_in),
             "rests_on": {
-                "counts": dict(Counter(statuses)),
-                "conditional": truncated or any(status != "accepted" for status in statuses),
+                "counts": dict(Counter(sources)),
+                "conditional": truncated or any(rank not in COMPLETE_RANKS for rank in sources),
                 "truncated": truncated,
             },
             "claimants": claimants,
@@ -659,6 +669,7 @@ class CommonsMixin:
             key: node[key]
             for key in ("id", "node_type", "title", "status", "lean_name", "citation_count")
         }
+        item["status"] = public_status(item["status"])
         item["statement"] = node["statement"][:300]
         # Nothing imports the goal: it has no module to list.
         item["module"] = None if node["node_type"] == "goal" else node_module(node)
@@ -694,13 +705,15 @@ class CommonsMixin:
                 # -1.0 per live claim without a distinct route (see _live_claim_counts).
                 "claimants": float(-claims.get(node["id"], 0)),
             }
-            items.append(
-                {
-                    **CommonsMixin._node_item(node),
-                    "score": round(sum(components.values()), 4),
-                    "score_components": components,
-                }
-            )
+            item = {
+                **CommonsMixin._node_item(node),
+                "score": round(sum(components.values()), 4),
+                "score_components": components,
+            }
+            if node.get("in_verified_proof"):
+                # Provenance only: independently verified proofs that imported this node.
+                item["in_verified_proof"] = len(node["in_verified_proof"])
+            items.append(item)
         items.sort(key=lambda item: (-item["score"], item["id"]))
         return items[:limit]
 
@@ -856,7 +869,7 @@ class CommonsMixin:
             "next_cursor": page[-1]["id"] if len(selected) > limit else None,
         }
 
-    # Ladder --------------------------------------------------------------------
+    # Status --------------------------------------------------------------------
 
     def abandon_node(self, node_id, reason, actor, key):
         """The author branch's only status move: close its own open node with a reason."""
@@ -901,7 +914,7 @@ class CommonsMixin:
         )
 
     def _set_node_status(self, session, row, status, *, reason, evidence, op, branch_id=None):
-        """The single ladder gate; platform code only (plus author abandonment). ``branch_id``
+        """The single status gate; platform code only (plus author abandonment). ``branch_id``
         is the branch whose action caused the move, None for a platform decision."""
         old = row.payload["status"]
         if status not in ALLOWED_TRANSITIONS.get(old, ()):
@@ -937,7 +950,7 @@ class CommonsMixin:
                 "branch_id": branch_id,
             },
         )
-        self._node_hooks_after_status(session, row, old, status, op)
+        self._node_hooks_after_status(session, row, public_status(old), status, op)
         return record
 
     def _node_hooks_after_status(self, session, row, old, new, op):

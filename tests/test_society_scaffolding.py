@@ -35,7 +35,7 @@ NORMS = [
     "Cite what you use.",
     "Recruit for one narrow deliverable (a named lemma with its signature, or a lookup); "
     "recruits end when they return.",
-    "Ask for a referee before investing heavily in formalization.",
+    "Ask a referee to check a plan before a long formalization; compiled Lean needs no referee.",
     "Publish Lean on its node (lean_check with node_id) and import peers' modules instead of "
     "copying their code.",
     "When you have nothing useful to do, wait for events (free while waiting) or finish; the "
@@ -78,7 +78,7 @@ def test_constitution_respects_policy_flags_and_length():
         assert "Only the independent verifier accepts proofs." in text
     # Playbook: present, labelled optional, and literature only when enabled.
     assert "Optional playbook" in full
-    assert "1. Orient:" in full and "7. Submit." in full
+    assert "1. Orient:" in full and "6. Submit." in full and "Get a referee" not in full
     assert "Explore: special cases, numerical experiments, literature." in full
     assert "Orient" not in bare
     no_literature = constitution(_policy(playbook=True), literature_enabled=False)
@@ -98,7 +98,7 @@ def test_referee_constitution_keeps_the_boundaries_without_a_playbook():
         assert "Only the independent verifier accepts proofs." in text
         # No playbook, and none of the builder norms.
         assert "playbook" not in text and "Submit." not in text
-        for builder_norm in ("Claim before", "Recruit for", "Ask for a referee"):
+        for builder_norm in ("Claim before", "Recruit for", "Ask a referee"):
             assert builder_norm not in text
 
 

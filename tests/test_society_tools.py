@@ -783,7 +783,7 @@ async def test_referee_task_gets_submit_review(lab):
         alpha,
         "node",
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     task = service.get_record("task", requested["review_task_id"], author)
     referee, context = running(service, author, exp, requested["branch_id"], task=task)
     dispatcher = profile(service, referee, context)
@@ -803,7 +803,7 @@ async def test_referee_task_gets_submit_review(lab):
         "submit_review",
         {"verdict": "sound", "summary": "Checked each step.", "objections": []},
     )
-    assert review["verdict"] == "sound" and review["node_status"] == "refereed"
+    assert review["verdict"] == "sound" and review["node_status"] == "open"
     worker, work_context = running(service, author, exp, branches[0]["id"])
     assert "submit_review" not in names(profile(service, worker, work_context))
 
@@ -816,7 +816,7 @@ async def test_referee_prompt_fences_author_text_and_has_no_frontier(lab):
     node = service.create_node(
         exp["id"], NodeCreate(node_type="lemma", title=evil, statement=breakout), alpha, "node"
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     result, seen = await run_worker(service, author, requested["review_task_id"])
     assert result["status"] == "completed"
     prompt = json.loads(seen["payloads"][0]["input"][0]["content"])
@@ -886,7 +886,7 @@ async def test_read_artifact_opens_cited_evidence_under_existing_scope(lab):
     hidden = await call(tools, "read_artifact", {"artifact_id": private["id"]})
     assert hidden["error"]["code"] == "NOT_FOUND"
     # A referee opens only evidence cited by its node or the node's thread, and its own.
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     task = service.get_record("task", requested["review_task_id"], author)
     referee, referee_context = running(service, author, exp, requested["branch_id"], task=task)
     referee_tools = profile(service, referee, referee_context)
@@ -914,7 +914,7 @@ async def test_referee_calling_an_absent_tool_still_submits_its_review(lab):
         alpha,
         "node",
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
 
     def script(phase, payload):
         if phase == 0:
@@ -933,7 +933,7 @@ async def test_referee_calling_an_absent_tool_still_submits_its_review(lab):
     assert rejected["error"]["code"] == "TOOL_UNAVAILABLE"
     reviews = service.list_records("commons_review", author, exp["id"])
     assert [review["task_id"] for review in reviews] == [requested["review_task_id"]]
-    assert service.get_record("commons_node", node["id"], author)["status"] == "refereed"
+    assert service.get_record("commons_node", node["id"], author)["status"] == "open"
 
 
 async def test_society_profiles_answer_unknown_tool_names_with_an_envelope(caplog):
@@ -979,7 +979,7 @@ async def test_commons_node_actions_dispatch(lab):
         "commons_node",
         lemma_args(edges=[{"relation": "motivated_by", "target_id": goal["id"]}]),
     )
-    assert created["status"] == "informal" and created["lean_elaborated"] is False
+    assert created["status"] == "open" and created["lean_elaborated"] is False
     assert created["auto_subscribed"] is True
     other = await call(
         tools,
@@ -1001,13 +1001,14 @@ async def test_commons_node_actions_dispatch(lab):
         tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **LEAN}
     )
     assert formal["lean_elaborated"] is True and formal["elaboration"]["ok"] is True
+    assert formal["dependents"] == 1  # other depends_on it
     assert workspace.lean.calls[-1] == ("elaborate", *LEAN.values())
     stored = service.get_record("commons_node", created["id"], alpha)
     assert stored["lean_statement_sha256"] == _lean_digest(*LEAN.values())
     review = await call(
         tools,
         "commons_node",
-        {"action": "request_review", "node_id": created["id"], "scope": "informal"},
+        {"action": "request_review", "node_id": created["id"]},
     )
     assert review["deduplicated"] is False and review["review_task_id"]
     abandoned = await call(
@@ -1083,7 +1084,7 @@ async def test_lean_check_automation_is_off_by_default(lab):
     created = await call(tools, "commons_node", lemma_args())
     await call(tools, "lean_check", {"source": PROOF})
     assert workspace.lean.calls == [("check", False)]
-    requested = service.request_review(created["id"], "informal", beta, "review")
+    requested = service.request_review(created["id"], beta, "review")
     task = service.get_record("task", requested["review_task_id"], author)
     judge, judge_context = running(service, author, exp, requested["branch_id"], task=task)
     judge_space = FakeWorkspace()
@@ -1092,7 +1093,7 @@ async def test_lean_check_automation_is_off_by_default(lab):
     assert judge_space.lean.calls == [("check", False)]
 
 
-async def test_lean_check_records_local_compile_for_node(lab, clock):
+async def test_lean_check_publishes_and_claims_for_its_node(lab, clock):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     workspace = FakeWorkspace()
@@ -1101,26 +1102,25 @@ async def test_lean_check_records_local_compile_for_node(lab, clock):
     await call(
         tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
     )
-    set_status(service, node["id"], "formally_stated")
     await call(tools, "commons_claim", {"node_id": node["id"], "action": "claim"})
     clock.now += 100
     # A longer statement that only starts with the node's statement is not the node's.
     longer = PROOF.replace("= 2 :=", "= 2 ∧ True :=")
     missed = await call(tools, "lean_check", {"source": longer, "node_id": node["id"]})
-    assert missed["local_compile"]["recorded"] is False
-    assert missed["local_compile"]["statement_found"] is False
-    assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
+    assert missed["published"] == {
+        "recorded": False,
+        "module": "Commons.N" + node["id"][:8],
+        "reason": "statement_not_found",
+    }
     checked = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
     assert checked["complete"] is True and checked["proof_status"] == "not_accepted"
-    assert checked["local_compile"] == {
-        "recorded": True,
-        "node_id": node["id"],
-        "status": "compiles_locally",
-        "status_evidence": {
-            "source_sha256": sha(PROOF),
-            "backend": "lean_statement_check",
-            "axioms": {"trace_add": ["propext"]},
-        },
+    assert checked["published"]["rank"] == "verified" and "local_compile" not in checked
+    stored = service.read_node(node["id"], alpha)["node"]
+    assert stored["status"] == "open"  # only the independent verifier accepts
+    assert stored["lean_source"]["statement_check"] == {
+        "ok": True,
+        "reason": None,
+        "axioms": ["propext"],
     }
     # The statement check judged the node's own statement, not the file's text.
     assert ("verify", *LEAN.values()) in workspace.lean.calls
@@ -1128,19 +1128,16 @@ async def test_lean_check_records_local_compile_for_node(lab, clock):
     claimants = service.read_node(node["id"], alpha)["claimants"]
     assert claimants[0]["expires_at"] == clock.now + 900
     plain = await call(tools, "lean_check", {"source": PROOF, "automate": True})
-    assert "local_compile" not in plain and workspace.lean.calls[-1] == ("check", True)
-    # An incomplete compile of a formally stated node is not recorded.
+    assert "published" not in plain and workspace.lean.calls[-1] == ("check", True)
+    # An incomplete check still publishes a partial module, and publishing claims the node.
     second = await call(tools, "commons_node", lemma_args(title="Second", **LEAN))
     await call(
         tools, "commons_node", {"action": "set_lean_statement", "node_id": second["id"], **LEAN}
     )
-    set_status(service, second["id"], "formally_stated")
     workspace.lean.complete = False
     partial = await call(
         tools, "lean_check", {"source": PROOF, "node_id": second["id"], "automate": False}
     )
-    assert partial["local_compile"] == {"recorded": False, "reason": "The compile was incomplete."}
-    # An incomplete check still publishes a partial module, and publishing claims the node.
     assert partial["published"]["rank"] == "partial" and partial["claimed"] is True
 
 
@@ -1231,8 +1228,6 @@ async def test_lean_check_publishes_only_what_the_statement_check_does_not_rejec
         "module": module,
         "reason": "statement_mismatch",
     }
-    # The one statement check serves both the publication and the local compile.
-    assert rejected["local_compile"] == {"recorded": False, "reason": "statement_mismatch"}
     assert [entry[0] for entry in workspace.lean.calls].count("verify") == 1
     missing = await call(
         tools,
@@ -1254,8 +1249,7 @@ async def test_lean_check_publishes_only_what_the_statement_check_does_not_rejec
     workspace.lean.verdict = None
     workspace.lean.axioms = {"x": ["propext"]}
     clean = await call(tools, "lean_check", {"source": PROOF, "node_id": plain["id"]})
-    assert clean["published"]["rank"] == "complete"
-    assert clean["local_compile"] == {"recorded": False, "reason": "no_lean_statement"}
+    assert clean["published"]["rank"] == "complete" and "local_compile" not in clean
     workspace.lean.axioms = {"x": ["sorryAx"]}
     sorried = await call(tools, "lean_check", {"source": PROOF, "node_id": plain["id"]})
     assert sorried["published"] == {
@@ -1394,7 +1388,7 @@ async def test_a_referee_check_expands_commons_imports(lab):
     plan = await call(
         alpha_tools, "commons_node", lemma_args(title="Plan", statement="Use the trace lemma.")
     )
-    requested = service.request_review(plan["id"], "informal", beta, "review")
+    requested = service.request_review(plan["id"], beta, "review")
     task = service.get_record("task", requested["review_task_id"], author)
     judge, judge_context = running(service, author, exp, requested["branch_id"], task=task)
     judge_space = FakeWorkspace()
@@ -2142,7 +2136,7 @@ async def test_referee_prompt_is_packet_target_and_referee_constitution(lab):
         alpha,
         "node",
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     result, seen = await run_worker(service, author, requested["review_task_id"])
     assert result["status"] == "completed"
     prompt = json.loads(seen["payloads"][0]["input"][0]["content"])
@@ -2262,7 +2256,7 @@ async def test_forged_target_refuses_society_prompts_before_any_request(lab, fie
         alpha,
         "node",
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     task = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Society objective"), author, "task"
     )
@@ -2429,7 +2423,7 @@ def test_branch_claims_lists_live_claims_of_this_branch(lab, clock):
     service.claim_node(nodes[3]["id"], "claim", beta, "beta-claim")
     listed = service.branch_claims(exp["id"], alpha)["items"]
     assert [(item["node_id"], item["title"], item["status"]) for item in listed] == [
-        (nodes[0]["id"], "Kept", "informal")
+        (nodes[0]["id"], "Kept", "open")
     ]
     assert listed[0]["expires_at"] == clock.now + 15  # renewed 45 s ago with a 60 s TTL
     assert [item["node_id"] for item in service.branch_claims(exp["id"], beta)["items"]] == [
@@ -2516,7 +2510,7 @@ async def test_runner_selects_and_executes_referee_requested_by_own_agent(lab):
             return [tool_call("commons_node", lemma_args(), "create-1")]
         if phase == 1:
             node_id = outputs[0]["id"]
-            request = {"action": "request_review", "node_id": node_id, "scope": "informal"}
+            request = {"action": "request_review", "node_id": node_id}
             return [tool_call("commons_node", request, "review-1")]
         return [message("Root done.")]
 
@@ -2538,8 +2532,10 @@ async def test_runner_selects_and_executes_referee_requested_by_own_agent(lab):
     assert service.get_record("task", referee["id"], author)["status"] == "completed"
     assert phases == {"root": 3, "referee": 2}
     assert report["status"] == "completed"
+    reviews = service.list_records("commons_review", author, exp["id"])
+    assert [review["task_id"] for review in reviews] == [referee["id"]]
     node = service.get_record("commons_node", referee["review_assignment"]["node_id"], author)
-    assert node["status"] == "refereed"
+    assert node["status"] == "open"  # the review is recorded and moves nothing
 
 
 async def test_joined_recruit_ends_after_return_result(lab):
@@ -2674,7 +2670,7 @@ async def test_synthesis_gate_opens_with_a_referee_lineage_present(lab, monkeypa
         alpha,
         "node",
     )
-    service.request_review(node["id"], "informal", alpha, "review")
+    service.request_review(node["id"], alpha, "review")
     root = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
     )
@@ -2704,7 +2700,7 @@ def test_referee_task_is_not_a_root_for_replan_policy(lab):
         alpha,
         "node",
     )
-    requested = service.request_review(node["id"], "informal", alpha, "review")
+    requested = service.request_review(node["id"], alpha, "review")
     with pytest.raises(HarnessError) as caught:
         service.configure_root_replans(requested["review_task_id"], 1, OPERATOR, "replan")
     assert caught.value.code == "ROOT_TASK_REQUIRED"
@@ -2734,10 +2730,10 @@ async def test_runner_runs_parentless_synthesis_and_gate_reopens(lab, monkeypatc
             alpha,
             title,
         )
-        for title in ("Trace lemma", "Gap lemma")
+        for title in ("Trace lemma", "Gap lemma", "Cut lemma")
     ]
     # First sampled post: a referee objection (an isolated referee branch may not parent).
-    requested = service.request_review(nodes[0]["id"], "informal", alpha, "review")
+    requested = service.request_review(nodes[0]["id"], alpha, "review")
     referee = Principal(
         id="referee",
         role="agent",
@@ -2749,9 +2745,9 @@ async def test_runner_runs_parentless_synthesis_and_gate_reopens(lab, monkeypatc
         requested["review_task_id"], "gaps", "Step 2 is missing.", ["Step 2."], referee, "gaps"
     )
     finish_task(service, requested["review_task_id"])
-    # Then platform status posts on both node threads, which have no author branch.
-    set_status(service, nodes[0]["id"], "formally_stated")
-    set_status(service, nodes[1]["id"], "refereed", "formally_stated")
+    # Then platform status posts on the node threads, which have no author branch.
+    for node in nodes:
+        set_status(service, node["id"], "abandoned")
     root = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
     )
@@ -2820,7 +2816,7 @@ async def test_write_file_respects_e2b_file_limit(lab):
     assert "At most 1,000,000 characters" in generic["description"]
 
 
-async def test_local_compile_requires_standard_axioms(lab):
+async def test_the_statement_checks_axioms_decide_a_verified_rank(lab):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     workspace = FakeWorkspace()
@@ -2829,43 +2825,35 @@ async def test_local_compile_requires_standard_axioms(lab):
     await call(
         tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
     )
-    set_status(service, node["id"], "formally_stated")
+    module = "Commons.N" + node["id"][:8]
     # The statement check collects the axioms; the file's own report (the session's
     # axioms, which an elaborator in the file can forge) does not count either way.
     workspace.lean.axioms = {"trace_add": []}
     workspace.lean.checked_axioms = ["propext", "Lean.ofReduceBool", "sorryAx"]
     checked = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
     assert checked["complete"] is True and checked["axioms"] == {"trace_add": []}
-    assert checked["local_compile"] == {
-        "recorded": False,
-        "reason": "nonstandard_axioms",
-        "axioms": ["Lean.ofReduceBool", "sorryAx"],
-    }
-    assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
-    # A failed check records nothing, whatever the session reported, and says why.
+    assert checked["published"]["rank"] == "partial"
+    # A rejecting check publishes nothing, whatever the session reported, and says why.
     for verdict in (
         {"ok": False, "reason": "statement_mismatch", "detail": None},
         {"ok": False, "reason": "kernel_rejected", "detail": "(kernel) type mismatch"},
-        {"ok": False, "reason": "statement_check_unavailable", "detail": None},
     ):
         workspace.lean.verdict = {**verdict, "axioms": None, "backend": "lean_statement_check"}
         refused = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
-        expected = {"recorded": False, "reason": verdict["reason"]}
+        expected = {"recorded": False, "module": module, "reason": verdict["reason"]}
         if verdict["detail"]:
             expected["detail"] = verdict["detail"]
-        assert refused["local_compile"] == expected
-    assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
+        assert refused["published"] == expected
     workspace.lean.verdict = None
     workspace.lean.axioms = {"trace_add": ["sorryAx"], "helper": ["sorryAx"]}
     workspace.lean.checked_axioms = ["propext", "Classical.choice", "Quot.sound"]
     standard = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
-    assert standard["local_compile"]["recorded"] is True
-    assert standard["local_compile"]["status_evidence"]["axioms"] == {
-        "trace_add": ["propext", "Classical.choice", "Quot.sound"]
-    }
+    assert standard["published"]["rank"] == "verified"
+    source = service.read_node(node["id"], alpha)["node"]["lean_source"]
+    assert source["statement_check"]["axioms"] == ["propext", "Classical.choice", "Quot.sound"]
 
 
-async def test_local_compile_runs_the_statement_check_only_after_the_textual_gates(lab):
+async def test_publication_runs_the_statement_check_only_after_the_textual_gates(lab):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     workspace = FakeWorkspace()
@@ -2874,20 +2862,19 @@ async def test_local_compile_runs_the_statement_check_only_after_the_textual_gat
     await call(
         tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
     )
-    set_status(service, node["id"], "formally_stated")
     exited = await call(tools, "lean_check", {"source": PROOF + "#exit\n", "node_id": node["id"]})
-    assert exited["local_compile"] == {"recorded": False, "reason": "exit_command"}
+    assert exited["published"]["reason"] == "exit_command"
     workspace.lean.complete = False
     partial = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
-    assert partial["local_compile"] == {"recorded": False, "reason": "The compile was incomplete."}
+    assert partial["published"]["rank"] == "partial"
     assert not [c for c in workspace.lean.calls if c[0] == "verify"]
-    # A statement recorded before statements were checked for shape never compiles locally.
+    # A statement recorded before statements were checked for shape is never published.
     with service.db.transaction() as session:
         row = session.get(RecordRow, node["id"])
         service._replace(session, row, {"lean_statement": ": True := trivial\n#exit"})
     workspace.lean.complete = True
     legacy = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
-    assert legacy["local_compile"] == {"recorded": False, "reason": "invalid_lean_statement"}
+    assert legacy["published"]["reason"] == "invalid_lean_statement"
     assert not [c for c in workspace.lean.calls if c[0] == "verify"]
 
 
@@ -2995,7 +2982,7 @@ async def test_runner_ignores_referee_requested_from_another_lineage(lab):
         beta,
         "node",
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     root = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
     )
@@ -3020,11 +3007,11 @@ async def test_runner_adopts_orphaned_parentless_synthesis(lab):
         OPERATOR,
         "workforce",
     )
-    for title in ("Trace lemma", "Gap lemma"):
+    for title in ("Trace lemma", "Gap lemma", "Cut lemma", "Bound lemma"):
         node = service.create_node(
             exp["id"], NodeCreate(node_type="lemma", title=title, statement="S."), alpha, title
         )
-        set_status(service, node["id"], "refereed", "formally_stated")  # platform posts
+        set_status(service, node["id"], "abandoned")  # platform posts
     # The state a crashed first run leaves: a parentless synthesis it scheduled, never run.
     orphan = service.schedule_research_synthesis(exp["id"], OPERATOR, "run-synthesis:first")
     assert orphan["scheduled"] is True and orphan["parent_branch_id"] is None
@@ -3064,11 +3051,11 @@ async def test_runner_that_loses_an_adopted_synthesis_skips_it_quietly(lab, monk
         OPERATOR,
         "workforce",
     )
-    for title in ("Trace lemma", "Gap lemma"):
+    for title in ("Trace lemma", "Gap lemma", "Cut lemma", "Bound lemma"):
         node = service.create_node(
             exp["id"], NodeCreate(node_type="lemma", title=title, statement="S."), alpha, title
         )
-        set_status(service, node["id"], "refereed", "formally_stated")
+        set_status(service, node["id"], "abandoned")
     orphan = service.schedule_research_synthesis(exp["id"], OPERATOR, "run-synthesis:first")
     orphan_id = orphan["task"]["id"]
     root = service.create_task(
@@ -3142,11 +3129,11 @@ async def test_runner_reports_losing_the_lease_on_a_synthesis_it_scheduled(lab, 
         OPERATOR,
         "workforce",
     )
-    for title in ("Trace lemma", "Gap lemma"):
+    for title in ("Trace lemma", "Gap lemma", "Cut lemma", "Bound lemma"):
         node = service.create_node(
             exp["id"], NodeCreate(node_type="lemma", title=title, statement="S."), alpha, title
         )
-        set_status(service, node["id"], "refereed", "formally_stated")
+        set_status(service, node["id"], "abandoned")
     root = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
     )
@@ -3216,7 +3203,7 @@ def test_statement_found_accepts_the_real_top_level_declaration(source):
     assert statement_found(source, "trace_add", ": (1 : Nat) + 1 = 2")
 
 
-# Refused by the other local-compile gates, before the statement is looked for.
+# Refused by the other publication gates, before the statement is looked for.
 GATED = ("variable", "missing_header", "exit_command")
 
 
@@ -3225,7 +3212,7 @@ def test_statement_found_ignores_comments_strings_and_nested_declarations(label)
     assert not statement_found(FORGED_SOURCES[label], "trace_add", ": (1 : Nat) + 1 = 2")
 
 
-async def test_lean_check_refuses_forged_local_compiles(lab):
+async def test_lean_check_never_publishes_a_forged_source(lab):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     tools = profile(service, alpha, context, workspace=FakeWorkspace())
@@ -3233,20 +3220,18 @@ async def test_lean_check_refuses_forged_local_compiles(lab):
     await call(
         tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
     )
-    set_status(service, node["id"], "formally_stated")
     # The fake session reports every source complete, with standard axioms for trace_add.
     for label, source in FORGED_SOURCES.items():
         checked = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
         assert checked["complete"] is True, label
-        assert checked["local_compile"]["recorded"] is False, (label, checked["local_compile"])
-        stored = service.get_record("commons_node", node["id"], alpha)
-        assert stored["status"] == "formally_stated", label
+        assert checked["published"]["recorded"] is False, (label, checked["published"])
+        assert service.read_node(node["id"], alpha)["node"]["lean_source"] is None, label
     reasons = {
         label: (
             await call(
                 tools, "lean_check", {"source": FORGED_SOURCES[label], "node_id": node["id"]}
             )
-        )["local_compile"]["reason"]
+        )["published"]["reason"]
         for label in GATED
     }
     assert reasons == {
@@ -3255,7 +3240,7 @@ async def test_lean_check_refuses_forged_local_compiles(lab):
         "exit_command": "exit_command",
     }
     recorded = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
-    assert recorded["local_compile"]["recorded"] is True
+    assert recorded["published"]["rank"] == "verified"
 
 
 async def test_lean_check_requires_every_node_header_line(lab):
@@ -3267,12 +3252,11 @@ async def test_lean_check_requires_every_node_header_line(lab):
     await call(
         tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **formal}
     )
-    set_status(service, node["id"], "formally_stated")
     missing = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
-    assert missing["local_compile"] == {"recorded": False, "reason": "header_mismatch"}
+    assert missing["published"]["reason"] == "header_mismatch"
     source = PROOF.replace("import Mathlib\n", "import Mathlib\nopen Real\nopen Nat\n")
     recorded = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
-    assert recorded["local_compile"]["recorded"] is True
+    assert recorded["published"]["rank"] == "verified"
 
 
 # Final review fixes (I2: referee profile, and reviews requested from platform lineages) ----
@@ -3289,7 +3273,7 @@ async def test_referee_tools_stay_within_the_assignment(lab):
     other = service.create_node(
         exp["id"], NodeCreate(node_type="lemma", title="Other", statement="Other."), alpha, "other"
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     task = service.get_record("task", requested["review_task_id"], author)
     referee, context = running(service, author, exp, requested["branch_id"], task=task)
     workspace = FakeWorkspace()
@@ -3306,7 +3290,7 @@ async def test_referee_tools_stay_within_the_assignment(lab):
     elsewhere = await call(tools, "commons_post", {"node_id": other["id"], **objection})
     assert elsewhere["error"]["code"] == "INVALID_ARGUMENTS"
     assert node["id"] in elsewhere["error"]["message"]
-    assert service.get_record("commons_node", node["id"], alpha)["status"] == "informal"
+    assert service.get_record("commons_node", node["id"], alpha)["status"] == "open"
 
 
 def fenced_blocks(value):
@@ -3353,7 +3337,7 @@ async def test_referee_tool_outputs_fence_author_text(lab):
         alpha,
         "node",
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     task = service.get_record("task", requested["review_task_id"], author)
     referee, context = running(service, author, exp, requested["branch_id"], task=task)
     tools = profile(service, referee, context)
@@ -3426,7 +3410,7 @@ async def test_verification_status_fences_diagnostics_for_referees(lab):
         alpha,
         "node",
     )
-    requested = service.request_review(node["id"], "informal", beta, "review")
+    requested = service.request_review(node["id"], beta, "review")
     task = service.get_record("task", requested["review_task_id"], author)
     referee, context = running(service, author, exp, requested["branch_id"], task=task)
     with service.db.transaction() as session:
@@ -3463,10 +3447,10 @@ async def test_runner_executes_review_requested_by_parentless_synthesis(lab):
             alpha,
             title,
         )
-        for title in ("Trace lemma", "Gap lemma")
+        for title in ("Trace lemma", "Gap lemma", "Cut lemma")
     ]
     # A referee objection and platform status posts: the sampled synthesis has no parent.
-    requested = service.request_review(nodes[0]["id"], "informal", alpha, "review")
+    requested = service.request_review(nodes[0]["id"], alpha, "review")
     referee = Principal(
         id="referee",
         role="agent",
@@ -3478,8 +3462,8 @@ async def test_runner_executes_review_requested_by_parentless_synthesis(lab):
         requested["review_task_id"], "gaps", "Step 2 is missing.", ["Step 2."], referee, "gaps"
     )
     finish_task(service, requested["review_task_id"])
-    set_status(service, nodes[0]["id"], "formally_stated")
-    set_status(service, nodes[1]["id"], "refereed", "formally_stated")
+    for node in nodes:
+        set_status(service, node["id"], "abandoned")
     root = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
     )
@@ -3512,11 +3496,7 @@ async def test_runner_executes_review_requested_by_parentless_synthesis(lab):
         elif role == "synthesis" and phase == 0:
             items = [tool_call("commons_node", lemma_args(title="Synthesis lemma"), "create-1")]
         elif role == "synthesis" and phase == 1:
-            request_review = {
-                "action": "request_review",
-                "node_id": outputs[0]["id"],
-                "scope": "informal",
-            }
+            request_review = {"action": "request_review", "node_id": outputs[0]["id"]}
             items = [tool_call("commons_node", request_review, "review-1")]
         else:
             items = [message("done")]
@@ -3541,7 +3521,7 @@ async def test_runner_executes_review_requested_by_parentless_synthesis(lab):
     assert len(reviews) == 1 and reviews[0]["status"] == "completed"
     assert phases["referee"] == 2
     node = service.get_record("commons_node", reviews[0]["review_assignment"]["node_id"], author)
-    assert node["status"] == "refereed"
+    assert node["status"] == "open"
     assert report["status"] == "completed"
 
 
@@ -3577,7 +3557,9 @@ class InfrastructureFailingLean(FakeLean):
         ("lean_repl_unavailable", "Lean exited with status 137."),  # one-shot, no position
     ],
 )
-async def test_infrastructure_failure_never_demotes_a_formal_node(lab, reason_code, text):
+async def test_infrastructure_failure_is_never_recorded_as_a_statement_result(
+    lab, reason_code, text
+):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     workspace = FakeWorkspace()
@@ -3585,21 +3567,20 @@ async def test_infrastructure_failure_never_demotes_a_formal_node(lab, reason_co
     node = await call(tools, "commons_node", lemma_args(**LEAN))
     arguments = {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
     await call(tools, "commons_node", arguments)
-    set_status(service, node["id"], "formally_stated")
     workspace.lean = InfrastructureFailingLean(reason_code, text)
     retried = await call(tools, "commons_node", arguments)
     assert retried["error"]["code"] == "LEAN_INFRASTRUCTURE_FAILURE"
     assert retried["error"]["retryable"] is True
     stored = service.get_record("commons_node", node["id"], alpha)
-    assert stored["status"] == "formally_stated" and stored["lean_elaborated"] is True
+    assert stored["status"] == "open" and stored["lean_elaborated"] is True
     # A diagnostic failure is Lean's judgement of the statement, and it is recorded.
     workspace.lean = FakeLean(elaborates=lambda header, name, signature: False)
     failed = await call(tools, "commons_node", arguments)
     assert failed["lean_elaborated"] is False and failed["elaboration"]["ok"] is False
-    assert service.get_record("commons_node", node["id"], alpha)["status"] == "informal"
+    assert failed["status"] == "open"
 
 
-async def test_local_compile_accepts_a_hole_node_universe_header_line(lab):
+async def test_publication_accepts_a_hole_node_universe_header_line(lab):
     """A hole node's header ends with its universe line, which is a command, not a header
     line: it counts when the compiled source declares it outside comments and strings."""
     service, author, exp, branches, _ = society_lab(lab)
@@ -3615,17 +3596,16 @@ async def test_local_compile_accepts_a_hole_node_universe_header_line(lab):
     await call(
         tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **formal}
     )
-    set_status(service, node["id"], "formally_stated")
     workspace.lean.axioms = {"sq_pos_hole_2": []}
     theorem = "theorem sq_pos_hole_2 {α : Type u_1} (a : α) : a = a := rfl\n"
     quoted = f'import Mathlib\n\ndef s := "\nuniverse u_1\n"\n{theorem}'
     commented = f"import Mathlib\n\n-- universe u_1\n{theorem}"
     for source in (quoted, commented):
         refused = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
-        assert refused["local_compile"] == {"recorded": False, "reason": "header_mismatch"}
+        assert refused["published"]["reason"] == "header_mismatch"
     source = f"import Mathlib\nuniverse u_1\n\n{theorem}"
     recorded = await call(tools, "lean_check", {"source": source, "node_id": node["id"]})
-    assert recorded["local_compile"]["recorded"] is True
+    assert recorded["published"]["rank"] == "verified"
 
 
 def test_statement_search_fails_closed_on_pathologically_nested_source():

@@ -1,9 +1,9 @@
-"""Local compiles rest on the harness statement check, never on the file's own output.
+"""Verified source ranks rest on the harness statement check, never on the file's output.
 
 Lean-marked tests run real Lean (``PHYSHARNESS_LEAN_CMD``, else elan's v4.33.0 toolchain)
 through the society ``lean_check`` tool and ``LeanSession.verify_statement``. They show that
-elaboration-level tricks in plain Lean source cannot move a false or axiom-dirty statement
-to ``compiles_locally``: an instance or macro that changes what the statement's text means,
+elaboration-level tricks in plain Lean source cannot publish a false or axiom-dirty statement
+as a ``verified`` source: an instance or macro that changes what the statement's text means,
 an elaborator that forges the ``#print axioms`` report, and a declaration added with
 ``debug.skipKernelTC``. (Compile-time code that writes VM files, like a shell command, can
 tamper with the check itself: the result is VM-attested.) They also show that honest
@@ -23,7 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from commons_helpers import set_status, society_lab
+from commons_helpers import society_lab
 from test_lean_session import FakeWorkspaceTools, RealLeanScratchTools, lean_env  # noqa: F401
 from test_society_tools import FakeWorkspace, call, lemma_args, profile, running
 
@@ -42,7 +42,7 @@ from physharness.orchestration.workspace_tools import WorkspaceTools
 FALSE = {"lean_header": "import Lean", "lean_name": "bad", "lean_statement": ": (2 : Nat) + 2 = 5"}
 TRUE = {"lean_header": "import Lean", "lean_name": "good", "lean_statement": ": (2 : Nat) + 2 = 4"}
 # Each forgery is ordinary Lean source submitted through lean_check; before the statement
-# check, each moved the false node to compiles_locally (Lean 4.33, one-shot backend).
+# check, each moved the false node to the S1 status compiles_locally (Lean 4.33, one-shot).
 FORGERIES = {
     "instance_shadowing": (
         "import Lean\n\n"
@@ -71,10 +71,12 @@ FORGERIES = {
         "theorem bad : (2 : Nat) + 2 = 5 := lemmaFalse.elim\n"
     ),
 }
-FORGERY_REASONS = {
+# What lean_check does with each forgery: the refusal reason, or the rank it publishes (never
+# verified: the check finds the added axiom).
+FORGERY_OUTCOMES = {
     "instance_shadowing": "statement_mismatch",
     "macro_rules": "statement_mismatch",
-    "print_axioms_override": "nonstandard_axioms",
+    "print_axioms_override": "partial",
     "skip_kernel_tc": "kernel_rejected",
 }
 HONEST = (
@@ -151,7 +153,6 @@ async def _formal_node(tools, service, node):
         tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **node}
     )
     assert stated["lean_elaborated"] is True, stated
-    set_status(service, created["id"], "formally_stated")
     return created["id"]
 
 
@@ -160,7 +161,7 @@ async def _formal_node(tools, service, node):
 
 @pytest.mark.lean
 @pytest.mark.parametrize("backend", ["one_shot", "repl_inline", "repl"])
-async def test_elaboration_tricks_cannot_forge_a_local_compile(lab, real_lean, backend):
+async def test_elaboration_tricks_cannot_forge_a_verified_source(lab, real_lean, backend):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     session = LeanSession(_tools(real_lean, backend))
@@ -169,20 +170,19 @@ async def test_elaboration_tricks_cannot_forge_a_local_compile(lab, real_lean, b
     for label, source in FORGERIES.items():
         checked = await call(tools, "lean_check", {"source": source, "node_id": node})
         # The session's own report may say complete with no axioms; it does not decide.
-        assert checked["local_compile"]["recorded"] is False, (label, checked)
-        assert checked["local_compile"]["reason"] == FORGERY_REASONS[label], (label, checked)
-        assert service.get_record("commons_node", node, alpha)["status"] == "formally_stated"
+        published = checked["published"]
+        outcome = published.get("rank") if published["recorded"] else published["reason"]
+        assert outcome == FORGERY_OUTCOMES[label], (label, checked)
+        stored = service.read_node(node, alpha)["node"]
+        assert (stored["lean_source"] or {}).get("rank") != "verified", (label, stored)
     assert session._backend == backend
-    # An honest proof of a true statement still compiles locally, on the check's axioms.
+    # An honest proof of a true statement is published verified, on the check's axioms.
     honest = await _formal_node(tools, service, TRUE)
     checked = await call(tools, "lean_check", {"source": HONEST, "node_id": honest})
-    assert checked["local_compile"]["recorded"] is True, checked
-    assert checked["local_compile"]["status_evidence"] == {
-        "source_sha256": checked["source_sha256"],
-        "backend": CHECK_BACKEND,
-        "axioms": {"good": []},
-    }
-    assert service.get_record("commons_node", honest, alpha)["status"] == "compiles_locally"
+    assert checked["published"]["rank"] == "verified", checked
+    stored = service.read_node(honest, alpha)["node"]
+    assert stored["lean_source"]["statement_check"] == {"ok": True, "reason": None, "axioms": []}
+    assert stored["status"] == "open"  # only the independent verifier accepts
 
 
 @pytest.mark.lean
@@ -201,7 +201,7 @@ async def test_statement_check_verdicts_on_real_lean(real_lean):
             assert verdict["ok"] is True and verdict["axioms"] == ["cheat"], verdict
         else:
             assert verdict["ok"] is False, (label, verdict)
-            assert verdict["reason"] == FORGERY_REASONS[label], (label, verdict)
+            assert verdict["reason"] == FORGERY_OUTCOMES[label], (label, verdict)
     classical = (
         "import Lean\n\ntheorem good : (2 : Nat) + 2 = 4 ∧ (True ∨ ¬True) :=\n"
         "  ⟨rfl, Classical.em True⟩\n"
