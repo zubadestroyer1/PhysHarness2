@@ -1,6 +1,8 @@
 """Fenced, canonical handoffs between settled native research sessions."""
 
-from sqlalchemy import and_, case, or_, select
+from collections import OrderedDict
+
+from sqlalchemy import and_, case, func, or_, select
 
 from .commons_sources import RANKS
 from .domain import digest_json, utcnow
@@ -28,6 +30,16 @@ BRANCH_WATCH_KINDS = (
     "discussion.post_created",
 )
 LONG_POLE_KINDS = ("commons.node_status", "commons.edge_added", "commons.source_published")
+LONG_POLE_CACHE_SIZE = 256
+# Long-pole ids per (experiment id, its latest LONG_POLE_KINDS event sequence): the graph is
+# unchanged until the next such event, so one recompute serves every poll and waiter.
+_long_pole_ids = OrderedDict()
+
+
+def _not_by(branch_id):
+    """Events another branch or the platform caused: a waiter's own moves are not news."""
+    branch = EventRow.payload["branch_id"].as_string()
+    return or_(branch.is_(None), branch != branch_id)
 
 
 class ContinuationMixin:
@@ -1131,11 +1143,8 @@ class ContinuationMixin:
                         "EVENT_WAIT_SCOPE", "Watch only nodes and branches of this experiment."
                     )
                 watched[row.kind].append(identifier)
-            nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
-            long_pole, _ = self._long_pole(
-                nodes,
-                self._experiment_dependencies(session, experiment),
-                self._live_claims(session, experiment),
+            long_pole, _ = self._goal_long_pole(
+                session, experiment, actor, self._live_claims(session, experiment)
             )
             now = utcnow()
             # Updates wake from the acknowledged delivery position, as a peer wait's reply
@@ -1295,16 +1304,21 @@ class ContinuationMixin:
             return status(True, "timeout")
         if now < peer_wait.get("min_sleep_until", 0):
             return status(False, "min_sleep")
-        with self.db.sessions() as session:
-            experiment = self._get(session, "experiment", experiment_id, actor)
-            if self._pending_update(session, experiment, actor, peer_wait["after_sequence"]):
-                return status(True, "relevant_update")
-            event = self._watched_event(session, experiment, peer_wait)
-            if event is not None:
-                detail = {"kind": event.kind, "aggregate_id": event.aggregate_id}
-                return status(True, "watched_event", detail)
-            if self._long_pole_moved(session, experiment, peer_wait, actor):
-                return status(True, "long_pole_changed")
+        try:
+            with self.db.sessions() as session:
+                experiment = self._get(session, "experiment", experiment_id, actor)
+                if self._pending_update(session, experiment, actor, peer_wait["after_sequence"]):
+                    return status(True, "relevant_update")
+                event = self._watched_event(session, experiment, peer_wait)
+                if event is not None:
+                    detail = {"kind": event.kind, "aggregate_id": event.aggregate_id}
+                    return status(True, "watched_event", detail)
+                if self._long_pole_moved(session, experiment, peer_wait, actor):
+                    return status(True, "long_pole_changed")
+        except HarnessError as error:
+            # A graph or subscription limit would otherwise reach the team loop and end the
+            # whole run; it wakes only this waiter, which can see the error for itself.
+            return status(True, "wait_error", {"code": error.code})
         return status(False, "waiting")
 
     @staticmethod
@@ -1331,7 +1345,7 @@ class ContinuationMixin:
                     and_(EventRow.kind.in_(NODE_WATCH_KINDS), EventRow.aggregate_id.in_(nodes)),
                     and_(EventRow.kind.in_(BRANCH_WATCH_KINDS), branch.in_(branches)),
                 ),
-                or_(branch.is_(None), branch != peer_wait["branch_id"]),
+                _not_by(peer_wait["branch_id"]),
                 or_(
                     EventRow.kind != "commons.node_claim",
                     EventRow.payload["new_claimant"].as_boolean().is_(True),
@@ -1346,25 +1360,33 @@ class ContinuationMixin:
         )
 
     def _long_pole_moved(self, session, experiment, peer_wait, actor):
-        """Whether the goal's long pole differs from the wait's, recomputed only once an
-        event that can move it has happened."""
+        """Whether the goal's long pole differs from the wait's. Checked only once another
+        branch or the platform has changed the graph since the wait began; the comparison is
+        of state, so the waiter's own change shows up alongside such a change."""
+        graph_events = (
+            EventRow.project_id == experiment.project_id,
+            EventRow.kind.in_(LONG_POLE_KINDS),
+            EventRow.payload["experiment_id"].as_string() == experiment.id,
+        )
         moved = session.scalar(
             select(EventRow.sequence)
             .where(
-                EventRow.project_id == experiment.project_id,
+                *graph_events,
                 EventRow.sequence > peer_wait["event_after"],
-                EventRow.kind.in_(LONG_POLE_KINDS),
-                EventRow.payload["experiment_id"].as_string() == experiment.id,
+                _not_by(peer_wait["branch_id"]),
             )
             .limit(1)
         )
         if moved is None:
             return False
-        nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
-        long_pole, _ = self._long_pole(
-            nodes, self._experiment_dependencies(session, experiment), ()
-        )
-        return {item["id"] for item in long_pole} != set(peer_wait.get("long_pole_ids") or [])
+        head = session.scalar(select(func.max(EventRow.sequence)).where(*graph_events))
+        ids = _long_pole_ids.get((experiment.id, head))
+        if ids is None:
+            items, _ = self._goal_long_pole(session, experiment, actor)
+            ids = _long_pole_ids[experiment.id, head] = frozenset(item["id"] for item in items)
+            while len(_long_pole_ids) > LONG_POLE_CACHE_SIZE:
+                _long_pole_ids.popitem(last=False)
+        return ids != set(peer_wait.get("long_pole_ids") or [])
 
     def handoff_intent(self, task_id, holder, fence, actor):
         with self.db.sessions() as session:

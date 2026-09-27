@@ -231,6 +231,7 @@ def test_depends_on_cycle_rejected(lab):
         "source_id": c["id"],
         "relation": "generalizes",
         "target_id": b["id"],
+        "branch_id": beta.branch_id,  # the branch that added it
     }
     with service.db.sessions() as session:
         relations = set(
@@ -440,6 +441,7 @@ def test_illegal_transition_rejected(lab):
             "from": "informal",
             "to": "formally_stated",
             "reason": "platform test",
+            "branch_id": None,  # a platform move
         },
         {
             "experiment_id": exp["id"],
@@ -447,6 +449,7 @@ def test_illegal_transition_rejected(lab):
             "from": "formally_stated",
             "to": "accepted",
             "reason": "platform test",
+            "branch_id": None,  # a platform move
         },
     ]
 
@@ -555,11 +558,33 @@ def test_frontier_reports_the_long_pole_and_a_hint(lab):
     assert frontier()["long_pole"] == [
         {
             "id": ids["B"],
+            "node_type": "lemma",
             "title": "B",
             "open_minutes": 0,
             "claimants": [{"branch_id": beta.branch_id, "route": None}],
         }
     ]
+
+
+def test_the_long_pole_skips_the_parts_of_closed_routes(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    ids = {
+        name: service.create_node(exp["id"], lemma(name), alpha, name)["id"]
+        for name in ("Dead", "Under dead", "Proved", "Under proved", "Live")
+    }
+    for source, target in (
+        (goal["id"], ids["Dead"]),
+        (ids["Dead"], ids["Under dead"]),
+        (goal["id"], ids["Proved"]),
+        (ids["Proved"], ids["Under proved"]),
+        (goal["id"], ids["Live"]),
+    ):
+        service.link_nodes(exp["id"], source, "depends_on", target, beta, f"{source}-{target}")
+    service.abandon_node(ids["Dead"], "A dead route.", alpha, "abandon")
+    set_status(service, ids["Proved"], "formally_stated", "accepted")
+    pole = service.query_nodes(exp["id"], beta, frontier=True)["long_pole"]
+    assert [item["id"] for item in pole] == [ids["Live"]]
 
 
 def test_query_filters_and_keyset_pages(lab):

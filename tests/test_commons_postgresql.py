@@ -13,6 +13,8 @@ import pytest
 from commons_helpers import society_lab
 from sqlalchemy import create_engine, event
 from sqlalchemy.dialects import postgresql
+from test_commons_sources import publish
+from test_event_waits import park
 
 from physharness.artifacts import LocalArtifactStore
 from physharness.commons import CommonsMixin
@@ -168,6 +170,42 @@ def test_library_notes_on_the_backend(backend_lab):
     assert again == appended
     found = service.library_notes(beta, query="Foo.bar")
     assert [note["text"] for note in found["notes"]] == ["`Foo.bar` was renamed `Foo.baz`."]
+
+
+def test_event_wait_filters_run_on_the_backend(backend_lab):
+    """The wake filters (a JSON boolean, rank CASEs over JSON text) and the routed-update
+    scan, run against the database rather than only compiled."""
+    service, author, exp, _, (alpha, beta) = society_lab(backend_lab)
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="Watched", statement="W."), beta, "node"
+    )
+    mine = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="Mine", statement="M."), alpha, "mine"
+    )
+    service.link_nodes(exp["id"], goal["id"], "depends_on", node["id"], alpha, "goal-node")
+    service.claim_node(node["id"], "claim", beta, "claim")
+    publish(service, node["id"], beta, "partial", "partial")
+
+    def reason(ticket):
+        return service.peer_wait_status(ticket, agent)["reason"]
+
+    agent, renewed = park(service, author, exp, alpha.branch_id, ids=[node["id"]])
+    service.claim_node(node["id"], "renew", beta, "renew")
+    publish(service, node["id"], beta, "partial", "retry")
+    assert reason(renewed) == "waiting"
+    publish(service, node["id"], beta, "complete", "complete")
+    assert reason(renewed) == "watched_event"
+    _, claimed = park(service, author, exp, alpha.branch_id, ids=[node["id"]])
+    service.claim_node(node["id"], "release", beta, "release")
+    service.claim_node(node["id"], "claim", beta, "claim-again")
+    assert reason(claimed) == "watched_event"
+    _, pole = park(service, author, exp, alpha.branch_id)
+    service.abandon_node(node["id"], "Dead end.", beta, "abandon")
+    assert reason(pole) == "long_pole_changed"
+    _, routed = park(service, author, exp, alpha.branch_id)
+    service.post_on_node(mine["id"], NodePostCreate(kind="objection", abstract="Gap."), beta, "p")
+    assert reason(routed) == "relevant_update"
 
 
 class _Capture:

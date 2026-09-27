@@ -431,6 +431,7 @@ class CommonsMixin:
                 "source_id": source_id,
                 "relation": relation,
                 "target_id": target_id,
+                "branch_id": actor.branch_id,
             },
         )
         if relation == "depends_on":
@@ -707,18 +708,18 @@ class CommonsMixin:
     def _long_pole(nodes, dependencies, claims, limit=3):
         """Where help counts most (S1 audit #14): ``(items, hint)``.
 
-        The open non-goal nodes on the goal's depends_on closure that wait on no other open
-        node, oldest first. Without such nodes, the open nodes most open nodes depend on (at
-        least one; ties kept). Without those either, no items and a hint to link the goal's
-        parts. ``claims`` are live claim payloads.
+        The open non-goal nodes the goal reaches through open depends_on paths that wait on
+        no other open node, oldest first. Without such nodes, the open nodes most open nodes
+        depend on (at least one; ties kept). Without those either, no items and a hint to link
+        the goal's parts. ``claims`` are live claim payloads.
         """
-        visible = {node["id"] for node in nodes}
         open_ids = {node["id"] for node in nodes if node["status"] not in CLOSED_STATUSES}
         goal = next((node["id"] for node in nodes if node["node_type"] == "goal"), None)
         waiting_on_open = {s for s, t in dependencies if s in open_ids and t in open_ids}
         parts = set()
         if goal is not None:
-            children = _dependency_children(dependencies, within=visible)
+            # Only through open nodes: the parts of an abandoned or proved route are moot.
+            children = _dependency_children(dependencies, within=open_ids | {goal})
             parts = set(_depends_closure(children, goal, MAX_GRAPH_NODES)[0])
         chosen = (parts & open_ids) - waiting_on_open
         if not chosen:
@@ -737,6 +738,7 @@ class CommonsMixin:
         return [
             {
                 "id": node["id"],
+                "node_type": node["node_type"],
                 "title": node["title"],
                 "open_minutes": int(
                     max((now - datetime.fromisoformat(node["created_at"])).total_seconds(), 0) // 60
@@ -752,6 +754,17 @@ class CommonsMixin:
             }
             for node in pole
         ], None
+
+    def _goal_long_pole(self, session, experiment, actor, claims=(), graph=None):
+        """The long pole over the experiment's visible nodes and depends_on edges, the one
+        reading the frontier, event waits and their wake checks share. ``graph`` is
+        ``(nodes, dependencies)`` when the caller has already read them."""
+        if graph is None:
+            graph = (
+                [row.payload for row in self._experiment_nodes(session, experiment, actor)],
+                self._experiment_dependencies(session, experiment),
+            )
+        return self._long_pole(*graph, claims)
 
     def query_nodes(
         self,
@@ -794,7 +807,11 @@ class CommonsMixin:
             nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
             dependencies = self._experiment_dependencies(session, experiment) if frontier else []
             claims = self._live_claim_counts(session, experiment) if frontier else None
-            live_claims = self._live_claims(session, experiment) if frontier else []
+            if frontier:
+                live_claims = self._live_claims(session, experiment)
+                long_pole, hint = self._goal_long_pole(
+                    session, experiment, actor, live_claims, graph=(nodes, dependencies)
+                )
         receipt = self._goal_receipt(experiment_id, actor, nodes)
         nodes = [self._goal_view(node, receipt) for node in nodes]
         wanted = tokens(text) if text is not None else None
@@ -822,7 +839,6 @@ class CommonsMixin:
 
         selected = [node for node in nodes if matches(node)]
         if frontier:
-            long_pole, hint = self._long_pole(nodes, dependencies, live_claims)
             page = {
                 "items": self._frontier(nodes, selected, dependencies, limit, claims),
                 "next_cursor": None,
@@ -877,14 +893,16 @@ class CommonsMixin:
                 reason=reason,
                 evidence={"abandoned_by": actor.id},
                 op=op,
+                branch_id=actor.branch_id,
             )
 
         return self._execute(
             actor, key, "commons.node_abandon", {"node_id": node_id, "reason": reason}, action
         )
 
-    def _set_node_status(self, session, row, status, *, reason, evidence, op):
-        """The single ladder gate; platform code only (plus author abandonment)."""
+    def _set_node_status(self, session, row, status, *, reason, evidence, op, branch_id=None):
+        """The single ladder gate; platform code only (plus author abandonment). ``branch_id``
+        is the branch whose action caused the move, None for a platform decision."""
         old = row.payload["status"]
         if status not in ALLOWED_TRANSITIONS.get(old, ()):
             raise HarnessError(
@@ -916,6 +934,7 @@ class CommonsMixin:
                 "from": old,
                 "to": status,
                 "reason": reason,
+                "branch_id": branch_id,
             },
         )
         self._node_hooks_after_status(session, row, old, status, op)

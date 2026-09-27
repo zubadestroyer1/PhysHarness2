@@ -1137,6 +1137,7 @@ class CommonsReviewMixin:
                         "previous_lean_statement_sha256": previous,
                     },
                     op=op,
+                    branch_id=actor.branch_id,
                 )
             self._touch_node(session, row, actor, op)
             return copy.deepcopy(row.payload)
@@ -1211,6 +1212,7 @@ class CommonsReviewMixin:
                     "axioms": {name: data["compile_result"]["axioms"][name]},
                 },
                 op=op,
+                branch_id=actor.branch_id,
             )
             self._touch_node(session, row, actor, op)
             return {
