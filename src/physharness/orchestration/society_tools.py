@@ -197,12 +197,17 @@ def text(limit, description, *, nullable=False):
     }
 
 
+def routed(description, *, nullable=False):
+    """A routing id property (a message recipient, a wait target): a full id, or a unique
+    prefix of at least 8 hex characters. Routing is not permission to read, so its handler
+    resolves a prefix among the tool's own targets."""
+    return text(ID, f"{description} A unique 8+ hex character prefix works too.", nullable=nullable)
+
+
 def ident(description, kinds, *, nullable=False):
-    """An id property: a full id, or a unique prefix of at least 8 hex characters (S1 #5d)."""
-    schema = text(
-        ID, f"{description} A unique 8+ hex character prefix works too.", nullable=nullable
-    )
-    return {**schema, "_id": tuple(kinds)}
+    """An id property: a full id, or a unique prefix of at least 8 hex characters of a
+    record of ``kinds`` the agent can read (S1 #5d)."""
+    return {**routed(description, nullable=nullable), "_id": tuple(kinds)}
 
 
 EVIDENCE_KINDS = (
@@ -1374,9 +1379,10 @@ def society_tools(
         if a["to"] == "lab":
             sent = service.send_lab_message(branch_id, a["content"], a["artifact_ids"], agent, k)
             return {"to": "lab", **sent}
-        sent = service.send_message(branch_id, a["to"], a["content"], a["artifact_ids"], agent, k)
+        to = service.resolve_id(a["to"], agent, ("branch",), route=("recipient", branch_id))
+        sent = service.send_message(branch_id, to, a["content"], a["artifact_ids"], agent, k)
         return {
-            "to": a["to"],
+            "to": to,
             "message_id": sent["id"],
             "evidence_status": sent["evidence_status"],
         }
@@ -1384,7 +1390,7 @@ def society_tools(
     add(
         "message",
         {
-            "to": ident("A branch id in your lab or your parent/child, or 'lab'.", ("branch",)),
+            "to": routed("A branch id in your lab or your parent/child, or 'lab'."),
             "content": text(20000, "The message."),
             "artifact_ids": array(
                 ident("An artifact id.", ("artifact",)), 12, "Attached evidence."
@@ -1401,17 +1407,22 @@ def society_tools(
 
         def wait(a, k):
             if a["for"] == "tasks":
-                return service.request_handoff(task_id, "wait_for_tasks", a["ids"], agent, k)
+                ids = [
+                    service.resolve_id(i, agent, ("task",), route=("child_task", task_id))
+                    for i in a["ids"]
+                ]
+                return service.request_handoff(task_id, "wait_for_tasks", ids, agent, k)
             if len(a["ids"]) != 1 or a["timeout_seconds"] is None:
                 raise invalid("A peer wait takes exactly one branch id and a timeout_seconds.")
-            return service.request_peer_wait(task_id, a["ids"][0], a["timeout_seconds"], agent, k)
+            peer = service.resolve_id(a["ids"][0], agent, ("branch",), route=("peer", branch_id))
+            return service.request_peer_wait(task_id, peer, a["timeout_seconds"], agent, k)
 
         add(
             "wait",
             {
                 "for": choice(("tasks", "peer"), "What to wait for."),
                 "ids": array(
-                    ident("A task or branch id.", ("task", "branch")),
+                    routed("A task or branch id."),
                     MAX_WAIT_IDS,
                     "tasks: your recruits' task ids; peer: one branch id.",
                     min_items=1,

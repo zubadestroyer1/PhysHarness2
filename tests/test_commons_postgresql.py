@@ -176,6 +176,20 @@ class _Capture:
         return SimpleNamespace(all=lambda: [])
 
 
+def test_resolve_id_prefix(backend_lab):
+    """The prefix resolver's LIKE query, for readable records and for a routing target."""
+    service, _, exp, branches, (alpha, _) = society_lab(backend_lab)
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="L", statement="L holds."), alpha, "node"
+    )
+    for prefix in (node["id"][:8], node["id"][:13]):
+        assert service.resolve_id(prefix, alpha, ("commons_node",)) == node["id"]
+    assert service.resolve_id(node["id"][:8], alpha, ("branch",)) == node["id"][:8]
+    peer = branches[1]["id"]
+    route = ("peer", alpha.branch_id)
+    assert service.resolve_id(peer[:8], alpha, ("branch",), route=route) == peer
+
+
 def test_commons_queries_compile_for_postgresql():
     """Runs without a server: the JSON paths and NOT EXISTS compile on PostgreSQL."""
     session = _Capture()
