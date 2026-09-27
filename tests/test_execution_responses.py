@@ -734,3 +734,72 @@ async def test_tool_turn_save_sequence_is_pinned(tmp_path):
         "responses",
     ]
     await client.close()
+
+
+PARALLEL = ModelConfig(model="exact-model", parameters={"parallel_tool_calls": True})
+
+
+@pytest.mark.parametrize(
+    "parameters,expected", [({}, False), ({"parallel_tool_calls": True}, True)]
+)
+async def test_parallel_flag_sent_to_count_and_create(tmp_path, parameters, expected):
+    requests = []
+    client = client_for([response([message("done")])], requests)
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client)
+    await runtime.start(
+        "x", ModelConfig(model="exact-model", parameters=parameters), RuntimeLimits()
+    )
+    assert [payload["parallel_tool_calls"] for _, payload in requests] == [expected, expected]
+    await client.close()
+
+
+async def test_parallel_calls_run_in_order_each_after_its_marker(tmp_path):
+    requests, dispatched = [], []
+    store, dispatcher = RecordingStore(tmp_path / "s.db"), ToolDispatcher()
+
+    async def double(arguments, operation_id):
+        dispatched.append((operation_id, store.pending[-1]))
+        return {"value": arguments["value"] * 2}
+
+    dispatcher.register("double", DOUBLE_SCHEMA, double)
+    client = client_for(
+        [
+            response([double_call("call_1", 2), double_call("call_2", 3)]),
+            response([message("done")], response_id="resp_2"),
+        ],
+        requests,
+    )
+    result = await ResponsesRuntime(store=store, dispatcher=dispatcher, client=client).start(
+        "x", PARALLEL, RuntimeLimits()
+    )
+    sid = result.session.id
+    assert dispatched == [(f"{sid}:call_1", f"{sid}:call_1"), (f"{sid}:call_2", f"{sid}:call_2")]
+    second = [p for u, p in requests if u.endswith("/responses")][1]["input"]
+    assert [json.loads(i["output"]) for i in second if i.get("type") == "function_call_output"] == [
+        {"value": 4},
+        {"value": 6},
+    ]
+    await client.close()
+
+
+async def test_fatal_tool_error_mid_batch_stops_later_calls(tmp_path):
+    dispatched, dispatcher = [], ToolDispatcher()
+
+    async def fatal(arguments, operation_id):
+        dispatched.append(operation_id)
+        raise ExecutionError("STALE_LEASE", "lease lost", operation_id=operation_id)
+
+    dispatcher.register("double", DOUBLE_SCHEMA, fatal)
+    client = client_for([response([double_call("call_1"), double_call("call_2")])], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), dispatcher=dispatcher, client=client
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", PARALLEL, RuntimeLimits())
+    assert error.value.code == "STALE_LEASE" and len(dispatched) == 1
+    checkpoint = await runtime.checkpoint(dispatched[0].split(":")[0])
+    assert (checkpoint.session.status, checkpoint.native_state["pending_operation"]) == (
+        "uncertain",
+        dispatched[0],
+    )
+    await client.close()

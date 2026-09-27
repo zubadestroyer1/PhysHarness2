@@ -87,8 +87,17 @@ This is a genuine `AsyncOpenAI.responses.create` tool loop. The real SDK's
 `responses.input_tokens.count` preflights each request. The next output cap is bounded by
 remaining cumulative tokens. A provider consumption discrepancy raises a limit violation and
 stops further turns. No aliases or substitute models are selected by the adapter. Parameters
-supported here are `instructions`, `reasoning`, `text`, `temperature`, `top_p`, and `service_tier`.
-Unsupported provider parameter/model combinations fail at the provider.
+supported here are `instructions`, `reasoning`, `text`, `temperature`, `top_p`, `service_tier`,
+`context_management`, and `parallel_tool_calls`. Unsupported provider parameter/model combinations
+fail at the provider.
+
+`parallel_tool_calls` defaults to `false`, as today. With `true`, a response's function calls
+still run one at a time, in the order the provider emitted them: the calls in a batch are never
+executed concurrently, and each call's pending marker is durable before that call's dispatch. A
+fatal tool error stops the batch, leaving its later calls undispatched and the session
+`uncertain`; a tool error envelope (a normal failed result returned to the model, not raised) does
+not stop the batch. Handoff and wait intents from the boundary hook apply only after the whole
+batch settles. There is no per-response call cap beyond the output cap.
 
 The adapter uses `store=False`, requests encrypted reasoning content, and replays native output
 items in subsequent inputs, preserving item IDs and function `call_id`. Native responses are

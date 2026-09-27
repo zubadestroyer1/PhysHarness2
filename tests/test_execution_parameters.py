@@ -33,6 +33,8 @@ INVALID = [
     {"text": {"format": {"type": "text", "extra": "secret-value"}}},
     {"service_tier": "cheap"},
     {"secret-key": "secret-value"},
+    {"parallel_tool_calls": "yes"},
+    {"parallel_tool_calls": 1},
 ]
 
 
@@ -55,6 +57,15 @@ async def test_invalid_responses_parameters_fail_before_any_checkpoint(parameter
     assert store.saves == 0
     assert "secret-value" not in str(error.value)
     assert "secret-key" not in str(error.value)
+
+
+def test_parallel_tool_calls_validates_as_a_strict_boolean():
+    from physharness.execution.parameters import validate_responses_parameters
+
+    assert validate_responses_parameters({"parallel_tool_calls": True}) == {
+        "parallel_tool_calls": True
+    }
+    assert validate_responses_parameters({}) == {}
 
 
 async def test_worker_parameter_validation_precedes_slot_lease_and_runtime(lab):

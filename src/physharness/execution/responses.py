@@ -179,6 +179,7 @@ class _Prepared:
     input_reservation: int
     output_reservation: int
     remaining: int | None
+    parallel_tool_calls: bool
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -1041,6 +1042,9 @@ class ResponsesRuntime:
     ) -> _Prepared | RuntimeResult:
         """Count the active input, check the budgets and size the reservation."""
         params = dict(session.model.parameters)
+        # Popped here, not left in params, so it cannot clash with the explicit
+        # keyword passed to the count and create calls below.
+        parallel = bool(params.pop("parallel_tool_calls", False))
         count_params = {
             k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
         }
@@ -1051,7 +1055,7 @@ class ResponsesRuntime:
                     model=session.model.model,
                     input=state["input"],
                     tools=self.dispatcher.definitions,
-                    parallel_tool_calls=False,
+                    parallel_tool_calls=parallel,
                     **count_params,
                 ),
                 deadline,
@@ -1131,6 +1135,7 @@ class ResponsesRuntime:
             input_reservation=input_reservation,
             output_reservation=output_reservation,
             remaining=remaining,
+            parallel_tool_calls=parallel,
         )
 
     async def _send(
@@ -1180,7 +1185,7 @@ class ResponsesRuntime:
                 model=session.model.model,
                 input=state["input"],
                 tools=self.dispatcher.definitions,
-                parallel_tool_calls=False,
+                parallel_tool_calls=prepared.parallel_tool_calls,
                 max_output_tokens=prepared.output_reservation,
                 store=False,
                 include=["reasoning.encrypted_content"],
