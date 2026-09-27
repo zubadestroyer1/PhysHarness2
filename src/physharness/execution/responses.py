@@ -578,7 +578,8 @@ class ResponsesRuntime:
             await self._receive_updates(session, state, changed_retry=True)
 
     async def _receive_turn_note(self, session: RuntimeSession, state: dict[str, Any]) -> None:
-        """Persist optional harness guidance at a settled boundary before the next request."""
+        """Add optional harness guidance at a settled boundary. The generation marker's save
+        makes it durable before generation; a failure before then saves it in `_run`."""
         if self.turn_note is None:
             return
         if (
@@ -602,7 +603,6 @@ class ResponsesRuntime:
         }
         state["input"].append({"role": "user", "content": canonical_json(content)})
         state["turn_note_turns"] = session.turns
-        await self._save(session, state)
 
     async def start(
         self,
@@ -1052,7 +1052,9 @@ class ResponsesRuntime:
                 "output_reserved": prepared.output_reservation,
             }
             state.pop("compaction_replay_pending", None)
-            await self._save(session, state)
+            # The next save records settlement (compaction marker, first tool marker, terminal
+            # save or _run's failure save); until then B still holds the generation marker, so a
+            # crash stays uncertain.
             if (
                 session.limits.max_total_tokens is not None
                 and state.get("cumulative_input_offset", 0)
@@ -1129,7 +1131,7 @@ class ResponsesRuntime:
                 # A terminal result needs no active-input pruning. Preserve the
                 # exact response suffix for crash recovery and handoff auditing.
                 state["settled_boundary"] = True
-                await self._save(session, state)
+                state["terminal_response_pending"] = True
                 artifact = OutputArtifact(
                     content=text,
                     digest=hashlib.sha256(text.encode()).hexdigest(),
@@ -1140,10 +1142,14 @@ class ResponsesRuntime:
                         "response_id": response.id,
                     },
                 )
-                state["terminal_response_pending"] = True
-                saved = await self._save(session, state)
+                checkpoint = await self._save(session, state)
                 handoff = await self._maybe_handoff(
-                    session, state, native, output_text=text, artifacts=[artifact], checkpoint=saved
+                    session,
+                    state,
+                    native,
+                    output_text=text,
+                    artifacts=[artifact],
+                    checkpoint=checkpoint,
                 )
                 if handoff is not None:
                     return handoff
@@ -1159,11 +1165,12 @@ class ResponsesRuntime:
                     artifacts=[artifact],
                     native_items=native["output"],
                 )
-            await self._run_calls(session, state, native, calls)
+            completed = await self._run_calls(session, state, native, calls)
             await self._advance_active_input(session, state, native)
             state["settled_boundary"] = True
-            saved = await self._save(session, state)
-            handoff = await self._maybe_handoff(session, state, native, checkpoint=saved)
+            checkpoint = await self._save(session, state)
+            await self._emit_completed(session, completed)
+            handoff = await self._maybe_handoff(session, state, native, checkpoint=checkpoint)
             if handoff is not None:
                 return handoff
 
@@ -1402,8 +1409,13 @@ class ResponsesRuntime:
         state: dict[str, Any],
         native: dict[str, Any],
         calls: list[dict[str, Any]],
-    ) -> None:
-        """Dispatch each call in order, replaying any committed result for its ID."""
+    ) -> list[tuple[str, str, str | None, dict[str, Any] | None]]:
+        """Dispatch each call in order, replaying any committed result for its ID.
+
+        Returns the calls whose outputs no save holds yet, for `_emit_completed` after the
+        next save; each call's marker save announces the calls before it.
+        """
+        unsaved = []
         for call in calls:
             tool_operation = f"{session.id}:{call['call_id']}"
             try:
@@ -1430,6 +1442,8 @@ class ResponsesRuntime:
             else:
                 state["pending_operation"] = tool_operation
                 await self._save(session, state)
+                await self._emit_completed(session, unsaved)
+                unsaved = []
                 result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
                 signal = observe_stagnation(
                     state.setdefault("stagnation", {}), call["name"], arguments, result
@@ -1460,15 +1474,26 @@ class ResponsesRuntime:
                 }
             )
             state["pending_operation"] = None
-            await self._save(session, state)
-            await self._emit("tool_completed", session, tool_operation, name=call["name"])
-            if signal is not None:
-                await self._emit(
-                    signal,
-                    session,
+            unsaved.append(
+                (
                     tool_operation,
-                    stagnation_state=dict(state["stagnation"]),
+                    call["name"],
+                    signal,
+                    dict(state["stagnation"]) if signal is not None else None,
                 )
+            )
+        return unsaved
+
+    async def _emit_completed(
+        self,
+        session: RuntimeSession,
+        completed: list[tuple[str, str, str | None, dict[str, Any] | None]],
+    ) -> None:
+        """Announce tool results only after the save that made them durable."""
+        for tool_operation, name, signal, snapshot in completed:
+            await self._emit("tool_completed", session, tool_operation, name=name)
+            if signal is not None:
+                await self._emit(signal, session, tool_operation, stagnation_state=snapshot)
 
     async def _find_tool_result(
         self, session: RuntimeSession, state: dict[str, Any], key: str

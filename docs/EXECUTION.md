@@ -178,15 +178,28 @@ be idempotent by operation ID. If the provider response was persisted but delive
 callback failed, reconcile from the saved native response. The adapter does not implement a
 transactional outbox or monetary pricing; those belong to the controller/ledger.
 
-The session is checkpointed before each external request and host tool. The controller's store
-verifies each checkpoint's digest once, then encodes it into content-addressed chunks; encoding
-stays on the event loop by design. A save first stores its new chunk and manifest bytes, then
-commits their artifact rows, the session pointer and one `session.saved` event in one
-`runtime.save` transaction. A committed row therefore never references missing bytes, and an
-interrupted save publishes nothing and leaves only orphan bytes. Chunks carry no
-`artifact.created` event. A crash or tool failure with a pending marker prohibits automatic
-resume. Provider usage absent from a response also requires reconciliation. A session's total
-token budget persists across `continue_session`.
+The session is checkpointed before each external request and host tool. A turn saves at:
+- **A**, the generation marker, which also carries any turn note;
+- **B**, the response, before `usage`;
+- **D**, one per dispatched call: its marker, the settlement and the earlier calls' outputs;
+- **F**, the last output and the settled boundary.
+
+A one-call turn makes 4 saves, and a k-call turn makes 3 + k. A final text response instead saves
+the settled terminal response, then its completion. A peer delivery adds its save before the
+acknowledgement, and a compaction adds its marker and prune saves. Settlement after `usage` is not
+saved on its own: until the next save the durable state is B, which holds the generation marker,
+so a crash stays uncertain. A fatal tool error, a cancellation or a failed settlement is recorded
+by `_run`'s failure save. `tool_completed` and any stagnation signal are emitted after the save
+that made the call's output durable.
+
+The controller's store verifies each checkpoint's digest once, then encodes it into
+content-addressed chunks; encoding stays on the event loop by design. A save first stores its new
+chunk and manifest bytes, then commits their artifact rows, the session pointer and one
+`session.saved` event in one `runtime.save` transaction. A committed row therefore never references
+missing bytes, and an interrupted save publishes nothing and leaves only orphan bytes. Chunks carry
+no `artifact.created` event. A crash or tool failure with a pending marker prohibits automatic
+resume. Provider usage absent from a response also requires reconciliation. A session's total token
+budget persists across `continue_session`.
 `start_from_handoff` and `start(..., predecessor=checkpoint)` seed a successor with its
 lineage's cumulative usage, so the budget also persists across a task's continuations.
 `interrupt` cancels the active local coroutine; provider completion/billing may remain uncertain.
@@ -212,6 +225,8 @@ experiments too.
   and `settled_response.input_reserved` hold the count plus the bound's margin, or the bound, not
   the whole window, while that value plus 8,192 is at most `compact_threshold`.
 - The `bound_reservation_compacted` alarm event.
+- Fewer saves per turn: 4 for a single call, 3 + k for k calls. `tool_completed` is emitted after
+  the save that made its output durable.
 
 ## Official Codex SDK
 

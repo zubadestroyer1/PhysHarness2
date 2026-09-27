@@ -1,6 +1,7 @@
 import asyncio
 import json
 import time
+from copy import deepcopy
 
 import httpx
 import pytest
@@ -715,20 +716,16 @@ class RecordingStore(SQLiteRuntimeStore):
         self.shapes.append((kind, state.get("settled_boundary"), checkpoint.session.status))
 
 
-TODAY_SAVE_SHAPES = [  # one tool turn, then a final turn
+COALESCED_SAVE_SHAPES = [  # one tool turn, then a final turn
     (None, True, "ready"),
     (None, True, "running"),
-    ("generation", True, "running"),
-    ("generation", False, "running"),
-    (None, False, "running"),
-    ("tool", False, "running"),
-    (None, False, "running"),
-    (None, True, "running"),
-    ("generation", True, "running"),
-    ("generation", False, "running"),
-    (None, False, "running"),
-    (None, True, "running"),
-    (None, True, "running"),
+    ("generation", True, "running"),  # A
+    ("generation", False, "running"),  # B
+    ("tool", False, "running"),  # D1 (settlement + marker)
+    (None, True, "running"),  # F
+    ("generation", True, "running"),  # A
+    ("generation", False, "running"),  # B
+    (None, True, "running"),  # terminal pending
     (None, True, "completed"),
 ]
 
@@ -743,8 +740,111 @@ async def test_tool_turn_save_sequence_is_pinned(tmp_path):
     assert (
         await runtime.start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
     ).output_text == "4"
-    assert store.shapes == TODAY_SAVE_SHAPES
+    assert store.shapes == COALESCED_SAVE_SHAPES
     assert [u.rsplit("/", 1)[-1] for u, _ in requests] == ["input_tokens", "responses", "responses"]
+    await client.close()
+
+
+async def test_multi_call_turn_saves_one_marker_per_call_and_announces_after_saving(tmp_path):
+    completed_at = []
+
+    class OutputCounting(RecordingStore):
+        async def save(self, checkpoint):
+            await super().save(checkpoint)
+            self.outputs = sum(
+                item.get("type") == "function_call_output"
+                for item in checkpoint.native_state["input"]
+            )
+
+    store = OutputCounting(tmp_path / "s.db")
+
+    async def emit(event):
+        if event.kind == "tool_completed":
+            completed_at.append(store.outputs)
+
+    client = client_for(
+        [
+            response([double_call("call_1"), double_call("call_2")]),
+            response([message("done")], response_id="resp_2"),
+        ],
+        [],
+    )
+    await ResponsesRuntime(
+        store=store, dispatcher=double_dispatcher(), client=client, event_sink=emit
+    ).start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert store.shapes[2:7] == [
+        ("generation", True, "running"),
+        ("generation", False, "running"),
+        ("tool", False, "running"),
+        ("tool", False, "running"),
+        (None, True, "running"),
+    ]
+    assert completed_at == [1, 2]
+    await client.close()
+
+
+async def test_batched_stagnation_signal_reports_the_state_at_its_call(tmp_path):
+    signals = []
+
+    async def emit(event):
+        if event.kind == "stagnation_warning":
+            signals.append(deepcopy(event.payload["stagnation_state"]))
+
+    dispatcher = ToolDispatcher()
+
+    async def read(arguments, operation_id):
+        return {"text": "unchanged"}
+
+    dispatcher.register(
+        "read_file",
+        {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
+            "additionalProperties": False,
+        },
+        read,
+    )
+
+    def read_call(call_id, path):
+        return {
+            "id": "fc_" + call_id,
+            "type": "function_call",
+            "call_id": call_id,
+            "name": "read_file",
+            "arguments": json.dumps({"path": path}),
+            "status": "completed",
+        }
+
+    # The fourth identical read warns; the fifth, a new read, is announced after it.
+    calls = [read_call(f"call_{i}", "a") for i in range(4)] + [read_call("call_4", "b")]
+    client = client_for([response(calls), response([message("done")], response_id="resp_2")], [])
+    await ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        dispatcher=dispatcher,
+        client=client,
+        event_sink=emit,
+    ).start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert [sorted(state["read_counts"].values()) for state in signals] == [[4]]
+    await client.close()
+
+
+async def test_turn_note_rides_on_the_generation_marker_save(tmp_path):
+    requests = []
+
+    async def note(turns):
+        return "Check in now." if turns == 1 else None
+
+    client = client_for(
+        [response([double_call()]), response([message("4")], response_id="resp_2")], requests
+    )
+    store = RecordingStore(tmp_path / "s.db")
+    await ResponsesRuntime(
+        store=store, dispatcher=double_dispatcher(), client=client, turn_note=note
+    ).start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert store.shapes == COALESCED_SAVE_SHAPES
+    creates = [payload for url, payload in requests if url.endswith("/responses")]
+    assert "research_runtime_note" in creates[1]["input"][-1]["content"]
     await client.close()
 
 

@@ -884,8 +884,7 @@ async def test_later_tool_response_clears_stale_compaction_recovery_marker(tmp_p
             if (
                 not self.tripped
                 and checkpoint.session.turns == 2
-                and state.get("pending_operation") is None
-                and state.get("settled_boundary") is False
+                and (state.get("pending_operation") or "").endswith(":a")
             ):
                 self.tripped = True
                 raise asyncio.CancelledError()
@@ -997,12 +996,7 @@ async def test_interrupted_response_before_tool_output_is_not_safe_to_resume(tmp
         async def save(self, checkpoint):
             await super().save(checkpoint)
             state = checkpoint.native_state
-            if (
-                not self.tripped
-                and state.get("pending_operation") is None
-                and state.get("responses")
-                and not any(item.get("type") == "function_call_output" for item in state["input"])
-            ):
+            if not self.tripped and (state.get("pending_operation") or "").endswith(":a"):
                 self.tripped = True
                 raise asyncio.CancelledError()
 
@@ -1012,7 +1006,7 @@ async def test_interrupted_response_before_tool_output_is_not_safe_to_resume(tmp
         await runtime.start("work", ModelConfig(model="exact-model"), RuntimeLimits())
     checkpoint = store.db.execute("SELECT data FROM runtime_sessions").fetchone()[0]
     native = json.loads(checkpoint)
-    assert native["session"]["status"] == "interrupted"
+    assert native["session"]["status"] == "uncertain"
     assert native["native_state"]["settled_boundary"] is False
     with pytest.raises(ExecutionError) as error:
         await runtime.resume(await runtime.checkpoint(native["session"]["id"]))
