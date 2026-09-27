@@ -66,7 +66,9 @@ from .workspace_tools import WorkspaceTools
 log = logging.getLogger(__name__)
 NULLABLE_STRATEGY = {"type": ["string", "null"]}
 # Tool rejections that end the runtime instead of reaching the model.
-FATAL_TOOL_CODES = frozenset({"STALE_LEASE", "EXPERIMENT_NOT_ACTIVE", "EXPERIMENT_DEADLINE"})
+FATAL_TOOL_CODES = frozenset(
+    {"STALE_LEASE", "EXPERIMENT_NOT_ACTIVE", "EXPERIMENT_DEADLINE", "STATEMENT_CHECK_UNAVAILABLE"}
+)
 # Another runner leased, or already finished, a task this run also selected.
 LEASE_CONFLICT_CODES = frozenset({"LEASE_HELD", "TASK_NOT_RUNNABLE"})
 

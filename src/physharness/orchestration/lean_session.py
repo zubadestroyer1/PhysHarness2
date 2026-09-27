@@ -16,6 +16,7 @@ Every result is evidence only: ``proof_status`` stays ``not_accepted``.
 
 import hashlib
 import json
+import logging
 import re
 import shlex
 from importlib import resources
@@ -29,6 +30,8 @@ from ..formal_tools.lean_session_daemon import (
     select_messages,
     split_header,
 )
+
+log = logging.getLogger(__name__)
 
 AUTOMATION = (
     "rfl",
@@ -65,7 +68,8 @@ MAX_NAME = 200
 # The daemon answers this long before the provider's own timeout, which quarantines the VM.
 RUN_MARGIN_SECONDS = 30
 # The local-compile statement check: a stdlib driver and a Lean checker, uploaded to
-# .physharness/ and kept in the runtime directory, out of the workspace archive.
+# .physharness/ in the workspace and run from there (the workbench root, /tmp included,
+# is read-only).
 CHECK_FILES = ("statement_check.py", "statement_check.lean")
 CHECK_TIMEOUT_SECONDS = 240
 CHECK_BACKEND = "lean_statement_check"
@@ -985,20 +989,15 @@ class LeanSession:
                 f"{operation_id}:check-{label.lower()}",
             )
         check_timeout, run_timeout = self._timeouts(timeout)
-        runtime = [f"{DAEMON_RUNTIME_DIR}/{file}" for file in CHECK_FILES]
         uploaded = [f".physharness/{file}" for file in CHECK_FILES]
-        place = (
-            f"if test -f {uploaded[0]}; then mkdir -p {DAEMON_RUNTIME_DIR} && "
-            f"mv -f {shlex.join(uploaded)} {DAEMON_RUNTIME_DIR}/; fi; "
-        )
-        argv = [*GUEST_PYTHON, runtime[0], "--timeout", f"{check_timeout:g}", "--cwd", LAKE_PROJECT]
-        argv += ["--checker", runtime[1], workdir, name]
+        argv = [*GUEST_PYTHON, uploaded[0], "--timeout", f"{check_timeout:g}"]
+        argv += ["--cwd", LAKE_PROJECT, "--checker", uploaded[1], workdir, name]
         for attempt in range(2):
             tidy = f"rm -rf {workdir}; " if attempt else ""  # the driver removes it otherwise
             script = (
-                f"{place}if ! {{ test -f {runtime[0]} && test -f {runtime[1]}; }}; then "
+                f"if ! {{ test -f {uploaded[0]} && test -f {uploaded[1]}; }}; then "
                 f"{tidy}rmdir .physharness 2>/dev/null; exit {_DAEMON_MISSING}; fi; "
-                f"{shlex.join(argv)}; status=$?; rmdir .physharness 2>/dev/null; exit $status"
+                f"{shlex.join(argv)}"
             )
             result = await self._tools.run(
                 {"argv": ["sh", "-c", script], "cwd": ".", "timeout_seconds": run_timeout},
@@ -1008,6 +1007,10 @@ class LeanSession:
                 break
             await self._upload_checker(f"{operation_id}:check-reupload")  # a VM restore
         if result["exit_code"] == _DAEMON_MISSING:
+            log.error(
+                "statement_check_unavailable",
+                extra={"operation_id": operation_id, "error_code": "statement_check_unavailable"},
+            )
             return _verdict("statement_check_unavailable")
         return _check_verdict(result)
 

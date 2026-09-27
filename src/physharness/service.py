@@ -54,6 +54,8 @@ from .workforce import WorkforceMixin
 
 log = logging.getLogger(__name__)
 MICRO_USD = Decimal(1_000_000)
+ID_PREFIX = re.compile(r"[0-9a-f]{8}[0-9a-f-]{0,27}")
+MAX_PREFIX_CANDIDATES = 20
 
 
 def money_units(value: str | Decimal) -> int:
@@ -515,6 +517,89 @@ class HarnessService(
     def get_record(self, kind: str, identifier: str, actor: Principal) -> dict:
         with self.db.sessions() as session:
             return copy.deepcopy(self._get(session, kind, identifier, actor).payload)
+
+    def _route_target(self, session, row, route):
+        """Whether the routing tool named by ``route`` accepts ``row`` as its target: the
+        target checks of ``_deliver_message``, ``request_handoff`` and ``request_peer_wait``."""
+        name, anchor = route
+        if name == "child_task":  # anchor: the waiting task
+            return row.payload.get("delegated_from_task_id") == anchor
+        if name == "peer":  # anchor: the waiting branch
+            return row.id != anchor
+        if name == "recipient":  # anchor: the sending branch
+            sender = session.get(RecordRow, anchor)
+            if sender is None or sender.payload.get("experiment_id") != row.payload.get(
+                "experiment_id"
+            ):
+                return False
+            experiment = session.get(RecordRow, sender.payload["experiment_id"])
+            try:
+                self._guard_referee_recipient(sender, row)
+                self._lab_route(experiment, sender, row)
+            except HarnessError:
+                return False
+            return True
+        raise ValueError(f"Unknown id route {name!r}.")
+
+    def _prefix_candidates(self, session, prefix, actor, kinds, route=None):
+        """Records of ``kinds`` in the actor's experiment whose id begins with ``prefix``,
+        ordered by id: those the actor may read or, with ``route``, those that routing tool
+        accepts as targets. Uses records_project_kind_experiment_keyset."""
+        rows = session.scalars(
+            select(RecordRow)
+            .where(
+                RecordRow.project_id == actor.project_id,
+                RecordRow.kind.in_(kinds),
+                record_json_text("experiment_id") == actor.experiment_id,
+                RecordRow.id.startswith(prefix, autoescape=True),
+            )
+            .order_by(RecordRow.id)
+            .limit(MAX_PREFIX_CANDIDATES + 1)
+        ).all()
+        if route is not None:
+            return [row for row in rows if self._route_target(session, row, route)]
+        return [row for row in rows if self._in_scope(session, row, actor)]
+
+    def _resolve_prefix(self, session, identifier, actor, kinds, route=None):
+        if (
+            not isinstance(identifier, str)
+            or len(identifier) >= 36
+            or not ID_PREFIX.fullmatch(identifier)
+            or not actor.experiment_id
+        ):
+            return identifier
+        candidates = self._prefix_candidates(session, identifier, actor, kinds, route)
+        if len(candidates) > 1 and route is None:
+            raise HarnessError(
+                "AMBIGUOUS_ID",
+                f"{len(candidates)} records begin with {identifier}; give more characters.",
+                status=409,
+                details={
+                    "candidates": [
+                        {"id": row.id, "kind": row.kind}
+                        for row in candidates[:MAX_PREFIX_CANDIDATES]
+                    ]
+                },
+                remediation="Repeat the call with a longer prefix or a full id from "
+                "details.candidates.",
+            )
+        # Unknown ids pass through, so the caller's lookup still answers NOT_FOUND. So does a
+        # routing prefix that names several targets: its tool refuses it as an unknown full
+        # id, and no candidate list reveals records the actor cannot read.
+        return candidates[0].id if len(candidates) == 1 else identifier
+
+    def resolve_id(self, identifier, actor, kinds, *, route=None):
+        """The one resolver for model-supplied ids: a full id, or a unique prefix of at least
+        8 hex characters of a visible record of ``kinds`` in the actor's experiment.
+
+        Routing is not permission to read, so ``route=(name, anchor)`` resolves a routing
+        argument among exactly the records its tool accepts instead: ``("recipient", sending
+        branch)`` for a direct message, ``("child_task", waiting task)`` and ``("peer",
+        waiting branch)`` for waits. A prefix naming none or several of them passes through."""
+        if not isinstance(identifier, str) or not ID_PREFIX.fullmatch(identifier):
+            return identifier
+        with self.db.sessions() as session:
+            return self._resolve_prefix(session, identifier, actor, kinds, route)
 
     def page_records(self, kind, actor, experiment_id=None, limit=500, after=None):
         if not 1 <= limit <= 5000:

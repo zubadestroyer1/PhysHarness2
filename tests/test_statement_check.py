@@ -12,6 +12,7 @@ statement-shape rules without Lean.
 """
 
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -28,6 +29,7 @@ from test_society_tools import FakeWorkspace, call, lemma_args, profile, running
 
 from physharness.errors import HarnessError
 from physharness.formal_tools import statement_check as driver
+from physharness.orchestration import workspace_tools as workspace_tools_module
 from physharness.orchestration.lean_session import (
     CHECK_BACKEND,
     CHECK_FILES,
@@ -35,6 +37,7 @@ from physharness.orchestration.lean_session import (
     header_problem,
     signature_problem,
 )
+from physharness.orchestration.workspace_tools import WorkspaceTools
 
 FALSE = {"lean_header": "import Lean", "lean_name": "bad", "lean_statement": ": (2 : Nat) + 2 = 5"}
 TRUE = {"lean_header": "import Lean", "lean_name": "good", "lean_statement": ": (2 : Nat) + 2 = 4"}
@@ -557,6 +560,23 @@ def test_statement_check_files_are_packaged_and_fit_one_upload():
         assert 0 < len(data) < 32_768  # E2B's per-file workspace upload limit
 
 
+def test_statement_check_imports_only_the_modules_it_uses():
+    """Lean maps an .olean from its file only on its first load in a process, so every module
+    both the checker and the source import is read again onto the checker's heap. With
+    ``import Lean`` that was all of Lean (1.6 GB) for an ``import Lean`` source, which the
+    2 GiB workbench OOM-killed; these modules' closure is a quarter of it."""
+    checker = resources.files("physharness.formal_tools").joinpath("statement_check.lean")
+    lines = checker.read_text("utf-8").splitlines()
+    assert [line.split()[1] for line in lines if line.startswith("import ")] == [
+        "Lean.CoreM",
+        "Lean.Data.Json",
+        "Lean.Replay",
+        "Lean.Util.CollectAxioms",
+        "Lean.Util.FoldConsts",
+        "Lean.Util.Path",
+    ]
+
+
 class CheckTools:
     """Records uploads and answers each statement-check run with a scripted result."""
 
@@ -635,8 +655,8 @@ async def test_statement_check_uploads_its_files_once_and_after_a_restore():
     assert uploads[:2] == [".physharness/statement_check.py", ".physharness/statement_check.lean"]
     assert [Path(path).name for path in uploads[2:]] == ["Source.lean", "Reference.lean"]
     tools.calls.clear()
-    # The VM dropped /tmp: the run reports the files missing, they are uploaded, and the
-    # check runs again.
+    # A VM restore dropped the uploaded checker: the run reports the files missing, they are
+    # uploaded, and the check runs again.
     assert (await verify("second"))["ok"] is True
     kinds = [(kind, Path(path).name if kind == "write" else "") for kind, path in tools.calls]
     assert kinds == [
@@ -650,6 +670,126 @@ async def test_statement_check_uploads_its_files_once_and_after_a_restore():
     missing = CheckTools(("", 97), ("", 97))
     assert (await _verify(missing))["reason"] == "statement_check_unavailable"
     assert "rm -rf .physharness/check-" in missing.calls[-1][1]
+
+
+async def test_statement_check_runs_from_workspace_paths_without_staging():
+    ok = json.dumps({"ok": True, "axioms": [], "reason": None})
+    tools = CheckTools((ok, 0))
+    assert (await _verify(tools))["ok"] is True
+    [script] = [text for kind, text in tools.calls if kind == "run"]
+    assert "/tmp" not in script and "mkdir" not in script and "mv -f" not in script
+    assert ".physharness/statement_check.py --timeout" in script
+    assert "--checker .physharness/statement_check.lean" in script
+
+
+async def test_statement_check_succeeds_when_tmp_is_read_only(lean_env):  # noqa: F811
+    """The S1 bug: /tmp is part of the workbench's read-only root, so staging there failed."""
+    shim = lean_env.root / "bin"
+    (shim / "lean.py").write_text(FAKE_LEAN)
+    (shim / "lake").write_text(
+        f"#!/bin/sh\nshift 3\nexec {shlex.quote(sys.executable)} "
+        f'{shlex.quote(str(shim / "lean.py"))} "$@"\n'
+    )
+    (shim / "lake").chmod(0o755)
+    blocker = lean_env.root / "not-a-directory"
+    blocker.write_text("")
+    lean_env.runtime = blocker / "rt"  # mkdir -p under a regular file fails, like /tmp there
+    verdict = await _verify(FakeWorkspaceTools(lean_env, background=False))
+    assert verdict["ok"] is True and verdict["axioms"] == ["propext"]
+
+
+async def test_statement_check_unavailable_is_logged_at_error(caplog):
+    with caplog.at_level(logging.ERROR, logger="physharness.orchestration.lean_session"):
+        verdict = await _verify(CheckTools(("", 97), ("", 97)))
+    assert verdict["reason"] == "statement_check_unavailable"
+    [record] = [r for r in caplog.records if r.getMessage() == "statement_check_unavailable"]
+    assert record.levelname == "ERROR" and record.error_code == "statement_check_unavailable"
+
+
+OK_VERDICT = {"ok": True, "reason": None, "axioms": [], "detail": None, "backend": CHECK_BACKEND}
+BROKEN = {**OK_VERDICT, "ok": False, "reason": "statement_check_unavailable", "axioms": None}
+
+
+@pytest.fixture
+def self_tests(monkeypatch):
+    cache = {}
+    monkeypatch.setattr(workspace_tools_module, "_CHECKER_SELF_TESTS", cache)
+    return cache
+
+
+def provisioning_tools(verdict, template_id="image-a"):
+    """A WorkspaceTools whose broker provisions instantly and whose checker answers `verdict`."""
+    tools = WorkspaceTools.__new__(WorkspaceTools)
+    tools.policy = SimpleNamespace(template_id=template_id, timeout_seconds=600, cost_bound_usd=0)
+    tools.workspace, tools.cleanup_report, tools.checker_self_test = None, None, True
+    provisions, checks = [], []
+
+    async def provision(**kwargs):
+        provisions.append(kwargs)
+        return {"id": "ws", "execution_id": "vm"}
+
+    async def verify_statement(source, header, name, signature, *, operation_id):
+        checks.append((header, name, signature))
+        return verdict
+
+    tools.broker = SimpleNamespace(task_id="task", holder="holder", provision=provision)
+    tools._lean_session = SimpleNamespace(verify_statement=verify_statement)
+    return tools, provisions, checks
+
+
+async def test_checker_self_test_runs_once_per_image(self_tests):
+    first, _, checks = provisioning_tools(OK_VERDICT)
+    second, _, later = provisioning_tools(OK_VERDICT)
+    await first._ensure()
+    await first._ensure()
+    await second._ensure()
+    assert checks == [("import Lean", "physharness_checker_self_test", ": True")]
+    assert later == [] and self_tests == {"image-a": True}
+
+
+async def test_unavailable_checker_fails_fast_and_logs(self_tests, caplog):
+    tools, _, _ = provisioning_tools(BROKEN)
+    with caplog.at_level(logging.ERROR), pytest.raises(HarnessError) as error:
+        await tools._ensure()
+    assert error.value.code == "STATEMENT_CHECK_UNAVAILABLE" and error.value.status == 503
+    with pytest.raises(HarnessError):
+        await tools._ensure()  # every later use of this workspace fails the same way
+    [record] = [r for r in caplog.records if r.getMessage() == "statement_check_self_test_failed"]
+    assert record.error_code == "STATEMENT_CHECK_UNAVAILABLE"
+    other, _, checks = provisioning_tools(BROKEN)
+    with pytest.raises(HarnessError):
+        await other._ensure()
+    assert checks == []  # the per-image verdict is cached for the process
+
+
+async def test_failed_self_test_provisions_no_later_workspace(self_tests):
+    first, provisions, _ = provisioning_tools(BROKEN)
+    with pytest.raises(HarnessError):
+        await first._ensure()
+    assert len(provisions) == 1
+    later, provisions, checks = provisioning_tools(BROKEN)
+    with pytest.raises(HarnessError) as error:
+        await later._ensure()
+    assert error.value.code == "STATEMENT_CHECK_UNAVAILABLE"
+    assert provisions == [] and checks == [] and later.workspace is None
+    later.checker_self_test = False  # a referee's workspace needs no checker
+    await later._ensure()
+    other, provisions, _ = provisioning_tools(OK_VERDICT, template_id="image-b")
+    await other._ensure()  # each image is judged on its own
+    assert len(provisions) == 1 and self_tests == {"image-a": False, "image-b": True}
+
+
+async def test_checker_self_test_timeout_is_retried_and_off_by_default(self_tests):
+    timed_out = {**OK_VERDICT, "ok": False, "reason": "check_timeout", "axioms": None}
+    tools, _, checks = provisioning_tools(timed_out)
+    await tools._ensure()  # provisions without raising; judged nothing
+    assert checks == [("import Lean", "physharness_checker_self_test", ": True")]
+    assert self_tests == {}
+    tools.checker_self_test = False
+    checks.clear()
+    tools.workspace = None
+    await tools._ensure()
+    assert checks == []
 
 
 async def test_statement_check_refuses_invalid_statements_without_the_vm():

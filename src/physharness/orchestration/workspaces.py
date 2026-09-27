@@ -980,14 +980,7 @@ class WorkspaceBroker:
                         if row.payload.get("active_operation_id") != identity:
                             raise _reconcile("Workspace ownership changed after helper refusal.")
                         op = self.service._get(session, "workspace_operation", identity, self.actor)
-                        failure = {
-                            "code": exc.code,
-                            "message": (
-                                "Workspace helper refused the operation; VM is available."
-                                if exc.code == "WORKSPACE_TRANSFER_REJECTED"
-                                else f"{exc}; VM is available."
-                            ),
-                        }
+                        failure = {"code": exc.code, "message": f"{exc}; VM is available."}
                         self.service._replace(
                             session, op, {"status": "rejected", "result": failure}
                         )

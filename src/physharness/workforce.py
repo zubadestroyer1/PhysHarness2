@@ -22,6 +22,27 @@ from .workforce_models import (
 
 DEFAULT_MAX_TOTAL_TASKS = 10_000
 DEFAULT_MAX_PENDING_TASKS = 10_000
+
+
+def _cap_reached(code, what, limit, used):
+    """A task-count cap is a budget the operator set, never a malformed request (S1 F6).
+    Only the pending cap frees up (as tasks end), so only it is retryable."""
+    pending = code == "TASK_PENDING_CAP"
+    return HarnessError(
+        code,
+        f"Experiment {what} cap reached (budget, not input: limit {limit}, used {used}).",
+        remediation="This is a budget limit, not an input error. "
+        + (
+            "Retry only after a queued or running task ends; until then continue with work "
+            "already running."
+            if pending
+            else "Do not retry the same request; continue with work already running."
+        ),
+        retryable=pending,
+        details={"limit": limit, "used": used},
+    )
+
+
 LAB_NAME = re.compile(LAB_PATTERN)
 
 
@@ -307,9 +328,9 @@ class WorkforceMixin:
             )
         )
         if total + count > total_limit:
-            raise HarnessError("TASK_TOTAL_CAP", "Experiment task total cap reached.")
+            raise _cap_reached("TASK_TOTAL_CAP", "task total", total_limit, total)
         if pending + count > pending_limit:
-            raise HarnessError("TASK_PENDING_CAP", "Experiment pending task cap reached.")
+            raise _cap_reached("TASK_PENDING_CAP", "pending task", pending_limit, pending)
 
     def configure_workforce(
         self, experiment_id: str, request: ConfigureWorkforceRequest, actor: Principal, key: str

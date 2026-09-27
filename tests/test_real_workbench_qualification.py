@@ -1,17 +1,22 @@
 """Opt-in qualification against the dedicated Linux Docker endpoint.
 
 Set PHYSHARNESS_WORKBENCH_DOCKER_HOST and PHYSHARNESS_WORKBENCH_IMAGE_DIGEST.
-This test allocates and removes two local containers; it makes no paid model calls.
+These tests allocate and remove local containers; they make no paid model calls.
 """
 
 import base64
 import hashlib
 import os
+import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from physharness.execution.local_docker import LocalDockerWorkspaceProvider
 from physharness.execution.types import CommandRequest, ExecutionError
+from physharness.orchestration.lean_session import LeanSession
+from physharness.orchestration.workspace_tools import CHECKER_SELF_TEST
 
 
 @pytest.mark.integration
@@ -140,3 +145,104 @@ async def test_real_isolated_workbench_checkpoint_and_science():
     finally:
         await first.close()
         await second.close()
+
+
+@pytest.mark.integration
+async def test_real_login_shell_path():
+    host = os.environ.get("PHYSHARNESS_WORKBENCH_DOCKER_HOST")
+    image = os.environ.get("PHYSHARNESS_WORKBENCH_IMAGE_DIGEST")
+    if not host or not image:
+        pytest.skip("Dedicated workbench endpoint and image digest are required")
+    # The workbench's tmpfs hides whatever the image ships in /etc/profile.d, so list the
+    # raw image's directory in a plain container first: it must be empty.
+    raw = subprocess.run(
+        ["docker", "--host", host, "run", "--rm", "--network", "none", "--entrypoint"]
+        + ["/bin/sh", image, "-c", "ls -A /etc/profile.d"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert raw.returncode == 0 and raw.stdout == "", raw.stderr
+    provider = LocalDockerWorkspaceProvider(
+        docker_host=host, image_digest=image, timeout_seconds=180
+    )
+
+    async def run(arguments, operation_id):
+        request = CommandRequest(operation_id=operation_id, max_output_bytes=65536, **arguments)
+        return (await provider.run(request)).model_dump()
+
+    try:
+        await provider.create()
+        login = await run(
+            {
+                "argv": ["bash", "-lc", "command -v lake && command -v lean"],
+                "cwd": ".",
+                "timeout_seconds": 30,
+            },
+            "login-path",
+        )
+        assert login["exit_code"] == 0, login["stderr"]
+        assert [Path(line).name for line in login["stdout"].split()] == ["lake", "lean"]
+        listed = await run(
+            {"argv": ["ls", "-A", "/etc/profile.d"], "cwd": ".", "timeout_seconds": 30}, "ls"
+        )
+        assert listed["stdout"].split() == ["physharness-path.sh"]
+    finally:
+        await provider.close()
+
+
+@pytest.mark.integration
+async def test_real_statement_check_end_to_end():
+    """The statement check completes in one 2 GiB workbench: an ``import Lean`` source (it was
+    OOM-killed), a Mathlib source, and a mismatched statement."""
+    host = os.environ.get("PHYSHARNESS_WORKBENCH_DOCKER_HOST")
+    image = os.environ.get("PHYSHARNESS_WORKBENCH_IMAGE_DIGEST")
+    if not host or not image:
+        pytest.skip("Dedicated workbench endpoint and image digest are required")
+    provider = LocalDockerWorkspaceProvider(
+        docker_host=host, image_digest=image, timeout_seconds=900
+    )
+
+    async def run(arguments, operation_id):
+        request = CommandRequest(operation_id=operation_id, max_output_bytes=65536, **arguments)
+        return (await provider.run(request)).model_dump()
+
+    async def write(arguments, operation_id):
+        data = arguments["content"].encode()
+        await provider.upload_file(
+            arguments["path"], data, expected_execution_id=provider.execution_id
+        )
+        return {"path": arguments["path"]}
+
+    session = LeanSession(
+        SimpleNamespace(policy=SimpleNamespace(timeout_seconds=300), run=run, write=write)
+    )
+    real = "import Mathlib.Data.Real.Basic"
+
+    def real_case(proves):  # the node states x + 0 = x
+        source = f"{real}\n\ntheorem physharness_real_check {proves} := by simp\n"
+        return source, real, "physharness_real_check", "(x : ℝ) : x + 0 = x"
+
+    cases = [  # source, header, name and the node's signature
+        CHECKER_SELF_TEST,  # exactly what each society task's provision self-test checks
+        real_case("(x : ℝ) : x + 0 = x"),
+        real_case("(x : ℝ) : 0 + x = x"),
+    ]
+    try:
+        await provider.create()
+        verdicts = []
+        for index, (source, header, name, signature) in enumerate(cases):
+            verdicts.append(
+                await session.verify_statement(
+                    source, header, name, signature, operation_id=f"real-check-{index}"
+                )
+            )
+            assert provider.last_command_diagnostics["oom_delta"] == 0, verdicts[-1]
+        lean, mathlib, mismatch = verdicts
+        assert lean["ok"] is True and lean["axioms"] == [], lean
+        assert mathlib["ok"] is True, mathlib
+        assert set(mathlib["axioms"]) <= {"propext", "Classical.choice", "Quot.sound"}
+        assert mismatch["ok"] is False and mismatch["reason"] == "statement_mismatch", mismatch
+    finally:
+        await provider.close()

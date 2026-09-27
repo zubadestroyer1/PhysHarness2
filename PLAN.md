@@ -169,7 +169,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 **Lean checking** (fast feedback is the biggest lever on formalization cost):
 - **A persistent Lean session per workspace** with the pinned Mathlib/Physlib imports already loaded, instead of re-importing on every check.
 - **Rich feedback on every check:** goal states, errors, and an axiom report.
-- **On failure,** the check automatically runs automation (`simp`, `aesop`, `linarith`/`nlinarith`, `polyrith`, `positivity`, `norm_num`, `exact?`/`apply?`) and premise suggestions from library search on the failing goal, and returns what worked or came close.
+- **On failure,** the check can run automation (`simp`, `aesop`, `linarith`/`nlinarith`, `polyrith`, `positivity`, `norm_num`, `exact?`/`apply?`) and premise suggestions from library search on the failing goal, and returns what worked or came close (`automate=true`; off by default since S1, where it exhausted the 2 GiB workbench 14 of 14 times).
 - **Local compile success is never acceptance;** only the independent checker (§5.2) accepts.
 
 **Literature and online sources** (brokered from the trusted plane, never from the sandbox, which stays offline):
@@ -306,7 +306,7 @@ The final root proof is always checked against this fixed statement. Agent-inven
 
 - Formalization dominated the effort in the last run: the final proof was 606 lines.
 - O-tier models run the Lean feedback loops. F-tier models handle statements, strategy and hard steps.
-- Sketch-then-fill (§3.7) turns an informal proof into a Lean skeleton whose holes become nodes. The persistent Lean session and automation-on-failure (§3.6) cut the cost of each iteration.
+- Sketch-then-fill (§3.7) turns an informal proof into a Lean skeleton whose holes become nodes. The persistent Lean session (§3.6) cuts the cost of each iteration. Automation on a failing goal is opt-in (`automate=true`) since S1, where it exhausted the workbench's memory.
 - Accepted nodes are immediately reusable library entries within the campaign. Retrieval is tested to actually return them; in the last run, lemma-bank searches returned nothing.
 - Agents may introduce definitions in a campaign-local namespace. Definitions are nodes with fidelity checks.
 - Numerical and computational evidence stays evidence (computation nodes carry reproducibility metadata). It counts as proof only with a certificate checked in Lean (Wave 7).

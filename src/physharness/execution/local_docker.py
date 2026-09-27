@@ -22,6 +22,17 @@ from .types import GUEST_PYTHON, Capabilities, CommandRequest, CommandResult, Ex
 from .workspace_archive import CHUNK_SIZE, DEFAULT_QUOTA, WorkspaceArchive, checked_path
 
 _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
+# Login shells (bash -l) source /etc/profile, which resets PATH on Debian and drops the
+# image's /opt/lean/bin (S1: `bash -lc 'lake …'` failed 37 of 38 times). A small tmpfs at
+# /etc/profile.d holds one script that restores the image's own PATH. The image ships no
+# files there, which the tmpfs would hide; the opt-in real-image test lists the raw image's.
+PROFILE_D_TMPFS = "/etc/profile.d:rw,noexec,nosuid,nodev,size=65536,mode=0755,uid=65532,gid=65532"
+PROFILE_SCRIPT_PATH = "/etc/profile.d/physharness-path.sh"
+_PROFILE_WRITER = (
+    "import os, shlex\n"
+    f"with open({PROFILE_SCRIPT_PATH!r}, 'x') as out:\n"
+    "    out.write('export PATH=' + shlex.quote(os.environ['PATH']) + '\\n')\n"
+)
 _RUN_LOCKS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 _GUEST = r"""
 import base64, hashlib, json, os, stat, sys
@@ -532,6 +543,19 @@ class LocalDockerWorkspaceProvider:
         finally:
             self._creating = False
 
+    async def _quarantine(self) -> None:
+        """Mark this provider unusable and best-effort remove the planned container.
+
+        Shielded and swallows everything: the caller is already unwinding from its own
+        failure (possibly a cancellation), and the broker keeps the durable uncertain
+        reservation for reconciliation regardless of whether this `rm` lands.
+        """
+        self._quarantined = True
+        try:
+            await asyncio.shield(self._call(["rm", "-f", self._planned_name], timeout=30))
+        except BaseException:
+            pass
+
     async def _create_once(self):
         observed = (
             (await self._call(["image", "inspect", "--format", "{{.Id}}", self.image_digest]))
@@ -584,6 +608,8 @@ class LocalDockerWorkspaceProvider:
                         "65532:65532",
                         "--tmpfs",
                         f"/work:rw,noexec,nosuid,nodev,size={self.workspace_quota_bytes},mode=0700,uid=65532,gid=65532",
+                        "--tmpfs",
+                        PROFILE_D_TMPFS,
                         "--entrypoint",
                         "/usr/bin/python3",
                         self.image_digest,
@@ -595,29 +621,25 @@ class LocalDockerWorkspaceProvider:
         except ExecutionError as exc:
             if exc.code in ("WORKSPACE_CAPACITY", "PROVIDER_POLICY_MISMATCH"):
                 raise  # Atomic inspection proved this provider created no container.
-            self._quarantined = True
-            try:
-                await asyncio.shield(self._call(["rm", "-f", self._planned_name], timeout=30))
-            except BaseException:
-                pass
+            await self._quarantine()
             raise
         except BaseException:
-            self._quarantined = True
-            try:
-                await asyncio.shield(self._call(["rm", "-f", self._planned_name], timeout=30))
-            except BaseException:
-                pass  # The broker keeps the durable uncertain reservation for reconciliation.
+            await self._quarantine()
             raise
         self._container_id = output.decode().strip()
         if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]{5,127}", self._container_id):
-            self._quarantined = True
-            try:
-                await self._call(["rm", "-f", self._planned_name], timeout=30)
-            except ExecutionError:
-                pass
+            await self._quarantine()
             raise ExecutionError(
                 "WORKSPACE_IDENTITY_MISMATCH", "Docker returned invalid container identity"
             )
+        try:
+            # docker exec without -e runs with the image's Config.Env PATH.
+            await self._call(
+                ["exec", self._container_id, *GUEST_PYTHON, "-c", _PROFILE_WRITER], timeout=30
+            )
+        except BaseException:
+            await self._quarantine()
+            raise
         return self
 
     async def run(self, request: CommandRequest) -> CommandResult:
