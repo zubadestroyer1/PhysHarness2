@@ -75,6 +75,10 @@ Every unit of research is a **node** in one graph rooted at the target. Nodes ex
 
 "I'm working on this node" is a **claim that expires** unless the agent renews it through activity. Stale claims free up automatically. This directly addresses what the last run showed: helpers queued for 10–12 minutes, and one started on work another agent had already finished. Several agents may claim one node. Duplication is visible, and it is allowed when intentional (independent attempts, checking).
 
+- **Routes and time boxes (S1 remediation).** A claim may name its **route**, the method it tries, and a **time box** of 5–240 minutes that caps every renewal: the claim lapses at the box unless the agent claims again.
+- **The frontier rewards distinct routes.** A node's score drops by 1 for each live claim that names no route, or a route another live claim of the node also names. Claims on distinct routes cost nothing.
+- **The compile note.** When a node first gets a complete source, the platform posts "compiled by … (route: …); consider stopping your route" on its thread. The note is urgent for the node's other live claimants and pushed to no one else.
+
 ### 2.4 Discourse protocol
 
 - **One kind of post, attached to a node:** `question`, `finding`, `objection`, `attempt_failed`, `review`, `synthesis`, `update`.
@@ -245,6 +249,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 
 ### 4.4 Diversity and anti-herding
 
+- Declared alternative routes at genuine choice points, with time boxes and the compile note, replace labs as the diversity mechanism (§2.3).
 - The allocator keeps a minimum number of distinct approach families alive.
 - Periodic **fresh-eyes reseeding**: new agents get the root plus *accepted* results only, without the discussion, so they can escape a shared blind spot.
 - Referees come from a different model family where possible.

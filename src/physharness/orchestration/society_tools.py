@@ -870,8 +870,14 @@ def society_tools(
             )
 
         def claim(node_id, key):
+            """Claim the node; a live claim is renewed instead, so its route and box stand."""
             try:
-                service.claim_node(node_id, "claim", agent, f"{key}:claim")
+                try:
+                    service.claim_node(node_id, "renew", agent, f"{key}:renew")
+                except HarnessError as error:
+                    if error.code != "CLAIM_NOT_HELD":
+                        raise
+                    service.claim_node(node_id, "claim", agent, f"{key}:claim")
             except HarnessError as error:
                 if error.code in FATAL_TOOL_CODES:
                     raise
@@ -1278,11 +1284,25 @@ def society_tools(
         {
             "node_id": ident("The node.", ("commons_node",)),
             "action": choice(CLAIM_ACTIONS, "claim, renew or release your work claim."),
+            "route": text(
+                200, "claim: the method you are trying, when several routes exist.", nullable=True
+            ),
+            "time_box_minutes": integer(
+                5, 240, "claim: when your claim lapses unless you re-claim.", nullable=True
+            ),
         },
-        lambda a, k: service.claim_node(a["node_id"], a["action"], agent, k),
+        lambda a, k: service.claim_node(
+            a["node_id"],
+            a["action"],
+            agent,
+            k,
+            route=a["route"],
+            time_box_minutes=a["time_box_minutes"],
+        ),
         "Signal that you are working on a node. Claims expire unless renewed by activity; "
         "several branches may hold one; the goal takes none. The result lists your "
         "co-claimants. A claim is attention, never authority.",
+        defaults={"route": None, "time_box_minutes": None},
     )
 
     # Society ---------------------------------------------------------------------------

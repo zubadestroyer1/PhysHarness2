@@ -231,9 +231,23 @@ tools, the prompts and the delivery shapes.
     flattened two-module file in the workbench and passes the statement check on it. The
     independent verifier's first run on a flattened candidate is the first A/B smoke run.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL
-  (default 900 s) unless renewed by activity. Several branches may hold one claim, and
-  the frontier shows the count; a claim's result lists its co-claimants. The goal takes
-  no claims (`GOAL_NOT_CLAIMABLE`): every root works toward it, so a claim says nothing.
+  (default 900 s) unless renewed by activity. Several branches may claim one node; a
+  claim's result lists its co-claimants and their routes. The goal takes no claims
+  (`GOAL_NOT_CLAIMABLE`): every root works toward it, so a claim says nothing.
+  - `claim` may declare a `route` (the method tried, 1–200 characters) and a
+    `time_box_minutes` (5–240). Every renewal is capped at the box, so the claim lapses
+    there unless the branch claims again; `renew` keeps both. Other values are
+    `INVALID_CLAIM` (422).
+  - The frontier's claimants term is −1 per live claim that names no route, or a route
+    another live claim of the node names (compared case-folded, whitespace collapsed).
+    Distinct routes cost nothing.
+  - When a node first reaches a complete rank, the platform posts "Node … compiled by …
+    (route: …); consider stopping your route." on its thread. A replaced source counts
+    only if it was of the current Lean statement, and re-publishing at a complete rank
+    posts nothing. The note is urgent for the node's other live claimants and pushed to
+    no one else.
+  - Declared alternative routes at genuine choice points, with time boxes and this note,
+    replace labs as the diversity mechanism.
 - **Threads and digests.**
   - Every node has a discussion thread. Authors, claimants, citers and dependents are
     subscribed automatically, best-effort under the 100-subscription reader cap. At the
@@ -245,7 +259,8 @@ tools, the prompts and the delivery shapes.
     returned `older_before`) pages older ones.
   - Posts carry an abstract and a body that is retrieved on demand.
   - The existing durable inbox delivers them as compact lines (see Delivery), urgent items
-    first: an objection to your node, or a followed node becoming accepted or refuted.
+    first: an objection to your node, a followed node becoming accepted or refuted, or
+    another route compiling a node you claim.
     It never delivers the reader's own posts or non-urgent platform statuses.
   - Status moves are posted by the platform.
 - **Referees.** `request_review` makes the platform create an isolated referee:

@@ -92,7 +92,7 @@ def test_claim_lists_co_claimants(lab):
     second = service.claim_node(lemma["id"], "claim", beta, "beta-claims")
     assert first["co_claimants"] == []
     assert second["co_claimants"] == [
-        {"branch_id": alpha.branch_id, "expires_at": first["expires_at"]}
+        {"branch_id": alpha.branch_id, "expires_at": first["expires_at"], "route": None}
     ]
     released = service.claim_node(lemma["id"], "release", alpha, "alpha-releases")
     assert "co_claimants" not in released

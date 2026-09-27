@@ -1001,6 +1001,31 @@ async def test_commons_node_actions_dispatch(lab):
     assert goal_edit["error"]["code"] == "GOAL_NODE_RESERVED"
 
 
+async def test_commons_claim_declares_a_route_and_a_time_box(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    tools = profile(service, alpha, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    plain = await call(tools, "commons_claim", {"node_id": node["id"], "action": "claim"})
+    assert plain["route"] is None and plain["time_box_until"] is None
+    routed = await call(
+        tools,
+        "commons_claim",
+        {"node_id": node["id"], "action": "claim", "route": "Banach", "time_box_minutes": 30},
+    )
+    assert routed["route"] == "Banach"
+    assert routed["time_box_until"] == routed["claimed_at"] + 1800
+    # lean_check's own claim renews a live claim, so the declared route and box stand.
+    checked = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert checked["claimed"] is True
+    [claim] = service.read_node(node["id"], alpha)["claimants"]
+    assert (claim["route"], claim["time_box_until"]) == ("Banach", routed["time_box_until"])
+    blank = await call(
+        tools, "commons_claim", {"node_id": node["id"], "action": "claim", "route": "  "}
+    )
+    assert blank["error"]["code"] == "INVALID_CLAIM"
+
+
 async def test_lean_check_automation_is_off_by_default(lab):
     service, author, exp, branches, (alpha, beta) = society_lab(lab)
     agent, context = running(service, author, exp, alpha.branch_id)

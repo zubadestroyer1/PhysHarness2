@@ -689,7 +689,8 @@ class CommonsMixin:
                 "on_root_path": ROOT_PATH_SCORE if node["id"] in root_path else 0.0,
                 "waiting_dependents": float(min(waiting[node["id"]], MAX_WAITING_DEPENDENTS)),
                 "neglect": round(min(max(idle, 0) / 60 / NEGLECT_MINUTES, MAX_NEGLECT), 4),
-                "claimants": float(-claims.get(node["id"], 0)),  # -1.0 per live work claim
+                # -1.0 per live claim without a distinct route (see _live_claim_counts).
+                "claimants": float(-claims.get(node["id"], 0)),
             }
             items.append(
                 {

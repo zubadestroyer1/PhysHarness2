@@ -5,7 +5,8 @@ clean ``lean_check`` against the node publishes the checked file as the node's s
 ranked ``verified`` (the statement check passed on standard axioms), ``complete`` (no
 ``sorry``, but the check could not judge) or ``partial``. A higher rank replaces a lower
 one; a verified source of the node's current statement is replaced only by its publisher or
-the node's author (S1 audit #12).
+the node's author (S1 audit #12). A node's first complete source tells its other claimants
+to consider stopping their routes (S1 audit #22).
 
 A file imports node modules with ``import Commons.N…``. The platform inlines them: each
 module's published source, or a ``sorry`` stub of an elaborated statement, goes into one
@@ -87,6 +88,16 @@ def _effective_rank(source, digest):
     if source["rank"] == "verified" and source.get("lean_statement_sha256") != digest:
         return "complete"
     return source["rank"]
+
+
+def _complete_for(source, digest):
+    """Whether ``source`` is complete for the statement ``digest``; a source of an older
+    statement is stale and counts as none."""
+    return (
+        source is not None
+        and source.get("lean_statement_sha256") == digest
+        and source["rank"] in COMPLETE_RANKS
+    )
 
 
 def node_refusal(node: dict) -> str | None:
@@ -420,6 +431,17 @@ class CommonsSourceMixin:
                     if error.code not in SKIPPED_IMPORT_EDGES:
                         raise
             self._touch_node(session, row, actor, op)
+            if rank in COMPLETE_RANKS and not _complete_for(current, digest):
+                # First reach only: a re-publication at a complete rank never re-posts.
+                route = next(
+                    (
+                        claim["route"]
+                        for claim in self._active_claims(session, row.id)
+                        if claim["branch_id"] == actor.branch_id
+                    ),
+                    None,
+                )
+                self._post_route_compiled(session, row, actor.branch_id, route, op)
             replaced = current is not None
             self._event(
                 session,

@@ -11,8 +11,11 @@ MAX_CONSTITUTION_CHARS = 4_000
 NORMS = (
     "Informal work is welcome.",
     "State evidence status honestly.",
-    "Claim the node you work on before sinking effort (the goal takes no claims; read its "
-    "thread on demand).",
+    "Claim the node you work on before sinking effort (the goal takes none; read its thread on "
+    "demand). Several branches may claim one node on different routes: name yours, and "
+    "optionally a time box.",
+    "At a genuine choice between methods, a second route is cheap insurance; stop yours when "
+    "another compiles.",
     "Post failures.",
     "Cite what you use.",
     "Recruit when a piece can proceed independently.",

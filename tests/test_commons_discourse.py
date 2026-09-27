@@ -9,7 +9,7 @@ from sqlalchemy import update
 from test_sharing import approaches, artifact
 
 from physharness import commons_discourse
-from physharness.commons import PLATFORM
+from physharness.commons import PLATFORM, _lean_digest
 from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.discussion_models import DiscussionCreate, DiscussionPostCreate
 from physharness.domain import Principal, TaskCreate, digest_json, new_id
@@ -170,7 +170,13 @@ def test_claim_expires_lazily(lab, clock):
     assert claim["released"] is False and claim["task_id"] is None
     assert claim["branch_id"] == beta.branch_id and claim["node_id"] == node["id"]
     assert claim["experiment_id"] == exp["id"]
-    live = {"branch_id": beta.branch_id, "task_id": None, "expires_at": clock.now + 120}
+    live = {
+        "branch_id": beta.branch_id,
+        "task_id": None,
+        "expires_at": clock.now + 120,
+        "route": None,
+        "time_box_until": None,
+    }
     assert service.read_node(node["id"], alpha)["claimants"] == [live]
     clock.now += 119
     assert service.read_node(node["id"], alpha)["claimants"] == [live]
@@ -300,6 +306,147 @@ def test_post_renews_posters_claim(lab, clock):
     other = service.create_node(exp["id"], lemma("Other"), alpha, "other")
     service.post_on_node(other["id"], note(), beta, "post-other")
     assert service.read_node(other["id"], alpha)["claimants"] == []
+
+
+def test_claims_carry_a_route_and_a_time_box_that_caps_renewal(lab, clock):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="L", statement="L."), alpha, "l"
+    )
+    claimed = service.claim_node(
+        node["id"], "claim", beta, "c", route="Banach fixed point", time_box_minutes=5
+    )
+    assert claimed["route"] == "Banach fixed point" and claimed["time_box_until"] == clock.now + 300
+    clock.now += 240
+    service.post_on_node(
+        node["id"], NodePostCreate(kind="finding", abstract="Progress."), beta, "p"
+    )
+    [claim] = [
+        c
+        for c in service.read_node(node["id"], alpha)["claimants"]
+        if c["branch_id"] == beta.branch_id
+    ]
+    assert claim["expires_at"] == clock.now + 60 and claim["route"] == "Banach fixed point"
+    clock.now += 61
+    assert all(
+        c["branch_id"] != beta.branch_id for c in service.read_node(node["id"], alpha)["claimants"]
+    )
+
+
+def test_renew_keeps_the_route_and_time_box_and_a_claim_replaces_them(lab, clock):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    start = clock.now
+    claimed = service.claim_node(
+        node["id"], "claim", beta, "claim", route="  Banach  ", time_box_minutes=10
+    )
+    assert (claimed["route"], claimed["claimed_at"]) == ("Banach", start)
+    clock.now += 60
+    renewed = service.claim_node(node["id"], "renew", beta, "renew")
+    assert (renewed["route"], renewed["claimed_at"]) == ("Banach", start)
+    assert renewed["time_box_until"] == renewed["expires_at"] == start + 600
+    again = service.claim_node(node["id"], "claim", beta, "again")
+    assert (again["route"], again["claimed_at"], again["time_box_until"]) == (None, clock.now, None)
+    assert again["expires_at"] == clock.now + 900
+    first = service.claim_node(node["id"], "claim", alpha, "alpha", route="Schauder")
+    assert first["co_claimants"] == [
+        {"branch_id": beta.branch_id, "expires_at": again["expires_at"], "route": None}
+    ]
+
+
+def test_time_box_is_bounded(lab):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    for i, bad in enumerate(
+        (
+            {"time_box_minutes": 4},
+            {"time_box_minutes": 241},
+            {"time_box_minutes": 5.0},
+            {"route": "r" * 201},
+            {"route": " "},
+        )
+    ):
+        with pytest.raises(HarnessError) as err:
+            service.claim_node(node["id"], "claim", alpha, f"bad-{i}", **bad)
+        assert (err.value.code, err.value.status) == ("INVALID_CLAIM", 422), bad
+    edge = service.claim_node(
+        node["id"], "claim", alpha, "edge", route=f" {'r' * 200} ", time_box_minutes=240
+    )
+    assert edge["route"] == "r" * 200
+    assert edge["time_box_until"] == edge["claimed_at"] + 240 * 60
+
+
+def test_distinct_routes_keep_the_frontier_score(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="L", statement="L."), alpha, "l"
+    )
+
+    def penalty():
+        items = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
+        return next(i for i in items if i["id"] == node["id"])["score_components"]["claimants"]
+
+    service.claim_node(node["id"], "claim", alpha, "a", route="linear algebra")
+    service.claim_node(node["id"], "claim", beta, "b", route="Banach")
+    assert penalty() == 0.0
+    service.claim_node(node["id"], "claim", beta, "b2", route="Linear  Algebra")
+    assert penalty() == -2.0
+
+
+def test_a_compiled_route_is_urgent_for_other_claimants_only(lab):
+    from test_commons_sources import publish, third_branch  # it imports this module
+
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    gamma = third_branch(service, author, exp)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    service.claim_node(node["id"], "claim", alpha, "claim-a", route="A")
+    service.claim_node(node["id"], "claim", beta, "claim-b", route="B")
+    # Gamma follows the thread but no longer works on the node.
+    service.claim_node(node["id"], "claim", gamma, "claim-g", route="C")
+    service.claim_node(node["id"], "release", gamma, "release-g")
+    publish(service, node["id"], alpha, "complete", "compiled")
+    (item,) = drain(service, exp["id"], beta)["items"]
+    assert item["urgent"] is True and item["attributed_to"] == PLATFORM
+    assert item["excerpt"] == (
+        f"Node {node['id'][:8]} compiled by {alpha.branch_id[:8]} (route: A); "
+        "consider stopping your route."
+    )
+    stored = service.read_discussion_post(item["id"], beta)
+    assert stored["platform_status"] == {"compiled_by": alpha.branch_id, "route": "A"}
+    for reader in (alpha, gamma):
+        assert drain(service, exp["id"], reader)["items"] == []
+
+
+def test_the_compile_note_marks_only_a_first_complete_rank(lab):
+    from test_commons_sources import ELABORATED, LEAN, publish  # it imports this module
+
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(**LEAN), alpha, "node")
+    service.claim_node(node["id"], "claim", beta, "claim-b", route="B")
+    digest = _lean_digest(*LEAN.values())
+
+    def notes():
+        posts = service.list_records("discussion_post", author, exp["id"])
+        return [
+            post["platform_status"]
+            for post in sorted(posts, key=lambda post: post["sequence"])
+            if "compiled_by" in (post.get("platform_status") or {})
+        ]
+
+    publish(service, node["id"], alpha, "partial", "p", lean_statement_sha256=digest)
+    assert notes() == []
+    for rank, key in (("complete", "c1"), ("complete", "c2"), ("verified", "v")):
+        assert publish(service, node["id"], alpha, rank, key, lean_statement_sha256=digest)[
+            "recorded"
+        ]
+    first = {"compiled_by": alpha.branch_id, "route": None}
+    assert notes() == [first]
+    # A source of an older statement is stale, so the new statement reaches the rank afresh.
+    changed = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    service.set_lean_statement(node["id"], *changed.values(), ELABORATED, alpha, "restate")
+    fresh = _lean_digest(*changed.values())
+    publish(service, node["id"], beta, "complete", "c3", lean_statement_sha256=fresh)
+    assert notes() == [first, {"compiled_by": beta.branch_id, "route": "B"}]
 
 
 def test_post_on_node_rules(lab):
