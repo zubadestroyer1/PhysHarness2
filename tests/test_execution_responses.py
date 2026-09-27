@@ -900,6 +900,23 @@ async def test_fatal_tool_error_mid_batch_stops_later_calls(tmp_path):
         "uncertain",
         dispatched[0],
     )
+
+
+@pytest.mark.parametrize("reported,expected", [(8, 8), (-1, 0), (11, 0)])
+async def test_usage_event_carries_cached_input_tokens(tmp_path, reported, expected):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    reply = response([message("done")])
+    reply["usage"]["input_tokens_details"]["cached_tokens"] = reported
+    client = client_for([reply], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=emit
+    )
+    await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert next(e for e in events if e.kind == "usage").payload["cached_input_tokens"] == expected
     await client.close()
 
 

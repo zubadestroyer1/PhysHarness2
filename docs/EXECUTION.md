@@ -148,7 +148,10 @@ the task for an operator to resume.
 The usage event includes the stable operation ID and actual native usage; reconciliation should
 be idempotent by operation ID. If the provider response was persisted but delivery of a usage
 callback failed, reconcile from the saved native response. The adapter does not implement a
-transactional outbox or monetary pricing; those belong to the controller/ledger.
+transactional outbox or monetary pricing; those belong to the controller/ledger. The usage event's
+`usage.cached_input_tokens` carries the provider's reported cache hit (0 when absent or
+inconsistent); the controller/ledger settles those tokens at an optional cached rate, while every
+reservation stays at the full input rate, since a cache hit is never guaranteed in advance.
 
 The session is checkpointed before each external request and host tool. A crash or tool failure
 with a pending marker prohibits automatic resume. Provider usage absent from a response also

@@ -108,8 +108,11 @@ an approval. Unknown revisions, changed pins or incompatible kernels produce blo
 Supply `OPENAI_API_KEY` privately to the worker process. Set `PHYSHARNESS_MODEL_PRICES` to a JSON
 mapping from the exact configured model IDs to `input_usd_per_million`,
 `output_usd_per_million` and a pricing `source`. These values are recorded with resource usage;
-prices are operator inputs, not guesses in the repository. Do not put credentials in plans,
-model parameters, source artifacts or version control.
+prices are operator inputs, not guesses in the repository. An optional `cached_input_usd_per_million`
+bills a provider-reported cache hit at a discount; it must not exceed `input_usd_per_million`, and
+omitting it bills every input token at the full rate, as before. Do not change prices while an
+experiment runs; a replayed settlement with a new amount fails with `IDEMPOTENCY_CONFLICT`. Do not
+put credentials in plans, model parameters, source artifacts or version control.
 
 ```sh
 export PHYSHARNESS_TOKEN="$(cat .state/operator.token)"

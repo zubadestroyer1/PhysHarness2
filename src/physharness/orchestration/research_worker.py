@@ -1286,7 +1286,7 @@ class ResearchTaskExecutor:
                 inp, out = event.payload["input_tokens"], event.payload["output_tokens"]
                 settlement = self.service.settle_resources(
                     reservations[event.operation_id],
-                    price.cost(inp, out),
+                    price.cost(inp, out, event.payload.get("cached_input_tokens", 0)),
                     False,
                     actor,
                     f"model-settle:{event.operation_id}",
@@ -1336,7 +1336,10 @@ class ResearchTaskExecutor:
                         kind="runtime_event",
                         content=canonical_json(event.model_dump(mode="json")),
                         media_type="application/json",
-                        provenance={"task_id": task_id, "price": price.model_dump(mode="json")},
+                        provenance={
+                            "task_id": task_id,
+                            "price": price.model_dump(mode="json", exclude_none=True),
+                        },
                     ),
                     actor,
                     f"runtime-event:{digest_json(event.model_dump(mode='json'))}",

@@ -238,6 +238,12 @@ def _input_bound(
     return raw + max(BOUND_MARGIN_FLOOR, (raw * BOUND_MARGIN_PERCENT + 99) // 100)
 
 
+def _cached_input_tokens(usage: Any) -> int:
+    """Provider-reported cache hits, or 0 (the full input rate) if absent or inconsistent."""
+    cached = getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", None)
+    return cached if type(cached) is int and 0 <= cached <= usage.input_tokens else 0
+
+
 def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
     """Input and output tokens used by a session and every predecessor in its lineage."""
     state = checkpoint.native_state
@@ -1002,6 +1008,7 @@ class ResponsesRuntime:
                 model=session.model.model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                cached_input_tokens=_cached_input_tokens(response.usage),
                 native_usage=response.usage.model_dump(mode="json"),
                 rate_limit_waits=sent.rate_limit_waits,
                 rate_limit_wait_seconds=sent.rate_limit_wait_seconds,
