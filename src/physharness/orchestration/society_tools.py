@@ -73,6 +73,7 @@ from .lean_session import (
     signature_problem,
     split_header,
     top_level_declarations,
+    top_level_names,
 )
 from .research_worker import FATAL_TOOL_CODES, tool_registrar, worker_check
 from .society_brief import _line
@@ -573,11 +574,13 @@ def _referee_view(result, keep=(), *, items=False):
     return view
 
 
-def _referee_lean_result(result):
+def _referee_lean_result(result, source, expansion):
     """A referee's ``lean_check`` result. A message or hole inside an inlined commons module
     keeps its place but not its text: a module's ``#print`` or ``#eval`` output, or the goal
     of its ``sorry``, is its publisher's text, maybe the reviewed author's, and would reach
-    the referee unfenced."""
+    the referee unfenced. For the same reason the axiom report keeps only the declarations
+    of the referee's own ``source`` (a «guillemet» name holds near-arbitrary text) and counts
+    the rest as ``axioms_withheld``."""
 
     def withheld(item, kept, field, what):
         if item.get("module") is None:
@@ -585,7 +588,7 @@ def _referee_lean_result(result):
         text = f"({what} inside inlined module {item['module']}; {field} withheld from referees)"
         return {**{key: item[key] for key in kept}, field: text}
 
-    return {
+    view = {
         **result,
         "messages": [
             withheld(item, ("severity", "module", "expanded_line"), "text", "message")
@@ -596,6 +599,11 @@ def _referee_lean_result(result):
             for item in result["holes"]
         ],
     }
+    if expansion.modules:
+        axioms, own = result.get("axioms") or {}, set(top_level_names(source))
+        view["axioms"] = {name: found for name, found in axioms.items() if name in own}
+        view["axioms_withheld"] = len(axioms) - len(view["axioms"])
+    return view
 
 
 # S1 audit #23: every recruit brief is scoped, so a recruit never takes on the whole target.
@@ -929,8 +937,8 @@ def society_tools(
         if referee:
 
             async def referee_check(a, k):
-                result, _ = await expanded_check(a["source"], a["automate"], k)
-                return _referee_lean_result(result)
+                result, expansion = await expanded_check(a["source"], a["automate"], k)
+                return _referee_lean_result(result, a["source"], expansion)
 
             # A referee checks Lean but never publishes sources.
             add(
