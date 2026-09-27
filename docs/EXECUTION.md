@@ -292,11 +292,17 @@ without one. Under a budget:
   `{"elided":true,"tool","chars","sha256","head","recall":{"tool":"recall_output","call_id"}}`.
   `chars` is the replaced text's length, `sha256` the first 16 hex digits of its digest and
   `head` its first 160 characters. The full result stays in `tool_results`, so `recall_output`
-  on the stub's call ID pages it back. Recall pages, stubs, and outputs stored without a `seq`
-  (before this feature) are never elided. Between blocks the input only grows, so its prefix is
-  byte-stable and provider prefix caching holds; a block breaks the prefix once, at its first
-  newly elided item. A block that elides anything emits `context_elided` with `count`,
-  `chars_removed`, `first_index` (the input index of the first new stub) and `seq`.
+  on the stub's call ID pages it back. An output is replaced only when its stub is strictly
+  shorter, so elision never lengthens an output and `chars_removed` is always positive. Never
+  elided are recall pages, stubs, outputs stored without a `seq` (before this feature), and
+  outputs whose `tool_results` entries a compaction archived. Between blocks the input only
+  grows, so its prefix is byte-stable and provider prefix caching holds; a block breaks the
+  prefix once, at its first newly elided item. A block that elides anything emits
+  `context_elided` with `count`, `chars_removed`, `first_index` (the input index of the first new
+  stub) and `seq`. It is emitted only after the save that holds the stubs, normally the
+  generation marker save and otherwise the save that ends the run. A crash before that save
+  replays the block with the same payload, and `(session_id, seq)` identifies a block, so
+  consumers can dedupe on it.
 - **Elision state.** `elision = {"seq", "last_block_seq"}` in native state. `seq` counts the
   lineage's provider responses: it grows with each response and is saved with it (save B), and
   `start_from_handoff` copies it, so a native successor keeps the block schedule; a portable
@@ -306,7 +312,7 @@ without one. Under a budget:
 - **Elision and the bound.** A stub is not byte-identical to the output it replaces, so the P1
   bound counts it at its full size and credits nothing for the removed output: a block's request
   adds every new stub to its bound, and the requests between blocks bound only their appended
-  items. The billed input still shrinks by the removed text.
+  items. The text the model sees shrinks by `chars_removed`.
 - **Not a default yet.** Elision changes what the model sees. Making it a default needs a quality
   A/B; block sizes (`elide_every_turns`) of 8 to 20 are recommended for it. Larger blocks break
   the cache less often but keep stale outputs longer.

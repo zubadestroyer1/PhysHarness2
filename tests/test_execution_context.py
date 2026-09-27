@@ -1764,8 +1764,15 @@ async def test_elision_state_survives_resume_without_reeliding(tmp_path):
     saved = (await runtime.checkpoint(result.session.id)).native_state
     assert saved["elision"] == {"seq": 4, "last_block_seq": 3}
     second = sdk_client([response([text_item("again")], "r5")], requests)
+
+    async def emit(event):
+        events.append(event)
+
     resumed = ResponsesRuntime(
-        store=store, client=second, dispatcher=observe_dispatcher(big_result(2_000))
+        store=store,
+        client=second,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
     )
     assert (await resumed.continue_session(result.session.id, "next")).output_text == "again"
     assert creates_of(requests)[-1]["input"][:-1] == saved["input"]
@@ -1823,6 +1830,253 @@ async def test_an_elided_output_recalls_in_full_and_a_recall_page_is_never_elide
     assert {
         k.split(":", 1)[1]: (v["seq"], v["name"]) for k, v in state["tool_results"].items()
     } == {f"c{n}": (n, "observe") for n in (1, 2, 3, 5, 6)}
+    await client.close()
+
+
+async def test_an_output_is_elided_only_when_its_stub_is_shorter(tmp_path):
+    from physharness.execution.responses import _elision_stub
+
+    # A 64-character tool name, a 29-character call ID and a backslash-heavy head: this
+    # 502-character output would get a 528-character stub.
+    requests, events, name, tight = [], [], "t" * 64, "call_" + "0" * 24
+    dispatcher = observe_dispatcher(big_result(2_000))
+
+    async def backslashes(arguments, operation_id):
+        return {"text": "\\" * 245}
+
+    dispatcher.register(
+        name,
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        backslashes,
+    )
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            response([{**call_item(tight), "name": name}], "r1"),
+            response([call_item("c2")], "r2"),
+            response([call_item("c3")], "r3"),
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=dispatcher,
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    outputs = outputs_of(creates_of(requests)[-1])
+    assert (len(outputs[tight]), len(_elision_stub(name, tight, outputs[tight]))) == (502, 528)
+    assert json.loads(outputs[tight]) == {"text": "\\" * 245}  # kept whole
+    original = json.dumps(big_result(2_000), ensure_ascii=False)
+    assert json.loads(outputs["c2"])["elided"] is True
+    assert [e.payload for e in events if e.kind == "context_elided"] == [
+        {
+            "count": 1,
+            "chars_removed": len(original) - len(outputs["c2"]),
+            "first_index": 4,
+            "seq": 3,
+        }
+    ]
+    await client.close()
+
+
+class LastSavedStore(SQLiteRuntimeStore):
+    """Remembers the last committed checkpoint, after refusing the first saves of a block."""
+
+    def __init__(self, path, refusals=0):
+        super().__init__(path)
+        self.refusals, self.last = refusals, None
+
+    async def save(self, checkpoint):
+        if self.refusals and checkpoint.native_state.get("elision", {}).get("last_block_seq"):
+            self.refusals -= 1
+            raise RuntimeError("disk full")
+        await super().save(checkpoint)
+        self.last = checkpoint
+
+
+def saved_block(store):
+    """What the last committed save holds of a block: status, last_block_seq and stub count."""
+    state = store.last.native_state
+    stubs = [text for text in outputs_of(state).values() if text.startswith('{"elided"')]
+    return store.last.session.status, state["elision"]["last_block_seq"], len(stubs)
+
+
+@pytest.mark.parametrize(
+    ("refusals", "announced"),
+    [
+        (0, [(3, ("running", 3, 2))]),  # after the generation marker save (A)
+        (1, [(3, ("uncertain", 3, 2))]),  # A was refused: after the failure save
+        (2, []),  # the failure save was refused too: never
+    ],
+)
+async def test_context_elided_follows_the_save_that_holds_its_stubs(tmp_path, refusals, announced):
+    requests, events, seen = [], [], []
+    store = LastSavedStore(tmp_path / "sessions.db", refusals)
+
+    async def emit(event):
+        events.append(event.kind)
+        if event.kind == "context_elided":
+            seen.append((event.payload["seq"], saved_block(store)))
+
+    client = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=store,
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    if refusals:
+        with pytest.raises((ExecutionError, RuntimeError)):
+            await runtime.start(
+                "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+            )
+    else:
+        await runtime.start(
+            "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+        )
+        started = [n for n, kind in enumerate(events) if kind == "generation_started"]
+        assert events[started[3] - 1] == "context_elided"  # announced before its request
+    assert seen == announced
+    await client.close()
+
+
+@pytest.mark.parametrize("ending", ["context_pressure", "target_verified"])
+async def test_a_block_whose_run_ends_before_its_request_is_announced_after_saving(
+    tmp_path, ending
+):
+    # The first run ends at seq 3, so the second run opens with a block, then stops before
+    # sending: a context-pressure handoff after the count, or a target verified during send.
+    requests, seen, guard_calls = [], [], []
+    store = LastSavedStore(tmp_path / "sessions.db")
+
+    async def emit(event):
+        if event.kind == "context_elided":
+            seen.append((event.payload["seq"], saved_block(store)))
+
+    async def boundary(checkpoint):
+        return (
+            {"reason": "context_pressure"}
+            if "context_pressure" in checkpoint.native_state
+            else None
+        )
+
+    async def guard():
+        guard_calls.append(True)
+        return ending == "target_verified" and len(guard_calls) == 8  # the second run's send
+
+    client = sdk_client(
+        [
+            response([call_item("c1")], "r1"),
+            response([call_item("c2")], "r2"),
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+        count=[10, 50_000 if ending == "context_pressure" else 10],
+    )
+    runtime = ResponsesRuntime(
+        store=store,
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        boundary_hook=boundary,
+        pre_generation_guard=guard,
+        context_budget=ELIDE,
+    )
+    limits = RuntimeLimits(
+        max_context_tokens=20_000, max_output_tokens=1_000, max_total_tokens=None
+    )
+    first = await runtime.start("work", ModelConfig(model="exact-model"), limits)
+    assert seen == [] and len(creates_of(requests)) == 3
+    result = await runtime.continue_session(first.session.id, "next")
+    assert len(creates_of(requests)) == 3  # the block's request was never sent
+    if ending == "context_pressure":
+        assert result.continuation["reason"] == "context_pressure"
+        assert seen == [(3, ("running", 3, 2))]
+    else:
+        assert result.completion_reason == "target_verified"
+        assert seen == [(3, ("completed", 3, 2))]
+    await client.close()
+
+
+async def test_a_refused_block_request_keeps_its_stubs_and_resumes_without_a_second_block(
+    tmp_path,
+):
+    requests, events = [], []
+    scripted = [
+        *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+        None,  # the block's request is refused before generation
+        response([text_item("done")], "rt"),
+    ]
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append((request.url.path, payload))
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        if (scripted_response := scripted.pop(0)) is None:
+            refusal = {"message": "refused", "type": "invalid_request_error", "param": None}
+            return httpx.Response(400, json={"error": {**refusal, "code": None}})
+        return httpx.Response(200, json=scripted_response)
+
+    async def emit(event):
+        events.append(event)
+
+    client = AsyncOpenAI(
+        api_key="test-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    )
+    store = SQLiteRuntimeStore(tmp_path / "sessions.db")
+    runtime = ResponsesRuntime(
+        store=store,
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start(
+            "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+        )
+    assert error.value.code == "MODEL_REQUEST_INVALID"
+    failed = await runtime.checkpoint(events[0].session_id)
+    saved = failed.native_state
+    assert (failed.session.status, saved["elision"]) == ("failed", {"seq": 3, "last_block_seq": 3})
+    assert saved["input"] == creates_of(requests)[-1]["input"]  # the refused request's stubs
+    assert [k for k, text in outputs_of(saved).items() if text.startswith('{"elided"')] == [
+        "c1",
+        "c2",
+    ]
+    resumed = ResponsesRuntime(
+        store=store,
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+    )
+    await resumed.resume(failed)
+    assert (await resumed.continue_session(failed.session.id, "next")).output_text == "done"
+    assert creates_of(requests)[-1]["input"][:-1] == saved["input"]
+    assert [e.payload["seq"] for e in events if e.kind == "context_elided"] == [3]  # just one
+    assert [p.rsplit("/", 1)[-1] for p, _ in requests[-2:]] == ["input_tokens", "responses"]
+    assert [e.payload for e in events if e.kind == "generation_started"][-1][
+        "input_tokens_counted"
+    ] is True
     await client.close()
 
 

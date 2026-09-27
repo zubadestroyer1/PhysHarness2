@@ -557,6 +557,8 @@ class ResponsesRuntime:
         # Each running session's tool results awaiting announcement, in call order: (operation,
         # name, signal, stagnation snapshot). Announced only after a save that holds them.
         self._unannounced: dict[str, list[tuple[str, str, str | None, dict[str, Any] | None]]] = {}
+        # Each running session's elision block awaiting announcement: its context_elided payload.
+        self._elided: dict[str, dict[str, Any]] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -774,7 +776,7 @@ class ResponsesRuntime:
         Between blocks the input prefix is byte-stable, so provider prefix caching holds; a block
         breaks it once, at its first newly elided item. Full outputs stay in tool_results for
         recall_output. Runs at a settled boundary before request preparation; the generation
-        marker save persists it.
+        marker save persists it, and `_announce_elided` reports it after that save.
         """
         budget, elision = state.get("context_budget"), state.get("elision")
         if not budget or not isinstance(elision, dict):
@@ -799,19 +801,26 @@ class ResponsesRuntime:
                 or _is_elision_stub(output)
             ):
                 continue
-            item["output"] = _elision_stub(entry.get("name", "unknown"), item["call_id"], output)
-            count, removed = count + 1, removed + len(output) - len(item["output"])
+            stub = _elision_stub(entry.get("name", "unknown"), item["call_id"], output)
+            if len(stub) >= len(output):  # elision never lengthens an output
+                continue
+            item["output"] = stub
+            count, removed = count + 1, removed + len(output) - len(stub)
             first = index if first is None else first
         elision["last_block_seq"] = seq
         if count:
-            await self._emit_telemetry(
-                "context_elided",
-                session,
-                count=count,
-                chars_removed=removed,
-                first_index=first,
-                seq=seq,
-            )
+            self._elided[session.id] = {
+                "count": count,
+                "chars_removed": removed,
+                "first_index": first,
+                "seq": seq,
+            }
+
+    async def _announce_elided(self, session: RuntimeSession) -> None:
+        """Report a block only after a save that holds its stubs. A restart before that save
+        replays the block, and one after it never repeats it."""
+        if (payload := self._elided.pop(session.id, None)) is not None:
+            await self._emit_telemetry("context_elided", session, **payload)
 
     async def start(
         self,
@@ -1175,11 +1184,14 @@ class ResponsesRuntime:
             self._active.pop(session.id, None)
             self._last_request.pop(session.id, None)
             self._unannounced.pop(session.id, None)
+            self._elided.pop(session.id, None)
 
     async def _save_failure(self, session: RuntimeSession, state: dict[str, Any]) -> None:
-        """`_run`'s failure save, then a best-effort announcement of the tool results it made
-        durable. A sink error is only logged, so the original failure still propagates."""
+        """`_run`'s failure save, then a best-effort announcement of the elision block and tool
+        results it made durable. A sink error is only logged, so the original failure still
+        propagates."""
         await self._save(session, state)
+        await self._announce_elided(session)
         for tool_operation, name, signal, snapshot in self._unannounced.pop(session.id, []):
             await self._emit_telemetry("tool_completed", session, tool_operation, name=name)
             if signal is not None:
@@ -1504,6 +1516,7 @@ class ResponsesRuntime:
                     "max_output_tokens": session.limits.max_output_tokens,
                 }
                 saved = await self._save(session, state)
+                await self._announce_elided(session)
                 handoff = await self._maybe_handoff(
                     session, state, {"output": []}, checkpoint=saved
                 )
@@ -1586,6 +1599,7 @@ class ResponsesRuntime:
             self._release(admission)
             raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
         try:
+            await self._announce_elided(session)  # the marker save holds the block's stubs
             await self._emit(
                 "generation_started",
                 session,
@@ -1873,6 +1887,7 @@ class ResponsesRuntime:
         session.status = "completed"
         state.pop("terminal_response_pending", None)
         await self._save(session, state)
+        await self._announce_elided(session)
         return RuntimeResult(session=session, output_text="", completion_reason="target_verified")
 
     async def _maybe_handoff(
