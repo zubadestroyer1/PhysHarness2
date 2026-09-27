@@ -16,9 +16,10 @@ from physharness.execution import (
     RuntimeLimits,
     SQLiteRuntimeStore,
 )
+from physharness.execution.responses import COMPLETION_REASONS
 from physharness.execution.stagnation import observe
 from physharness.orchestration.research_network import fair_ready_order
-from physharness.orchestration.research_worker import research_tools
+from physharness.orchestration.research_worker import COMPLETION_NOTES, research_tools
 from physharness.storage import RecordRow
 from physharness.worker_authority import worker_effects
 from physharness.workforce_models import RecruitResearcherRequest
@@ -74,6 +75,39 @@ async def test_boundary_hook_can_complete_after_settled_response_without_success
     assert result.output_text == "Progress retained"
     await client.close()
     store.close()
+
+
+@pytest.mark.parametrize("reason", [*sorted(COMPLETION_REASONS), "other"])
+async def test_boundary_hook_completion_reasons(tmp_path, reason):
+    assert COMPLETION_REASONS == {
+        "target_verified",
+        "result_returned",
+        "scope_proved",
+        "scope_closed",
+    }
+    assert set(COMPLETION_NOTES) == COMPLETION_REASONS  # the worker's empty-text fallbacks
+    store = SQLiteRuntimeStore(tmp_path / "complete.db")
+    client = client_for([response([message("Delivered")])], [])
+
+    async def boundary(checkpoint):
+        return {"complete_reason": reason}
+
+    runtime = ResponsesRuntime(store=store, client=client, boundary_hook=boundary)
+    try:
+        if reason == "other":
+            with pytest.raises(ExecutionError) as caught:
+                await runtime.start("target", ModelConfig(model="exact-model"), RuntimeLimits())
+            assert caught.value.code == "INVALID_CONTINUATION"
+        else:
+            result = await runtime.start(
+                "target", ModelConfig(model="exact-model"), RuntimeLimits()
+            )
+            assert result.session.status == "completed"
+            assert result.completion_reason == reason and result.continuation is None
+            assert result.output_text == "Delivered"
+    finally:
+        await client.close()
+        store.close()
 
 
 async def test_verified_guard_stops_before_generation_is_marked_pending(tmp_path):

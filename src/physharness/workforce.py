@@ -6,7 +6,9 @@ from decimal import Decimal
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 
+from .commons import _lean_digest
 from .commons_review import REFEREE_HAT
+from .commons_sources import node_module, node_refusal
 from .domain import Principal, make_record, new_id, utcnow
 from .errors import HarnessError
 from .storage import BudgetRow, EdgeRow, EventRow, LeaseRow, RecordRow, record_json_text
@@ -77,6 +79,25 @@ def _cap_reached(code, what, limit, used):
         ),
         retryable=pending,
         details={"limit": limit, "used": used},
+    )
+
+
+def scope_statement_error(node: dict | None) -> HarnessError | None:
+    """``SCOPE_NEEDS_STATEMENT`` unless ``node`` can scope an until_proved recruit: an open
+    node that takes a published source and has an elaborated Lean statement (S1 audit #23)."""
+    if (
+        node is not None
+        and node_refusal(node) is None
+        and node.get("lean_elaborated")
+        and node.get("lean_name")
+        and node.get("lean_statement")
+    ):
+        return None
+    return HarnessError(
+        "SCOPE_NEEDS_STATEMENT",
+        "until_proved needs a focus node with an elaborated Lean statement.",
+        status=422,
+        remediation="Record the statement with set_lean_statement first.",
     )
 
 
@@ -666,7 +687,10 @@ class WorkforceMixin:
         self, experiment_id: str, request: RecruitResearcherRequest, actor: Principal, key: str
     ) -> dict:
         self._research_role(actor)
-        data = request.model_dump(mode="json")
+        # A request without a scope keeps its pre-scope fingerprint.
+        data = request.model_dump(
+            mode="json", exclude={"scope_node_id"} if request.scope_node_id is None else None
+        )
 
         def action(session, op):
             experiment = self._workforce_lock(session, experiment_id, actor)
@@ -684,6 +708,21 @@ class WorkforceMixin:
                     raise HarnessError(
                         "DISCUSSION_SCOPE", "Source post targets another experiment."
                     )
+            scope = None
+            if request.scope_node_id is not None:
+                node = self._commons_node(
+                    session, request.scope_node_id, actor, experiment_id
+                ).payload
+                refusal = scope_statement_error(node)
+                if refusal is not None:
+                    raise refusal
+                scope = {
+                    "node_id": node["id"],
+                    "lean_statement_sha256": _lean_digest(
+                        node.get("lean_header"), node["lean_name"], node["lean_statement"]
+                    ),
+                    "module": node_module(node),
+                }
             parent = session.get(RecordRow, request.parent_branch_id)
             model = _branch_model(experiment, request.model_index, parent)
             self._admit_research_tasks(session, experiment_id, actor, models=[model])
@@ -701,6 +740,7 @@ class WorkforceMixin:
                 synthesis=request.synthesis,
                 detached=request.detached,
                 public_summary=request.public_summary,
+                task_extra={"scope": scope} if scope is not None else None,
             )
             return {"experiment_id": experiment_id, **result}
 

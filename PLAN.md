@@ -110,7 +110,7 @@ Addressed messages, discussions, the component registry, research profiles, team
   - Claim before sinking effort.
   - Post failures.
   - Cite what you use.
-  - Recruit when a piece can proceed independently.
+  - Recruit for one narrow deliverable (a named lemma with its signature, or a lookup); recruits end when they return.
   - Ask for a referee before investing heavily in formalization.
 - **Episodes.** An agent works in episodes around one or a few focus nodes. At each safe pause it gets its digest and chooses what to do next:
   - continue working;
@@ -143,7 +143,7 @@ Existing tools map onto these. For example, `run_command`, `run_lean_scratch`, `
 
 ### 3.4 Roles are optional "hats", not assignments
 
-Available hats: explorer, formalizer, referee, experimenter (numerics/simulation), librarian (library and literature search, deduplication), synthesizer (review articles), maintainer (graph upkeep). Recruitment can suggest a hat, agents can change hats, and none are mandatory.
+Available hats: explorer, formalizer, referee, experimenter (numerics/simulation), librarian (library names, signatures and duplicates for one brief, then return), synthesizer (review articles), maintainer (graph upkeep). Recruitment can suggest a hat, agents can change hats, and none are mandatory.
 
 ### 3.5 Model routing
 

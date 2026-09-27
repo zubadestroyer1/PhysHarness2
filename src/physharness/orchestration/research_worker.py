@@ -13,7 +13,9 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from sqlalchemy import select
 
 from ..commons_discourse import compact_update_lines
+from ..commons_models import CLOSED_STATUSES
 from ..commons_review import REFEREE_HAT, is_referee_task
+from ..commons_sources import COMPLETE_RANKS
 from ..domain import (
     ArtifactCreate,
     BranchCreate,
@@ -958,6 +960,16 @@ def research_tools(service, agent, branch_id, *, task_context=None, workspace_to
     return dispatcher
 
 
+# The output artifact's text when a boundary completion ends a session with no final text.
+COMPLETION_NOTES = {
+    "target_verified": "Target verification stopped further model generation "
+    "after a settled response.",
+    "result_returned": "The recruit returned its result to its parent; its session ended.",
+    "scope_proved": "The recruit's node has a complete published source; its session ended.",
+    "scope_closed": "The recruit's node was closed; its session ended.",
+}
+
+
 class ResearchTaskExecutor:
     def __init__(
         self,
@@ -995,6 +1007,42 @@ class ResearchTaskExecutor:
             log.warning("Masked reference unavailable: %s", error.code)
             return None
         log.warning("Masked reference is not a masked_reference artifact")
+        return None
+
+    def _society_completion(self, task, agent, holder, fence):
+        """Why a society recruit's work is delivered, or None (S1 audit #23).
+
+        A scoped recruit ends once its node has a complete source of the scoped statement,
+        published by anyone (a joined recruit returns that source to its parent), or once the
+        node is closed. A joined recruit ends once it has called return_result.
+        """
+        joined = bool(task.get("reply_to_parent_task_id"))
+        scope = task.get("scope")
+        if scope:
+            node = self.service.get_record("commons_node", scope["node_id"], agent)
+            source = node.get("lean_source") or {}
+            if (
+                source.get("rank") in COMPLETE_RANKS
+                and source.get("lean_statement_sha256") == scope["lean_statement_sha256"]
+            ):
+                if joined and not task.get("return_result"):
+                    with worker_effects(agent, task["id"], holder, fence):
+                        self.service.return_result(
+                            task["id"],
+                            evidence_status="unverified",
+                            artifact_ids=[source["artifact_id"]],
+                            unresolved_obligations=[],
+                            summary=f"Node {scope['node_id'][:8]} is proved as "
+                            f"{scope['module']}; import it.",
+                            execution_failure=None,
+                            actor=agent,
+                            key=f"scope-result:{task['id']}",
+                        )
+                return "scope_proved"
+            if node["status"] in CLOSED_STATUSES:
+                return "scope_closed"
+        if joined and task.get("return_result"):
+            return "result_returned"
         return None
 
     async def execute(self, task_id: str, project_id: str, *, stop_on_verified_target=True):
@@ -1532,6 +1580,15 @@ class ResearchTaskExecutor:
                     experiment["id"], actor
                 ):
                     return {"complete_reason": "target_verified"}
+                if society and not referee:
+                    reason = self._society_completion(
+                        self.service.get_record("task", task_id, actor),
+                        agent,
+                        holder,
+                        lease["fence"],
+                    )
+                    if reason:
+                        return {"complete_reason": reason}
                 stagnation = checkpoint.native_state.get("stagnation") or {}
                 if stagnation.get("exhausted"):
                     raise HarnessError(
@@ -1983,12 +2040,7 @@ class ResearchTaskExecutor:
                     branch_id=branch["id"],
                     kind="research_output",
                     content=result.output_text
-                    or (
-                        "Target verification stopped further model generation "
-                        "after a settled response."
-                        if result.completion_reason == "target_verified"
-                        else ""
-                    ),
+                    or COMPLETION_NOTES.get(result.completion_reason, ""),
                     provenance={
                         "task_id": task_id,
                         "session_id": result.session.id,

@@ -60,6 +60,9 @@ class RecruitResearcherRequest(StrictModel):
     synthesis: bool = False
     detached: bool = False
     public_summary: str | None = Field(default=None, max_length=1000)
+    # Society until_proved recruits: the node whose complete source ends the task. None is
+    # no scope and is omitted from fingerprints.
+    scope_node_id: str | None = None
 
     @model_validator(mode="after")
     def nonblank(self):

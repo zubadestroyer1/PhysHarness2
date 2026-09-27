@@ -250,3 +250,4 @@ def test_legacy_recruit_fingerprint_and_branch_payload_unchanged(lab):
             )
         ).one()
         assert "lab" not in task.payload
+        assert "scope" not in task.payload

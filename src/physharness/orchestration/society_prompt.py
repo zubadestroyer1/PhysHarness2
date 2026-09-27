@@ -18,7 +18,8 @@ NORMS = (
     "another compiles.",
     "Post failures.",
     "Cite what you use.",
-    "Recruit when a piece can proceed independently.",
+    "Recruit for one narrow deliverable (a named lemma with its signature, or a lookup); "
+    "recruits end when they return.",
     "Ask for a referee before investing heavily in formalization.",
 )
 BOUNDARIES = (

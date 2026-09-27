@@ -52,6 +52,7 @@ from physharness.orchestration.society_tools import (
     SOCIETY_TOOL_NAMES,
     STATEMENT_REJECTIONS,
     _publication_refusal,
+    _recruit_objective,
     _source_rank,
     society_tools,
     statement_found,
@@ -59,7 +60,7 @@ from physharness.orchestration.society_tools import (
 from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
 from physharness.orchestration.workspaces import WorkspaceBroker
 from physharness.storage import RecordRow
-from physharness.workforce_models import ConfigureWorkforceRequest
+from physharness.workforce_models import ConfigureWorkforceRequest, RecruitResearcherRequest
 
 # Recorded from the pre-change code (research_worker.research_tools before Task 9).
 LEGACY_DIGESTS = {
@@ -1630,6 +1631,181 @@ async def test_recruit_claims_focus_node(lab):
     assert refused["error"]["code"] == "NODE_CLOSED"
 
 
+async def test_recruit_refuses_the_goal_as_focus_before_creating_anything(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context)
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+
+    def counts():
+        return [len(service.list_records(kind, author, exp["id"])) for kind in ("branch", "task")]
+
+    before = counts()
+    refused = await call(
+        tools, "recruit", {"brief": "Prove the target.", "title": "T", "focus_node_id": goal["id"]}
+    )
+    assert refused["error"]["code"] == "GOAL_NOT_CLAIMABLE"
+    assert counts() == before
+
+
+SCOPE = "Scope: this brief only. The target statement is context, not your assignment:"
+
+
+def test_every_recruit_brief_gets_a_scope_paragraph():
+    joined = _recruit_objective("Find the coin theorem.", None, "librarian", detached=False)
+    assert (
+        SCOPE in joined
+        and "call return_result with what you have; your session then ends." in joined
+    )
+    assert "look up library names, signatures and duplicates for this brief, then return" in joined
+    assert joined.index("Suggested hat") < joined.index(SCOPE)
+    detached = _recruit_objective("Explore.", None, None, detached=True)
+    assert SCOPE in detached and "post what you have on your focus node and finish" in detached
+    assert "return_result" not in detached
+
+
+async def test_until_proved_needs_an_elaborated_focus_statement(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context)
+    bare = await call(tools, "commons_node", lemma_args())
+    refused = await call(
+        tools,
+        "recruit",
+        {
+            "brief": "Prove it.",
+            "title": "Prover",
+            "focus_node_id": bare["id"],
+            "until_proved": True,
+        },
+    )
+    assert refused["error"]["code"] == "SCOPE_NEEDS_STATEMENT"
+    unfocused = await call(
+        tools, "recruit", {"brief": "Prove it.", "title": "Prover", "until_proved": True}
+    )
+    assert unfocused["error"]["code"] == "SCOPE_NEEDS_STATEMENT"
+    # The service checks the scope itself too.
+    request = RecruitResearcherRequest(
+        parent_branch_id=alpha.branch_id, title="P", objective="P", scope_node_id=bare["id"]
+    )
+    with pytest.raises(HarnessError) as caught:
+        service.recruit_researcher(exp["id"], request, author, "scoped")
+    assert (caught.value.code, caught.value.status) == ("SCOPE_NEEDS_STATEMENT", 422)
+    # With an elaborated statement the task records its scope and the brief names the lemma.
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": bare["id"], **LEAN}
+    )
+    id8 = bare["id"][:8]
+    recruited = await call(
+        tools,
+        "recruit",
+        {"brief": "Prove it.", "title": "Prover", "focus_node_id": id8, "until_proved": True},
+    )
+    task = service.get_record("task", recruited["task_id"], author)
+    assert task["scope"] == {
+        "node_id": bare["id"],
+        "lean_statement_sha256": _lean_digest(*LEAN.values()),
+        "module": "Commons.N" + id8,
+    }
+    assert (
+        f"Prove exactly theorem trace_add : (1 : Nat) + 1 = 2 (node {id8}). Publish it with "
+        f"lean_check(node_id={id8}). Your task ends by itself" in task["objective"]
+    )
+
+
+class ProvisionedWorkspace(FakeWorkspace):
+    """A FakeWorkspace the worker itself provisions (its policy is recorded) and closes."""
+
+    def __init__(self):
+        super().__init__()
+        self.policy.model_dump = lambda **kwargs: {"template_id": self.policy.template_id}
+
+    async def close(self):
+        self.calls.append(("close", None))
+
+
+async def test_scoped_recruit_completes_once_its_node_has_a_complete_source(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    id8 = node["id"][:8]
+    recruited = await call(
+        tools,
+        "recruit",
+        {"brief": "Prove it.", "title": "Prover", "focus_node_id": id8, "until_proved": True},
+    )
+
+    def script(phase, payload):
+        if phase == 0:
+            return [tool_call("lean_check", {"source": PROOF, "node_id": id8}, "check-1")]
+        return [message("Kept going past the scope.")]
+
+    workspace = ProvisionedWorkspace()
+    result, seen = await run_worker(
+        service, author, recruited["task_id"], script, workspace_factory=lambda *_: workspace
+    )
+    assert result["status"] == "completed"
+    assert len(seen["payloads"]) == 1  # no second recruit request
+    published = service.read_node(node["id"], agent)["node"]["lean_source"]
+    assert published["rank"] == "verified"
+    task = service.get_record("task", recruited["task_id"], author)
+    assert task["status"] == "completed"
+    # finish_task then appends the output artifact and marks the execution completed.
+    assert task["return_result"] == {
+        "evidence_status": "unverified",
+        "artifact_ids": [published["artifact_id"], result["artifact_id"]],
+        "unresolved_obligations": [],
+        "summary": f"Node {id8} is proved as Commons.N{id8}; import it.",
+        "execution_failure": None,
+        "execution_status": "completed",
+        "attributed_to": task["holder"],
+        "task_id": task["id"],
+    }
+    note = service.artifact_content(result["artifact_id"], author).decode()
+    assert note == "The recruit's node has a complete published source; its session ended."
+
+
+async def test_scoped_recruit_ends_when_its_node_closes(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    recruited = await call(
+        tools,
+        "recruit",
+        {
+            "brief": "Prove it.",
+            "title": "Prover",
+            "focus_node_id": node["id"],
+            "until_proved": True,
+        },
+    )
+    task = service.get_record("task", recruited["task_id"], author)
+    recruit, recruit_context = running(service, author, exp, recruited["branch_id"], task=task)
+    executor = ResearchTaskExecutor(service, prices=PRICES)
+
+    def completion():
+        current = service.get_record("task", task["id"], author)
+        return executor._society_completion(
+            current, recruit, recruit_context["holder"], recruit_context["fence"]
+        )
+
+    assert completion() is None  # joined, nothing returned, the scope still open
+    await call(
+        tools, "commons_node", {"action": "abandon", "node_id": node["id"], "reason": "Moot."}
+    )
+    assert completion() == "scope_closed"
+    assert service.get_record("task", task["id"], author).get("return_result") is None
+
+
 async def test_fetch_source_hides_screen_numbers_and_records_fetch(lab):
     literature = LiteraturePolicy(
         mode="benchmark", masked_reference_artifact_id="ref", blocked_sources=["2101.00001"]
@@ -1997,8 +2173,9 @@ def run_manifest(experiment, author, root_task, **extra):
     )
 
 
-def scripted_society_route(root_steps):
-    """Route by prompt: a referee submits one sound verdict; the root follows its script."""
+def scripted_society_route(root_steps, recruit_steps=None):
+    """Route by prompt: a referee submits one sound verdict; with ``recruit_steps``, a task
+    whose objective is not "Root" follows that script; the root follows its script."""
     phases = {"root": 0, "referee": 0}
 
     async def route(request):
@@ -2009,8 +2186,10 @@ def scripted_society_route(root_steps):
         role = (
             "referee" if prompt["instructions"].startswith("Research society referee") else "root"
         )
-        phase = phases[role]
-        phases[role] += 1
+        if role == "root" and recruit_steps is not None and prompt["objective"] != "Root":
+            role = "recruit"
+        phase = phases.get(role, 0)
+        phases[role] = phase + 1
         outputs = [
             json.loads(item["output"])
             for item in payload["input"]
@@ -2022,6 +2201,8 @@ def scripted_society_route(root_steps):
                 if phase == 0
                 else [message("Reviewed.")]
             )
+        elif role == "recruit":
+            items = recruit_steps(phase, outputs, prompt)
         else:
             items = root_steps(phase, outputs)
         return httpx.Response(200, json=response(items, response_id=f"{role}-{phase}"))
@@ -2067,6 +2248,60 @@ async def test_runner_selects_and_executes_referee_requested_by_own_agent(lab):
     assert report["status"] == "completed"
     node = service.get_record("commons_node", referee["review_assignment"]["node_id"], author)
     assert node["status"] == "refereed"
+
+
+async def test_joined_recruit_ends_after_return_result(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    brief = {"brief": "Look up the trace lemma in Mathlib.", "title": "Lookup", "hat": "librarian"}
+    returned = {
+        "evidence_status": "unverified",
+        "artifact_ids": [],
+        "unresolved_obligations": [],
+        "summary": "Matrix.trace_add is the lemma.",
+        "execution_failure": None,
+    }
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            return [tool_call("recruit", brief, "recruit-1")]
+        if phase == 1:
+            return [message("Root waits for its recruit.")]
+        return [message("Root done.")]
+
+    def recruit_steps(phase, outputs, prompt):
+        assert prompt["objective"].startswith("Look up")
+        if phase == 0:
+            return [tool_call("return_result", returned, "result-1")]
+        return [message("Recruit kept going after returning.")]
+
+    route, phases = scripted_society_route(root_steps, recruit_steps)
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["status"] == "completed"
+    assert phases == {"root": 3, "referee": 0, "recruit": 1}
+    (recruit,) = [
+        task
+        for task in service.list_records("task", author, exp["id"])
+        if task.get("reply_to_parent_task_id") == root["id"]
+    ]
+    assert recruit["status"] == "completed"
+    assert recruit["return_result"]["summary"] == "Matrix.trace_add is the lemma."
+    output = next(
+        item
+        for item in service.list_records("artifact", author, exp["id"])
+        if item["artifact_kind"] == "research_output"
+        and item["provenance"]["task_id"] == recruit["id"]
+    )
+    note = service.artifact_content(output["id"], author).decode()
+    assert note == "The recruit returned its result to its parent; its session ended."
+    parent = service.get_record("task", root["id"], author)
+    assert parent["status"] == "completed" and parent["continuation_count"] == 1
 
 
 async def test_synthesis_gate_opens_with_a_referee_lineage_present(lab, monkeypatch):

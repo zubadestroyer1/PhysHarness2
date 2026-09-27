@@ -59,6 +59,7 @@ from ..knowledge.literature import run_blocking as run_literature
 from ..memory import PortableMemory
 from ..verification.boundary import MAX_CANDIDATE_CHARACTERS
 from ..worker_authority import current_worker_effects
+from ..workforce import scope_statement_error
 from ..workforce_models import RecruitResearcherRequest
 from .computation import MAX_ARG_CHARS, MAX_ARGS, MAX_TIMEOUT_SECONDS, ComputationRunner
 from .lean_session import (
@@ -125,7 +126,7 @@ HATS = {
     "formalizer": "turn informal arguments into Lean statements and proofs",
     "referee": "check arguments and Lean statements for gaps",
     "experimenter": "run numerical experiments and simulations",
-    "librarian": "search the library and literature, and find duplicates",
+    "librarian": "look up library names, signatures and duplicates for this brief, then return",
     "synthesizer": "write review summaries of a region of the commons",
     "maintainer": "keep the commons graph tidy: links, duplicates, stale claims",
 }
@@ -555,7 +556,20 @@ def _referee_view(result, keep=(), *, items=False):
     return view
 
 
-def _recruit_objective(brief, focus, hat):
+# S1 audit #23: every recruit brief is scoped, so a recruit never takes on the whole target.
+SCOPE_JOINED = (
+    "Scope: this brief only. The target statement is context, not your assignment: do not "
+    "attempt, assemble or submit the whole target. When the brief is done or blocked, call "
+    "return_result with what you have; your session then ends."
+)
+SCOPE_DETACHED = (
+    "Scope: this brief only. The target statement is context, not your assignment: do not "
+    "attempt, assemble or submit the whole target. When the brief is done or blocked, post "
+    "what you have on your focus node and finish."
+)
+
+
+def _recruit_objective(brief, focus, hat, *, detached, scope=None):
     parts = [brief.strip()]
     if focus is not None:
         lines = [
@@ -574,6 +588,15 @@ def _recruit_objective(brief, focus, hat):
         parts.append("\n".join(lines))
     if hat is not None:
         parts.append(f"Suggested hat (optional; you may change it): {hat}, to {HATS[hat]}.")
+    parts.append(SCOPE_DETACHED if detached else SCOPE_JOINED)
+    if scope is not None:
+        id8 = scope["id"][:8]
+        parts.append(
+            f"Prove exactly theorem {scope['lean_name']} "
+            f"{scope['lean_statement'][:FOCUS_EXCERPT]} (node {id8}). Publish it with "
+            f"lean_check(node_id={id8}). Your task ends by itself once a complete source for "
+            "the node is recorded, by you or anyone; do not work beyond it."
+        )
     return "\n\n".join(parts)
 
 
@@ -1311,14 +1334,30 @@ def society_tools(
         focus = None
         if a["focus_node_id"] is not None:
             focus = service.read_node(a["focus_node_id"], agent)["node"]
+        if focus is not None and focus["node_type"] == "goal":
+            raise HarnessError(
+                "GOAL_NOT_CLAIMABLE",
+                "The goal cannot be a recruit's focus: it takes no work claims, since every "
+                "root works toward it.",
+                remediation="Focus the recruit on an approach or lemma node (motivated_by the "
+                "goal), or recruit without a focus node.",
+            )
         if focus is not None and focus["status"] in CLOSED_STATUSES:
             raise HarnessError("NODE_CLOSED", "A closed node cannot be a recruit's focus.")
+        if a["until_proved"]:
+            refusal = scope_statement_error(focus)
+            if refusal is not None:
+                raise refusal
+        scope = focus if a["until_proved"] else None
         request = RecruitResearcherRequest(
             parent_branch_id=branch_id,
             title=a["title"],
-            objective=_recruit_objective(a["brief"], focus, a["hat"]),
+            objective=_recruit_objective(
+                a["brief"], focus, a["hat"], detached=a["detached"], scope=scope
+            ),
             model_index=a["model_index"],
             detached=a["detached"],
+            scope_node_id=scope["id"] if scope is not None else None,
         )
         created = service.recruit_researcher(experiment_id, request, agent, k)
         branch, task = created["branch"], created["task"]
@@ -1366,16 +1405,23 @@ def society_tools(
                 "description": "false: your final response waits for this recruit; "
                 "true: independent work.",
             },
+            "until_proved": {
+                "type": "boolean",
+                "description": "End the recruit once the focus node has a complete published "
+                "source.",
+            },
         },
         recruit,
         "Recruit a colleague under the shared budget. The objective is your brief plus the "
         "focus node's header and an optional hat; the platform claims the focus node for "
-        "the new branch.",
+        "the new branch. Give one narrow deliverable (a named lemma with its Lean signature, "
+        "or a specific lookup); narrow recruits cost least.",
         defaults={
             "focus_node_id": None,
             "hat": None,
             "model_index": None,
             "detached": False,
+            "until_proved": False,
         },
     )
 

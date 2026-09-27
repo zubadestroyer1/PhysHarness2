@@ -306,6 +306,26 @@ tools, the prompts and the delivery shapes.
   `recruit`, `message`, `wait` or `submit_for_verification`. Its
   `lean_check` records no local compiles, and it posts questions, findings and
   objections only on the assigned node's thread.
+- **Recruits.** `recruit` takes one narrow deliverable (a named lemma with its Lean
+  signature, or a specific lookup), since in S1 broad recruits drifted into attempting the
+  whole target (S1 audit #23). The librarian hat looks up library names, signatures and
+  duplicates for one brief, then returns.
+  - Every recruit brief ends with a scope paragraph: the brief only; the target statement
+    is context, not the recruit's assignment, so it never attempts, assembles or submits
+    the whole target. When the brief is done or blocked, a joined recruit calls
+    `return_result` and a detached one posts what it has on its focus node and finishes.
+  - A joined recruit's session ends after `return_result`: at the next settled boundary
+    the platform completes its task (`result_returned`) without another model request,
+    and the parent's joined handoff proceeds.
+  - `until_proved=true` needs a focus node that is open and has an elaborated Lean
+    statement (`SCOPE_NEEDS_STATEMENT`, 422, otherwise). The brief then names the exact
+    theorem and the task records its scope (node, statement digest and module). The task
+    ends by itself (`scope_proved`) once the node has a `complete` or `verified` source of
+    that statement, published by the recruit or anyone else; a joined recruit then returns
+    that source to its parent as an unverified result. If the node closes first, the task
+    ends (`scope_closed`).
+  - The goal cannot be a recruit's focus (`GOAL_NOT_CLAIMABLE`), refused before any branch
+    or task is created.
 - **Workforce.** Society work is admitted by dollars, not task counts. A new task (a
   seeded root, a recruit, a delegated task, a synthesis or a referee) is admitted only if
   `max_cost − spent − reserved − admission_floor_usd ≥ minimum reservation`. Otherwise it

@@ -33,7 +33,8 @@ NORMS = [
     "another compiles.",
     "Post failures.",
     "Cite what you use.",
-    "Recruit when a piece can proceed independently.",
+    "Recruit for one narrow deliverable (a named lemma with its signature, or a lookup); "
+    "recruits end when they return.",
     "Ask for a referee before investing heavily in formalization.",
 ]
 WARNING = (
@@ -93,7 +94,7 @@ def test_referee_constitution_keeps_the_boundaries_without_a_playbook():
         assert "Only the independent verifier accepts proofs." in text
         # No playbook, and none of the builder norms.
         assert "playbook" not in text and "Submit." not in text
-        for builder_norm in ("Claim before", "Recruit when", "Ask for a referee"):
+        for builder_norm in ("Claim before", "Recruit for", "Ask for a referee"):
             assert builder_norm not in text
 
 

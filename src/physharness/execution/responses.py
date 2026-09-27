@@ -46,6 +46,10 @@ MAX_STAGNATION_SUGGESTIONS = 10
 MAX_STAGNATION_SUGGESTION_CHARS = 200
 # A provider rate-limit refusal waits at most this long per attempt before a resend.
 MAX_RATE_LIMIT_WAIT_SECONDS = 30.0
+# Boundary-hook reasons that complete a native session without a successor.
+COMPLETION_REASONS = frozenset(
+    {"target_verified", "result_returned", "scope_proved", "scope_closed"}
+)
 # P1: the input bound's safety margin is max(2,048 tokens, ceil(2% of the bound)).
 BOUND_MARGIN_FLOOR = 2_048
 BOUND_MARGIN_PERCENT = 2
@@ -1927,7 +1931,11 @@ class ResponsesRuntime:
         )
         if request is None:
             return None
-        if request == {"complete_reason": "target_verified"}:
+        if (
+            isinstance(request, dict)
+            and set(request) == {"complete_reason"}
+            and request["complete_reason"] in COMPLETION_REASONS
+        ):
             # All external effects from this response are settled. Complete the
             # native session without inventing a successor or another model call.
             state.pop("terminal_response_pending", None)
@@ -1938,7 +1946,7 @@ class ResponsesRuntime:
                 output_text=output_text,
                 artifacts=artifacts or [],
                 native_items=native.get("output", []),
-                completion_reason="target_verified",
+                completion_reason=request["complete_reason"],
             )
         if (
             not isinstance(request, dict)
