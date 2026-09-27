@@ -1614,8 +1614,15 @@ class ObjectStore:
 
 async def test_a_lone_surrogate_under_a_budget_keeps_the_lineage_sendable():
     # UTF-8 cannot encode a lone surrogate, so it keeps the escape legacy output uses.
+    # ToolDispatcher escapes its own results; this covers a dispatch override that does not.
     requests = []
     result = {"path": "notes/\ud800∀.md", "text": "x" * 30_000}
+    dispatcher = observe_dispatcher()
+
+    async def unscrubbed(name, arguments, operation_id):
+        return result
+
+    dispatcher.dispatch = unscrubbed
     client = sdk_client(
         [
             response([call_item("a")], "r1"),
@@ -1627,7 +1634,7 @@ async def test_a_lone_surrogate_under_a_budget_keeps_the_lineage_sendable():
     runtime = ResponsesRuntime(
         store=ObjectStore(),
         client=client,
-        dispatcher=observe_dispatcher(result),
+        dispatcher=dispatcher,
         context_budget=BUDGET,
     )
     await runtime.start(

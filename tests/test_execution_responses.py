@@ -120,6 +120,65 @@ async def test_real_sdk_tool_loop_preserves_items_usage_and_checkpoint(tmp_path)
     store.close()
 
 
+def echo_dispatcher(result):
+    dispatcher = ToolDispatcher()
+
+    async def echo(arguments, operation_id):
+        return result
+
+    dispatcher.register(
+        "echo",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        echo,
+    )
+    return dispatcher
+
+
+async def test_lone_surrogates_in_a_tool_result_are_escaped_so_the_session_saves(tmp_path):
+    requests = []
+    result = {
+        "out": "a\ud800b",
+        "nested": [{"k\udc00": "x"}],
+        "pair": ("ok", "\udfff"),
+        "clean": {"text": "∀"},
+    }
+    dispatcher = echo_dispatcher(result)
+    scrubbed = await dispatcher.dispatch("echo", {}, "operation")
+    assert scrubbed == {
+        "out": "a\\ud800b",
+        "nested": [{"k\\udc00": "x"}],
+        "pair": ["ok", "\\udfff"],
+        "clean": {"text": "∀"},
+    }
+    assert scrubbed["clean"] is result["clean"]  # an untouched branch is the same object
+    call = {
+        "id": "fc_1",
+        "type": "function_call",
+        "call_id": "call_1",
+        "name": "echo",
+        "arguments": "{}",
+        "status": "completed",
+    }
+    store = SQLiteRuntimeStore(tmp_path / "sessions.db")
+    client = client_for(
+        [response([call]), response([message("done")], response_id="resp_2")], requests
+    )
+    runtime = ResponsesRuntime(store=store, dispatcher=dispatcher, client=client)
+    run = await runtime.start("echo", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert run.output_text == "done"
+    creates = [p for url, p in requests if not url.endswith("/input_tokens")]
+    assert json.loads(creates[1]["input"][2]["output"]) == scrubbed
+    saved = await runtime.checkpoint(run.session.id)
+    assert saved.native_state["tool_results"][f"{run.session.id}:call_1"]["result"] == scrubbed
+    await client.close()
+    store.close()
+
+
+async def test_a_tool_result_without_lone_surrogates_is_returned_as_is():
+    result = {"text": "∀ ε > 0", "items": [{"k": "v", "n": 1}, None, True, 2.5]}
+    assert await echo_dispatcher(result).dispatch("echo", {}, "operation") is result
+
+
 async def test_token_preflight_prevents_generation(tmp_path):
     requests = []
     client = client_for([], requests)

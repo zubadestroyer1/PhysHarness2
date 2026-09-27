@@ -354,6 +354,29 @@ class _Sent:
     admission: Admission | None = None
 
 
+def _scrub_surrogates(value: Any) -> Any:
+    """``value`` with each string UTF-8 cannot encode (one holding a lone surrogate, which no
+    checkpoint store accepts) replaced by its backslash-escaped form. Dict keys are treated the
+    same. Anything that needs no change is returned as the same object."""
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return value.encode("utf-8", "backslashreplace").decode()
+        return value
+    if isinstance(value, dict):
+        items = [(_scrub_surrogates(k), _scrub_surrogates(v)) for k, v in value.items()]
+        changed = any(
+            k is not old_k or v is not old_v
+            for (k, v), (old_k, old_v) in zip(items, value.items(), strict=True)
+        )
+        return dict(items) if changed else value
+    if isinstance(value, (list, tuple)):  # both serialize as a JSON array
+        items = [_scrub_surrogates(item) for item in value]
+        return items if any(a is not b for a, b in zip(items, value, strict=True)) else value
+    return value
+
+
 class ToolDispatcher:
     """Only explicitly registered, schema-checked host functions are exposed.
 
@@ -416,6 +439,7 @@ class ToolDispatcher:
             result = await handler(arguments, operation_id)
             if not isinstance(result, dict):
                 raise ValueError("tool result must be a JSON object")
+            result = _scrub_surrogates(result)
             json.dumps(result, allow_nan=False)
             return result
         except ExecutionError:

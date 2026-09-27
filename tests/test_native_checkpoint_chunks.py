@@ -170,6 +170,24 @@ async def test_old_full_checkpoint_and_new_chunked_checkpoint_restore_exactly(na
 
 
 @pytest.mark.asyncio
+async def test_a_dispatched_tool_result_with_lone_surrogates_saves_and_loads(native_store):
+    from test_execution_responses import echo_dispatcher
+
+    _, _, _, _, store, session = native_store
+    dispatcher = echo_dispatcher({"out": "a\ud800b", "nested": [{"k\udc00": "x"}]})
+    result = await dispatcher.dispatch("echo", {}, "operation")
+    checkpoint = RuntimeCheckpoint.build(
+        session,
+        {
+            "tool_results": {f"{session.id}:call": {"identity": "i", "result": result}},
+            "settled_boundary": True,
+        },
+    )
+    await store.save(checkpoint)
+    assert await store.load(session.id) == checkpoint
+
+
+@pytest.mark.asyncio
 async def test_chunk_missing_or_tampered_fails_closed(native_store):
     service, actor, _, _, store, session = native_store
     await store.save(

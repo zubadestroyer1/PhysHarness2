@@ -266,7 +266,10 @@ without one. Under a budget:
 - **Literal Unicode (#5e).** Tool outputs are serialized with `ensure_ascii=False`, so non-ASCII
   text reaches the model as literal characters, not `\uXXXX` escapes. A lone surrogate is the
   exception: UTF-8 cannot encode it, and left literal it would make every later request of the
-  lineage fail, so it keeps the `\udXXX` escape that legacy output uses.
+  lineage fail, so it keeps the `\udXXX` escape that legacy output uses. In every experiment,
+  `ToolDispatcher.dispatch` also rewrites a lone surrogate in a tool result (keys included) as
+  that escape before the result is stored, so checkpoints always save, and returns a result that
+  has none unchanged.
 - **Output cap.** An output whose serialized text is longer than `max_output_chars` is replaced in
   the model's input by a view. The view is `{"truncated": true, "tool", "total_chars", "head",
   "recall": {"tool": "recall_output", "call_id", "next_offset"}}`, and its `head` holds the first
