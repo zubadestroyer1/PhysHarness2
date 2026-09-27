@@ -316,6 +316,12 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
   admits roots and joined children first and turns 429 waits into queueing
   (docs/EXECUTION.md, "Provider rate governance"). The Compose and Terraform workers do
   not forward the variable yet (docs/DEPLOYMENT.md).
+- Admission charges each request its input plus the `max_output_tokens` it sends, until
+  settlement refunds the unused output. The lower output cap recommended above therefore
+  also lets the governor admit more requests at once. A 429 cuts the rate by 20% at most
+  once per 30 s, and the rate recovers 5% of the limit every 10 s.
+- During the dev calibration, compare `provider_throttled.remaining_tokens` and
+  `limit_tokens` with the governor's `snapshot()` before any paid arm enables the governor.
 
 ### Prices
 

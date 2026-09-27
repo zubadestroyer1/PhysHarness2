@@ -1359,9 +1359,9 @@ async def test_a_counted_request_is_admitted_on_its_margin_inclusive_input(
     await runtime.start(
         "work",
         ModelConfig(model="exact-model", parameters=params),
-        RuntimeLimits(max_context_tokens=window, max_output_tokens=1_000, max_total_tokens=None),
+        RuntimeLimits(max_context_tokens=window, max_output_tokens=1_500, max_total_tokens=None),
     )
-    assert tokens == [admitted + 1_000]  # plus the output estimate's 1,000-token seed
+    assert tokens == [admitted + 1_500]  # plus the max_output_tokens sent
     await client.close()
 
 

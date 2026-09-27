@@ -63,7 +63,10 @@ a default replacement. E2B tools additionally require the key and an exact separ
 template ID. `PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` optionally governs the organisation's
 tokens-per-minute limit in each process that calls the provider (a worker or `run-team`). Set it
 to about 90% of the org limit divided by the number of those processes. Unset, requests are not
-governed (`docs/EXECUTION.md`, "Provider rate governance"). Neither the Compose worker
+governed (`docs/EXECUTION.md`, "Provider rate governance"). The governor charges each request its
+input plus the requested max output and cuts its rate at most once per 30 s. Validate that
+estimate in a dev calibration, against the provider's rate-limit headers, before a paid run
+enables it. Neither the Compose worker
 (`compose.yaml`) nor the Terraform ECS worker (`infra/terraform/aws/services.tf`) forwards it
 yet, since both list the worker's environment explicitly. Then start both application and worker
 profiles:

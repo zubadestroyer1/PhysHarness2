@@ -52,8 +52,6 @@ BOUND_MARGIN_PERCENT = 2
 # A create re-queued after a 429 must be re-admitted this long before the deadline, so that a
 # give-up while queued is still definitely "not sent".
 REQUEUE_MARGIN_SECONDS = 1.0
-# The per-session output estimate for TPM admission starts here, never at the output cap.
-OUTPUT_ESTIMATE_SEED = 1_000
 # Response fields a checkpoint keeps. The rest is the provider's echo of the request (tools,
 # instructions, settings): kept as a digest; the session record holds the tool digest.
 STORED_RESPONSE_FIELDS = frozenset(
@@ -552,8 +550,6 @@ class ResponsesRuntime:
             raise ExecutionError("INVALID_CONFIG", "Admission priority must be 0-3")
         self.token_governor = token_governor
         self.admission_priority = admission_priority
-        # Each running session's moving-average output, for the TPM admission estimate.
-        self._output_ema: dict[str, float] = {}
         self.context_budget = context_budget
         self._active: dict[str, asyncio.Task[Any]] = {}
         # Each running session's last saved checkpoint, handed to its hooks.
@@ -609,13 +605,6 @@ class ResponsesRuntime:
                 "runtime_telemetry_failed",
                 extra={"event_kind": kind, "session_id": session.id, "operation_id": operation_id},
             )
-
-    def _expected_output(self, session: RuntimeSession) -> int:
-        """Admission output estimate: a per-session moving average, never the cap."""
-        return min(
-            session.limits.max_output_tokens,
-            int(self._output_ema.get(session.id, OUTPUT_ESTIMATE_SEED)),
-        )
 
     def _release(self, admission: Admission | None) -> None:
         if admission is not None:
@@ -1191,7 +1180,6 @@ class ResponsesRuntime:
         finally:
             self._active.pop(session.id, None)
             self._saved.pop(session.id, None)
-            self._output_ema.pop(session.id, None)
             self._last_request.pop(session.id, None)
             self._unannounced.pop(session.id, None)
             self._elided.pop(session.id, None)
@@ -1302,8 +1290,6 @@ class ResponsesRuntime:
             if sent.admission is not None:
                 usage = response.usage
                 self.token_governor.settle(sent.admission, usage.input_tokens + usage.output_tokens)
-                ema = self._output_ema.get(session.id, OUTPUT_ESTIMATE_SEED)
-                self._output_ema[session.id] = 0.8 * ema + 0.2 * usage.output_tokens
             # Clear only after authoritative accounting succeeds. The checkpoint
             # retains the native response and correlation ID if settlement fails.
             state["pending_operation"] = None
@@ -1596,7 +1582,9 @@ class ResponsesRuntime:
         deadline: float,
     ) -> _Sent | RuntimeResult:
         """Mark the generation pending, announce its reservation and send it."""
-        admission, estimate = None, prepared.input_bound + self._expected_output(session)
+        # The provider counts the requested max output toward TPM, so the estimate does too;
+        # settlement refunds what the response did not use.
+        admission, estimate = None, prepared.input_bound + prepared.output_reservation
         if self.token_governor is not None:
             # Admission precedes the dollar reservation: a request waiting for its first admission
             # holds no dollar reservation, and a target verified while queued sends nothing. A
@@ -1649,16 +1637,20 @@ class ResponsesRuntime:
         waits: list[float] = []
 
         async def requeue() -> None:
-            # Re-queue behind the global pause instead of a private sleep, so waiting requests
-            # resume in priority order rather than all at once.
+            # Re-queue behind the global pause instead of a private sleep, so the request waits in
+            # the priority queue with every other one, keeping the age it has built up.
             nonlocal admission
+            enqueued = admission.enqueued
             self._release(admission)
             admission = None
             budget = deadline - asyncio.get_running_loop().time() - REQUEUE_MARGIN_SECONDS
             try:
                 admission = await asyncio.wait_for(
                     self.token_governor.admit(
-                        key=session.id, tokens=estimate, priority=self.admission_priority
+                        key=session.id,
+                        tokens=estimate,
+                        priority=self.admission_priority,
+                        enqueued=enqueued,
                     ),
                     timeout=max(budget, 0.0),
                 )

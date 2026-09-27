@@ -58,7 +58,8 @@ async def test_throttle_pauses_and_cuts_rate_and_cancelled_waiters_leave():
     governor = TokenRateGovernor(tokens_per_minute=60_000, burst_tokens=1_000)
     governor.throttled(0.3)
     assert (await governor.admit(key="a", tokens=10, priority=0)).waited_seconds >= 0.29
-    assert 47_900 <= governor.snapshot()["effective_tokens_per_minute"] <= 48_100
+    # Cut to 48,000, then recovering at 300 per second of the wait.
+    assert 48_000 <= governor.snapshot()["effective_tokens_per_minute"] <= 48_300
     slow = TokenRateGovernor(tokens_per_minute=60, burst_tokens=100)
     await slow.admit(key="drain", tokens=100, priority=0)
     waiter = asyncio.create_task(slow.admit(key="b", tokens=50, priority=0))
@@ -78,10 +79,16 @@ def test_settings_read_the_process_token_rate(tmp_path, monkeypatch):
         Settings(auth_file=tmp_path / "none.json")
 
 
-async def test_a_burst_of_429s_cuts_the_rate_once_per_pause(monkeypatch):
-    clock = [100.0]
-    governor = TokenRateGovernor(tokens_per_minute=1_800_000)
+def fake_clock(monkeypatch, governor, start=0.0):
+    """Drive ``governor`` from a clock the test advances by hand."""
+    clock = [start]
     monkeypatch.setattr(governor, "_now", lambda: clock[0])
+    return clock
+
+
+async def test_429s_inside_the_cooldown_cause_no_extra_cut(monkeypatch):
+    governor = TokenRateGovernor(tokens_per_minute=1_800_000)
+    clock = fake_clock(monkeypatch, governor, start=100.0)
     for wait in [2.0] * 8 + [5.0] + [2.0] * 7:  # 16 creates refused together
         governor.throttled(wait)
     snapshot = governor.snapshot()
@@ -90,8 +97,68 @@ async def test_a_burst_of_429s_cuts_the_rate_once_per_pause(monkeypatch):
     clock[0] = 103.0  # inside the pause: a longer wait extends it, with no second cut
     governor.throttled(4.0)
     snapshot = governor.snapshot()
-    # 3 s of recovery at 5% of the limit per minute: 1,440,000 + 4,500.
-    assert (snapshot["effective_tokens_per_minute"], snapshot["paused_seconds"]) == (1_444_500, 4.0)
-    clock[0] = 107.0  # the pause has ended: a new 429 is a new event and cuts again
+    # Recovery is 5% of the limit per 10 s: 3 s adds 27,000.
+    assert (snapshot["effective_tokens_per_minute"], snapshot["paused_seconds"]) == (1_467_000, 4.0)
+    clock[0] = 120.0  # the pause is over but the cooldown is not: the 429 only pauses
     governor.throttled(1.0)
-    assert governor.snapshot()["effective_tokens_per_minute"] == round((1_440_000 + 10_500) * 0.8)
+    snapshot = governor.snapshot()
+    assert (snapshot["effective_tokens_per_minute"], snapshot["paused_seconds"]) == (1_620_000, 1.0)
+    clock[0] = 130.0  # 30 s after the cut: a new 429 cuts again
+    governor.throttled(1.0)
+    assert governor.snapshot()["effective_tokens_per_minute"] == round(1_710_000 * 0.8)
+
+
+async def test_one_isolated_429_a_minute_keeps_at_least_70_percent_of_the_limit(monkeypatch):
+    limit = 1_800_000
+    governor = TokenRateGovernor(tokens_per_minute=limit)
+    clock = fake_clock(monkeypatch, governor)
+    rates = []
+    for second in range(30 * 60):
+        clock[0] = float(second)
+        if second % 60 == 30:
+            governor.throttled(1.0)  # one isolated refusal a minute, as from unseen traffic
+        rates.append(governor.snapshot()["effective_tokens_per_minute"])
+    # Each cut takes 20% and has recovered before the next, so the rate cannot ratchet down.
+    assert min(rates) >= 0.7 * limit
+
+
+async def test_one_cut_recovers_to_the_full_rate_within_a_minute(monkeypatch):
+    governor = TokenRateGovernor(tokens_per_minute=1_800_000)
+    clock = fake_clock(monkeypatch, governor)
+    governor.throttled(0.5)
+    rates = {}
+    for second in (0, 20, 40, 60):
+        clock[0] = float(second)
+        rates[second] = governor.snapshot()["effective_tokens_per_minute"]
+    assert rates == {0: 1_440_000, 20: 1_620_000, 40: 1_800_000, 60: 1_800_000}
+
+
+async def test_the_default_burst_is_fifteen_seconds_of_tokens():
+    assert TokenRateGovernor(tokens_per_minute=1_800_000).snapshot()["level"] == 450_000
+
+
+@pytest.mark.parametrize(("hint", "first"), [(True, "requeued"), (False, "fresh")])
+async def test_a_requeued_request_keeps_its_queue_age(monkeypatch, hint, first):
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=1_000)  # a class per 30 s
+    fake_clock(monkeypatch, governor, start=1_000.0)
+    drain = await governor.admit(key="drain", tokens=1_000, priority=0)
+    order = []
+
+    async def request(name, priority, **kwargs):
+        await governor.admit(key=name, tokens=1_000, priority=priority, **kwargs)
+        order.append(name)
+
+    # A priority-1 create that first queued 60 s ago has aged two classes, so it outranks a new
+    # priority-0 request, but only if the re-queue keeps its original queue time.
+    queued = asyncio.create_task(request("requeued", 1, **({"enqueued": 940.0} if hint else {})))
+    fresh = asyncio.create_task(request("fresh", 0))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    governor.release(drain)  # room for exactly one of them
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert order == [first]
+    for task in (queued, fresh):
+        task.cancel()
+    await asyncio.gather(queued, fresh, return_exceptions=True)
+    assert governor.snapshot()["waiting"] == 0

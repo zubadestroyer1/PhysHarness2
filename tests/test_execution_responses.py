@@ -770,12 +770,13 @@ async def test_rate_limited_count_is_announced_but_not_totalled(tmp_path):
 
 
 async def test_rate_limits_pause_the_governor_and_only_a_create_requeues(tmp_path):
-    calls, requests, events = [], [], []
+    calls, requests, events, admitted = [], [], [], []
 
     class Counting(TokenRateGovernor):
         async def admit(self, **kwargs):
             calls.append("admit")
-            return await super().admit(**kwargs)
+            admitted.append((kwargs, await super().admit(**kwargs)))
+            return admitted[-1][1]
 
         def release(self, admission):
             calls.append("release")
@@ -823,7 +824,54 @@ async def test_rate_limits_pause_the_governor_and_only_a_create_requeues(tmp_pat
     started = next(e for e in events if e.kind == "generation_started")
     assert started.payload["admission_wait_seconds"] >= 0
     assert len({ident for url, ident in requests if not url.endswith("/input_tokens")}) == 1
-    assert governor.snapshot()["level"] >= 999_985  # settled at the 15 tokens used
+    # The re-queue keeps the create's original queue time, so it keeps its age.
+    assert admitted[1][0]["enqueued"] == admitted[0][1].enqueued
+    # A full default bucket holds 15 s of tokens; settled at the 15 tokens used.
+    assert governor.snapshot()["level"] >= 249_985
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    ("max_total_tokens", "counted", "sent"),
+    [
+        (None, [True, False], [3_000, 3_000]),  # the second request is admitted on the P1 bound
+        (2_000, [True, True], [1_990, 1_975]),  # near the guard: counted, output cut to fit
+    ],
+)
+async def test_admission_is_the_input_bound_plus_the_output_sent(
+    tmp_path, max_total_tokens, counted, sent
+):
+    admitted, started, requests = [], [], []
+
+    class Recording(TokenRateGovernor):
+        async def admit(self, **kwargs):
+            admitted.append(kwargs["tokens"])
+            return await super().admit(**kwargs)
+
+    async def emit(event):
+        if event.kind == "generation_started":
+            started.append(event.payload)
+
+    client = client_for(
+        [response([double_call()]), response([message("4")], response_id="resp_2")], requests
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        dispatcher=double_dispatcher(),
+        client=client,
+        event_sink=emit,
+        token_governor=Recording(tokens_per_minute=1_000_000),
+    )
+    limits = RuntimeLimits(max_output_tokens=3_000, max_total_tokens=max_total_tokens)
+    await runtime.start("compute", ModelConfig(model="exact-model"), limits)
+    # The provider charges the requested max output against TPM, so admission takes the
+    # max_output_tokens each create actually sent, not an average of past outputs.
+    assert [p["max_output_tokens"] for u, p in requests if u.endswith("/responses")] == sent
+    assert [s["input_tokens_counted"] for s in started] == counted
+    # Without context_management the reserved input is the input bound.
+    assert admitted == [
+        s["input_tokens_reserved"] + out for s, out in zip(started, sent, strict=True)
+    ]
     await client.close()
 
 
@@ -837,7 +885,7 @@ async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
         [(429, refusal("rate_limit_exceeded"), {"retry-after": "1.1"})], []
     )
     # A slow bucket that holds the whole estimate: within the test only a release refills it.
-    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=2_000)
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=5_000)
     store = SQLiteRuntimeStore(tmp_path / "s.db")
     runtime = ResponsesRuntime(store=store, client=client, event_sink=emit, token_governor=governor)
     with pytest.raises(ExecutionError) as error:
@@ -852,7 +900,7 @@ async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
         None,
     )
     assert events == ["generation_started", "provider_throttled", "generation_aborted"]
-    assert governor.snapshot()["level"] == 2_000
+    assert governor.snapshot()["level"] == 5_000
     await client.close()
 
 
@@ -875,7 +923,7 @@ async def test_a_400_after_a_rate_limit_wait_aborts_once_as_request_invalid(tmp_
         [(429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"}), (400, invalid, {})], []
     )
     # A slow bucket that holds the whole estimate: within the test only a release refills it.
-    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=2_000) if governed else None
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=5_000) if governed else None
     store = SQLiteRuntimeStore(tmp_path / "s.db")
     runtime = ResponsesRuntime(store=store, client=client, event_sink=emit, token_governor=governor)
     with pytest.raises(ExecutionError) as error:
@@ -893,7 +941,7 @@ async def test_a_400_after_a_rate_limit_wait_aborts_once_as_request_invalid(tmp_
     assert (checkpoint.session.status, state["pending_operation"]) == ("failed", None)
     assert state["preflight_error"]["stage"] == "create"
     if governed:
-        assert governor.snapshot()["level"] == 2_000  # the re-admitted estimate came back
+        assert governor.snapshot()["level"] == 5_000  # the re-admitted estimate came back
     await client.close()
 
 
@@ -920,7 +968,7 @@ async def test_immediate_rate_limit_give_up_still_pauses_the_governor(tmp_path, 
         counts=[hopeless] if refused == "count" else [],
     )
     # A slow bucket that holds the whole estimate: within the test only a release refills it.
-    governor = Recording(tokens_per_minute=60, burst_tokens=2_000)
+    governor = Recording(tokens_per_minute=60, burst_tokens=5_000)
     runtime = ResponsesRuntime(
         store=SQLiteRuntimeStore(tmp_path / "s.db"),
         client=client,
@@ -934,7 +982,7 @@ async def test_immediate_rate_limit_give_up_still_pauses_the_governor(tmp_path, 
     # refusal still pauses and cuts the governor, before main's abandon (emit, then clear).
     assert error.value.code == "PROVIDER_RATE_LIMITED"
     assert 19 < snapshot["paused_seconds"] <= 20 and snapshot["effective_tokens_per_minute"] == 48
-    assert snapshot["level"] == 2_000
+    assert snapshot["level"] == 5_000
     assert order == (
         ["generation_started", "throttled", "generation_aborted", "release"]
         if refused == "create"
@@ -1490,17 +1538,16 @@ async def test_per_session_caches_are_dropped_when_a_run_ends(tmp_path):
         return [
             runtime._active,
             runtime._saved,
-            runtime._output_ema,
             runtime._last_request,
             runtime._unannounced,
             runtime._elided,
         ]
 
     first = await runtime.start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
-    assert caches() == [{}] * 6
+    assert caches() == [{}] * 5
     with pytest.raises(ExecutionError):  # the provider has no reply left
         await runtime.continue_session(first.session.id, "again")
-    assert caches() == [{}] * 6
+    assert caches() == [{}] * 5
     await client.close()
 
 
