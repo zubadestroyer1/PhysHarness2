@@ -545,3 +545,39 @@ async def test_worker_settles_cached_input_at_the_cached_rate(lab):
     assert ledger["spent_cost_usd"] == "0.000013"  # (2·1 + 8·0.1 + 5·2)/1e6, rounded up
     assert (ledger["tokens_spent"], ledger["tokens_reserved"]) == (15, 0)
     assert all(p["cached_input_usd_per_million"] == "0.1" for p in price_provenance(service, actor))
+
+
+class KeywordRuntime:
+    """Accepts every runtime keyword, records them, and completes without a model call."""
+
+    seen: dict = {}
+
+    def __init__(self, **kwargs):
+        KeywordRuntime.seen = kwargs
+        self.store = kwargs["store"]
+
+    async def start(self, prompt, model, limits):
+        from physharness.execution import RuntimeCheckpoint, RuntimeResult, RuntimeSession
+
+        session = RuntimeSession(runtime="responses", model=model, limits=limits)
+        await self.store.save(RuntimeCheckpoint.build(session, {"source": "keyword fixture"}))
+        session.status = "completed"
+        await self.store.save(RuntimeCheckpoint.build(session, {"result": "Unresolved"}))
+        return RuntimeResult(
+            session=session, output_text="No proof; remaining assumptions need review."
+        )
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_shared_governor_and_role_priority(lab):
+    from physharness.execution.admission import TokenRateGovernor
+    from physharness.orchestration.research_worker import ResearchTaskExecutor
+
+    service, actor, _, task = started_task(lab)
+    governor = TokenRateGovernor(tokens_per_minute=1_000_000)
+    executor = ResearchTaskExecutor(
+        service, prices=PRICES, runtime_factory=KeywordRuntime, token_governor=governor
+    )
+    assert (await executor.execute(task["id"], actor.project_id))["status"] == "completed"
+    assert KeywordRuntime.seen["token_governor"] is governor
+    assert KeywordRuntime.seen["admission_priority"] == 0  # a root is on the critical path

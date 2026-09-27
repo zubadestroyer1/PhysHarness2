@@ -30,6 +30,7 @@ def prepared(lab, tmp_path, monkeypatch):
             }
         },
         worker_workspace=None,
+        provider_tokens_per_minute=None,
     )
     monkeypatch.setattr(cli, "local_authority", lambda *roles: (settings, service, operator))
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)

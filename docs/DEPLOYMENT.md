@@ -57,7 +57,12 @@ Development endpoints bind only loopback:
 To enable real research deliberately, add `OPENAI_API_KEY` and a reviewed exact-model
 `PHYSHARNESS_MODEL_PRICES` JSON object to the private environment. Experiment records select the
 model; the worker never chooses a default replacement. E2B tools additionally require the key and
-an exact separately qualified template ID. Then start both application and worker profiles:
+an exact separately qualified template ID. `PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` optionally
+governs the organisation's tokens-per-minute limit in each process that calls the provider (a
+worker or `run-team`). Set it to about 90% of the org limit divided by the number of those
+processes. Unset, requests are not governed (`docs/EXECUTION.md`, "Provider rate governance").
+Compose does not forward it to the worker container yet. Then start both application and worker
+profiles:
 
 ```sh
 docker-compose --env-file .env --profile app --profile worker up --build -d

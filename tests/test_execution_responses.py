@@ -16,6 +16,7 @@ from physharness.execution import (
     SQLiteRuntimeStore,
     ToolDispatcher,
 )
+from physharness.execution.admission import TokenRateGovernor
 from physharness.execution.responses import STORED_RESPONSE_FIELDS
 from physharness.execution.stagnation import observe as observe_stagnation
 
@@ -667,6 +668,116 @@ async def test_rate_limited_count_is_announced_but_not_totalled(tmp_path):
     ]
     usage = next(e for e in events if e.kind == "usage").payload
     assert (usage["rate_limit_waits"], usage["rate_limit_wait_seconds"]) == (0, 0.0)
+    await client.close()
+
+
+async def test_rate_limits_pause_the_governor_and_only_a_create_requeues(tmp_path):
+    calls, requests, events = [], [], []
+
+    class Counting(TokenRateGovernor):
+        async def admit(self, **kwargs):
+            calls.append("admit")
+            return await super().admit(**kwargs)
+
+        def release(self, admission):
+            calls.append("release")
+            super().release(admission)
+
+        def throttled(self, wait_seconds):
+            calls.append("throttled")
+            super().throttled(wait_seconds)
+
+        def settle(self, admission, actual_tokens):
+            calls.append("settle")
+            super().settle(admission, actual_tokens)
+
+    async def emit(event):
+        if event.kind == "generation_started":
+            calls.append(event.kind)
+        events.append(event)
+
+    client = rate_limited_client(
+        [
+            (429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"}),
+            (200, response([message("done")]), {}),
+        ],
+        requests,
+        counts=[(429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"})],
+    )
+    governor = Counting(tokens_per_minute=1_000_000)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        client=client,
+        event_sink=emit,
+        token_governor=governor,
+    )
+    await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    # F10: the count's 429 only pauses admission; the create's pauses, releases and re-admits.
+    assert calls == [
+        "throttled",
+        "admit",
+        "generation_started",
+        "throttled",
+        "release",
+        "admit",
+        "settle",
+    ]
+    started = next(e for e in events if e.kind == "generation_started")
+    assert started.payload["admission_wait_seconds"] >= 0
+    assert len({ident for url, ident in requests if not url.endswith("/input_tokens")}) == 1
+    assert governor.snapshot()["level"] >= 999_985  # settled at the 15 tokens used
+    await client.close()
+
+
+async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
+    events = []
+
+    async def emit(event):
+        events.append(event.kind)
+
+    client = rate_limited_client(
+        [(429, refusal("rate_limit_exceeded"), {"retry-after": "1.5"})], []
+    )
+    governor = TokenRateGovernor(tokens_per_minute=1_000_000)
+    store = SQLiteRuntimeStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, client=client, event_sink=emit, token_governor=governor)
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=2))
+    (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
+    checkpoint = await runtime.checkpoint(session_id)
+    # The 1.5 s pause outlasts the re-admission budget (deadline - 1 s): the give-up runs
+    # main's _abandon_refused (emit, then clear) and every admitted token comes back.
+    assert error.value.code == "PROVIDER_RATE_LIMITED" and error.value.retryable
+    assert (checkpoint.session.status, checkpoint.native_state["pending_operation"]) == (
+        "failed",
+        None,
+    )
+    assert events == ["generation_started", "provider_throttled", "generation_aborted"]
+    assert governor.snapshot()["level"] == 1_000_000
+    await client.close()
+
+
+async def test_verified_target_during_admission_wait_sends_nothing(tmp_path):
+    requests, checks = [], []
+    governor = TokenRateGovernor(tokens_per_minute=60_000, burst_tokens=100)
+    await governor.admit(key="other", tokens=100, priority=0)
+
+    async def guard():
+        checks.append(True)
+        return len(checks) >= 2  # verified by the time admission is granted
+
+    client = client_for([], requests)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        client=client,
+        pre_generation_guard=guard,
+        token_governor=governor,
+        admission_priority=0,
+    )
+    result = await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert result.completion_reason == "target_verified"
+    assert not [u for u, _ in requests if u.endswith("/responses")]
+    assert governor.snapshot()["waiting"] == 0
     await client.close()
 
 

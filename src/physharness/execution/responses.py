@@ -17,6 +17,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from ..domain import canonical_json
+from .admission import Admission, TokenRateGovernor
 from .context_policy import CONTEXT_MARGIN
 from .parameters import validate_responses_parameters
 from .stagnation import observe as observe_stagnation
@@ -48,6 +49,11 @@ MAX_RATE_LIMIT_WAIT_SECONDS = 30.0
 # P1: the input bound's safety margin is max(2,048 tokens, ceil(2% of the bound)).
 BOUND_MARGIN_FLOOR = 2_048
 BOUND_MARGIN_PERCENT = 2
+# A create re-queued after a 429 must be re-admitted this long before the deadline, so that a
+# give-up while queued is still definitely "not sent".
+REQUEUE_MARGIN_SECONDS = 1.0
+# The per-session output estimate for TPM admission starts here, never at the output cap.
+OUTPUT_ESTIMATE_SEED = 1_000
 # Response fields a checkpoint keeps. The rest is the provider's echo of the request (tools,
 # instructions, settings): kept as a digest; the session record holds the tool digest.
 STORED_RESPONSE_FIELDS = frozenset(
@@ -280,6 +286,7 @@ class _Sent:
     operation_id: str
     rate_limit_waits: int = 0
     rate_limit_wait_seconds: float = 0.0
+    admission: Admission | None = None
 
 
 class ToolDispatcher:
@@ -383,6 +390,8 @@ class ResponsesRuntime:
         update_ack: Callable[[str], Awaitable[None]] | None = None,
         turn_note: Callable[[int], Awaitable[str | None]] | None = None,
         stagnation_suggestions: list[str] | None = None,
+        token_governor: TokenRateGovernor | None = None,
+        admission_priority: int = 1,
     ):
         self.store = store
         self.dispatcher = dispatcher or ToolDispatcher()
@@ -414,6 +423,12 @@ class ResponsesRuntime:
             self.stagnation_state = successor_state(stagnation_state or {})
         except ValueError:
             raise ExecutionError("INVALID_CONFIG", "Invalid durable stagnation state") from None
+        if not (type(admission_priority) is int and 0 <= admission_priority <= 3):
+            raise ExecutionError("INVALID_CONFIG", "Admission priority must be 0-3")
+        self.token_governor = token_governor
+        self.admission_priority = admission_priority
+        # Each session's moving-average output, for the TPM admission estimate.
+        self._output_ema: dict[str, float] = {}
         self._active: dict[str, asyncio.Task[Any]] = {}
         self._saved: dict[str, RuntimeCheckpoint] = {}
         # Each running session's previous request, for the P1 input bound; never persisted.
@@ -466,11 +481,26 @@ class ResponsesRuntime:
                 extra={"event_kind": kind, "session_id": session.id, "operation_id": operation_id},
             )
 
+    def _expected_output(self, session: RuntimeSession) -> int:
+        """Admission output estimate: a per-session moving average, never the cap."""
+        return min(
+            session.limits.max_output_tokens,
+            int(self._output_ema.get(session.id, OUTPUT_ESTIMATE_SEED)),
+        )
+
+    def _release(self, admission: Admission | None) -> None:
+        if admission is not None:
+            self.token_governor.release(admission)
+
     def _throttle_hook(
-        self, session: RuntimeSession, operation_id: str | None, waits: list[float]
+        self,
+        session: RuntimeSession,
+        operation_id: str | None,
+        waits: list[float],
+        requeue: Callable[[], Awaitable[None]] | None = None,
     ) -> Callable[[int, float, str, Exception], Awaitable[None]]:
         """The on_wait hook of one provider call: record and announce each rate-limit wait,
-        then wait it out."""
+        then wait it out, or re-queue behind the governor's pause when given ``requeue``."""
 
         async def on_wait(attempt: int, wait: float, source: str, error: Exception) -> None:
             waits.append(wait)
@@ -483,7 +513,11 @@ class ResponsesRuntime:
                 wait_source=source,
                 **_rate_limit_headers(error),
             )
-            await asyncio.sleep(wait)
+            if self.token_governor is not None:
+                self.token_governor.throttled(wait)  # every 429 pauses admission (R5, F10)
+            # Only a create holds an admission, so only a create re-queues; a count 429 just
+            # waits out the pause.
+            await (requeue() if requeue is not None else asyncio.sleep(wait))
 
         return on_wait
 
@@ -1055,6 +1089,11 @@ class ResponsesRuntime:
                 rate_limit_waits=sent.rate_limit_waits,
                 rate_limit_wait_seconds=sent.rate_limit_wait_seconds,
             )
+            if sent.admission is not None:
+                usage = response.usage
+                self.token_governor.settle(sent.admission, usage.input_tokens + usage.output_tokens)
+                ema = self._output_ema.get(session.id, OUTPUT_ESTIMATE_SEED)
+                self._output_ema[session.id] = 0.8 * ema + 0.2 * usage.output_tokens
             # Clear only after authoritative accounting succeeds. The checkpoint
             # retains the native response and correlation ID if settlement fails.
             state["pending_operation"] = None
@@ -1340,13 +1379,22 @@ class ResponsesRuntime:
         deadline: float,
     ) -> _Sent | RuntimeResult:
         """Mark the generation pending, announce its reservation and send it."""
+        admission, estimate = None, prepared.input_tokens + self._expected_output(session)
+        if self.token_governor is not None:
+            # Admission precedes the dollar reservation: a queued request holds no money, and a
+            # target verified while queued sends nothing.
+            admission = await self.token_governor.admit(
+                key=session.id, tokens=estimate, priority=self.admission_priority
+            )
         if self.pre_generation_guard is not None and await self.pre_generation_guard():
+            self._release(admission)
             return await self._complete_verified(session, state)
         operation_id = identifier()
         state["pending_operation"] = operation_id
         await self._save(session, state)
         if asyncio.get_running_loop().time() >= deadline:
             state["pending_operation"] = None
+            self._release(admission)
             raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
         try:
             await self._emit(
@@ -1358,22 +1406,54 @@ class ResponsesRuntime:
                 output_tokens_reserved=prepared.output_reservation,
                 input_tokens_estimate=prepared.input_tokens,
                 input_tokens_counted=prepared.counted,
+                **(
+                    {"admission_wait_seconds": round(admission.waited_seconds, 3)}
+                    if admission
+                    else {}
+                ),
             )
         except BaseException:
             # The provider request has not been sent. A reservation hook
             # owns any local compensation; do not mark remote work uncertain.
             state["pending_operation"] = None
+            self._release(admission)
             await self._save(session, state)
             raise
         if asyncio.get_running_loop().time() >= deadline:
             # asyncio.timeout cannot interrupt synchronous event persistence.
             # The request has not been sent, so release its reservation at zero.
             state["pending_operation"] = None
+            self._release(admission)
             await self._emit("generation_aborted", session, operation_id, reason="timeout")
             raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
         # A rate-limit refusal did no work, so the same operation and reservation
         # are resent; giving up releases the reservation at zero instead.
         waits: list[float] = []
+
+        async def requeue() -> None:
+            # Re-queue behind the global pause instead of a private sleep, so waiting requests
+            # resume in priority order rather than all at once.
+            nonlocal admission
+            self._release(admission)
+            admission = None
+            budget = deadline - asyncio.get_running_loop().time() - REQUEUE_MARGIN_SECONDS
+            try:
+                admission = await asyncio.wait_for(
+                    self.token_governor.admit(
+                        key=session.id, tokens=estimate, priority=self.admission_priority
+                    ),
+                    timeout=max(budget, 0.0),
+                )
+            except TimeoutError:
+                # Raised inside _resend_rate_limited's wait guard, so its abandon runs
+                # _abandon_refused first: generation_aborted, then the marker clears.
+                raise ExecutionError(
+                    "PROVIDER_RATE_LIMITED",
+                    "Provider rate limit outlasted the runtime deadline",
+                    operation_id=operation_id,
+                    retryable=True,
+                ) from None
+
         try:
             response = await _resend_rate_limited(
                 partial(
@@ -1391,9 +1471,16 @@ class ResponsesRuntime:
                 deadline,
                 operation_id=operation_id,
                 abandon=partial(self._abandon_refused, session, state, operation_id),
-                on_wait=self._throttle_hook(session, operation_id, waits),
+                on_wait=self._throttle_hook(
+                    session,
+                    operation_id,
+                    waits,
+                    requeue if self.token_governor is not None else None,
+                ),
             )
         except Exception as error:
+            if isinstance(error, ExecutionError) and error.code == "PROVIDER_RATE_LIMITED":
+                self._release(admission)  # the rate-limit give-up: nothing is in flight
             # A 400 means the provider refused the request before generating anything.
             if getattr(error, "status_code", None) != 400:
                 raise
@@ -1404,6 +1491,7 @@ class ResponsesRuntime:
                 "provider_code": provider_code,
                 "provider_param": provider_param,
             }
+            self._release(admission)
             # Emit, then clear, as for a rate-limit give-up: a failed release stays uncertain.
             await self._abandon_refused(session, state, operation_id, reason="request_invalid")
             raise ExecutionError(
@@ -1416,6 +1504,7 @@ class ResponsesRuntime:
             operation_id=operation_id,
             rate_limit_waits=len(waits),
             rate_limit_wait_seconds=round(sum(waits), 3),
+            admission=admission,
         )
 
     async def _run_calls(

@@ -464,6 +464,13 @@ def _task_contract(task, branch):
     }
 
 
+def _admission_priority(task, branch):
+    """TPM admission class: roots and children a parent waits on first, then referees."""
+    if is_referee_task(task):
+        return 1
+    return 0 if _task_contract(task, branch)["kind"] in {"root", "joined_child"} else 2
+
+
 def _peer_routing(directory, sharing, own_branch_id):
     return {
         "recipient_id_kind": "branch_id",
@@ -956,7 +963,14 @@ def research_tools(service, agent, branch_id, *, task_context=None, workspace_to
 
 class ResearchTaskExecutor:
     def __init__(
-        self, service, *, prices: dict, runtime_factory=None, limits=None, workspace_factory=None
+        self,
+        service,
+        *,
+        prices: dict,
+        runtime_factory=None,
+        limits=None,
+        workspace_factory=None,
+        token_governor=None,
     ):
         self.service = service
         self.prices = {name: ModelPrice.model_validate(price) for name, price in prices.items()}
@@ -964,6 +978,8 @@ class ResearchTaskExecutor:
         self.live_runtime = runtime_factory is None or runtime_factory is ResponsesRuntime
         self.limits = limits or RuntimeLimits()
         self.workspace_factory = workspace_factory
+        # One process-wide TPM governor shared by every runtime, or None (R5, off by default).
+        self.token_governor = token_governor
 
     def _masked_reference(self, society, actor):
         """The benchmark screen's reference text, read only from the operator-configured id.
@@ -1742,6 +1758,7 @@ class ResearchTaskExecutor:
                 event_sink=accounting,
             )
             parameters = inspect.signature(self.runtime_factory).parameters
+            accepts_any = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
             if stop_on_verified_target and (
                 "pre_generation_guard" in parameters
                 or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
@@ -1773,10 +1790,10 @@ class ResearchTaskExecutor:
                 )
                 runtime_kwargs["update_source"] = update_source
                 runtime_kwargs["update_ack"] = update_ack
+            if self.token_governor is not None and ("token_governor" in parameters or accepts_any):
+                runtime_kwargs["token_governor"] = self.token_governor
+                runtime_kwargs["admission_priority"] = _admission_priority(task, branch)
             if society:
-                accepts_any = any(
-                    p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
-                )
                 scaffolding = society["scaffolding"]
                 every = scaffolding["checkin_every_turns"]
                 if every and ("turn_note" in parameters or accepts_any):

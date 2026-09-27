@@ -201,6 +201,7 @@ def run_team_command(
     """Launch a finite live team on durable records after explicit operator preflight."""
     import asyncio
 
+    from .execution.admission import TokenRateGovernor
     from .orchestration.research_worker import (
         ResearchTaskExecutor,
         ResearchTeamRunner,
@@ -239,7 +240,12 @@ def run_team_command(
             timeout_seconds=timeout_seconds,
         )
         executor = ResearchTaskExecutor(
-            service, prices=settings.model_prices, workspace_factory=factory
+            service,
+            prices=settings.model_prices,
+            workspace_factory=factory,
+            token_governor=TokenRateGovernor(tokens_per_minute=settings.provider_tokens_per_minute)
+            if settings.provider_tokens_per_minute
+            else None,
         )
         action = {"created": "start", "paused": "resume", "blocked": "resume"}.get(
             experiment["status"]

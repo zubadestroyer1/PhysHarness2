@@ -348,6 +348,8 @@ Useful concurrency is bounded by the smallest of:
 
 Size each plane from measured per-agent demand in the 8–32 agent runs. VM count alone is not a capacity measure.
 
+Hosted rate limits are held today by a per-process client-side TPM governor (`PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE`); cross-process governance belongs to the model router (§6.1).
+
 ---
 
 ## 7. Execution order (milestones)

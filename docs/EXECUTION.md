@@ -206,6 +206,37 @@ budget persists across `continue_session`.
 lineage's cumulative usage, so the budget also persists across a task's continuations.
 `interrupt` cancels the active local coroutine; provider completion/billing may remain uncertain.
 
+### Provider rate governance
+
+`PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` (`Settings.provider_tokens_per_minute`) enables one
+`TokenRateGovernor` (`execution/admission.py`) per process. The worker and `run-team` share it
+across every runtime on the process's event loop. Unset, there is no governor and nothing changes.
+The governor is a token bucket that holds one minute's tokens. A request's estimate is its input,
+which is the exact count or the margin-inclusive bound, plus the session's moving-average output,
+seeded at 1,000 and never the output cap. Cached tokens count, since the provider's limit counts
+them. Admission comes before `generation_started`, so a queued request holds no dollar
+reservation, and a target verified while it is queued sends nothing. `generation_started` then
+carries `admission_wait_seconds`. Once `usage` is emitted, the governor settles at the billed input
+plus output, refunding an overestimate or charging an underestimate. Any other exit after the send
+keeps the estimate charged.
+
+Roots and joined children, which a parent waits on, are admitted first, then referees, then
+everything else. A waiting request ages one class per 30 s, so nothing starves.
+
+Every 429 the runtime waits out pauses all admission for that wait and cuts the rate by 20%. The
+rate recovers by 5% of the limit per clean minute. A 429 on `responses.create` also releases its
+admission and re-queues it behind the pause instead of sleeping, so waiting requests resume in
+priority order rather than all at once. A 429 on `input_tokens.count` holds no admission and only
+pauses (F10). A re-queued request must be admitted one second before the deadline. Otherwise the
+give-up is definite, as without a governor: `generation_aborted(reason="rate_limited")`, then the
+marker clears, and the session fails with retryable `PROVIDER_RATE_LIMITED`. Every exit that
+certainly sent nothing returns the admission.
+
+The governor adds no throughput. It spreads requests under the limit, in priority order, instead
+of letting them all meet 429s. It cannot see other processes, so set it to about 90% of the org
+limit divided by the number of processes that share it. Cross-process governance belongs to the
+model router (`PLAN.md` §6.1).
+
 ### Stored shape changes (G3 infrastructure, all experiments)
 
 G1 covers the bytes the model sees and the pinned freeze tests (F7), so these changes reach legacy

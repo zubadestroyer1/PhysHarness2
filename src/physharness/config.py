@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     temporal_tls: bool = False
     temporal_api_key: SecretStr | None = None
     model_prices: dict[str, dict] = Field(default_factory=dict)
+    provider_tokens_per_minute: int | None = Field(default=None, ge=1)
     e2b_template_id: str | None = None
     worker_workspace: WorkspacePolicy | None = Field(default=None, repr=False)
     worker_workspace_provider: Literal["e2b", "local_docker"] | None = None
