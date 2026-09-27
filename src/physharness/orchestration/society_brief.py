@@ -2,7 +2,13 @@
 the constitution and the live frontier, without platform bookkeeping. Legacy prompts are
 built in research_worker and never come here."""
 
+import copy
+import json
+
+from ..commons_discourse import _one_line
 from ..domain import canonical_json
+from ..errors import HarnessError
+from ..storage import RecordRow
 
 TARGET_FIELDS = (
     "title",
@@ -17,7 +23,37 @@ FOCUS_ITEMS = 10
 
 
 def _line(node_id, node_type, title):
-    return f"{node_id[:8]} [{node_type}] {title[:120]}"
+    """A platform-format node line. The title is agent text: collapsed to one line and
+    JSON-quoted, as in compact updates, so it cannot forge another line."""
+    return f"{node_id[:8]} [{node_type}] {json.dumps(_one_line(title)[:120], ensure_ascii=False)}"
+
+
+def _checked_target(service, experiment, agent):
+    """The target, refused unless its identity and canonical review are consistent: the
+    checks PortableMemory.working_context makes before a legacy prompt."""
+    with service.db.sessions() as session:
+        current = service._get(session, "experiment", experiment["id"], agent)
+        target = service._get(session, "problem", current.payload["problem_id"], agent)
+        if target.payload["target_digest"] != current.payload["target_digest"]:
+            raise HarnessError("CONTEXT_TARGET_INVALID", "Experiment and target identities differ.")
+        if target.payload.get("review_id"):
+            review = session.get(RecordRow, target.payload["review_id"])
+            if (
+                not review
+                or review.kind != "review"
+                or review.project_id != agent.project_id
+                or review.payload.get("problem_id") != target.id
+                or review.payload.get("target_digest") != target.payload["target_digest"]
+                or review.payload.get("decision") != target.payload.get("semantic_review")
+            ):
+                raise HarnessError(
+                    "CONTEXT_REVIEW_INVALID", "Target review identity is inconsistent."
+                )
+        elif target.payload.get("semantic_review") != "pending":
+            raise HarnessError(
+                "CONTEXT_REVIEW_INVALID", "A reviewed target requires its canonical review."
+            )
+        return copy.deepcopy(target.payload)
 
 
 def society_prompt_view(
@@ -28,7 +64,7 @@ def society_prompt_view(
     A referee's view is its fenced review packet (the objective), the target and the
     referee constitution. A builder's view adds only the non-empty context entries.
     """
-    target = service.get_record("problem", experiment["problem_id"], agent)
+    target = _checked_target(service, experiment, agent)
     view = {
         "objective": task["objective"],
         "target": {field: target.get(field) for field in TARGET_FIELDS},

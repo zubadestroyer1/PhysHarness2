@@ -119,7 +119,7 @@ Addressed messages, discussions, the component registry, research profiles, team
 
 ### 3.2 Memory (three tiers)
 
-1. **Working context.** The model's native context, compacted when needed. Compaction is already implemented and preserves exact target, assumptions and obligations (the society anchor is the same lean view as its prompt).
+1. **Working context.** The model's native context, compacted when needed. Compaction is already implemented. The legacy anchor preserves exact target, assumptions and obligations; the society anchor is the same lean view as its prompt (exact target and assumptions, objective, frontier and claims).
 2. **Notebook.** The agent's portable scientific memory: research notes checkpointed with exact assumptions and evidence status (already implemented). It survives handoff to a fresh session and to a different model.
 3. **The commons.** Canonical and shared. On restart, an agent rebuilds its context from its notebook plus the current state of its focus nodes and their threads, so it never relies on stale context.
 
