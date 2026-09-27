@@ -36,7 +36,7 @@ arm's work. The model families are the same: family A and family B.
 
 | Arm | Experiment shape | Agents | Concurrency | Wall-clock ceiling |
 |---|---|---|---|---|
-| **S. Society** | One society experiment (`sharing="ideas"`, society policy as in the example). Policy `independent` with 8 model entries (4 per family) seeds 8 roots. Each root founds a lab, and recruits join labs (`lab_size_max` 6). Referees are platform-created, cross-model and isolated (ruling R18). | 8 seeded roots, up to 16 research agents, plus referee tasks | 12 (8 roots and 4 slots for referees and recruits) | W |
+| **S. Society** | One society experiment (`sharing="ideas"`, society policy as in the example). Policy `independent` with 8 model entries (4 per family) seeds 8 roots. In S1 each root founded a lab and recruits joined labs (`lab_size_max` 6); labs were removed after S1 (audit #15). Referees are platform-created, cross-model and isolated (ruling R18). | 8 seeded roots, up to 16 research agents, plus referee tasks | 12 (8 roots and 4 slots for referees and recruits) | W |
 | **I. Independent attempts** | 8 roots (4 per family) that share nothing | 8 | 8 | B / (8 × $40) hours |
 | **1. Single agent** | One root, family A | 1 | 1 | B / $40 hours (at most 24 h), or earlier when it finishes |
 

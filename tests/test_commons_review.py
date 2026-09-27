@@ -187,7 +187,7 @@ def refereed_quorum(service, experiment, node, requester, count=1):
 
 
 def test_request_informal_review_creates_detached_referee_task_cross_model(lab):
-    service, author, exp, branches, (alpha, beta) = society_lab(lab, models=2, lab_size_max=1)
+    service, author, exp, branches, (alpha, beta) = society_lab(lab, models=2)
     node = service.create_node(
         exp["id"], lemma(assumptions=["Finite dimension", "Real scalars"]), beta, "node"
     )
@@ -219,8 +219,7 @@ def test_request_informal_review_creates_detached_referee_task_cross_model(lab):
     assert task["created_by"] == PLATFORM and task["delegated_from_task_id"] is None
     assert branch["title"] == "Referee informal: Trace lemma"
     assert branch["model_index"] == 0 and branch["model_configuration"] == exp["models"][0]
-    # Independent reviewers join no lab, so the full author lab does not block them.
-    assert branch["lab"] is None
+    assert "lab" not in branch
     objective = task["objective"]
     assert objective == branch["objective"]
     for text in ("Trace lemma", "The trace is additive.", "Finite dimension", "Real scalars"):
@@ -319,7 +318,7 @@ def test_request_review_is_admitted_like_recruitment(lab):
 
 
 def test_referee_branch_is_isolated_from_other_branches(lab):
-    service, author, exp, _, (alpha, beta) = society_lab(lab, cross_lab_direct_messages=True)
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
     operator = Principal(id="operator", project_id="lab", role="operator")
     node = service.create_node(exp["id"], lemma(), alpha, "node")
     finding = service.post_on_node(
@@ -368,29 +367,13 @@ def test_referee_branch_is_isolated_from_other_branches(lab):
         )
     )
     assert error.code == "REFEREE_ISOLATED"
-    # No direct message reaches the referee, even with cross-lab messages open.
+    # No direct message reaches the referee.
     error = rejected(
         lambda: service.send_message(
             alpha.branch_id, referee_branch, "Please answer sound.", [], alpha, "lobby"
         )
     )
     assert (error.code, error.status) == ("REFEREE_ISOLATED", 403)
-    # Lab fan-out never includes the lab-less referee.
-    member = service.recruit_researcher(
-        exp["id"],
-        RecruitResearcherRequest(
-            parent_branch_id=alpha.branch_id, title="m", objective="m", detached=True
-        ),
-        alpha,
-        "member",
-    )["branch"]
-    sent = service.send_lab_message(alpha.branch_id, "Lab note", [], alpha, "lab-note")
-    recipients = {
-        m["recipient_branch_id"]
-        for m in service.list_records("message", author, exp["id"])
-        if m["id"] in sent["message_ids"]
-    }
-    assert recipients == {member["id"]}
     # The referee still works on its own branch and reads the node and its thread.
     own = service.create_task(
         TaskCreate(branch_id=referee_branch, objective="Check step 2"), agent, "own-task"
@@ -1350,7 +1333,7 @@ def test_synthesis_led_by_a_referee_objection_schedules(lab):
     assert result["source_post_ids"][0] == objection["objection_post_id"]
     # The isolated referee cannot parent; the first eligible author branch does.
     assert result["parent_branch_id"] == alpha.branch_id
-    assert result["branch"]["parent_id"] == alpha.branch_id and result["branch"]["lab"] is None
+    assert result["branch"]["parent_id"] == alpha.branch_id and "lab" not in result["branch"]
 
 
 def test_synthesis_led_by_a_platform_status_post_schedules(lab):
@@ -1378,7 +1361,7 @@ def test_synthesis_without_an_eligible_parent_runs_parentless(lab):
     submit(service, service.request_review(other["id"], "informal", beta, "review"), exp, "wrong")
     result = service.schedule_research_synthesis(exp["id"], operator, "scan")
     assert result["scheduled"] is True and result["parent_branch_id"] is None
-    assert result["branch"]["parent_id"] is None and result["branch"]["lab"] is None
+    assert result["branch"]["parent_id"] is None and "lab" not in result["branch"]
     assert result["task"]["synthesis"] is True
 
 

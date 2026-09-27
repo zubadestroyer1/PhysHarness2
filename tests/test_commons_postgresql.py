@@ -23,7 +23,6 @@ from physharness.domain import Principal
 from physharness.errors import HarnessError
 from physharness.service import HarnessService
 from physharness.storage import Database
-from physharness.workforce_models import RecruitResearcherRequest
 
 
 def _lab(db, tmp_path):
@@ -74,7 +73,7 @@ def rejected(call):
 
 
 def test_commons_smoke(backend_lab):
-    service, author, exp, branches, (alpha, beta) = society_lab(backend_lab, lab_size_max=1)
+    service, author, exp, _, (alpha, beta) = society_lab(backend_lab, messages_per_minute=1)
     goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
     lemma = service.create_node(
         exp["id"],
@@ -133,12 +132,16 @@ def test_commons_smoke(backend_lab):
     )
     fresh = service.request_review(lemma["id"], "informal", beta, "review-3")
     assert fresh["deduplicated"] is False and fresh["review_task_id"] != first["review_task_id"]
-    # The lab cap holds under the lab lock: alpha's one-member lab is full.
-    recruit = RecruitResearcherRequest(
-        parent_branch_id=branches[0]["id"], title="Helper", objective="Help."
-    )
-    assert rejected(lambda: service.recruit_researcher(exp["id"], recruit, author, "r")) == (
-        "LAB_FULL"
+    # A node message reaches the live claimant; the per-sender window counts JSON timestamps.
+    sent = service.send_society_message(alpha.branch_id, lemma["id"], "Step 2?", [], alpha, "m1")
+    assert sent["recipients"] == [beta.branch_id]
+    assert (
+        rejected(
+            lambda: service.send_society_message(
+                alpha.branch_id, beta.branch_id, "Hi", [], alpha, "m2"
+            )
+        )
+        == "MESSAGE_RATE_LIMIT"
     )
     # The export carries the commons records and the edges between visible nodes.
     manifest = service.export_experiment(exp["id"], author)

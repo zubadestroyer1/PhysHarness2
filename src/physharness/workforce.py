@@ -1,7 +1,6 @@
 """Atomic research recruitment with central task admission and opt-in discovery."""
 
 import copy
-import re
 
 from sqlalchemy import func, select
 
@@ -11,7 +10,6 @@ from .errors import HarnessError
 from .storage import BudgetRow, EdgeRow, EventRow, LeaseRow, RecordRow, record_json_text
 from .worker_authority import current_worker_effects
 from .workforce_models import (
-    LAB_PATTERN,
     ConfigureWorkforceRequest,
     JoinResearchTeamRequest,
     PublishResearchProfileRequest,
@@ -43,9 +41,6 @@ def _cap_reached(code, what, limit, used):
     )
 
 
-LAB_NAME = re.compile(LAB_PATTERN)
-
-
 def _extended(payload, extra):
     """Append platform-assigned fields (``None`` leaves the payload as it is)."""
     if extra is None:
@@ -53,15 +48,6 @@ def _extended(payload, extra):
     if payload.keys() & extra.keys():
         raise ValueError("Extra fields cannot replace canonical fields")
     return {**payload, **copy.deepcopy(extra)}
-
-
-def _lab_not_found():
-    return HarnessError(
-        "LAB_NOT_FOUND",
-        "No branch in this experiment belongs to that lab.",
-        status=404,
-        remediation="Use the lab of an existing branch, or recruit with lab='new'.",
-    )
 
 
 class WorkforceMixin:
@@ -413,7 +399,6 @@ class WorkforceMixin:
         synthesis_scope=None,
         detached=False,
         public_summary=None,
-        lab="inherit",
         task_extra=None,
         branch_extra=None,
     ):
@@ -462,7 +447,6 @@ class WorkforceMixin:
                     "status": "open",
                     "execution_identity": new_id(),
                     "model_configuration": selected_model,
-                    **self._branch_lab(session, experiment, parent, branch_id, lab, actor),
                 },
                 branch_extra,
             ),
@@ -542,108 +526,6 @@ class WorkforceMixin:
         )
         return {"branch": branch, "task": task}
 
-    @staticmethod
-    def _lab_filter(experiment, lab):
-        return (
-            RecordRow.project_id == experiment.project_id,
-            RecordRow.kind == "branch",
-            record_json_text("experiment_id") == experiment.id,
-            record_json_text("lab") == lab,
-        )
-
-    def _branch_lab(self, session, experiment, parent, branch_id, lab="inherit", actor=None):
-        """Resolve a new branch's lab and admit it under the cap.
-
-        Returns the payload fields to merge: ``{}`` for legacy experiments (their branch
-        payloads carry no lab key) and ``{"lab": name_or_None}`` for society experiments.
-        ``"inherit"`` joins the parent's lab (a root founds one), ``"new"`` founds
-        ``"lab-" + branch_id[:8]``, a name joins that existing lab, and ``None`` records an
-        unaffiliated branch (e.g. an independent referee) that no lab counts. An agent joins a
-        branch only to its own branch's lab, whether it names the lab or inherits it from the
-        parent (so a branchless orchestrator forking another branch joins none); operators and
-        researchers place a branch in any lab. Otherwise an outsider could fill a lab against
-        its members, or plant a child there to relay around the cross-lab message block.
-        """
-        policy = experiment.payload.get("society")
-        if not policy:
-            if lab not in {"inherit", None}:
-                raise HarnessError(
-                    "SOCIETY_DISABLED",
-                    "Labs exist only in research-society experiments.",
-                    remediation="Omit the lab for experiments without a society policy.",
-                )
-            return {}
-        if lab == "inherit":
-            lab = "new" if parent is None else parent.payload.get("lab")
-        if lab is None:
-            return {"lab": None}
-        if lab == "new":
-            return {"lab": "lab-" + branch_id[:8]}
-        if not isinstance(lab, str) or not LAB_NAME.fullmatch(lab):
-            raise HarnessError("INVALID_LAB", "Lab names match ^[a-z0-9-]{1,40}$.", status=422)
-        own = (
-            session.get(RecordRow, actor.branch_id)
-            if actor is not None and actor.role == "agent" and actor.branch_id
-            else None
-        )
-        if (
-            actor is not None
-            and actor.role == "agent"
-            and (own.payload.get("lab") if own is not None and own.kind == "branch" else None)
-            != lab
-        ):
-            raise HarnessError(
-                "LAB_MEMBERSHIP",
-                "An agent recruits only into its own lab; only lab members add members.",
-                status=403,
-                remediation="Recruit into your lab (lab=null) or found a new one (lab='new').",
-            )
-        # Serialize joins per lab so concurrent recruits cannot overshoot the cap.
-        self.db.command_lock(session, self._digest(["lab", experiment.id, lab]))
-        members = session.scalar(
-            select(func.count()).select_from(RecordRow).where(*self._lab_filter(experiment, lab))
-        )
-        if not members:
-            raise _lab_not_found()
-        if members >= policy["lab_size_max"]:
-            raise HarnessError(
-                "LAB_FULL",
-                f"Lab {lab} already has {members} of {policy['lab_size_max']} members.",
-                status=409,
-                remediation="Recruit into a new lab (lab='new') or another lab with room.",
-            )
-        return {"lab": lab}
-
-    def lab_members(self, experiment_id, lab, actor) -> dict:
-        """Bounded roster of one society lab: branch id, title and status per member."""
-        self._research_role(actor)
-        if not isinstance(lab, str) or not LAB_NAME.fullmatch(lab):
-            raise HarnessError("INVALID_LAB", "Lab names match ^[a-z0-9-]{1,40}$.", status=422)
-        with self.db.sessions() as session:
-            experiment = self._commons_experiment(session, experiment_id, actor, active=False)
-            size_max = experiment.payload["society"]["lab_size_max"]
-            # Joins are capped, so the roster never exceeds size_max rows.
-            rows = session.scalars(
-                select(RecordRow)
-                .where(*self._lab_filter(experiment, lab))
-                .order_by(record_json_text("created_at"), RecordRow.id)
-                .limit(size_max)
-            ).all()
-            if not rows:
-                raise _lab_not_found()
-            return {
-                "lab": lab,
-                "members": [
-                    {
-                        "branch_id": row.id,
-                        "title": row.payload["title"],
-                        "status": row.payload["status"],
-                    }
-                    for row in rows
-                ],
-                "size_max": size_max,
-            }
-
     def seed_portfolio(
         self, experiment_id: str, request: SeedPortfolioRequest, actor: Principal, key: str
     ) -> dict:
@@ -684,8 +566,7 @@ class WorkforceMixin:
         self, experiment_id: str, request: RecruitResearcherRequest, actor: Principal, key: str
     ) -> dict:
         self._research_role(actor)
-        # Legacy command fingerprints predate labs; the key appears only when supplied.
-        data = request.model_dump(mode="json", exclude={"lab"} if request.lab is None else None)
+        data = request.model_dump(mode="json")
 
         def action(session, op):
             experiment = self._workforce_lock(session, experiment_id, actor)
@@ -718,7 +599,6 @@ class WorkforceMixin:
                 synthesis=request.synthesis,
                 detached=request.detached,
                 public_summary=request.public_summary,
-                lab="inherit" if request.lab is None else request.lab,
             )
             return {"experiment_id": experiment_id, **result}
 
@@ -1255,8 +1135,6 @@ class WorkforceMixin:
                 },
                 detached=True,
                 public_summary="Synthesis of sampled public research discussions",
-                # Synthesizers review across labs; they neither join nor fill the source lab.
-                lab=None,
             )
             self._replace(
                 session,

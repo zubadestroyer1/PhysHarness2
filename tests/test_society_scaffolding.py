@@ -43,8 +43,6 @@ def _policy(*, playbook: bool) -> dict:
     return {
         "tool_profile": "society",
         "claim_ttl_seconds": 900,
-        "lab_size_max": 8,
-        "cross_lab_direct_messages": False,
         "referee_quorum": 1,
         "literature": {"mode": "off", "blocked_sources": []},
         "scaffolding": {"playbook": playbook},

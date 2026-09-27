@@ -261,7 +261,7 @@ def test_society_export_adds_commons_records_edges_and_fetches(lab):
         {"source": lemma["id"], "target": goal["id"], "relation": "motivated_by"},
     ]
     assert list(manifest).index("edges") == list(manifest).index("records") + 1
-    assert all(branch.get("lab") for branch in records["branch"] if branch.get("hat") is None)
+    assert not any("lab" in branch for branch in records["branch"])
     private = {"literature_screen", "masked_reference"}
     kinds = {artifact["artifact_kind"] for artifact in records["artifact"]}
     assert private <= kinds  # the operator's export holds the screen and the reference

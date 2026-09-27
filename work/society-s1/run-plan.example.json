@@ -81,8 +81,6 @@
   "society": {
     "tool_profile": "society",
     "claim_ttl_seconds": 900,
-    "lab_size_max": 6,
-    "cross_lab_direct_messages": false,
     "referee_quorum": 1,
     "literature": {
       "mode": "benchmark",

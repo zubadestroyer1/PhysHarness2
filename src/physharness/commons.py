@@ -168,7 +168,6 @@ class CommonsMixin:
             "status": fields["status"],
             "status_reason": fields["status_reason"],
             "status_evidence": dict(fields.get("status_evidence") or {}),
-            "lab": None,
             "topic_id": None,
             "artifact_ids": list(fields.get("artifact_ids", [])),
             "citation_count": 0,
@@ -337,8 +336,6 @@ class CommonsMixin:
             experiment = self._commons_experiment(session, experiment_id, actor)
             for identifier in request.artifact_ids:
                 self._node_evidence(session, identifier, experiment, actor)
-            # The node belongs to its author branch's lab (None for lab-less authors).
-            author = session.get(RecordRow, actor.branch_id) if actor.branch_id else None
             node_id = new_id()  # The module name derives from the id.
             record = self._insert(
                 session,
@@ -354,7 +351,6 @@ class CommonsMixin:
                         lean_module=self._new_module(session, experiment, node_id),
                     ),
                     "branch_id": actor.branch_id,
-                    "lab": author.payload.get("lab") if author is not None else None,
                 },
                 record_id=node_id,
             )
@@ -660,7 +656,7 @@ class CommonsMixin:
     def _node_item(node):
         item = {
             key: node[key]
-            for key in ("id", "node_type", "title", "status", "lab", "lean_name", "citation_count")
+            for key in ("id", "node_type", "title", "status", "lean_name", "citation_count")
         }
         item["statement"] = node["statement"][:300]
         item["module"] = node_module(node)

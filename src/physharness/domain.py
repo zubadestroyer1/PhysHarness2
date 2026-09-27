@@ -60,6 +60,11 @@ REMOVED_SCAFFOLDING_FIELDS = {
     "skills": "technique notes were never loaded in S1",
 }
 
+REMOVED_SOCIETY_FIELDS = {
+    "lab_size_max": "labs were removed; message a branch or a node instead",
+    "cross_lab_direct_messages": "labs were removed; any branch may be messaged",
+}
+
 
 class Principal(StrictModel):
     id: str = Field(min_length=1, max_length=200)
@@ -138,11 +143,15 @@ class SocietyPolicy(StrictModel):
 
     tool_profile: Literal["society"] = "society"
     claim_ttl_seconds: int = Field(default=900, ge=60, le=86400)
-    lab_size_max: int = Field(default=8, ge=1, le=32)
-    cross_lab_direct_messages: bool = False
+    messages_per_minute: int = Field(default=12, ge=1, le=600)
     referee_quorum: int = Field(default=1, ge=1, le=5)
     literature: LiteraturePolicy = Field(default_factory=LiteraturePolicy)
     scaffolding: ScaffoldingPolicy = Field(default_factory=ScaffoldingPolicy)
+
+    @model_validator(mode="before")
+    @classmethod
+    def removed_fields(cls, data: Any) -> Any:
+        return _refuse_removed(data, REMOVED_SOCIETY_FIELDS, "SocietyPolicy")
 
 
 class ContextBudget(StrictModel):

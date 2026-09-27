@@ -1627,7 +1627,6 @@ class ResearchTaskExecutor:
                 research_instructions = constitution(society, literature_enabled=literature_enabled)
 
             def society_context():
-                lab = branch.get("lab")
                 frontier = self.service.query_nodes(
                     experiment["id"], agent, frontier=True, limit=10
                 )
@@ -1640,7 +1639,6 @@ class ResearchTaskExecutor:
                     }
                 return {
                     "commons_frontier": frontier,
-                    "lab": self.service.lab_members(experiment["id"], lab, agent) if lab else None,
                     "focus_nodes": self.service.branch_claims(experiment["id"], agent, limit=10),
                     "review_assignment": task.get("review_assignment"),
                 }

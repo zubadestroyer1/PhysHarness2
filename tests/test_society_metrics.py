@@ -129,6 +129,7 @@ def society_export(*, accepted=True, events=EVENTS):
         },
         "problem": problem,
         "records": {
+            # S1-shaped: stored S1 branches carry labs, which the metrics still count.
             "branch": [
                 {"id": A, "lab": "lab-a"},
                 {"id": B, "lab": "lab-a"},

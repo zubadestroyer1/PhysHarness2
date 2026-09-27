@@ -124,7 +124,7 @@ tools, the prompts and the delivery shapes.
   - The platform creates one `goal` node that mirrors the reviewed target. Agents
     propose lemma, definition, conjecture, approach, tangent, obstacle, counterexample
     and computation nodes. A tangent must be `motivated_by` another node.
-  - A node records its author branch and that branch's lab.
+  - A node records its author branch.
   - Edges are `depends_on` (cycle-checked), `motivated_by`, `refutes`, `generalizes`,
     `specializes` and `duplicates`.
   - The frontier ranks open nodes by root path, waiting dependents, neglect and live
@@ -223,7 +223,7 @@ tools, the prompts and the delivery shapes.
     It never delivers the reader's own posts or non-urgent platform statuses.
   - Status moves are posted by the platform.
 - **Referees.** `request_review` makes the platform create an isolated referee:
-  - a detached branch with no parent and no lab, marked `hat="referee"`;
+  - a detached branch with no parent, marked `hat="referee"`;
   - on the model family the node's earlier referees (for its current text) used least,
     preferring one other than the author's (for a fidelity review, also other than
     every branch that has claimed the node, since any of them may have written the Lean
@@ -257,19 +257,20 @@ tools, the prompts and the delivery shapes.
   `recruit`, `message`, `wait` or `submit_for_verification`. Its
   `lean_check` records no local compiles, and it posts questions, findings and
   objections only on the assigned node's thread.
-- **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
-  (`lab="new"`), up to `lab_size_max`. An agent cannot recruit into another lab, so no
-  outsider fills a lab or plants a child in it to relay messages across labs. Forks
-  (`create_branch`) follow the same rule, so a branchless orchestrator agent cannot fork
-  another branch into that branch's lab. `message(to="lab")` fans out to the lab. Direct
-  messages across labs are refused unless the policy allows them, so cross-lab
-  discourse goes through the commons.
+- **Messages.** There are no labs (S1 audit #15). `message` reaches one branch, or, given
+  a node id, whoever works on that node: its author and live claimants, never the sender,
+  at most 8 (`NO_RECIPIENTS` when nobody else does). Each delivered copy counts against
+  the sender's `messages_per_minute` (default 12) over a sliding minute; past it,
+  `MESSAGE_RATE_LIMIT` (429, retryable) says to wait or post on the node's thread, which
+  is not rate-limited. Referees stay unreachable: a direct message is refused and a node
+  message skips them. Anti-herding comes from relevance routing, this rate limit and
+  declared alternative routes. Stored S1 `lab` keys are ignored.
 - **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
   least 8 hex characters of a record the agent can see; an ambiguous prefix returns
   `AMBIGUOUS_ID` with the candidates. Routing arguments (`message.to`, `wait.ids`) name
   records the agent may be unable to read, so their prefixes resolve only among the
-  tool's own targets: the branches it may message, its delegated child tasks, or its
-  peer branches. A prefix that names none or several of them is refused exactly as an
+  tool's own targets: the branches and nodes it may message, its delegated child tasks,
+  or its peer branches. A prefix that names none or several of them is refused exactly as an
   unknown full id, so it reveals no other record.
 
 Society workers get the consolidated profile in
@@ -282,7 +283,7 @@ widest catalog has 25 (all but `submit_review`), and a referee's has 18:
 | Lean | `lean_check` |
 | Library and literature | `find_declaration`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
 | Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim` |
-| Society | `recruit`, `message`, `wait` |
+| Society | `recruit`, `message` (a branch or a node's workers), `wait` |
 | Evidence | `read_artifact`, `submit_for_verification`, `verification_status` |
 | Memory | `notebook` |
 | Task-specific | `return_result` (joined children), `submit_review` (referee tasks) |
@@ -298,7 +299,7 @@ it reads ±40 lines (at most 4,000 bytes) around a declaration, never a whole fi
 boundaries, and the technique skills were never loaded.
 
 The prompt carries the constitution (community norms and an optional playbook), the
-frontier, the lab roster and the agent's claimed nodes. A referee gets a referee
+frontier and the agent's claimed nodes. A referee gets a referee
 constitution instead, with no playbook, and its notes name only referee-profile tools.
 Its frontier's node titles and statements arrive fenced as untrusted author data, like
 its review packet, since they may come from the author of the node it reviews. So does

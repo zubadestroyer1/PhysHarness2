@@ -1,7 +1,7 @@
 """Platform-assigned referee reviews and evidence-bound commons ladder transitions.
 
-A referee is an isolated branch the platform creates for one review: it has no parent and no
-lab, and no other branch may message it or delegate work into it. When the experiment records
+A referee is an isolated branch the platform creates for one review: it has no parent, and no
+other branch may message it or delegate work into it. When the experiment records
 several models, the first referee runs one distinct from the author's (and, for a fidelity
 review, from every branch that may have written the Lean statement), and a panel spreads over
 the model families. Each referee task submits exactly one verdict, and a node gets a bounded
@@ -596,12 +596,12 @@ class CommonsReviewMixin:
 
     @staticmethod
     def _guard_referee_recipient(sender, recipient):
-        """No other branch sends a referee direct messages, whatever the lab policy."""
+        """No other branch sends a referee direct messages."""
         if recipient.payload.get("hat") == REFEREE_HAT and sender.id != recipient.id:
             raise _referee_isolated()
 
     def request_review(self, node_id, scope, actor, key) -> dict:
-        """Assign an isolated referee: a detached, parentless, lab-less platform branch."""
+        """Assign an isolated referee: a detached, parentless platform branch."""
         self._research_role(actor)
         if scope not in REVIEW_VERDICTS:
             raise HarnessError(
@@ -689,8 +689,6 @@ class CommonsReviewMixin:
                 relation="helper",
                 model_index=model_index,
                 detached=True,
-                # Independent reviewers are not lab members and fill no lab cap.
-                lab=None,
                 task_extra={
                     "review_assignment": {
                         **assignment,

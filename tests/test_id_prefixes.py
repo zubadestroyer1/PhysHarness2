@@ -126,7 +126,7 @@ async def test_routing_arguments_resolve_prefixes_among_their_targets(lab):
     sent = await call(
         child_tools, "message", {"to": branches[0]["id"][:8], "content": "Base case holds."}
     )
-    assert sent["to"] == branches[0]["id"] and sent["message_id"]
+    assert sent["to"] == branches[0]["id"] and sent["message_ids"]
     inbox = service.mailbox_page(branches[0]["id"], alpha)["items"]
     assert [item["content"] for item in inbox] == ["Base case holds."]
     peer = await call(
@@ -145,10 +145,15 @@ async def test_routing_prefix_outside_the_targets_fails_like_an_unknown_id(lab):
     assert error(missing)[0] == "HANDOFF_CHILD_SCOPE"
     hidden = await call(tools, "wait", {"for": "tasks", "ids": [unrelated["id"][:8]]})
     assert error(hidden) == error(missing)
-    # beta is in another lab: its full id is refused as cross-lab, its prefix as unknown.
+    # A referee's branch: its full id is refused as isolated, its prefix as unknown.
+    with service.db.transaction() as session:
+        payload = {"title": "R", "objective": "R", "experiment_id": exp["id"], "status": "open"}
+        referee = service._insert(session, "branch", author, {**payload, "hat": "referee"})
+    isolated = await call(tools, "message", {"to": referee["id"], "content": "Hi."})
+    assert error(isolated)[0] == "REFEREE_ISOLATED"
     missing = await call(tools, "message", {"to": UNKNOWN, "content": "Hi."})
     assert error(missing) == ("NOT_FOUND", "Recipient branch was not found.")
-    hidden = await call(tools, "message", {"to": branches[1]["id"][:8], "content": "Hi."})
+    hidden = await call(tools, "message", {"to": referee["id"][:8], "content": "Hi."})
     assert error(hidden) == error(missing)
 
 

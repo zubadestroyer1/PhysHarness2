@@ -222,7 +222,6 @@ async def simulate(society, export_directory):
     ranked = {item["id"]: item for item in frontier}
     assert ranked[L]["score_components"]["claimants"] == -1.0
     assert ranked[L]["score_components"]["on_root_path"] == 3.0
-    assert ranked[L]["lab"] == branches["A"]["lab"]  # the region's lab is visible
     other = await call(
         B,
         "commons_node",
@@ -275,7 +274,7 @@ async def simulate(society, export_directory):
     assert informal["cross_model"] is True and informal["deduplicated"] is False
     referee_branch = service.get_record("branch", informal["branch_id"], society.author)
     assert referee_branch["hat"] == "referee" and referee_branch["parent_id"] is None
-    assert referee_branch["lab"] is None
+    assert "lab" not in referee_branch
     assert referee_branch["model_index"] == 1 != branches["A"]["model_index"]
     task = service.get_record("task", informal["review_task_id"], society.author)
     assert task["review_assignment"]["requested_by"] == branches["A"]["id"]
@@ -441,5 +440,5 @@ async def simulate(society, export_directory):
     later = society_metrics.compute_metrics(manifest, as_of=metrics["claims_as_of"] + 3600)
     assert later["stale_claim_count"] == 2 and later["live_claim_count"] == 0
     assert metrics["literature_fetches"] == 2 and metrics["contamination_flags"] == 1
-    assert metrics["branches"] == {"agents": 3, "referees": 3, "labs": 3}
+    assert metrics["branches"] == {"agents": 3, "referees": 3, "labs": 0}
     assert metrics["tool_call_mix"] == {"available": False}

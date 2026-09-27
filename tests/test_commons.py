@@ -21,6 +21,7 @@ from physharness.domain import (
 )
 from physharness.errors import HarnessError
 from physharness.storage import EdgeRow, RecordRow, record_json_text
+from physharness.workforce_models import RecruitResearcherRequest
 
 
 def lemma(title="Trace lemma", statement="The trace is additive.", **extra):
@@ -102,7 +103,7 @@ def test_create_node_attribution_and_event(lab):
     assert node["experiment_id"] == exp["id"]
     assert node["target_digest"] == exp["target_digest"]
     # Every node opens its discussion thread in the same transaction (Task 2).
-    assert node["topic_id"] and node["lab"] == branches[0]["lab"]
+    assert node["topic_id"] and "lab" not in node
     assert node["citation_count"] == 0 and node["status_evidence"] == {}
     assert len(node["lean_statement_sha256"]) == 64
     created = events(service, beta, "commons.node_created")
@@ -118,19 +119,22 @@ def test_create_node_attribution_and_event(lab):
     assert plain["lean_statement_sha256"] is None
 
 
-def test_node_carries_its_author_branch_lab(lab):
-    """Regression (Task 10 simulation): node lab was always None although authors have labs."""
+def test_stored_s1_lab_keys_are_ignored(lab):
+    """S1 stored branch and node labs (audit #15): the records still read; no lab spreads."""
     service, author, exp, branches, (alpha, beta) = society_lab(lab)
-    assert branches[0]["lab"] and branches[0]["lab"] != branches[1]["lab"]
-    alpha_node = service.create_node(exp["id"], lemma(), alpha, "alpha-node")
-    beta_node = service.create_node(exp["id"], lemma(title="Beta"), beta, "beta-node")
-    unattributed = service.create_node(exp["id"], lemma(title="Operator"), author, "operator")
-    assert alpha_node["lab"] == branches[0]["lab"] and beta_node["lab"] == branches[1]["lab"]
-    assert unattributed["branch_id"] is None and unattributed["lab"] is None
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    with service.db.transaction() as session:
+        for identifier in (branches[0]["id"], node["id"]):
+            row = session.get(RecordRow, identifier)
+            row.payload = {**row.payload, "lab": "lab-" + branches[0]["id"][:8]}
     frontier = service.query_nodes(exp["id"], beta, frontier=True)["items"]
-    labs = {item["id"]: item["lab"] for item in frontier}
-    assert labs[alpha_node["id"]] == branches[0]["lab"]
-    assert service.read_node(beta_node["id"], alpha)["node"]["lab"] == branches[1]["lab"]
+    assert node["id"] in {item["id"] for item in frontier}
+    assert not any("lab" in item for item in frontier)
+    assert service.read_node(node["id"], beta)["node"]["id"] == node["id"]
+    request = RecruitResearcherRequest(
+        parent_branch_id=branches[0]["id"], title="Kid", objective="Kid"
+    )
+    assert "lab" not in service.recruit_researcher(exp["id"], request, author, "kid")["branch"]
 
 
 def test_agent_without_branch_cannot_author_nodes(lab):
@@ -505,7 +509,6 @@ def test_frontier_orders_root_path_and_dependents_first(lab):
         "node_type",
         "title",
         "status",
-        "lab",
         "statement",
         "lean_name",
         "citation_count",

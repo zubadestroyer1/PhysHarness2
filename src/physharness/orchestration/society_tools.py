@@ -1251,14 +1251,12 @@ def society_tools(
             objective=_recruit_objective(a["brief"], focus, a["hat"]),
             model_index=a["model_index"],
             detached=a["detached"],
-            lab=a["lab"],
         )
         created = service.recruit_researcher(experiment_id, request, agent, k)
         branch, task = created["branch"], created["task"]
         result = {
             "branch_id": branch["id"],
             "task_id": task["id"],
-            "lab": branch.get("lab"),
             "detached": task["detached"],
             "model_index": branch.get("model_index"),
             "focus_node_id": focus["id"] if focus else None,
@@ -1295,11 +1293,6 @@ def society_tools(
             ),
             "hat": choice(HATS, "Optional suggested hat.", nullable=True),
             "model_index": integer(0, 99, "Recorded experiment model, or null.", nullable=True),
-            "lab": text(
-                40,
-                "null joins your lab; 'new' founds a lab. You cannot recruit into another lab.",
-                nullable=True,
-            ),
             "detached": {
                 "type": "boolean",
                 "description": "false: your final response waits for this recruit; "
@@ -1309,41 +1302,36 @@ def society_tools(
         recruit,
         "Recruit a colleague under the shared budget. The objective is your brief plus the "
         "focus node's header and an optional hat; the platform claims the focus node for "
-        "the new branch. If your lab is full (LAB_FULL), recruit with lab='new'.",
+        "the new branch.",
         defaults={
             "focus_node_id": None,
             "hat": None,
             "model_index": None,
-            "lab": None,
             "detached": False,
         },
     )
 
     def message(a, k):
-        if a["to"] == "lab":
-            sent = service.send_lab_message(branch_id, a["content"], a["artifact_ids"], agent, k)
-            return {"to": "lab", **sent}
-        to = service.resolve_id(a["to"], agent, ("branch",), route=("recipient", branch_id))
-        sent = service.send_message(branch_id, to, a["content"], a["artifact_ids"], agent, k)
-        return {
-            "to": to,
-            "message_id": sent["id"],
-            "evidence_status": sent["evidence_status"],
-        }
+        to = service.resolve_id(
+            a["to"], agent, ("branch", "commons_node"), route=("recipient", branch_id)
+        )
+        return service.send_society_message(
+            branch_id, to, a["content"], a["artifact_ids"], agent, k
+        )
 
     add(
         "message",
         {
-            "to": routed("A branch id in your lab or your parent/child, or 'lab'."),
+            "to": routed("A branch id, or a node id to reach whoever works on it."),
             "content": text(20000, "The message."),
             "artifact_ids": array(
                 ident("An artifact id.", ("artifact",)), 12, "Attached evidence."
             ),
         },
         message,
-        "Send an attributed message to one branch or to every other member of your lab "
-        "(to='lab'). Cross-lab discussion goes through commons posts. Messages are "
-        "unverified ideas.",
+        "Send an attributed message to one branch, or to whoever works on a node (its author "
+        "and live claimants, at most 8). Rate-limited per sender; node threads are not. "
+        "Messages are unverified ideas.",
         defaults={"artifact_ids": []},
     )
     if task_context:

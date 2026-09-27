@@ -87,10 +87,7 @@ Every unit of research is a **node** in one graph rooted at the target. Nodes ex
   - A builder's digest is compact: one line per item with 8-hex ids that tools accept (the envelope was 91% of an update's tokens). Referees keep the fenced JSON envelope.
   - Delivery never pushes an agent's own posts, nor non-urgent platform status posts; the cursor advances past them.
   - Urgent events jump the queue: something you depend on was refuted, a dependency was accepted, someone posted an objection to your node, or a node you claimed was solved elsewhere.
-- **Labs.**
-  - A lab is a group of 3–8 agents working a region of the graph, with direct high-bandwidth messaging inside the lab.
-  - Across labs, communication goes only through the graph and synthesis posts.
-  - This sparse topology is the main defence against herding. Evidence from sparse multi-agent debate suggests it can match dense communication at lower cost; we still need to measure this for mathematical physics.
+- **No labs (S1 remediation).** Labs blocked the one useful hand-off in S1 and decided nothing else. Sparsity now comes from relevance routing (updates reach a node's author, claimants, citers and dependents, never a goal-thread broadcast), a per-sender message rate limit (`messages_per_minute`), and declared alternative routes at genuine choice points (§4.4).
 
 ### 2.5 What it replaces
 
@@ -134,7 +131,7 @@ Addressed messages, discussions, the component registry, research profiles, team
 | Lean | `lean_check` (persistent Lean session; goal states, errors, `#print axioms`) |
 | Library and literature | `find_declaration` (pinned Mathlib/Physlib declarations as ranked `Name signature — path:line` rows, by name or by type, with did-you-mean names; reads at most ±40 lines around one), `search_literature`, `fetch_source` (brokered online access, §3.6) |
 | Commons | `commons_query`, `commons_read`, `commons_post`, `commons_claim` |
-| Society | `recruit` (brief, focus node, hat, model tier), `message` (lab/direct), `wait` |
+| Society | `recruit` (brief, focus node, hat, model tier), `message` (a branch or a node's workers), `wait` |
 | Evidence | `submit_for_verification` (workspace file → candidate → independent check), `verification_status` |
 | Memory | `notebook` (read/write checkpointed notes) |
 
@@ -216,7 +213,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 ### 4.1 Persistent campaign
 
 - **Replace the finite `ResearchTeamRunner`** with a **CampaignRuntime**: one durable Temporal workflow per society, using Continue-As-New.
-- **What it owns:** the agent population, slot allocation, spawning and retiring agents, labs, synthesis cadence and stopping.
+- **What it owns:** the agent population, slot allocation, spawning and retiring agents, synthesis cadence and stopping.
 - **Event-driven:** it reacts to node status changes, idle agents, budget changes, expired claims and timers.
 - **Persistence.** It can pause and resume across days. Agents retire and are reincarnated through handoffs.
 - **Keeps existing guarantees:** leases and fencing, idempotency, uncertain-operation handling and checkpoint recovery.
@@ -224,8 +221,8 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 ### 4.2 Launch
 
 1. The root target passes the automated fidelity ensemble (§5.1).
-2. An opening round of several F-tier agents independently writes distinct framings or approaches to the root. Each distinct approach seeds a lab.
-3. Every lab has one of its agents make a whole-root attempt from the start. Decomposition is never forced.
+2. An opening round of several F-tier agents independently writes distinct framings or approaches to the root. Each distinct approach becomes an approach node.
+3. Every approach has one agent make a whole-root attempt from the start. Decomposition is never forced.
 
 ### 4.3 Attention allocation (priority signal, no currency)
 
@@ -260,9 +257,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 
 ### 4.6 Hierarchical budgets
 
-- The campaign budget is split into lab sub-budgets, which are split into agent reservations.
-- The allocator rebalances lab budgets periodically.
-- This gives labs autonomy and removes the single experiment/budget row lock that would otherwise throttle concurrency at hundreds of agents.
+- The campaign budget is split into agent reservations; sub-budgets by graph region remain future work.
 - Reserve-before-call accounting is unchanged.
 
 ### 4.7 Stopping
@@ -372,7 +367,7 @@ The **first society target** should be a known result that is hard enough that a
 
 | Society component | Waves it advances |
 |---|---|
-| Commons, blueprint, discourse, labs | 4 (collaboration and memory), 5 (knowledge) |
+| Commons, blueprint, discourse | 4 (collaboration and memory), 5 (knowledge) |
 | Built-in checks, fidelity ensemble, formalization economy | 1 (acceptance), 5 (autoformalization), 7 (certificates) |
 | Research toolkit and light scaffolding | 2 (single-agent loop, optional research skills), 5 (literature ingestion and retrieval), 7 (numerics and certificates) |
 | CampaignRuntime, allocator, diversity reserves | 6 (search and scaling policies), 9 (fair scheduling) |
@@ -399,7 +394,7 @@ Wave 0 (expert review of the 40 benchmark targets) remains open. The auto-review
 | Risk | Mitigation |
 |---|---|
 | Graph clutter and duplication at scale | Maintainer agents, `duplicates` edges, claim expiry, digest budgets |
-| Herding onto one approach | Labs, sparse cross-lab channel, diversity reserves, fresh-eyes reseeding, cross-model referees |
+| Herding onto one approach | Relevance routing, message rate limit, declared alternative routes, fresh-eyes reseeding, cross-model referees |
 | Gaming the attention signals | Signals affect attention only; bounded votes; only platform checkers move status |
 | Referee blind spots | Cross-model referees, preserved objections, independent kernel as final arbiter |
 | Runaway spawning or spend | Hierarchical budgets, reserve-before-call accounting, descendant caps |

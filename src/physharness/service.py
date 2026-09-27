@@ -522,7 +522,8 @@ class HarnessService(
 
     def _route_target(self, session, row, route):
         """Whether the routing tool named by ``route`` accepts ``row`` as its target: the
-        target checks of ``_deliver_message``, ``request_handoff`` and ``request_peer_wait``."""
+        target checks of ``send_society_message``, ``request_handoff`` and
+        ``request_peer_wait``."""
         name, anchor = route
         if name == "child_task":  # anchor: the waiting task
             return row.payload.get("delegated_from_task_id") == anchor
@@ -534,10 +535,10 @@ class HarnessService(
                 "experiment_id"
             ):
                 return False
-            experiment = session.get(RecordRow, sender.payload["experiment_id"])
+            if row.kind == "commons_node":  # the tool messages whoever works on it
+                return True
             try:
                 self._guard_referee_recipient(sender, row)
-                self._lab_route(experiment, sender, row)
             except HarnessError:
                 return False
             return True
@@ -596,8 +597,9 @@ class HarnessService(
 
         Routing is not permission to read, so ``route=(name, anchor)`` resolves a routing
         argument among exactly the records its tool accepts instead: ``("recipient", sending
-        branch)`` for a direct message, ``("child_task", waiting task)`` and ``("peer",
-        waiting branch)`` for waits. A prefix naming none or several of them passes through."""
+        branch)`` for a message to a branch or a node, ``("child_task", waiting task)`` and
+        ``("peer", waiting branch)`` for waits. A prefix naming none or several of them
+        passes through."""
         if not isinstance(identifier, str) or not ID_PREFIX.fullmatch(identifier):
             return identifier
         with self.db.sessions() as session:
@@ -1415,9 +1417,6 @@ class HarnessService(
                     "status": "open",
                     "execution_identity": new_id(),
                     "model_configuration": selected_model,
-                    # Society roots found a lab; forks join their parent's lab, which an
-                    # agent may join only when it is the agent's own.
-                    **self._branch_lab(session, experiment, parent, branch_id, actor=actor),
                 },
                 record_id=branch_id,
             )

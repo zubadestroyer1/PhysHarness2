@@ -506,7 +506,6 @@ def test_society_schemas_bound_arrays_without_string_length_keywords():
         walk(item["parameters"], item["name"])
     message_ids = definition(dispatcher, "message")["parameters"]["properties"]["artifact_ids"]
     assert message_ids["maxItems"] == 12
-    assert "lab='new'" in definition(dispatcher, "recruit")["description"]
 
 
 def test_society_catalog_without_literature_or_review():
@@ -1253,31 +1252,6 @@ def test_publication_refusals_and_source_ranks():
     assert _source_rank(node, {**clean, "axioms": {}}, unjudged) == "partial"
 
 
-async def test_message_lab_routing(lab):
-    service, author, exp, branches, _ = society_lab(lab)
-    alpha, context = running(service, author, exp, branches[0]["id"])
-    tools = profile(service, alpha, context)
-    recruited = await call(
-        tools, "recruit", {"brief": "Check the base case.", "title": "Base", "detached": True}
-    )
-    assert recruited["lab"] == service.get_record("branch", branches[0]["id"], author)["lab"]
-    sent = await call(tools, "message", {"to": "lab", "content": "Step 1 holds."})
-    assert sent["to"] == "lab" and len(sent["message_ids"]) == 1
-    child = Principal(
-        id="child",
-        role="agent",
-        project_id="lab",
-        experiment_id=exp["id"],
-        branch_id=recruited["branch_id"],
-    )
-    inbox = service.mailbox_page(recruited["branch_id"], child)["items"]
-    assert [message["content"] for message in inbox] == ["Step 1 holds."]
-    direct = await call(tools, "message", {"to": recruited["branch_id"], "content": "Direct."})
-    assert direct["message_id"] and direct["evidence_status"] == "attributed_idea"
-    crossed = await call(tools, "message", {"to": branches[1]["id"], "content": "Hi."})
-    assert crossed["error"]["code"] == "CROSS_LAB_MESSAGE"
-
-
 async def test_recruit_claims_focus_node(lab):
     service, author, exp, branches, _ = society_lab(lab, models=2)
     alpha, context = running(service, author, exp, branches[0]["id"])
@@ -1313,18 +1287,6 @@ async def test_recruit_claims_focus_node(lab):
         tools, "recruit", {"brief": "B", "title": "T", "focus_node_id": closed["id"]}
     )
     assert refused["error"]["code"] == "NODE_CLOSED"
-
-
-async def test_recruit_into_full_lab_suggests_new_lab(lab):
-    service, author, exp, branches, _ = society_lab(lab, lab_size_max=1)
-    alpha, context = running(service, author, exp, branches[0]["id"])
-    tools = profile(service, alpha, context)
-    full = await call(tools, "recruit", {"brief": "Help.", "title": "Helper", "detached": True})
-    assert full["error"]["code"] == "LAB_FULL" and "lab='new'" in full["error"]["remediation"]
-    fresh = await call(
-        tools, "recruit", {"brief": "Help.", "title": "Helper", "detached": True, "lab": "new"}
-    )
-    assert fresh["lab"] == "lab-" + fresh["branch_id"][:8]
 
 
 async def test_fetch_source_hides_screen_numbers_and_records_fetch(lab):
@@ -1397,8 +1359,7 @@ async def test_worker_society_prompt_contains_constitution_and_frontier(lab):
         assert view["instructions"] == constitution(exp["society"], literature_enabled=False)
         assert not {"discussion_topics", "research_directory", "peer_routing"} & set(view)
         assert {item["id"] for item in view["commons_frontier"]["items"]} >= {node["id"]}
-        assert view["lab"]["lab"] == branches[0]["lab"]
-        assert [member["branch_id"] for member in view["lab"]["members"]] == [branches[0]["id"]]
+        assert "lab" not in view
         focus = view["focus_nodes"]["items"]
         assert [(item["node_id"], item["title"]) for item in focus] == [(node["id"], "Trace lemma")]
         assert view["review_assignment"] is None
