@@ -1203,10 +1203,10 @@ async def test_reservation_bound_window_fallback_and_violation(tmp_path):
     creates, reserved, error = await run_reserved(tmp_path / "bound", 40_000, 64_000)
     appended = creates[1]["input"][len(creates[0]["input"]) :]
     assert error is None and reserved == [
-        10,
-        10 + sum(len(canonical_json(i).encode("utf-8")) for i in appended) + 2048,  # P1 margin
+        10 + 2048,  # the count plus the P1 margin
+        10 + sum(len(canonical_json(i).encode("utf-8")) for i in appended) + 2048,  # P1 bound
     ]
-    # count + 8,192 > threshold
+    # count + margin + 8,192 > threshold
     _, reserved, error = await run_reserved(tmp_path / "near", 8_200, 10_000)
     assert error is None and reserved == [10_000, 10_000]
     _, reserved, error = await run_reserved(tmp_path / "over", 40_000, 64_000, final_input=5_000)
@@ -1236,7 +1236,7 @@ async def test_compaction_on_a_request_reserved_below_the_window_raises_an_alarm
     assert [e.payload for e in events if e.kind == "bound_reservation_compacted"] == [
         {
             "response_id": "r1",
-            "input_tokens_reserved": 10,
+            "input_tokens_reserved": 10 + 2048,
             "input_tokens": 10,
             "compact_threshold": 40_000,
         }
@@ -1244,11 +1244,40 @@ async def test_compaction_on_a_request_reserved_below_the_window_raises_an_alarm
     await client.close()
 
 
-async def test_the_alarm_names_a_compaction_that_overran_before_the_limit_stops_it(tmp_path):
+async def test_compaction_on_a_request_reserved_at_the_window_raises_no_alarm(tmp_path):
     events = []
 
     async def emit(event):
         events.append(event)
+
+    client = sdk_client([response([compaction_item("one"), text_item("done")], "r1")], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"), client=client, event_sink=emit
+    )
+    params = {"context_management": [{"type": "compaction", "compact_threshold": 8_200}]}
+    await runtime.start(
+        "work",
+        ModelConfig(model="exact-model", parameters=params),
+        RuntimeLimits(max_context_tokens=10_000, max_output_tokens=1_000, max_total_tokens=None),
+    )
+    assert [
+        e.payload["input_tokens_reserved"] for e in events if e.kind == "generation_started"
+    ] == [10_000]
+    assert "bound_reservation_compacted" not in [e.kind for e in events]
+    await client.close()
+
+
+@pytest.mark.parametrize("settles", [False, True])
+async def test_the_alarm_precedes_usage_so_a_halt_on_settlement_still_names_the_cause(
+    tmp_path, settles
+):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        if settles and event.kind == "usage":
+            # As the worker's accounting sink does when settlement finds an overrun.
+            raise ExecutionError("BUDGET_RECONCILIATION_REQUIRED", "Usage exceeds reservation")
 
     client = sdk_client(
         [response([compaction_item("one"), call_item("a")], "r1", input_tokens=5_000)], []
@@ -1261,12 +1290,53 @@ async def test_the_alarm_names_a_compaction_that_overran_before_the_limit_stops_
     )
     with pytest.raises(ExecutionError) as error:
         await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
-    assert error.value.code == "PROVIDER_LIMIT_VIOLATION"
+    assert error.value.code == (
+        "BUDGET_RECONCILIATION_REQUIRED" if settles else "PROVIDER_LIMIT_VIOLATION"
+    )
     assert [e.kind for e in events] == [
         "generation_started",
-        "usage",
         "bound_reservation_compacted",
+        "usage",
     ]
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    ("threshold", "count", "reserved"),
+    [
+        (None, 10, 10),  # without compaction a count is reserved exactly
+        (183_808, 10, 10 + 2_048),
+        (183_808, 150_000, 150_000 + 3_000),  # 2% of the count exceeds the 2,048 floor
+        (183_808, 175_000, 256_000),  # count + 8,192 fits the gate, count + margin does not
+    ],
+)
+async def test_a_counted_request_under_compaction_reserves_the_count_plus_the_margin(
+    tmp_path, threshold, count, reserved
+):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client([response([text_item("done")], "r1", input_tokens=count)], [], count=count)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"), client=client, event_sink=emit
+    )
+    params = (
+        {"context_management": [{"type": "compaction", "compact_threshold": threshold}]}
+        if threshold
+        else {}
+    )
+    await runtime.start(
+        "work",
+        ModelConfig(model="exact-model", parameters=params),
+        RuntimeLimits(max_context_tokens=256_000, max_output_tokens=1_000, max_total_tokens=None),
+    )
+    assert [
+        (e.payload["input_tokens_estimate"], e.payload["input_tokens_reserved"])
+        for e in events
+        if e.kind == "generation_started"
+    ] == [(count, reserved)]
     await client.close()
 
 

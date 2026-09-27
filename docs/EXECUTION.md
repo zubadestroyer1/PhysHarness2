@@ -93,29 +93,43 @@ the same position in the previous request, plus a margin of the larger of 2,048 
 that sum. The elements are the instructions, the tools array and each input item, and removed
 content earns no credit. The previous request's element digests stay in runtime memory for the
 current run only, so a restart counts again. A compaction voids the bound. The count or the bound
-feeds the budget checks and is the input reservation, except under `context_management`: there
-it is reserved only while it plus 8,192 is at most `compact_threshold`, and otherwise the whole
-window (`max_context_tokens`) is. The output reservation is `max_output_tokens`. A 400 from
-`create` means the request was not sent: it is recorded as `preflight_error` (stage `create`),
-then `generation_aborted(reason="request_invalid")` releases the reservation at zero, and the
-session fails without being left uncertain. The next output cap is bounded by remaining cumulative
-tokens. A provider consumption discrepancy raises a limit violation and stops further turns.
+feeds the budget checks and is the input reservation, except under `context_management`. There a
+count is reserved with the bound's margin added, and the count or bound is reserved only while it
+plus 8,192 is at most `compact_threshold`; otherwise the whole window (`max_context_tokens`) is.
+The budget and context checks still use the exact count. The output reservation is
+`max_output_tokens`. A 400 from `create` means the request was not sent: it is recorded as
+`preflight_error` (stage `create`), then `generation_aborted(reason="request_invalid")` releases
+the reservation at zero, and the session fails without being left uncertain. The next output cap
+is bounded by remaining cumulative tokens. A provider consumption discrepancy raises a limit violation and stops further turns.
 No aliases or substitute models are selected by the adapter. Parameters supported here are
 `instructions`, `reasoning`, `text`, `temperature`, `top_p`, `service_tier`,
 `context_management`, and `parallel_tool_calls`. Unsupported provider parameter/model combinations
 fail at the provider.
 
-Reserving less than the window under `context_management` rests on a provider assumption. Server
-compaction fires only when a request's input exceeds `compact_threshold`, so a request under the
-gate cannot compact, and every compaction pass, which may bill more than the counted or bounded
-input, falls on a request that reserved the whole window. If a response to a request reserved
-below the window does carry a compaction item, the runtime logs a warning and emits
-`bound_reservation_compacted` (`response_id`, `input_tokens_reserved`, `input_tokens` and
-`compact_threshold`) before any limit check. A compaction that billed past the reservation still
-stops through `PROVIDER_LIMIT_VIOLATION` and the ledger's sticky halt; the alarm names the cause.
-`tools/reservation_bound.py` re-checks the bound offline on audit-extracted turns. On S1's 3,651
-consecutive completed turn pairs, the billed input was at most 0.9996 of the bound without its
-margin and 0.980 with it.
+Reserving less than the window under `context_management` rests on two provider assumptions.
+- **Compaction fires only above the threshold.** Server compaction fires only when a request's
+  input exceeds `compact_threshold`, so a request under the gate cannot compact, and every
+  compaction pass, which may bill more than the counted or bounded input, falls on a request that
+  reserved the whole window. If a response to a request reserved below the window does carry a
+  compaction item, the runtime logs a warning and emits `bound_reservation_compacted`
+  (`response_id`, `input_tokens_reserved`, `input_tokens` and `compact_threshold`). It does so
+  once the response is durable and before `usage` is emitted, so before the ledger settles it
+  and before any limit check. A compaction that billed past the reservation still stops, through
+  the ledger's sticky reconciliation halt (`BUDGET_RECONCILIATION_REQUIRED`) when settlement
+  finds the overrun, or else through `PROVIDER_LIMIT_VIOLATION`; the alarm names the cause.
+- **`context_management` adds no billed input.** `responses.input_tokens.count` does not accept
+  `context_management`, so a request is counted without it but billed with it. The runtime
+  assumes it adds no input tokens while compaction does not fire. The margin added to a counted
+  reservation covers a small gap. S1 cannot confirm this, because every S1 request under
+  `context_management` reserved the whole window; the first paid run checks it
+  (`work/society-s1/RUN_PLAN.md`, "Reservation smoke check").
+
+`tools/reservation_bound.py` re-checks the bound offline on audit-extracted turns. Its bound sums
+the characters of the appended items. That never exceeds the runtime's bound, which sums their
+canonical UTF-8 bytes, so a turn that passes offline would also pass at runtime. On S1's 3,651 consecutive
+completed turn pairs, the billed input was at most 0.9996 of the offline bound without its margin
+and 0.980 with it. That leaves little raw headroom: the runtime's safety comes mainly from the
+JSON syntax its byte count adds over those characters and from the margin.
 
 `parallel_tool_calls` defaults to `false`, as today. With `true`, a response's function calls
 still run one at a time, in the order the provider emitted them: the calls in a batch are never
@@ -195,8 +209,8 @@ experiments too.
 - A checkpoint chunk has no `artifact.created` event and no command row of its own; each save is
   one `runtime.save` transaction.
 - Smaller input reservations under `context_management`: `generation_started.input_tokens_reserved`
-  and `settled_response.input_reserved` hold the count or the bound, not the whole window, while
-  that value plus 8,192 is at most `compact_threshold`.
+  and `settled_response.input_reserved` hold the count plus the bound's margin, or the bound, not
+  the whole window, while that value plus 8,192 is at most `compact_threshold`.
 - The `bound_reservation_compacted` alarm event.
 
 ## Official Codex SDK

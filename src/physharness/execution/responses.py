@@ -218,6 +218,11 @@ def _request_elements(
     return elements
 
 
+def _bound_margin(tokens: int) -> int:
+    """P1's margin on a token bound: the larger of the floor and a percentage, rounded up."""
+    return max(BOUND_MARGIN_FLOOR, (tokens * BOUND_MARGIN_PERCENT + 99) // 100)
+
+
 def _input_bound(
     previous: dict[str, Any] | None, elements: list[tuple[str, int]], epoch: int
 ) -> int | None:
@@ -235,7 +240,7 @@ def _input_bound(
     raw = previous["tokens"] + sum(
         size for index, (sha, size) in enumerate(elements) if index >= len(old) or old[index] != sha
     )
-    return raw + max(BOUND_MARGIN_FLOOR, (raw * BOUND_MARGIN_PERCENT + 99) // 100)
+    return raw + _bound_margin(raw)
 
 
 def _cached_input_tokens(usage: Any) -> int:
@@ -1000,6 +1005,28 @@ class ResponsesRuntime:
             }
             state["input"].extend(native["output"])
             await self._save(session, state)
+            context = prepared.params.get("context_management")
+            if (
+                context
+                and prepared.input_reservation < session.limits.max_context_tokens
+                and any(item.get("type") == "compaction" for item in native["output"])
+            ):
+                # F4: compaction was assumed impossible below the gate, and the reservation's
+                # soundness depends on it. Name the cause before settlement or a limit check can
+                # stop the run.
+                log.warning(
+                    "bound_reservation_compacted",
+                    extra={"session_id": session.id, "operation_id": operation_id},
+                )
+                await self._emit_telemetry(
+                    "bound_reservation_compacted",
+                    session,
+                    operation_id,
+                    response_id=response.id,
+                    input_tokens_reserved=prepared.input_reservation,
+                    input_tokens=response.usage.input_tokens,
+                    compact_threshold=context[0]["compact_threshold"],
+                )
             await self._emit(
                 "usage",
                 session,
@@ -1026,27 +1053,6 @@ class ResponsesRuntime:
             }
             state.pop("compaction_replay_pending", None)
             await self._save(session, state)
-            context = prepared.params.get("context_management")
-            if (
-                context
-                and prepared.input_reservation < session.limits.max_context_tokens
-                and any(item.get("type") == "compaction" for item in native["output"])
-            ):
-                # F4: compaction was assumed impossible below the gate, and the reservation's
-                # soundness depends on it. Name the cause before any limit check can stop the run.
-                log.warning(
-                    "bound_reservation_compacted",
-                    extra={"session_id": session.id, "operation_id": operation_id},
-                )
-                await self._emit_telemetry(
-                    "bound_reservation_compacted",
-                    session,
-                    operation_id,
-                    response_id=response.id,
-                    input_tokens_reserved=prepared.input_reservation,
-                    input_tokens=response.usage.input_tokens,
-                    compact_threshold=context[0]["compact_threshold"],
-                )
             if (
                 session.limits.max_total_tokens is not None
                 and state.get("cumulative_input_offset", 0)
@@ -1256,11 +1262,13 @@ class ResponsesRuntime:
             raise ExecutionError("CONTEXT_LIMIT", "Active request exceeds context token limit")
         context = params.get("context_management")
         if context:
-            # A compaction pass may bill more than the counted or bounded input, so the count or
-            # the margin-inclusive bound is reserved only while compaction cannot fire (G4, F4).
+            # The count is taken without context_management, which the count endpoint does not
+            # accept, so a counted reservation carries the bound's margin too. A compaction pass
+            # may bill more than either, so they are reserved only while compaction cannot fire.
+            reserved = input_tokens + _bound_margin(input_tokens) if counted else input_tokens
             input_reservation = (
-                input_tokens
-                if input_tokens + CONTEXT_MARGIN <= context[0]["compact_threshold"]
+                reserved
+                if reserved + CONTEXT_MARGIN <= context[0]["compact_threshold"]
                 else session.limits.max_context_tokens
             )
         else:

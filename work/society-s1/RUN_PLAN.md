@@ -303,6 +303,23 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 - This is a documented recommendation only. Neither `run-plan.example.json` nor any code
   default changes.
 
+### Reservation smoke check (first paid run)
+
+- Under `context_management` a request is counted without it, since the count endpoint
+  does not accept it, but billed with it. The runtime assumes it adds no billed input
+  and adds the bound's margin (the larger of 2,048 tokens and 2%) to a counted
+  reservation. S1 reserved the whole window, so this assumption has not been observed
+  yet (docs/EXECUTION.md).
+- In the development calibration, before any arm starts, pair every `generation_started`
+  event with `input_tokens_counted: true` with its `usage` event (same operation ID).
+  - `usage.input_tokens` must be at most `input_tokens_reserved`. An overrun already
+    halts the experiment: treat it as a fault (stop rule 5) and do not start the arms.
+  - Record `usage.input_tokens − input_tokens_estimate`, the input that
+    `context_management` added over the exact count. Report any positive gap before the
+    arms start.
+- Also report any `bound_reservation_compacted` event before the arms start: compaction
+  fired on a request that the runtime assumed could not compact.
+
 ## 6. Stop rules (predeclared)
 
 1. **Root accepted.** An independent-kernel receipt on the exact target stops the run
