@@ -770,6 +770,30 @@ async def test_count_runs_once_per_run_then_estimates(tmp_path):
     await client.close()
 
 
+async def test_every_run_counts_its_first_request(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    client = client_for(
+        [response([message("first")]), response([message("second")], response_id="r2")],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=emit
+    )
+    first = await runtime.start(
+        "compute", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    # Same runtime, same session: the first run's last request must not bound the next run's.
+    await runtime.continue_session(first.session.id, "next")
+    assert [u.rsplit("/", 1)[-1] for u, _ in requests] == ["input_tokens", "responses"] * 2
+    started = [e.payload for e in events if e.kind == "generation_started"]
+    assert [p["input_tokens_counted"] for p in started] == [True, True]
+    await client.close()
+
+
 def test_input_bound_counts_changed_elements_and_credits_nothing_removed():
     from physharness.execution.responses import _input_bound, _request_elements
 
