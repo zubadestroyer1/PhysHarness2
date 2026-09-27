@@ -130,17 +130,20 @@ tools, the prompts and the delivery shapes.
   - Edges are `depends_on` (cycle-checked), `motivated_by`, `refutes`, `generalizes`,
     `specializes` and `duplicates`.
   - The frontier ranks open work by root path, waiting dependents, neglect and live
-    claims. A node proved by a complete or verified source of its current statement is
-    not open work, as for the long pole: it leaves the frontier and waits on nothing. The
-    score is attention, never proof.
+    claims. A proved node is not open work, as for the long pole: it leaves the frontier
+    and waits on nothing. A node is proved by a complete or verified source of its
+    current, elaborated Lean statement; a definition, which states nothing to prove, by
+    any complete or verified source. A clean file on any other node without an elaborated
+    statement proves nothing the verifier checks, so that node stays open work. The score
+    is attention, never proof.
 - **Status.** A node is `open` until its author abandons it (`abandoned`, with a reason) or
   the platform accepts or refutes it (`accepted`, `refuted`); nothing else moves a node
   (S1 audit #17). The independent verifier is the only arbiter: its receipt on the exact
   target accepts the goal. A node imported by an independently verified proof records
   that proof's receipt and the imported source's digest (`{receipt_id, sha256}`) in
-  `in_verified_proof` (shown by `commons_read`; a node whose current source is complete
-  is not open work and leaves the frontier, which otherwise counts only the entries for
-  the node's current source); its status stays open. Source ranks are advisory and only
+  `in_verified_proof` (shown by `commons_read`; a proved node is not open work and leaves
+  the frontier, which otherwise counts only the entries for the node's current source);
+  its status stays open. Source ranks are advisory and only
   verifier receipts are authority: the verifier certifies the target's axioms, not each
   imported lemma's. Only the receipt's platform-written `commons_modules` count, never
   the candidate artifact's provenance. Stale entries, nodes outside the experiment,
@@ -364,11 +367,13 @@ tools, the prompts and the delivery shapes.
   for a referee of an open approach, conjecture or lemma (else `REVIEW_PRECONDITION`); a
   node with an elaborated Lean statement and a complete or verified source of it needs
   none (`REVIEW_UNNEEDED`), since the verifier checks it. Without such a statement a clean
-  file proves nothing the verifier checks, so the node can still draw a referee. The referee's packet holds the node's text and, for a skeleton, the
-  Lean interface its source imports (at most 20 statements, no proofs). A verdict (`sound`,
-  `gaps` or `wrong`) is recorded, and a negative one is posted as an objection on the
-  node's thread; no verdict moves a status, vetoes further referees or reviews a Lean
-  statement's fidelity. The platform creates an isolated referee:
+  file proves nothing the verifier checks, so the node can still draw a referee, and it
+  stays open work on the frontier and the long pole. The referee's packet holds the
+  node's text and, for a skeleton, the Lean interface its source imports (at most 20
+  statements, no proofs). A verdict (`sound`, `gaps` or `wrong`) is recorded, and a
+  negative one is posted as an objection on the node's thread; no verdict moves a status,
+  vetoes further referees or reviews a Lean statement's fidelity. The platform creates an
+  isolated referee:
   - a detached branch with no parent, marked `hat="referee"`;
   - on the model family the node's earlier referees (for its current text) used least,
     preferring one other than the author's. The first referee is cross-model whenever a
@@ -504,10 +509,11 @@ tools, the prompts and the delivery shapes.
   The first 20 s are a minimum sleep (shorter only for a shorter timeout), so a burst of
   events wakes once. A graph or subscription limit hit while checking wakes the waiter
   with reason `wait_error` and the error code, instead of ending the run. The long pole is
-  where help counts most. Here a node counts as open while no status closed it and no
-  complete or verified source of its current statement proves it (only the goal is ever
-  accepted), so publishing such a source moves the pole and a restatement that makes the
-  source stale moves it back. The pole is the open nodes the goal reaches through open
+  where help counts most. Here a node counts as open while no status closed it and it is
+  not proved, as on the frontier (only the goal is ever accepted): a complete or verified
+  source of its current, elaborated Lean statement, or of a definition, proves it. So
+  publishing such a source moves the pole, and a restatement that makes the source stale
+  moves it back. The pole is the open nodes the goal reaches through open
   `depends_on` paths (never the parts of an abandoned or proved route) that wait on no
   other open node, oldest first (at most 3, with their age and claimants). Without such
   parts it is the open nodes that most open nodes depend on; failing that, a hint to link

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from commons_helpers import society_lab
+from commons_helpers import society_lab, state_lean
 from sqlalchemy import create_engine, event
 from sqlalchemy.dialects import postgresql
 from test_commons_sources import publish
@@ -185,7 +185,9 @@ def test_event_wait_filters_run_on_the_backend(backend_lab):
     )
     service.link_nodes(exp["id"], goal["id"], "depends_on", node["id"], alpha, "goal-node")
     service.claim_node(node["id"], "claim", beta, "claim")
-    publish(service, node["id"], beta, "partial", "partial")
+    # A complete source proves the node only once it has an elaborated Lean statement.
+    stated = {"lean_statement_sha256": state_lean(service, node["id"], beta)}
+    publish(service, node["id"], beta, "partial", "partial", **stated)
 
     def reason(ticket):
         return service.peer_wait_status(ticket, agent)["reason"]
@@ -193,9 +195,9 @@ def test_event_wait_filters_run_on_the_backend(backend_lab):
     agent, renewed = park(service, author, exp, alpha.branch_id, ids=[node["id"]])
     _, pole = park(service, author, exp, alpha.branch_id)
     service.claim_node(node["id"], "renew", beta, "renew")
-    publish(service, node["id"], beta, "partial", "retry")
+    publish(service, node["id"], beta, "partial", "retry", **stated)
     assert reason(renewed) == reason(pole) == "waiting"
-    publish(service, node["id"], beta, "complete", "complete")
+    publish(service, node["id"], beta, "complete", "complete", **stated)
     assert reason(renewed) == "watched_event"
     # The complete source proves the node, so it leaves the long pole.
     assert reason(pole) == "long_pole_changed"

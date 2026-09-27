@@ -23,7 +23,13 @@ from .commons_models import (
     is_open,
     public_status,
 )
-from .commons_sources import COMPLETE_RANKS, SOURCE_STATES, node_module, source_state
+from .commons_sources import (
+    COMPLETE_RANKS,
+    SOURCE_STATES,
+    has_elaborated_statement,
+    node_module,
+    source_state,
+)
 from .domain import Principal, digest_json, new_id, utcnow
 from .errors import HarnessError
 from .knowledge.index import tokens
@@ -105,9 +111,15 @@ def _dependency_children(edges, within=None):
 
 
 def _open_work(node):
-    """Whether a node is still open work: no status closed it and no complete or verified
-    source of its current statement proves it (only the goal is ever accepted)."""
-    return is_open(node["status"]) and source_state(node) not in COMPLETE_RANKS
+    """Whether a node is still open work: no status closed it, and it is not proved (only
+    the goal is ever accepted). A complete or verified source of the node's current,
+    elaborated Lean statement proves it, and so does any such source of a definition, which
+    states nothing to prove. Another node's clean file without such a statement proves
+    nothing the verifier checks (as for REVIEW_UNNEEDED), so the node stays open work."""
+    proved = source_state(node) in COMPLETE_RANKS and (
+        has_elaborated_statement(node) or node["node_type"] == "definition"
+    )
+    return is_open(node["status"]) and not proved
 
 
 def _depends_closure(children, start, limit):

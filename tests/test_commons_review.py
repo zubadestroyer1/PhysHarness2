@@ -1406,9 +1406,11 @@ def test_a_verified_proof_records_provenance_on_the_nodes_it_imports(lab, monkey
     # Provenance is neither a status move nor an announcement.
     moved = [e["aggregate_id"] for e in events(service, author, "commons.node_status")]
     assert moved == [goal["id"]]
-    # Their complete sources prove them, so they are no longer open work.
+    # A statement-less lemma's clean file proves nothing the verifier checks, so it stays
+    # open work, and the frontier counts the proofs that imported its current source.
     frontier = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
-    assert not {used["id"], stale["id"]} & {item["id"] for item in frontier}
+    shown = {item["id"]: item.get("in_verified_proof") for item in frontier}
+    assert shown[used["id"]] == 1 and shown[stale["id"]] is None
     # A later proof of the accepted goal adds its receipt, up to the bound.
     later = flattened_receipt(service, exp, alpha, commons_modules=commons[:1], key="later")
     node = service.read_node(used["id"], alpha)["node"]

@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 import pytest
-from commons_helpers import publish, set_status, society_lab
+from commons_helpers import publish, set_status, society_lab, state_lean
 from pydantic import ValidationError
 from sqlalchemy import event, select
 from test_core import setup_experiment
@@ -551,14 +551,16 @@ def test_frontier_orders_root_path_and_dependents_first(lab):
 
 
 def test_proved_nodes_leave_the_frontier(lab):
-    """A lemma is proved by a complete source (only the goal is ever accepted): it is no
-    longer open work, nor an open dependent that waits on another node."""
+    """A lemma is proved by a complete source of its elaborated Lean statement (only the goal
+    is ever accepted): it is no longer open work, nor an open dependent that waits on
+    another node."""
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     goal = service.ensure_goal_node(exp["id"], author)
     ids = {
         name: service.create_node(exp["id"], lemma(name), alpha, name)["id"]
         for name in ("A", "B", "C")
     }
+    digests = {name: state_lean(service, ids[name], alpha, f"lean-{name}") for name in "AC"}
     service.link_nodes(exp["id"], goal["id"], "depends_on", ids["A"], beta, "goal-a")
     service.link_nodes(exp["id"], ids["C"], "depends_on", ids["B"], beta, "c-b")
 
@@ -568,11 +570,34 @@ def test_proved_nodes_leave_the_frontier(lab):
     before = frontier()
     assert [item["id"] for item in before] == [ids["A"], goal["id"], ids["B"], ids["C"]]
     assert before[2]["score_components"]["waiting_dependents"] == 1.0
-    publish(service, ids["A"], beta, "complete", "prove-a")
-    publish(service, ids["C"], beta, "complete", "prove-c")
+    for name in "AC":
+        publish(service, ids[name], beta, "complete", name, lean_statement_sha256=digests[name])
     after = frontier()
     assert [item["id"] for item in after] == [goal["id"], ids["B"]]
     assert after[1]["score_components"]["waiting_dependents"] == 0.0
+
+
+def test_a_file_proves_only_a_stated_lemma_or_a_definition(lab):
+    """A statement-less lemma's clean file proves nothing the verifier checks: it stays
+    open work, on the frontier and the long pole. A definition states nothing to prove, so
+    its complete source finishes it."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    loose = service.create_node(exp["id"], lemma("Loose"), alpha, "loose")
+    definition = service.create_node(
+        exp["id"],
+        NodeCreate(node_type="definition", title="Gap", statement="The spectral gap."),
+        alpha,
+        "definition",
+    )
+    for node in (loose, definition):
+        service.link_nodes(exp["id"], goal["id"], "depends_on", node["id"], beta, node["id"])
+    publish(service, loose["id"], beta, "complete", "loose-source")
+    publish(service, definition["id"], beta, "complete", "definition-source")
+    page = service.query_nodes(exp["id"], beta, frontier=True)
+    listed = {item["id"] for item in page["items"]}
+    assert loose["id"] in listed and definition["id"] not in listed
+    assert [item["id"] for item in page["long_pole"]] == [loose["id"]]
 
 
 def test_frontier_reports_the_long_pole_and_a_hint(lab):
@@ -634,8 +659,10 @@ def test_the_long_pole_skips_the_parts_of_closed_routes(lab):
     ):
         service.link_nodes(exp["id"], source, "depends_on", target, beta, f"{source}-{target}")
     service.abandon_node(ids["Dead"], "A dead route.", alpha, "abandon")
-    # A lemma is proved by a complete source; only the goal is ever accepted.
-    publish(service, ids["Proved"], beta, "complete", "prove")
+    # A lemma is proved by a complete source of its elaborated Lean statement; only the goal
+    # is ever accepted.
+    digest = state_lean(service, ids["Proved"], alpha)
+    publish(service, ids["Proved"], beta, "complete", "prove", lean_statement_sha256=digest)
     pole = service.query_nodes(exp["id"], beta, frontier=True)["long_pole"]
     assert [item["id"] for item in pole] == [ids["Live"]]
 
@@ -648,8 +675,10 @@ def test_proving_a_pole_lemma_moves_the_pole_and_wakes_waiters(lab):
         "lean_name": "under",
         "lean_statement": ": (1 : Nat) + 1 = 2",
     }
+    elaborated = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
     part = service.create_node(exp["id"], lemma("A"), beta, "A")
-    under = service.create_node(exp["id"], lemma("B", **stated), beta, "B")
+    under = service.create_node(exp["id"], lemma("B"), beta, "B")
+    service.set_lean_statement(under["id"], *stated.values(), elaborated, beta, "state")
     for source, target in ((goal, part), (part, under)):
         service.link_nodes(exp["id"], source["id"], "depends_on", target["id"], beta, target["id"])
 
@@ -671,7 +700,6 @@ def test_proving_a_pole_lemma_moves_the_pole_and_wakes_waiters(lab):
     # and waiters see that move too, though not the branch that restated it.
     _, ticket = park(service, author, exp, alpha.branch_id)
     restater, own = park(service, author, exp, beta.branch_id)
-    elaborated = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
     changed = {**stated, "lean_statement": ": (2 : Nat) + 2 = 4"}
     service.set_lean_statement(under["id"], *changed.values(), elaborated, beta, "restate")
     assert pole() == [under["id"]] and woken(ticket) == "long_pole_changed"

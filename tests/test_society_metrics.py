@@ -319,6 +319,7 @@ def stated_node(identifier, rank, recorded, statement=CHECKED):
         "lean_header": "import Mathlib",
         "lean_name": name,
         "lean_statement": statement,
+        "lean_elaborated": True,
         "lean_source": {
             "rank": rank,
             "branch_id": B,
@@ -327,6 +328,22 @@ def stated_node(identifier, rank, recorded, statement=CHECKED):
             "lean_statement_sha256": _lean_digest("import Mathlib", name, CHECKED),
         },
     }
+
+
+def test_progress_counts_a_stated_lemma_or_a_definition_as_proved():
+    """As on the platform's frontier: a statement-less lemma's clean file proves nothing
+    the verifier checks, while a definition's complete source finishes it."""
+    source = {"rank": "complete", "imports": [], "recorded_at": stamp(700)}
+    loose = {"id": "loose", "node_type": "lemma", "lean_source": source}
+    definition = {**loose, "id": "definition", "node_type": "definition"}
+    unelaborated = {**stated_node("unelaborated", "verified", 800), "lean_elaborated": False}
+    stated = stated_node("stated", "complete", 100)
+    assert metrics_tool._progress([loose, unelaborated, stated], [])[
+        "last_source_progress_at"
+    ] == stamp(100)
+    assert metrics_tool._progress([loose, definition, stated], [])[
+        "last_source_progress_at"
+    ] == stamp(700)
 
 
 def test_statement_digest_reproduces_the_platforms():

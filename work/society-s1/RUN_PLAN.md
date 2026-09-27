@@ -409,11 +409,13 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 4. **Stagnation (operator rule).** S1 has no automated stagnation stop; CampaignRuntime
    in S2 adds one. So the operator exports every 15 minutes and runs
    `tools/society_metrics.py`. The operator stops the arm when no node has gained a new
-   complete or verified source, and no new receipt has arrived, in the last 45 minutes:
+   source that proves it, and no new receipt has arrived, in the last 45 minutes:
    both `last_source_progress_at` and `last_receipt_at` (null when none) are more than 45
-   minutes old. `last_source_progress_at` is the latest `recorded_at` of a complete or
-   verified source of its node's current statement (a stale source is no progress), and
-   `last_receipt_at` is the latest submission of a verification receipt of any status.
+   minutes old. `last_source_progress_at` is the latest `recorded_at` of a source that
+   proves its node: a complete or verified source of the node's current, elaborated Lean
+   statement, or of a definition. A stale source, or a clean file on a node without such a
+   statement, is no progress. `last_receipt_at` is the latest submission of a
+   verification receipt of any status.
    Node statuses no longer move before acceptance (S1 audit #17).
 5. **Fault.** On `BUDGET_RECONCILIATION_REQUIRED`, an uncertain external operation or a
    quarantined workspace, pause the experiment, audit, and ask the user before resuming.
@@ -456,7 +458,7 @@ proof and transcript bytes, so keep them private.
 | Retrieval hit rate | Not computed | S1 has no accepted non-root nodes to retrieve. |
 | Live approach families | `branches.labs` (S1 only; there are no labs after the remediation), `nodes_by_type` | Proxies. The count over time needs periodic exports. |
 | Referee catch rate; fidelity failure rate | `referee_negative_share`, `fidelity_failure_share` (S1 only; the remediation removed fidelity reviews), `reviews_by_verdict`, `cross_model_share`, `stale_reviews` | These are negative-verdict shares. A true catch rate needs ground truth. |
-| Source and receipt progress (stop rule 4) | `last_source_progress_at`, `last_receipt_at` | Timestamps as recorded, or null when there are none. A stale source is not progress; a receipt counts whatever its status. |
+| Source and receipt progress (stop rule 4) | `last_source_progress_at`, `last_receipt_at` | Timestamps as recorded, or null when there are none. Only a source that proves its node counts (stop rule 4), so a stale source or a statement-less lemma's clean file is not progress; a receipt counts whatever its status. |
 | Stale-claim rate | `stale_claim_count`, `live_claim_count`, `claims_as_of`, `claims_as_of_source` | Unreleased claims past expiry at `--as-of`. Without `--as-of`, claims are judged at the run's end (the latest activity in the export), so claims that merely outlived the run are not counted. Stale counts are meaningful only for in-run exports (the 15-minute checks) or with an explicit `--as-of`. A post-run count misses a lapse that the same branch later re-claimed, because the claim record is overwritten. |
 | Lean iterations per accepted node | `lean_checks_per_accepted_result` | Needs runtime events. |
 | Automation hit rate | Not computed | `lean_check` results are not persisted as records. |

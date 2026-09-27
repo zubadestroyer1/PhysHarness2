@@ -463,15 +463,22 @@ def _latest(stamps):
     return max(stamps, key=_epoch) if stamps else None
 
 
+def _proved(node):
+    """``physharness.commons._open_work``'s proof rule: a complete or verified source of the
+    node's current, elaborated Lean statement, or of a definition."""
+    elaborated = node.get("lean_statement") is not None and node.get("lean_elaborated")
+    return _source_state(node) in COMPLETE_RANKS and bool(
+        elaborated or node.get("node_type") == "definition"
+    )
+
+
 def _progress(nodes, receipts):
-    """RUN_PLAN stop rule 4's clocks: when a node last gained a complete or verified source
-    of its current statement (a stale source is no progress), and when the last
+    """RUN_PLAN stop rule 4's clocks: when a node was last proved (``_proved``; a stale
+    source, or a statement-less lemma's clean file, is no progress), and when the last
     verification receipt of any status was submitted."""
     return {
         "last_source_progress_at": _latest(
-            node["lean_source"].get("recorded_at")
-            for node in nodes
-            if _source_state(node) in COMPLETE_RANKS
+            node["lean_source"].get("recorded_at") for node in nodes if _proved(node)
         ),
         "last_receipt_at": _latest(receipt.get("created_at") for receipt in receipts),
     }
