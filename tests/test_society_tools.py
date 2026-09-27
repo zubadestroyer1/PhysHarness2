@@ -2048,6 +2048,25 @@ async def test_scoped_recruit_waits_for_its_own_joined_recruits(lab):
     assert scoped.record()["return_result"]["summary"].startswith("Node ")
 
 
+async def test_node_views_show_an_s1_status_as_open(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    tools = profile(service, alpha, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    with service.db.transaction() as session:
+        service._replace(
+            session, session.get(RecordRow, node["id"]), {"status": "compiles_locally"}
+        )
+    arguments = {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    assert (await call(tools, "commons_node", arguments))["status"] == "open"
+    recruited = await call(
+        tools, "recruit", {"brief": "Prove it.", "title": "Helper", "focus_node_id": node["id"]}
+    )
+    objective = service.get_record("task", recruited["task_id"], author)["objective"]
+    assert "status open" in objective and "compiles_locally" not in objective
+    assert service.get_record("commons_node", node["id"], author)["status"] == "compiles_locally"
+
+
 async def test_fetch_source_hides_screen_numbers_and_records_fetch(lab):
     literature = LiteraturePolicy(
         mode="benchmark", masked_reference_artifact_id="ref", blocked_sources=["2101.00001"]

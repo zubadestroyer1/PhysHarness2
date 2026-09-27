@@ -17,7 +17,7 @@ import re
 from collections import deque
 from dataclasses import dataclass
 
-from .commons_models import CLOSED_STATUSES
+from .commons_models import axiom_refusal, is_open
 from .domain import utcnow
 from .errors import HarnessError
 from .orchestration.lean_session import _ID_FIRST, _command_word, lean_code
@@ -26,7 +26,7 @@ from .worker_authority import current_worker_effects
 
 RANKS = {"partial": 1, "complete": 2, "verified": 3}
 COMPLETE_RANKS = frozenset({"complete", "verified"})
-SOURCE_STATES = ("verified", "complete", "partial", "stub", "none")
+SOURCE_STATES = ("verified", "complete", "partial", "stale", "stub", "none")
 MODULE = re.compile(r"Commons\.N([0-9a-f]{8}|[0-9a-f]{12}|[0-9a-f]{16})")
 SKIPPED_IMPORT_EDGES = frozenset({"DEPENDENCY_CYCLE", "SELF_EDGE"})
 COMMONS_IMPORT = re.compile(r"Commons\.N[0-9a-f]{8}(?:[0-9a-f]{4}){0,2}")
@@ -85,9 +85,16 @@ def _statement_digest(node):
     return _lean_digest(node.get("lean_header"), node.get("lean_name"), node.get("lean_statement"))
 
 
+def _stale(source, digest):
+    """Whether a source was checked against another statement than the node's current one
+    (``digest``): it proves nothing of the current statement."""
+    return source.get("lean_statement_sha256") != digest
+
+
 def _effective_rank(source, digest):
-    """A verified source of an older statement counts as complete."""
-    if source["rank"] == "verified" and source.get("lean_statement_sha256") != digest:
+    """The rank a source holds for replacement and import: a verified source of an older
+    statement counts as complete."""
+    if source["rank"] == "verified" and _stale(source, digest):
         return "complete"
     return source["rank"]
 
@@ -95,10 +102,17 @@ def _effective_rank(source, digest):
 def _complete_for(source, digest):
     """Whether ``source`` is complete for the statement ``digest``; a source of an older
     statement is stale and counts as none."""
+    return source is not None and not _stale(source, digest) and source["rank"] in COMPLETE_RANKS
+
+
+def _verified_evidence(node, check):
+    """Whether a statement-check record supports the verified rank: the check passed, and
+    it found only Lean's standard axioms for the node's theorem."""
+    name = node.get("lean_name")
     return (
-        source is not None
-        and source.get("lean_statement_sha256") == digest
-        and source["rank"] in COMPLETE_RANKS
+        isinstance(check, dict)
+        and check.get("ok") is True
+        and axiom_refusal({name: check.get("axioms")}, name) is None
     )
 
 
@@ -106,7 +120,7 @@ def node_refusal(node: dict) -> str | None:
     """Why a node takes no published source (the goal, or a closed node), or None."""
     if node["node_type"] == "goal":
         return "goal_node"
-    if node["status"] in CLOSED_STATUSES:
+    if not is_open(node["status"]):
         return "node_closed"
     return None
 
@@ -129,11 +143,13 @@ def blocking_rank(node: dict, rank: str, branch_id: str | None) -> str | None:
 
 
 def source_state(node: dict) -> str:
-    """The node's effective source rank; ``stub`` for an elaborated Lean statement with no
-    source (it imports as a ``sorry`` stub), else ``none``."""
+    """What the node's source proves of its current statement: its rank, or ``stale`` when
+    it was checked against another statement (so it is never complete); ``stub`` for an
+    elaborated Lean statement with no source (it imports as a ``sorry`` stub), else
+    ``none``."""
     source = node.get("lean_source")
     if source:
-        return _effective_rank(source, _statement_digest(node))
+        return "stale" if _stale(source, _statement_digest(node)) else source["rank"]
     if node.get("lean_statement") is not None and node.get("lean_elaborated"):
         return "stub"
     return "none"
@@ -363,7 +379,7 @@ class CommonsSourceMixin:
                 source["sha256"],
                 source["artifact_id"],
                 source["branch_id"],
-                stale=source.get("lean_statement_sha256") != digest,
+                stale=_stale(source, digest),
             )
         if node.get("lean_statement") is not None and node.get("lean_elaborated"):
             header, statement = node.get("lean_header") or "", node["lean_statement"]
@@ -452,6 +468,15 @@ class CommonsSourceMixin:
             digest = _statement_digest(node)
             if digest is not None and record["lean_statement_sha256"] != digest:
                 return {"recorded": False, "module": module, "reason": "statement_changed"}
+            if record["rank"] == "verified" and not _verified_evidence(
+                node, record.get("statement_check")
+            ):
+                # The rank exempts a node from review and locks its statement (S1 audit #17).
+                raise HarnessError(
+                    "INVALID_SOURCE_RECORD",
+                    "A verified rank needs a passing statement check on Lean's standard axioms.",
+                    status=422,
+                )
             rank, current = record["rank"], node.get("lean_source")
             held = blocking_rank(node, rank, actor.branch_id)
             if held is not None:
@@ -496,7 +521,7 @@ class CommonsSourceMixin:
                 self._post_route_compiled(session, row, actor.branch_id, route, op)
             replaced = current is not None
             # A source of an older statement is stale: the new one is a first publication.
-            fresh = replaced and current.get("lean_statement_sha256") == digest
+            fresh = replaced and not _stale(current, digest)
             self._event(
                 session,
                 actor,

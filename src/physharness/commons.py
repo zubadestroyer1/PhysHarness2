@@ -16,11 +16,11 @@ from sqlalchemy import select
 
 from .commons_models import (
     ALLOWED_TRANSITIONS,
-    CLOSED_STATUSES,
     EDGE_RELATIONS,
     NODE_TYPES,
     STATUSES,
     NodeCreate,
+    is_open,
     public_status,
 )
 from .commons_sources import COMPLETE_RANKS, SOURCE_STATES, node_module, source_state
@@ -271,7 +271,7 @@ class CommonsMixin:
         self.ensure_goal_node(experiment_id, actor)
 
     def _goal_receipt(self, experiment_id, actor, items):
-        if any(i["node_type"] == "goal" and public_status(i["status"]) == "open" for i in items):
+        if any(i["node_type"] == "goal" and is_open(i["status"]) for i in items):
             return self.verified_target_receipt(experiment_id, actor)
         return None
 
@@ -280,7 +280,7 @@ class CommonsMixin:
         """The item with its public status, reporting (never persisting) acceptance evidenced
         by a current independent receipt."""
         item = {**item, "status": public_status(item["status"])}
-        if receipt is None or item["node_type"] != "goal" or item["status"] != "open":
+        if receipt is None or item["node_type"] != "goal" or not is_open(item["status"]):
             return item
         return {
             **item,
@@ -683,7 +683,7 @@ class CommonsMixin:
         """Transparent ranking of open work: root path, waiting dependents, neglect, claims."""
         claims = claims or {}
         visible = {node["id"] for node in nodes}
-        open_ids = {node["id"] for node in nodes if node["status"] not in CLOSED_STATUSES}
+        open_ids = {node["id"] for node in nodes if is_open(node["status"])}
         waiting = Counter(
             target for source, target in dependencies if source in open_ids and target in visible
         )
@@ -695,7 +695,7 @@ class CommonsMixin:
         now = utcnow()
         items = []
         for node in selected:
-            if node["status"] in CLOSED_STATUSES:
+            if not is_open(node["status"]):
                 continue
             idle = (now - datetime.fromisoformat(node["last_activity_at"])).total_seconds()
             components = {
@@ -726,7 +726,7 @@ class CommonsMixin:
         depend on (at least one; ties kept). Without those either, no items and a hint to link
         the goal's parts. ``claims`` are live claim payloads.
         """
-        open_ids = {node["id"] for node in nodes if node["status"] not in CLOSED_STATUSES}
+        open_ids = {node["id"] for node in nodes if is_open(node["status"])}
         goal = next((node["id"] for node in nodes if node["node_type"] == "goal"), None)
         waiting_on_open = {s for s, t in dependencies if s in open_ids and t in open_ids}
         parts = set()
@@ -897,7 +897,7 @@ class CommonsMixin:
                 raise HarnessError(
                     "NODE_AUTHORITY", "Only the author branch may abandon a node.", status=403
                 )
-            if row.payload["status"] in CLOSED_STATUSES:
+            if not is_open(row.payload["status"]):
                 raise HarnessError("NODE_CLOSED", "The node is already closed.")
             return self._set_node_status(
                 session,

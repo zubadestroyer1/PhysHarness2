@@ -13,7 +13,7 @@ from collections import Counter
 from sqlalchemy import select
 
 from .commons import MAX_PAGE, PLATFORM, _platform
-from .commons_models import CLOSED_STATUSES, NodePostCreate
+from .commons_models import NodePostCreate, is_open
 from .domain import utcnow
 from .errors import HarnessError
 from .storage import RecordRow, record_json_text
@@ -261,7 +261,7 @@ class CommonsDiscourseMixin:
                     remediation="Create an approach or lemma node (motivated_by the goal) and "
                     "claim that; read the goal's thread with commons_read.",
                 )
-            if action != "release" and row.payload["status"] in CLOSED_STATUSES:
+            if action != "release" and not is_open(row.payload["status"]):
                 raise _node_closed("A closed node takes no work claims.")
             # Reader lock before claim lock, the same order as post_on_node.
             subscribed = (
@@ -335,7 +335,7 @@ class CommonsDiscourseMixin:
     def _touch_node(self, session, row, actor, op):
         """Record activity on a node and extend the actor's live claim on it, if any."""
         self._replace(session, row, {"last_activity_at": utcnow().isoformat()})
-        if not actor.branch_id or row.payload["status"] in CLOSED_STATUSES:
+        if not actor.branch_id or not is_open(row.payload["status"]):
             return
         self.db.command_lock(session, self._digest(["commons-claim", row.id, actor.branch_id]))
         claim = self._claim_row(session, row, actor.branch_id)
@@ -457,7 +457,7 @@ class CommonsDiscourseMixin:
             node = nodes.get(node_id)
             if node is None:
                 return None
-            if node["status"] in CLOSED_STATUSES:
+            if not is_open(node["status"]):
                 return 0
             if node.get("branch_id") != branch_id and node_id not in claimed:
                 return 1
@@ -495,10 +495,7 @@ class CommonsDiscourseMixin:
             experiment = self._commons_experiment(session, row.payload["experiment_id"], actor)
             # Under the experiment lock: see writes committed while this command waited.
             session.refresh(row)
-            if (
-                row.payload["status"] in CLOSED_STATUSES
-                and request.kind not in CLOSED_NODE_POST_KINDS
-            ):
+            if not is_open(row.payload["status"]) and request.kind not in CLOSED_NODE_POST_KINDS:
                 raise _node_closed("A closed node takes only synthesis and update posts.")
             if not row.payload.get("topic_id"):
                 raise HarnessError("NODE_THREAD_MISSING", "This node has no discussion thread.")

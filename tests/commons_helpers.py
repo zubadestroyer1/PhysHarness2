@@ -82,8 +82,12 @@ def set_status(service, node_id, *statuses, reason="platform test"):
     return record
 
 
+PASSED_CHECK = {"ok": True, "reason": None, "axioms": ["propext"]}
+
+
 def publish(service, node_id, agent, rank, key, content="theorem x : True := trivial", **record):
-    """Publish ``content`` as the node's source at ``rank``, as ``lean_check`` does."""
+    """Publish ``content`` as the node's source at ``rank``, as ``lean_check`` does; a
+    verified rank carries a passing statement check unless ``record`` says otherwise."""
     artifact = service.create_artifact(
         ArtifactCreate(
             experiment_id=agent.experiment_id,
@@ -100,7 +104,7 @@ def publish(service, node_id, agent, rank, key, content="theorem x : True := tri
         {
             "rank": rank,
             "bytes": len(content),
-            "statement_check": None,
+            "statement_check": PASSED_CHECK if rank == "verified" else None,
             "lean_statement_sha256": None,
             "imports": [],
             **record,

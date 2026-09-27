@@ -391,9 +391,10 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
    most 24 h: the `run-team --timeout-seconds` value and the plan's `max_runtime_seconds`.
 4. **Stagnation (operator rule).** S1 has no automated stagnation stop; CampaignRuntime
    in S2 adds one. So the operator exports every 15 minutes and runs
-   `tools/society_metrics.py`. The operator stops the arm when no node has moved up the
-   ladder (`nodes_by_status`) and no receipt has been accepted in the last 25% of B or
-   45 minutes, whichever comes first.
+   `tools/society_metrics.py`. The operator stops the arm when no node has gained a new
+   complete or verified source, and no new receipt has arrived, in the last 45 minutes.
+   The export shows source progress in each node's `lean_source` (`rank` and
+   `recorded_at`); node statuses no longer move before acceptance (S1 audit #17).
 5. **Fault.** On `BUDGET_RECONCILIATION_REQUIRED`, an uncertain external operation or a
    quarantined workspace, pause the experiment, audit, and ask the user before resuming.
    Earlier pilots did the same.
@@ -547,23 +548,27 @@ Each item needs the user. None has been started.
   simulation shows it.
 - **Goal hole names.** Hole nodes sketched from the goal are named `node_hole_<i>`,
   because the goal node has no Lean name.
-- **Local compiles rest on the statement check.** `lean_check` records a local compile
-  only when the platform's statement check passes (docs/RESEARCH_NETWORK.md). The kernel
-  re-checks every declaration of the compiled file. The theorem's elaborated type must
-  equal the node statement's under `lean_header` alone, each with its own file's
-  definitions (such as `match` matchers) unfolded. The axioms the check collects itself
-  must be within `propext`, `Classical.choice` and `Quot.sound` (R23).
+- **Published ranks rest on the statement check.** `lean_check` with `node_id` publishes
+  the file as the node's source, ranked `verified` only when the platform's statement
+  check passes (docs/RESEARCH_NETWORK.md); otherwise `complete` or `partial`, or nothing
+  when the check rejects the file. The kernel re-checks every declaration of the compiled
+  file. The theorem's elaborated type must equal the node statement's under `lean_header`
+  alone, each with its own file's definitions (such as `match` matchers) unfolded. The
+  axioms the check collects itself must be within `propext`, `Classical.choice` and
+  `Quot.sound` (R23).
   - Node headers: import, open, set_option and universe lines, no command keyword among
     their names, and set_option only for elaboration limits, auto-bound implicits, `pp.*`
     and `linter.*`.
-  - Cost: each recorded compile runs three more Lean processes in the VM (the file, the
-    reference statement, the checker), each importing the header.
+  - Cost: each complete check of a node with a Lean statement runs three more Lean
+    processes in the VM (the file, the reference statement, the checker), each importing
+    the header.
   - It needs `python3` and `lake` in the VM, as the REPL daemon and the one-shot
     fallback already do, and runs the same way on v1 and v2.
-  - `compiles_locally` stays VM-attested. The checker process loads the file only as data
-    and defeats elaboration-level tricks (instances, macros, `#print axioms` overrides,
-    skipped kernel checks). But compiling the file runs its compile-time code (`#eval`,
-    `run_cmd`) in the VM, which, like a `shell` command, can tamper with the checker,
-    the reference or the imported `.olean` files.
+  - A `verified` rank stays VM-attested and advisory; only a verifier receipt is
+    authority. The checker process loads the file only as data and defeats
+    elaboration-level tricks (instances, macros, `#print axioms` overrides, skipped kernel
+    checks). But compiling the file runs its compile-time code (`#eval`, `run_cmd`) in the
+    VM, which, like a `shell` command, can tamper with the checker, the reference or the
+    imported `.olean` files.
 - **E2B file cap.** On E2B, `write_file` is capped at 32,768 bytes per file (R23), and the
   workspace archive at 64 KiB (section 8, item 7).

@@ -27,7 +27,6 @@ from pydantic import ValidationError
 from ..commons import PLATFORM, _lean_digest
 from ..commons_discourse import CLAIM_ACTIONS
 from ..commons_models import (
-    CLOSED_STATUSES,
     EDGE_RELATIONS,
     NODE_TYPES,
     STANDARD_AXIOMS,
@@ -35,6 +34,7 @@ from ..commons_models import (
     NodeCreate,
     NodePostCreate,
     axiom_refusal,
+    is_open,
     public_status,
 )
 from ..commons_review import (
@@ -1407,7 +1407,7 @@ def society_tools(
                 remediation="Focus the recruit on an approach or lemma node (motivated_by the "
                 "goal), or recruit without a focus node.",
             )
-        if focus is not None and focus["status"] in CLOSED_STATUSES:
+        if focus is not None and not is_open(focus["status"]):
             raise HarnessError("NODE_CLOSED", "A closed node cannot be a recruit's focus.")
         if a["until_proved"]:
             refusal = scope_statement_error(focus)

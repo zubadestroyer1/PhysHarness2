@@ -175,16 +175,23 @@ def finish(service, task_id, status="completed"):
 
 
 def test_nodes_are_open_and_legacy_statuses_read_as_open(lab):
-    service, _, exp, _, (alpha, _) = society_lab(lab)
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
     goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
     node = service.create_node(exp["id"], lemma(), alpha, "lemma")
     assert goal["status"] == "open" and node["status"] == "open"
+    requested = service.request_review(node["id"], beta, "review")
+    service.claim_node(node["id"], "claim", alpha, "claim")
     with service.db.transaction() as session:
         row = session.get(RecordRow, node["id"])
         row.payload = {**row.payload, "status": "formally_stated"}  # an S1 record
     assert service.read_node(node["id"], alpha)["node"]["status"] == "open"
     opened = service.query_nodes(exp["id"], alpha, status="open")["items"]
     assert node["id"] in {item["id"] for item in opened}
+    frontier = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
+    assert {item["id"]: item["status"] for item in frontier}[node["id"]] == "open"
+    (claimed,) = service.branch_claims(exp["id"], alpha)["items"]
+    assert (claimed["node_id"], claimed["status"]) == (node["id"], "open")
+    assert submit(service, requested, exp, "sound")["node_status"] == "open"
     # Exports keep the stored value.
     assert service.get_record("commons_node", node["id"], alpha)["status"] == "formally_stated"
     set_status(service, node["id"], "accepted")
@@ -491,6 +498,26 @@ def test_referees_review_open_plans_and_arguments_only(lab):
         error = rejected(lambda n=node: service.request_review(n["id"], beta, f"r-{n['id']}"))
         assert error.code == "REVIEW_PRECONDITION"
         assert error.details == {"status": status, "node_type": node["node_type"]}
+        assert error.message.endswith(f"; this {node['node_type']} is {status}.")
+
+
+def test_a_source_of_an_older_statement_does_not_exempt_a_node_from_review(lab):
+    """A source proves a node only for the statement it was checked against."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    digest = formalize(service, node, alpha)["lean_statement_sha256"]
+    publish(service, node["id"], alpha, "complete", "src", lean_statement_sha256=digest)
+    assert rejected(lambda: service.request_review(node["id"], beta, "compiled")).code == (
+        "REVIEW_UNNEEDED"
+    )
+    formalize(service, node, alpha, statement="∀ n : Nat, 0 + n = n", key="restate")
+    assert service.read_node(node["id"], alpha)["node"]["lean_source"]["rank"] == "complete"
+    assert service.request_review(node["id"], beta, "restated")["deduplicated"] is False
+    # A source published before the node had a Lean statement proves no statement either.
+    early = service.create_node(exp["id"], lemma("Early"), alpha, "early")
+    publish(service, early["id"], alpha, "complete", "early-src")
+    formalize(service, early, alpha, key="early-lean")
+    assert service.request_review(early["id"], beta, "early")["deduplicated"] is False
 
 
 def plan_importing(service, exp, node, agent, name, statement):

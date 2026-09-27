@@ -421,6 +421,14 @@ def test_rests_on_counts_sources(lab):
         "conditional": False,
         "truncated": False,
     }
+    # A source of an older statement proves nothing of the current one: resting on it is
+    # conditional again.
+    service.set_lean_statement(proved[0], None, "p0", ": True", elaborated, alpha, "restate")
+    assert service.read_node(top["id"], alpha)["rests_on"] == {
+        "counts": {"verified": 1, "stale": 1},
+        "conditional": True,
+        "truncated": False,
+    }
     assert service.read_node(ids[0], beta)["rests_on"] == {
         "counts": {},
         "conditional": False,

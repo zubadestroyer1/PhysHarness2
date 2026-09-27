@@ -176,14 +176,14 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 - **A persistent Lean session per workspace** with the pinned Mathlib/Physlib imports already loaded, instead of re-importing on every check.
 - **Rich feedback on every check:** goal states, errors, and an axiom report.
 - **On failure,** the check can run automation (`simp`, `aesop`, `linarith`/`nlinarith`, `polyrith`, `positivity`, `norm_num`, `exact?`/`apply?`) and premise suggestions from library search on the failing goal, and returns what worked or came close (`automate=true`; off by default since S1, where it exhausted the 2 GiB workbench 14 of 14 times).
-- **Local compile success is never acceptance;** only the independent checker (§5.2) accepts.
+- **A published source rank, even `verified`, is never acceptance;** only the independent checker (§5.2) accepts.
 
 **Literature and online sources** (brokered from the trusted plane, never from the sandbox, which stays offline):
 - **Sources:**
   - `search_literature` covers arXiv, OpenAlex/Semantic Scholar, Mathlib/Physlib documentation, Lean community archives and general web search.
   - `fetch_source` retrieves a PDF or HTML page, converts it to text with source spans, and stores it as a source artifact with URL, time, hash and licence note.
 - **Status of what's retrieved:**
-  - Retrieved lemmas and proofs are **informal inputs**. They can be cited and autoformalized into nodes, which then climb the normal ladder with fidelity checks.
+  - Retrieved lemmas and proofs are **informal inputs**. They can be cited and autoformalized into nodes, which then earn source ranks from the statement check like any other node (§5.2).
   - A paper saying something is true never gives a node proof status.
 - **Access policy per campaign:**
   - `open` (open problems): full brokered access, all fetches logged.
@@ -269,7 +269,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 ### 4.7 Stopping
 
 - **Root accepted:** an independent kernel receipt on the exact root statement triggers a bounded wrap-up (final synthesis, proof outline, write-up), then stop. This is already implemented as exact-target stop and bounded drain.
-- **Other stops:** budget exhausted, operator stop, or a stagnation policy (no status-ladder progress within a configured spend). Each produces an honest report of the frontier, obstacles and partial results.
+- **Other stops:** budget exhausted, operator stop, or a stagnation policy (no new complete or verified source and no new receipt within a configured spend). Each produces an honest report of the frontier, obstacles and partial results.
 
 ---
 
@@ -305,7 +305,7 @@ The independent verifier is the only arbiter; referees check plans (S1 audit #17
 - O-tier models run the Lean feedback loops. F-tier models handle statements, strategy and hard steps.
 - Sketch-then-fill (§3.7) turns an informal proof into a Lean skeleton whose holes become nodes. The persistent Lean session (§3.6) cuts the cost of each iteration. Automation on a failing goal is opt-in (`automate=true`) since S1, where it exhausted the workbench's memory.
 - Accepted nodes are immediately reusable library entries within the campaign. Retrieval is tested to actually return them; in the last run, lemma-bank searches returned nothing.
-- Agents may introduce definitions in a campaign-local namespace. Definitions are nodes with fidelity checks.
+- Agents may introduce definitions in a campaign-local namespace. Definitions are nodes, checked by Lean elaboration like any other.
 - Numerical and computational evidence stays evidence (computation nodes carry reproducibility metadata). It counts as proof only with a certificate checked in Lean (Wave 7).
 
 ---

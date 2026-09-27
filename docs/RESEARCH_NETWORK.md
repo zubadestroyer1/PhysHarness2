@@ -152,8 +152,8 @@ tools, the prompts and the delivery shapes.
     declaration early (with `#exit`, say). The commons service enforces this whoever
     calls it.
   - A source ranks `verified` only when the harness statement check passes; the file's
-    own output never decides. After a complete
-    `lean_check` with `node_id`, the platform compiles the file, and a reference
+    own output never decides. After a complete `lean_check` with `node_id`, the platform
+    compiles the file, and a reference
     `<lean_header> theorem <lean_name> <lean_statement> := sorry`, to `.olean` files.
     A harness-authored Lean checker (`formal_tools/statement_check.lean`) then loads
     both `.olean` files as data: the checker process elaborates none of the file's syntax
@@ -204,18 +204,24 @@ tools, the prompts and the delivery shapes.
     `shell`, `read_file` and `write_file` descriptions say so.
   - A clean `lean_check` with `node_id` (no Lean errors, no `#exit`, no `end` of a scope
     the file never opened, and for a node with a Lean statement the textual gates of the
-    statement check above) publishes the file as the node's module, a `lean_source` artifact ranked
-    `verified` (the statement check passed with standard axioms), `complete` (no
-    `sorry`, but the check could not judge; a node with no Lean statement ranks on the
-    file's own axiom report) or `partial`. A statement check that rejects the file
-    publishes nothing.
+    statement check above) publishes the file as the node's module, a `lean_source`
+    artifact ranked `verified` (the statement check passed with standard axioms),
+    `complete` (no `sorry`, but the check could not judge; a node with no Lean statement
+    ranks on the file's own axiom report) or `partial`. A statement check that rejects the
+    file publishes nothing. `record_lean_source` refuses a `verified` rank whose record
+    lacks a passing statement check on standard axioms, whoever calls it.
+  - A source proves a node only for the statement it was checked against. Once the
+    node's Lean statement changes (or a node published without one gets one), its source
+    reports `stale`: it is never complete, so the node can draw a referee again and a node
+    resting on it is conditional. For replacement a stale verified source counts as
+    complete, and an importer still inlines it, flagged stale.
   - Higher ranks replace lower ones, and an equal rank replaces its peer, except that a
-    verified source is replaced only by its publisher or the node's author. A verified
-    source of an older Lean statement counts as complete.
+    verified source of the current statement is replaced only by its publisher or the
+    node's author.
   - Publishing claims the node, and the source's imports become `depends_on` edges (one
     that would close a cycle is skipped). A node with an elaborated Lean statement and no
-    source reports `stub`; `commons_query(source=…)` filters by rank, and its text also
-    matches Lean and module names.
+    source reports `stub`; `commons_query(source=…)` filters by these states, and its
+    text also matches Lean and module names.
   - A node module is that node's lemma, and a flattened submission is the platform's
     copy; neither is the branch's own source, so the working context's active source
     skips both.

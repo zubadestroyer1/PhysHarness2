@@ -144,13 +144,53 @@ def test_publication_refused_when_the_statement_changed(lab):
         "module": node["lean_module"],
         "reason": "statement_changed",
     }
-    # A verified source of the older statement now counts as complete: another branch's
-    # complete source of the current statement replaces it.
-    assert source_state(service.read_node(node["id"], alpha)["node"]) == "complete"
+    # The verified source of the older statement proves nothing of the current one: it reads
+    # stale. For replacement it counts as complete, so another branch's complete source of
+    # the current statement replaces it.
+    assert source_state(service.read_node(node["id"], alpha)["node"]) == "stale"
+    listed = service.query_nodes(exp["id"], alpha, source="stale")["items"]
+    assert [item["id"] for item in listed] == [node["id"]]
     gamma = third_branch(service, author, exp)
     current = _lean_digest(*changed.values())
     fresh = publish(service, node["id"], gamma, "complete", "c", lean_statement_sha256=current)
     assert fresh["recorded"] is True and fresh["replaced"] is True
+
+
+def test_a_verified_rank_needs_a_passing_statement_check_on_standard_axioms(lab):
+    """Whoever calls it, record_lean_source refuses a verified rank the evidence does not
+    support: the rank lets a node skip review and locks its statement."""
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = lemma(service, exp, alpha, "Trace", "n", **LEAN)
+    digest = _lean_digest(*LEAN.values())
+    for key, check in (
+        ("none", None),
+        ("failed", {"ok": False, "reason": "statement_mismatch", "axioms": None}),
+        ("sorry", {"ok": True, "reason": None, "axioms": ["propext", "sorryAx"]}),
+        ("unreported", {"ok": True, "reason": None, "axioms": None}),
+    ):
+        with pytest.raises(HarnessError) as refused:
+            publish(
+                service,
+                node["id"],
+                alpha,
+                "verified",
+                key,
+                lean_statement_sha256=digest,
+                statement_check=check,
+            )
+        assert (refused.value.code, refused.value.status) == ("INVALID_SOURCE_RECORD", 422), key
+    assert service.read_node(node["id"], alpha)["node"]["lean_source"] is None
+    check = {"ok": True, "reason": None, "axioms": ["propext", "Classical.choice"]}
+    published = publish(
+        service,
+        node["id"],
+        alpha,
+        "verified",
+        "ok",
+        lean_statement_sha256=digest,
+        statement_check=check,
+    )
+    assert published["recorded"] is True and published["rank"] == "verified"
 
 
 def test_import_edges_are_depends_on_and_skip_cycles(lab):

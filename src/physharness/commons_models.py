@@ -25,7 +25,7 @@ EDGE_RELATIONS = get_args(EdgeRelation)
 STATUSES = ("open", "accepted", "refuted", "abandoned")
 # Ladder values stored before the S1 remediation; every reader treats them as open.
 LEGACY_OPEN_STATUSES = ("informal", "refereed", "formally_stated", "compiles_locally")
-# A node is open exactly when its status is not closed (``public_status`` reads "open").
+# The terminal statuses; every open or closed gate asks ``is_open``.
 CLOSED_STATUSES = frozenset({"accepted", "refuted", "abandoned"})
 # Only author abandonment and platform acceptance or refutation move a node (S1 audit #17).
 ALLOWED_TRANSITIONS = {
@@ -42,6 +42,11 @@ MAX_AXIOM_REPORT = 32
 def public_status(status):
     """The status every read shows: a legacy ladder value reads as open."""
     return "open" if status in LEGACY_OPEN_STATUSES else status
+
+
+def is_open(status):
+    """Whether a node with this stored status is open: the one rule every gate uses."""
+    return public_status(status) == "open"
 
 
 def axiom_refusal(axioms, lean_name):

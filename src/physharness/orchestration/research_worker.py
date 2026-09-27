@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from sqlalchemy import select
 
 from ..commons_discourse import compact_update_lines
-from ..commons_models import CLOSED_STATUSES
+from ..commons_models import is_open
 from ..commons_review import REFEREE_HAT, is_referee_task
 from ..commons_sources import COMPLETE_RANKS
 from ..domain import (
@@ -1028,7 +1028,7 @@ class ResearchTaskExecutor:
                 and source.get("lean_statement_sha256") == scope["lean_statement_sha256"]
             ):
                 reason = "scope_proved"
-            elif node["status"] in CLOSED_STATUSES:
+            elif not is_open(node["status"]):
                 reason = "scope_closed"
         if reason is None and joined and task.get("return_result"):
             reason = "result_returned"

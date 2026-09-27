@@ -21,7 +21,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import aliased
 
 from .commons import DEPENDS_ON, PLATFORM, _lean_digest, _platform, _writer, statement_key
-from .commons_models import ALLOWED_TRANSITIONS, CLOSED_STATUSES, LEAN_NAME, public_status
+from .commons_models import ALLOWED_TRANSITIONS, LEAN_NAME, is_open, public_status
 from .commons_sources import COMPLETE_RANKS, MAX_COMMONS_MODULES, source_state
 from .domain import StrictModel, digest_json, new_id
 from .errors import HarnessError
@@ -275,11 +275,11 @@ class CommonsReviewMixin:
         """A referee checks a plan or argument: an open approach, conjecture or lemma without
         a complete source (the verifier checks compiled Lean)."""
         status, node_type = public_status(node["status"]), node["node_type"]
-        if status != "open" or node_type not in REVIEWABLE_TYPES:
+        if not is_open(status) or node_type not in REVIEWABLE_TYPES:
             raise HarnessError(
                 "REVIEW_PRECONDITION",
-                f"A referee reviews an open approach, conjecture or lemma, not a {status} "
-                f"{node_type}.",
+                f"A referee reviews an open approach, conjecture or lemma; this {node_type} "
+                f"is {status}.",
                 details={"status": status, "node_type": node_type},
             )
         if source_state(node) in COMPLETE_RANKS:
@@ -422,7 +422,7 @@ class CommonsReviewMixin:
                 )
                 .limit(1)
             )
-            if other.payload["status"] not in CLOSED_STATUSES or refereed is not None:
+            if is_open(other.payload["status"]) or refereed is not None:
                 return other
         return earlier[0] if len(earlier) >= MAX_SAME_TEXT_NODES else None
 
@@ -728,7 +728,7 @@ class CommonsReviewMixin:
                     status=409,
                 )
             stale = _stale(assignment, row.payload)
-            open_node = row.payload["status"] not in CLOSED_STATUSES
+            open_node = is_open(row.payload["status"])
             referee_branch = session.get(RecordRow, task.payload["branch_id"])
             review_id = new_id()
             review = {
@@ -845,7 +845,7 @@ class CommonsReviewMixin:
                 raise HarnessError(
                     "GOAL_NODE_RESERVED", "The goal mirrors the reviewed target.", status=403
                 )
-            if row.payload["status"] in CLOSED_STATUSES:
+            if not is_open(row.payload["status"]):
                 raise HarnessError("NODE_CLOSED", "A closed node takes no Lean statement.")
             if not self._may_formalize(session, row, actor):
                 raise HarnessError(
