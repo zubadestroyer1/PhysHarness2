@@ -122,15 +122,54 @@ def test_node_message_is_capped_at_eight_recipients(lab):
     assert spent.value.details == {"limit": 8, "used": 8, "requested": 1}
 
 
-async def test_message_tool_takes_a_branch_or_a_node_id(lab):
+def branch_with_id(service, exp, author, identifier):
+    with service.db.transaction() as session:
+        return service._insert(
+            session,
+            "branch",
+            author,
+            {"title": "B", "objective": "B", "experiment_id": exp["id"], "status": "open"},
+            record_id=identifier,
+        )
+
+
+async def test_message_tool_takes_a_branch_or_a_node_id_prefix(lab):
     service, author, exp, branches, (_, beta) = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     tools = profile(service, alpha, context)
     node = lemma(service, exp, beta, "trace")
     to_node = await call(tools, "message", {"to": node["id"][:8], "content": "Step 2?"})
     assert to_node["node_id"] == node["id"] and to_node["recipients"] == [beta.branch_id]
-    direct = await call(tools, "message", {"to": beta.branch_id, "content": "Hi."})
+    # Any branch of the experiment is addressable by prefix, though its records stay unreadable.
+    direct = await call(tools, "message", {"to": beta.branch_id[:8], "content": "Hi."})
     assert direct["node_id"] is None and direct["recipients"] == [beta.branch_id]
+    assert service.resolve_id(beta.branch_id[:8], alpha, ("branch",)) == beta.branch_id[:8]
+
+
+async def test_message_prefix_never_reaches_another_experiments_branch(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    _, _, _, (foreign, _), _ = society_lab(lab, prefix="other")
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    tools = profile(service, alpha, context)
+    sent = await call(tools, "message", {"to": foreign["id"][:8], "content": "Hi."})
+    assert sent["error"]["code"] == "NOT_FOUND"
+
+
+async def test_ambiguous_branch_prefix_is_refused_like_an_unknown_id(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    ids = [
+        branch_with_id(service, exp, author, f"abcdef12-0000-4000-8000-00000000000{index}")["id"]
+        for index in (1, 2)
+    ]
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    tools = profile(service, alpha, context)
+    sent = await call(tools, "message", {"to": "abcdef12", "content": "Hi."})
+    unknown = await call(tools, "message", {"to": "0" * 8, "content": "Hi."})
+    # A routing prefix lists no candidates: they may be branches the sender cannot read.
+    refusal = (sent["error"]["code"], sent["error"]["message"])
+    assert refusal == (unknown["error"]["code"], unknown["error"]["message"])
+    assert refusal == ("NOT_FOUND", "Recipient branch was not found.")
+    assert not any(identifier in str(sent) for identifier in ids)
 
 
 def test_recruit_request_has_no_lab(lab):

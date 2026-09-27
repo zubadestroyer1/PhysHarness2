@@ -269,9 +269,10 @@ tools, the prompts and the delivery shapes.
   least 8 hex characters of a record the agent can see; an ambiguous prefix returns
   `AMBIGUOUS_ID` with the candidates. Routing arguments (`message.to`, `wait.ids`) name
   records the agent may be unable to read, so their prefixes resolve only among the
-  tool's own targets: the branches and nodes it may message, its delegated child tasks,
-  or its peer branches. A prefix that names none or several of them is refused exactly as an
-  unknown full id, so it reveals no other record.
+  tool's own targets: the branches and nodes it may message (any branch of the
+  experiment but a referee's, since addressing a branch reads nothing of it), its
+  delegated child tasks, or its peer branches. A prefix that names none or several of
+  them is refused exactly as an unknown full id, so it reveals no other record.
 
 Society workers get the consolidated profile in
 `src/physharness/orchestration/society_tools.py`. It has 26 tools in all; a worker's

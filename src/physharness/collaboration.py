@@ -1020,6 +1020,7 @@ class CollaborationMixin:
 
         def action(session, op):
             sender = self._writable_branch(session, branch_id, actor)
+            # _active's experiment row lock (FOR UPDATE) serializes the budget count and insert.
             experiment = self._commons_experiment(session, sender.payload["experiment_id"], actor)
             target = session.get(RecordRow, to)
             node_id = None
