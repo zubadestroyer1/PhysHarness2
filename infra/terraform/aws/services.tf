@@ -108,11 +108,10 @@ resource "aws_ecs_task_definition" "app" {
     name                   = "app", image = var.app_image, essential = true, user = "10001:10001",
     readonlyRootFilesystem = true, command = local.commands[each.key], stopTimeout = 120,
     mountPoints            = [{ sourceVolume = "scratch", containerPath = "/app/.state", readOnly = false }],
-    environment = concat(local.shared_environment, contains(["api", "worker"], each.key) ? [
-      { name = "PHYSHARNESS_MODEL_PRICES", value = jsonencode(var.model_prices) }
-      ], each.key != "worker" ? [] : concat(
-      var.e2b_template_id == null ? [] : [{ name = "PHYSHARNESS_E2B_TEMPLATE_ID", value = var.e2b_template_id }],
-    var.worker_workspace == null ? [] : [{ name = "PHYSHARNESS_WORKER_WORKSPACE", value = jsonencode(var.worker_workspace) }])),
+    environment = concat(local.shared_environment,
+      each.key == "migration" ? [] : [{ name = "PHYSHARNESS_MODEL_PRICES", value = jsonencode(var.model_prices) }],
+      each.key == "worker" ? concat(var.e2b_template_id == null ? [] : [{ name = "PHYSHARNESS_E2B_TEMPLATE_ID", value = var.e2b_template_id }],
+    var.worker_workspace == null ? [] : [{ name = "PHYSHARNESS_WORKER_WORKSPACE", value = jsonencode(var.worker_workspace) }]) : []),
     secrets         = [for name, arn in local.secrets[each.key] : { name = name, valueFrom = arn }],
     portMappings    = each.key == "api" ? [{ containerPort = 8000, hostPort = 8000, protocol = "tcp" }] : [],
     linuxParameters = { initProcessEnabled = true },
