@@ -495,6 +495,8 @@ class CommonsSourceMixin:
                 )
                 self._post_route_compiled(session, row, actor.branch_id, route, op)
             replaced = current is not None
+            # A source of an older statement is stale: the new one is a first publication.
+            fresh = replaced and current.get("lean_statement_sha256") == digest
             self._event(
                 session,
                 actor,
@@ -509,6 +511,7 @@ class CommonsSourceMixin:
                     "sha256": source["sha256"],
                     "rank": rank,
                     "replaced": replaced,
+                    "previous_rank": current["rank"] if fresh else None,
                 },
             )
             return {"recorded": True, "module": module, "rank": rank, "replaced": replaced}

@@ -328,6 +328,7 @@ def test_publication_is_scoped_and_announced_on_the_node(lab):
         "sha256": stored["sha256"],
         "rank": "complete",
         "replaced": False,
+        "previous_rank": None,
     }
     service.abandon_node(node["id"], "Moot.", alpha, "abandon")
     closed = publish(service, node["id"], beta, "verified", "late")

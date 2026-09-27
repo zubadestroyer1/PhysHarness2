@@ -116,7 +116,7 @@ async def recruited_pair(service, author, exp, branches, **recruit):
 
 
 async def test_routing_arguments_resolve_prefixes_among_their_targets(lab):
-    """A routed record need not be readable: a recruit's task, a parent or a peer branch."""
+    """A routed record need not be readable: a recruit's task, a parent or a watched branch."""
     service, author, exp, branches, _ = society_lab(lab)
     (alpha, tools), (_, child_tools), recruited = await recruited_pair(
         service, author, exp, branches
@@ -129,10 +129,8 @@ async def test_routing_arguments_resolve_prefixes_among_their_targets(lab):
     assert sent["to"] == branches[0]["id"] and sent["message_ids"]
     inbox = service.mailbox_page(branches[0]["id"], alpha)["items"]
     assert [item["content"] for item in inbox] == ["Base case holds."]
-    peer = await call(
-        tools, "wait", {"for": "peer", "ids": [branches[1]["id"][:8]], "timeout_seconds": 60}
-    )
-    assert peer["intent"]["peer_wait"]["recipient_branch_id"] == branches[1]["id"]
+    watched = await call(tools, "wait", {"for": "events", "ids": [branches[1]["id"][:8]]})
+    assert watched["intent"]["peer_wait"]["watch_branch_ids"] == [branches[1]["id"]]
 
 
 async def test_routing_prefix_outside_the_targets_fails_like_an_unknown_id(lab):
@@ -144,6 +142,11 @@ async def test_routing_prefix_outside_the_targets_fails_like_an_unknown_id(lab):
     missing = await call(tools, "wait", {"for": "tasks", "ids": [UNKNOWN]})
     assert error(missing)[0] == "HANDOFF_CHILD_SCOPE"
     hidden = await call(tools, "wait", {"for": "tasks", "ids": [unrelated["id"][:8]]})
+    assert error(hidden) == error(missing)
+    # A watch takes this experiment's nodes and branches; a task's prefix names neither.
+    missing = await call(tools, "wait", {"for": "events", "ids": [UNKNOWN]})
+    assert error(missing)[0] == "EVENT_WAIT_SCOPE"
+    hidden = await call(tools, "wait", {"for": "events", "ids": [unrelated["id"][:8]]})
     assert error(hidden) == error(missing)
     # A referee's branch: its full id is refused as isolated, its prefix as unknown.
     with service.db.transaction() as session:
@@ -171,5 +174,8 @@ async def test_ambiguous_routing_prefix_is_refused_like_an_unknown_id(lab, monke
     unknown = await call(tools, "wait", {"for": "tasks", "ids": [UNKNOWN]})
     assert error(ambiguous) == error(unknown)
     assert "abcdef12" not in str(ambiguous)  # no candidate list
+    ambiguous = await call(tools, "wait", {"for": "events", "ids": ["abcdef12"]})
+    unknown = await call(tools, "wait", {"for": "events", "ids": [UNKNOWN]})
+    assert error(ambiguous) == error(unknown) and "abcdef12" not in str(ambiguous)
     both = await call(tools, "wait", {"for": "tasks", "ids": [first["task_id"], second["task_id"]]})
     assert both["intent"]["wait_task_ids"] == [first["task_id"], second["task_id"]]

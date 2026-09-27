@@ -703,6 +703,56 @@ class CommonsMixin:
         items.sort(key=lambda item: (-item["score"], item["id"]))
         return items[:limit]
 
+    @staticmethod
+    def _long_pole(nodes, dependencies, claims, limit=3):
+        """Where help counts most (S1 audit #14): ``(items, hint)``.
+
+        The open non-goal nodes on the goal's depends_on closure that wait on no other open
+        node, oldest first. Without such nodes, the open nodes most open nodes depend on (at
+        least one; ties kept). Without those either, no items and a hint to link the goal's
+        parts. ``claims`` are live claim payloads.
+        """
+        visible = {node["id"] for node in nodes}
+        open_ids = {node["id"] for node in nodes if node["status"] not in CLOSED_STATUSES}
+        goal = next((node["id"] for node in nodes if node["node_type"] == "goal"), None)
+        waiting_on_open = {s for s, t in dependencies if s in open_ids and t in open_ids}
+        parts = set()
+        if goal is not None:
+            children = _dependency_children(dependencies, within=visible)
+            parts = set(_depends_closure(children, goal, MAX_GRAPH_NODES)[0])
+        chosen = (parts & open_ids) - waiting_on_open
+        if not chosen:
+            dependents = Counter(
+                t for s, t in dependencies if s in open_ids and t in open_ids and t != goal
+            )
+            most = max(dependents.values(), default=0)
+            chosen = {node_id for node_id, count in dependents.items() if count == most}
+        if not chosen:
+            return [], "Link depends_on edges from the goal to its parts to show its long pole."
+        now = utcnow()
+        pole = sorted(
+            (node for node in nodes if node["id"] in chosen),
+            key=lambda node: (node["created_at"], node["id"]),
+        )[:limit]
+        return [
+            {
+                "id": node["id"],
+                "title": node["title"],
+                "open_minutes": int(
+                    max((now - datetime.fromisoformat(node["created_at"])).total_seconds(), 0) // 60
+                ),
+                "claimants": sorted(
+                    (
+                        {"branch_id": claim["branch_id"], "route": claim.get("route")}
+                        for claim in claims
+                        if claim["node_id"] == node["id"]
+                    ),
+                    key=lambda claimant: claimant["branch_id"],
+                ),
+            }
+            for node in pole
+        ], None
+
     def query_nodes(
         self,
         experiment_id,
@@ -744,6 +794,7 @@ class CommonsMixin:
             nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
             dependencies = self._experiment_dependencies(session, experiment) if frontier else []
             claims = self._live_claim_counts(session, experiment) if frontier else None
+            live_claims = self._live_claims(session, experiment) if frontier else []
         receipt = self._goal_receipt(experiment_id, actor, nodes)
         nodes = [self._goal_view(node, receipt) for node in nodes]
         wanted = tokens(text) if text is not None else None
@@ -771,10 +822,13 @@ class CommonsMixin:
 
         selected = [node for node in nodes if matches(node)]
         if frontier:
-            return {
+            long_pole, hint = self._long_pole(nodes, dependencies, live_claims)
+            page = {
                 "items": self._frontier(nodes, selected, dependencies, limit, claims),
                 "next_cursor": None,
+                "long_pole": long_pole,
             }
+            return {**page, "long_pole_hint": hint} if hint else page
         # Order and cursor in one comparison domain, independent of database collation.
         selected = sorted(
             (node for node in selected if after is None or node["id"] > after),

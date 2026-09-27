@@ -52,6 +52,7 @@ from ..commons_sources import (
     scope_closers,
     split_imports,
 )
+from ..continuation import EVENT_WAIT_DEFAULT_SECONDS
 from ..domain import ArtifactCreate, Principal
 from ..errors import HarnessError
 from ..execution import ToolDispatcher
@@ -1563,33 +1564,45 @@ def society_tools(
         task_id = task_context["task_id"]
 
         def wait(a, k):
-            if a["for"] == "tasks":
+            if a["for"] == "events":
+                timeout = a["timeout_seconds"] or EVENT_WAIT_DEFAULT_SECONDS
                 ids = [
-                    service.resolve_id(i, agent, ("task",), route=("child_task", task_id))
+                    service.resolve_id(
+                        i, agent, ("commons_node", "branch"), route=("watch", task_id)
+                    )
                     for i in a["ids"]
                 ]
-                return service.request_handoff(task_id, "wait_for_tasks", ids, agent, k)
-            if len(a["ids"]) != 1 or a["timeout_seconds"] is None:
-                raise invalid("A peer wait takes exactly one branch id and a timeout_seconds.")
-            peer = service.resolve_id(a["ids"][0], agent, ("branch",), route=("peer", branch_id))
-            return service.request_peer_wait(task_id, peer, a["timeout_seconds"], agent, k)
+                return service.request_event_wait(task_id, ids, timeout, agent, k)
+            if not a["ids"]:
+                raise invalid("A wait for tasks takes your recruits' task ids.")
+            ids = [
+                service.resolve_id(i, agent, ("task",), route=("child_task", task_id))
+                for i in a["ids"]
+            ]
+            return service.request_handoff(task_id, "wait_for_tasks", ids, agent, k)
 
         add(
             "wait",
             {
-                "for": choice(("tasks", "peer"), "What to wait for."),
+                "for": choice(("tasks", "events"), "What to wait for."),
                 "ids": array(
-                    routed("A task or branch id."),
+                    routed("tasks: a recruit's task id; events: a node or branch to watch."),
                     MAX_WAIT_IDS,
-                    "tasks: your recruits' task ids; peer: one branch id.",
-                    min_items=1,
+                    "tasks: your recruits' task ids; events: nodes or branches to watch.",
                 ),
-                "timeout_seconds": integer(1, 3600, "peer: finite timeout.", nullable=True),
+                "timeout_seconds": integer(
+                    1,
+                    3600,
+                    f"events: the longest sleep; null for {EVENT_WAIT_DEFAULT_SECONDS}.",
+                    nullable=True,
+                ),
             },
             wait,
-            "Yield your worker slot until recruited tasks finish (for='tasks') or one peer "
-            "replies (for='peer'); you resume from a durable handoff after this response.",
-            defaults={"timeout_seconds": None},
+            "Sleep at no cost until something relevant happens, then resume with your context "
+            "intact. for='events' wakes on a post or message routed to you, an event on a "
+            "watched node or branch, a change in the goal's long pole, or the timeout; "
+            "for='tasks' wakes when your recruits finish. Takes effect after this response.",
+            defaults={"ids": [], "timeout_seconds": None},
         )
 
     # Evidence ---------------------------------------------------------------------------

@@ -377,14 +377,33 @@ tools, the prompts and the delivery shapes.
   is not rate-limited. Referees stay unreachable: a direct message is refused and a node
   message skips them. Anti-herding comes from relevance routing, this rate limit and
   declared alternative routes. Stored S1 `lab` keys are ignored.
+- **Waiting.** `wait(for="events")` releases the worker slot, at no model cost, until the
+  first of these (S1 audit #14):
+  - a post or message that push would deliver to the waiter (its own posts and non-urgent
+    platform statuses do not count);
+  - news on a watched node (a status change, a new claimant, a new edge from it, or a
+    first source publication or rank increase) or from a watched branch (a new
+    node, a new claimant, such a publication or a node-thread post). Claim renewals,
+    re-claims and same-rank republications never wake, nor does the waiter's own branch;
+  - a change in the goal's long pole;
+  - the timeout (default 1,800 s, at most 3,600 s).
+
+  The first 20 s are a minimum sleep (shorter only for a shorter timeout), so a burst of
+  events wakes once. The long pole is where help counts most: the open parts of the goal's
+  `depends_on` closure that wait on no other open node, oldest first (at most 3, with
+  their age and claimants). Without such parts it is the open nodes that most open nodes
+  depend on; failing that, a hint to link the goal's parts. The wait result and the frontier
+  (`commons_query(frontier=true)`) both return it. `for="tasks"` still waits for
+  recruits.
 - **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
   least 8 hex characters of a record the agent can see; an ambiguous prefix returns
   `AMBIGUOUS_ID` with the candidates. Routing arguments (`message.to`, `wait.ids`) name
   records the agent may be unable to read, so their prefixes resolve only among the
   tool's own targets: the branches and nodes it may message (any branch of the
   experiment but a referee's, since addressing a branch reads nothing of it), its
-  delegated child tasks, or its peer branches. A prefix that names none or several of
-  them is refused exactly as an unknown full id, so it reveals no other record.
+  delegated child tasks, or the experiment's nodes and branches it may watch. A prefix
+  that names none or several of them is refused exactly as an unknown full id, so it
+  reveals no other record.
 - **Library notes.** A project-scoped table of shared facts about one pinned Mathlib and
   Physlib environment (`environment_digest`): renamed declarations, known absences and
   working recipes an agent has checked in Lean, so a later agent at the same pin stops

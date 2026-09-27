@@ -198,7 +198,7 @@ def test_resolve_id_prefix(backend_lab):
         assert service.resolve_id(prefix, alpha, ("commons_node",)) == node["id"]
     assert service.resolve_id(node["id"][:8], alpha, ("branch",)) == node["id"][:8]
     peer = branches[1]["id"]
-    route = ("peer", alpha.branch_id)
+    route = ("recipient", alpha.branch_id)
     assert service.resolve_id(peer[:8], alpha, ("branch",), route=route) == peer
 
 

@@ -119,7 +119,7 @@ Addressed messages, discussions, the component registry, research profiles, team
   - recruit help;
   - request a referee;
   - formalize;
-  - wait, which releases its worker slot until an event arrives. This is already implemented as durable peer waits.
+  - wait, which releases its worker slot until a relevant event (a routed post or message, a watched node or branch, a long-pole change) or a timeout.
 
 ### 3.2 Memory (four tiers)
 

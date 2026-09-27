@@ -531,12 +531,12 @@ class HarnessService(
     def _route_target(self, session, row, route):
         """Whether the routing tool named by ``route`` accepts ``row`` as its target: the
         target checks of ``send_society_message``, ``request_handoff`` and
-        ``request_peer_wait``."""
+        ``request_event_wait``."""
         name, anchor = route
         if name == "child_task":  # anchor: the waiting task
             return row.payload.get("delegated_from_task_id") == anchor
-        if name == "peer":  # anchor: the waiting branch
-            return row.id != anchor
+        if name == "watch":  # anchor: the waiting task; any node or branch of the experiment
+            return True
         if name == "recipient":  # anchor: the sending branch
             sender = session.get(RecordRow, anchor)
             if sender is None or sender.payload.get("experiment_id") != row.payload.get(
@@ -606,7 +606,7 @@ class HarnessService(
         Routing is not permission to read, so ``route=(name, anchor)`` resolves a routing
         argument among exactly the records its tool accepts instead: ``("recipient", sending
         branch)`` for a message to a branch or a node, ``("child_task", waiting task)`` and
-        ``("peer", waiting branch)`` for waits. A prefix naming none or several of them
+        ``("watch", waiting task)`` for waits. A prefix naming none or several of them
         passes through."""
         if not isinstance(identifier, str) or not ID_PREFIX.fullmatch(identifier):
             return identifier

@@ -1,13 +1,33 @@
 """Fenced, canonical handoffs between settled native research sessions."""
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, case, or_, select
 
+from .commons_sources import RANKS
 from .domain import digest_json, utcnow
 from .errors import HarnessError
 from .execution.types import ExecutionError
 from .execution.workspace_archive import checked_path
 from .storage import BudgetRow, EventRow, LeaseRow, RecordRow, ReservationRow, record_json_text
 from .worker_authority import current_worker_effects
+
+EVENT_WAIT_MIN_SLEEP_SECONDS = 20  # Debounces a burst of events into one wake.
+EVENT_WAIT_DEFAULT_SECONDS = 1800
+MAX_WATCH_IDS = 100
+# Events that wake an event wait: on a watched node (its aggregate), or by a watched branch
+# (its payload branch_id). Events that can move the goal's long pole are rechecked.
+NODE_WATCH_KINDS = (
+    "commons.node_status",
+    "commons.node_claim",
+    "commons.edge_added",
+    "commons.source_published",
+)
+BRANCH_WATCH_KINDS = (
+    "commons.node_created",
+    "commons.node_claim",
+    "commons.source_published",
+    "discussion.post_created",
+)
+LONG_POLE_KINDS = ("commons.node_status", "commons.edge_added", "commons.source_published")
 
 
 class ContinuationMixin:
@@ -1065,6 +1085,128 @@ class ContinuationMixin:
             action,
         )
 
+    def request_event_wait(self, task_id, watch_ids, timeout_seconds, actor, key):
+        """Yield a running society task until an update is routed to it, a watched node or
+        branch has news, the goal's long pole moves, or a bounded deadline passes (S1 #14).
+
+        The ticket rides under ``peer_wait`` so continuation issue, the pre-check, the
+        runner and availability carry it like a peer wait."""
+        self._research_role(actor)
+        binding = current_worker_effects.get()
+        if (
+            actor.role != "agent"
+            or binding is None
+            or binding.task_id != task_id
+            or type(timeout_seconds) is not int
+            or not 1 <= timeout_seconds <= 3600
+            or not isinstance(watch_ids, list)
+            or len(watch_ids) > MAX_WATCH_IDS
+            or not all(isinstance(identifier, str) for identifier in watch_ids)
+        ):
+            raise HarnessError(
+                "EVENT_WAIT_INVALID",
+                "A fenced task, a timeout of 1–3600 seconds and at most 100 ids are required.",
+            )
+
+        def action(session, op):
+            task = self._get(session, "task", task_id, actor)
+            self._fenced(session, task_id, binding.holder, binding.fence)
+            if (
+                task.payload.get("status") != "running"
+                or task.payload["branch_id"] != actor.branch_id
+            ):
+                raise HarnessError("EVENT_WAIT_INVALID", "Only the current task can wait.")
+            # Under the experiment lock, so no commons event commits below event_after.
+            experiment = self._commons_experiment(session, task.payload["experiment_id"], actor)
+            watched = {"commons_node": [], "branch": []}
+            for identifier in dict.fromkeys(watch_ids):
+                row = session.get(RecordRow, identifier)
+                if (
+                    row is None
+                    or row.project_id != actor.project_id
+                    or row.kind not in watched
+                    or row.payload.get("experiment_id") != experiment.id
+                ):
+                    raise HarnessError(
+                        "EVENT_WAIT_SCOPE", "Watch only nodes and branches of this experiment."
+                    )
+                watched[row.kind].append(identifier)
+            nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
+            long_pole, _ = self._long_pole(
+                nodes,
+                self._experiment_dependencies(session, experiment),
+                self._live_claims(session, experiment),
+            )
+            now = utcnow()
+            # Updates wake from the acknowledged delivery position, as a peer wait's reply
+            # does; watched and long-pole events only from those after this request.
+            reader = self._discussion_reader(session, experiment.id, actor)
+            peer_wait = {
+                "kind": "events",
+                "experiment_id": experiment.id,
+                "task_id": task_id,
+                "branch_id": actor.branch_id,
+                "watch_node_ids": watched["commons_node"],
+                "watch_branch_ids": watched["branch"],
+                "after_sequence": reader.payload["ack_sequence"] if reader else 0,
+                "event_after": self._discussion_max_sequence(session),
+                "long_pole_ids": [item["id"] for item in long_pole],
+                "requested_at": now.isoformat(),
+                "deadline_at": now.timestamp() + timeout_seconds,
+                "min_sleep_until": now.timestamp()
+                + min(EVENT_WAIT_MIN_SLEEP_SECONDS, timeout_seconds),
+            }
+            intent = {
+                "reason": "wait_for_events",
+                "wait_task_ids": [],
+                "peer_wait": peer_wait,
+                "holder": binding.holder,
+                "fence": binding.fence,
+                "requested_at": now.isoformat(),
+            }
+            result = self._replace(session, task, {"handoff_intent": intent})
+            self._event(
+                session,
+                actor,
+                op,
+                "task.event_wait_requested",
+                task_id,
+                {
+                    "watch_count": len(watched["commons_node"]) + len(watched["branch"]),
+                    "deadline_at": peer_wait["deadline_at"],
+                },
+            )
+            return {
+                "task_id": task_id,
+                "intent": intent,
+                "revision": result["revision"],
+                "long_pole": long_pole,
+            }
+
+        return self._execute(
+            actor,
+            key,
+            "task.event-wait",
+            {"task_id": task_id, "watch_ids": watch_ids, "timeout_seconds": timeout_seconds},
+            action,
+        )
+
+    def _wait_ended(self, session, peer_wait, actor):
+        """The waiter's experiment, and whether it was cancelled or the waiting task ended."""
+        branch_id = peer_wait.get("branch_id")
+        branch = self._get(session, "branch", branch_id, actor)
+        if branch.payload.get("experiment_id") != peer_wait.get("experiment_id"):
+            raise HarnessError("PEER_WAIT_SCOPE", "Peer wait experiment changed.")
+        experiment = self._get(session, "experiment", peer_wait["experiment_id"], actor)
+        waiter = session.get(RecordRow, peer_wait.get("task_id") or "")
+        return experiment, experiment.payload.get("status") == "cancelled" or (
+            waiter is not None
+            and waiter.kind == "task"
+            and waiter.project_id == actor.project_id
+            and waiter.payload.get("branch_id") == branch_id
+            and waiter.payload.get("status") in {"completed", "failed", "blocked"}
+        )
+
     def peer_wait_status(self, peer_wait, actor):
         """Return only the wake reason; message content remains mailbox scoped."""
         self._research_role(actor)
@@ -1075,19 +1217,11 @@ class ContinuationMixin:
             raise HarnessError(
                 "BRANCH_AUTHORITY", "Peer wait belongs to another branch.", status=403
             )
+        if peer_wait.get("kind") == "events":
+            return self._event_wait_status(peer_wait, actor)
         with self.db.sessions() as session:
-            branch = self._get(session, "branch", branch_id, actor)
-            if branch.payload.get("experiment_id") != peer_wait.get("experiment_id"):
-                raise HarnessError("PEER_WAIT_SCOPE", "Peer wait experiment changed.")
-            experiment = self._get(session, "experiment", peer_wait["experiment_id"], actor)
-            waiter = session.get(RecordRow, peer_wait.get("task_id") or "")
-            if experiment.payload.get("status") == "cancelled" or (
-                waiter is not None
-                and waiter.kind == "task"
-                and waiter.project_id == actor.project_id
-                and waiter.payload.get("branch_id") == branch_id
-                and waiter.payload.get("status") in {"completed", "failed", "blocked"}
-            ):
+            experiment, ended = self._wait_ended(session, peer_wait, actor)
+            if ended:
                 return {"ready": True, "reason": "cancelled", "message_id": None}
             # A later sharing downgrade or recipient move withdraws the wait scope;
             # wake the waiter instead of failing its supervisor.
@@ -1142,6 +1276,95 @@ class ContinuationMixin:
             if utcnow().timestamp() >= peer_wait.get("deadline_at", 0):
                 return {"ready": True, "reason": "timeout", "message_id": None}
             return {"ready": False, "reason": "pending", "message_id": None}
+
+    def _event_wait_status(self, peer_wait, actor):
+        """An event wait's wake reason, checked in order; ``detail`` names a watched event."""
+
+        def status(ready, reason, detail=None):
+            return {"ready": ready, "reason": reason, "message_id": None, "detail": detail}
+
+        experiment_id = peer_wait["experiment_id"]
+        with self.db.sessions() as session:
+            _, ended = self._wait_ended(session, peer_wait, actor)
+        if ended:
+            return status(True, "cancelled")
+        if self.verified_target_receipt(experiment_id, actor):
+            return status(True, "target_verified")
+        now = utcnow().timestamp()
+        if now >= peer_wait.get("deadline_at", 0):
+            return status(True, "timeout")
+        if now < peer_wait.get("min_sleep_until", 0):
+            return status(False, "min_sleep")
+        with self.db.sessions() as session:
+            experiment = self._get(session, "experiment", experiment_id, actor)
+            if self._pending_update(session, experiment, actor, peer_wait["after_sequence"]):
+                return status(True, "relevant_update")
+            event = self._watched_event(session, experiment, peer_wait)
+            if event is not None:
+                detail = {"kind": event.kind, "aggregate_id": event.aggregate_id}
+                return status(True, "watched_event", detail)
+            if self._long_pole_moved(session, experiment, peer_wait, actor):
+                return status(True, "long_pole_changed")
+        return status(False, "waiting")
+
+    @staticmethod
+    def _watched_event(session, experiment, peer_wait):
+        """The first event on a watched node or by a watched branch since the wait began,
+        other than the waiter's own. Of claims only a new claimant's counts, and of
+        publications only a first one or a rank increase: renewals and retries are noise."""
+        nodes = peer_wait.get("watch_node_ids") or []
+        branches = peer_wait.get("watch_branch_ids") or []
+        if not nodes and not branches:
+            return None
+        branch = EventRow.payload["branch_id"].as_string()
+
+        def rank(field):  # 0 when absent: no previous source, or an older event
+            return case(RANKS, value=EventRow.payload[field].as_string(), else_=0)
+
+        return session.scalar(
+            select(EventRow)
+            .where(
+                EventRow.project_id == experiment.project_id,
+                EventRow.sequence > peer_wait["event_after"],
+                EventRow.payload["experiment_id"].as_string() == experiment.id,
+                or_(
+                    and_(EventRow.kind.in_(NODE_WATCH_KINDS), EventRow.aggregate_id.in_(nodes)),
+                    and_(EventRow.kind.in_(BRANCH_WATCH_KINDS), branch.in_(branches)),
+                ),
+                or_(branch.is_(None), branch != peer_wait["branch_id"]),
+                or_(
+                    EventRow.kind != "commons.node_claim",
+                    EventRow.payload["new_claimant"].as_boolean().is_(True),
+                ),
+                or_(
+                    EventRow.kind != "commons.source_published",
+                    rank("rank") > rank("previous_rank"),
+                ),
+            )
+            .order_by(EventRow.sequence)
+            .limit(1)
+        )
+
+    def _long_pole_moved(self, session, experiment, peer_wait, actor):
+        """Whether the goal's long pole differs from the wait's, recomputed only once an
+        event that can move it has happened."""
+        moved = session.scalar(
+            select(EventRow.sequence)
+            .where(
+                EventRow.project_id == experiment.project_id,
+                EventRow.sequence > peer_wait["event_after"],
+                EventRow.kind.in_(LONG_POLE_KINDS),
+                EventRow.payload["experiment_id"].as_string() == experiment.id,
+            )
+            .limit(1)
+        )
+        if moved is None:
+            return False
+        nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
+        long_pole, _ = self._long_pole(
+            nodes, self._experiment_dependencies(session, experiment), ()
+        )
+        return {item["id"] for item in long_pole} != set(peer_wait.get("long_pole_ids") or [])
 
     def handoff_intent(self, task_id, holder, fence, actor):
         with self.db.sessions() as session:

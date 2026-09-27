@@ -520,6 +520,48 @@ def test_frontier_orders_root_path_and_dependents_first(lab):
     ] == order[:2]
 
 
+def test_frontier_reports_the_long_pole_and_a_hint(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    ids = {
+        name: service.create_node(exp["id"], lemma(name), alpha, name)["id"]
+        for name in ("A", "B", "C", "D")
+    }
+
+    def frontier():
+        return service.query_nodes(exp["id"], beta, frontier=True)
+
+    def link(source, target):
+        service.link_nodes(exp["id"], source, "depends_on", target, beta, f"{source}-{target}")
+
+    # No open node has an open dependent: a hint, never every open node.
+    page = frontier()
+    assert page["long_pole"] == []
+    assert page["long_pole_hint"] == (
+        "Link depends_on edges from the goal to its parts to show its long pole."
+    )
+    # Without goal edges, the most-waited-on open nodes, ties kept, oldest first.
+    link(ids["B"], ids["A"])
+    link(ids["D"], ids["C"])
+    page = frontier()
+    assert [item["id"] for item in page["long_pole"]] == [ids["A"], ids["C"]]
+    assert "long_pole_hint" not in page
+    link(ids["D"], ids["A"])
+    assert [item["id"] for item in frontier()["long_pole"]] == [ids["A"]]
+    # With goal edges, the goal's open parts that wait on no other open node.
+    link(goal["id"], ids["B"])
+    service.abandon_node(ids["A"], "Dead end.", alpha, "abandon-a")
+    service.claim_node(ids["B"], "claim", beta, "claim-b")
+    assert frontier()["long_pole"] == [
+        {
+            "id": ids["B"],
+            "title": "B",
+            "open_minutes": 0,
+            "claimants": [{"branch_id": beta.branch_id, "route": None}],
+        }
+    ]
+
+
 def test_query_filters_and_keyset_pages(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
     statements = ["Trace identity. " * 30, "Spectral gap bound.", "Trace identity."] * 2

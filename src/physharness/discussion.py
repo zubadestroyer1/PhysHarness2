@@ -719,6 +719,34 @@ class DiscussionMixin:
         own = actor.branch_id is not None and post.get("branch_id") == actor.branch_id
         return own or (post.get("platform_status") is not None and not item.get("urgent"))
 
+    def _pending_update(self, session, experiment, actor, after) -> bool:
+        """Whether the reader has a message or a post that push would deliver after ``after``;
+        at most 100 events are scanned (an event wait's ``relevant_update``)."""
+        reader_key = self._discussion_reader_key(experiment.id, actor)
+        clauses = self._delivery_clauses(session, experiment, actor, reader_key, after)
+        if not clauses:
+            return False
+        events = session.scalars(
+            select(EventRow)
+            .where(EventRow.project_id == actor.project_id, or_(*clauses))
+            .order_by(EventRow.sequence)
+            .limit(100)
+        )
+        society = bool(experiment.payload.get("society"))
+        for event in events:
+            if event.kind == "message.created":
+                return True
+            post = session.get(RecordRow, event.payload["post_id"])
+            if post is None or not self._in_scope(session, post, actor):
+                continue
+            node_id = post.payload.get("node_id")
+            if not (society and node_id):
+                return True
+            urgent = self._post_urgent(session, post.payload, node_id, actor)
+            if not self._push_skip(post.payload, {"urgent": urgent}, actor):
+                return True
+        return False
+
     def discussion_updates(self, experiment_id, actor, *, after=None, limit=10):
         self._research_role(actor)
         if not 1 <= limit <= 10:

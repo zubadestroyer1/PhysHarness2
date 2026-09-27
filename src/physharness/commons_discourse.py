@@ -198,7 +198,15 @@ class CommonsDiscourseMixin:
             ]
         }
 
-    def _claim_event(self, session, actor, op, claim, action):
+    def _live_claims(self, session, experiment, now=None):
+        """Live claim payloads across the experiment, for the long pole's claimants."""
+        now = _now() if now is None else now
+        rows = self._live_claim_rows(session, experiment.project_id, experiment.id, now)
+        return [row.payload for row in rows]
+
+    def _claim_event(self, session, actor, op, claim, action, *, new_claimant):
+        """``new_claimant``: a claim by a branch that held no live claim on the node, the only
+        claim event that wakes a waiter watching the node."""
         self._event(
             session,
             actor,
@@ -211,6 +219,7 @@ class CommonsDiscourseMixin:
                 "branch_id": claim["branch_id"],
                 "action": action,
                 "expires_at": claim["expires_at"],
+                "new_claimant": new_claimant,
             },
         )
 
@@ -299,7 +308,9 @@ class CommonsDiscourseMixin:
                     )
                 else:
                     record = self._replace(session, prior, values)
-            self._claim_event(session, actor, op, record, action)
+            self._claim_event(
+                session, actor, op, record, action, new_claimant=action == "claim" and not held
+            )
             if action != "release":
                 record = {
                     **record,
@@ -338,7 +349,7 @@ class CommonsDiscourseMixin:
             claim,
             {"expires_at": _expiry(now, ttl, claim.payload.get("time_box_until"))},
         )
-        self._claim_event(session, actor, op, record, "renew")
+        self._claim_event(session, actor, op, record, "renew", new_claimant=False)
 
     # Threads and subscriptions -------------------------------------------------
 
