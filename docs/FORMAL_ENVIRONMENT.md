@@ -148,8 +148,10 @@ opt-in real-image workbench tests passed against it.
 
 Each workbench container mounts a 64 KiB tmpfs at `/etc/profile.d` holding
 `physharness-path.sh`, which restores the image's `PATH` for login shells (`bash -lc`). The
-image ships no files there; `tests/test_real_workbench_qualification.py` checks this and a
-login-shell `lake` lookup on a real container.
+image ships no files there, which the tmpfs would hide. So
+`tests/test_real_workbench_qualification.py` lists the raw image's `/etc/profile.d` (a
+plain `docker run`, without the tmpfs), then checks a login-shell `lake` lookup on a real
+container.
 
 An engineering capacity observation at N=8 with this digest passed on 2026-09-26 UTC
 (`production_qualified=false`):
@@ -196,17 +198,23 @@ first load in a process. The file's imports load after the checker's own, so eve
 in both is copied onto the heap. With `import Lean`, an `import Lean` file copied all of
 Lean (1.6 GB of `.olean` data), and the 2 GiB workbench OOM-killed the checker. The narrow
 imports' closure is 555 modules (397 MiB). This was measured on `physharness-pilot` with
-the workbench-v2 digest. The checker step's anonymous memory used to reach 1.9 GiB (then
-the kill) for an `import Lean` file. It now peaks at 0.65–0.85 GiB for `import Lean`,
-`import Mathlib.Data.Real.Basic` and `import Mathlib` files, and no step is OOM-killed.
+the workbench-v2 digest. For an `import Lean` file, the checker's `lean` process used to
+reach 1.8 GiB of anonymous memory (1.9 GiB for the container's cgroup), and then the kill.
+Now the `lean` process holds 0.62–0.67 GiB of anonymous memory for `import Lean`,
+`import Mathlib.Data.Real.Basic` and `import Mathlib` files. The cgroup's anonymous memory
+(`lean` plus `lake`) peaks at 0.83 GiB, for a warm `import Mathlib` check. No step is
+OOM-killed.
 
-The statement check assumes a pre-warmed VM. The operator reads every `.olean`,
-`.olean.server` and `.olean.private` file under `/opt` once, outside the workbenches, so
-that page cache is neither charged to nor evicted within a workbench's 2 GiB. Pre-warmed,
-each of the check's three Lean steps takes 2–3 seconds for an `import Mathlib` file. In a
-cold VM each step takes about 80 seconds, so the check exceeds its 240-second budget.
-Warming only `.olean` and `.ilean` files leaves about 31 seconds per step, because Lean
-v4.33 also loads the `.olean.private` parts (3.6 GB for Mathlib).
+The statement check requires a pre-warmed VM: before any run, and after every VM start,
+the operator must read every `.olean`, `.ilean`, `.olean.server` and `.olean.private` file
+under `/opt` once, outside the workbenches. That page cache is then neither charged to nor
+evicted within a workbench's 2 GiB. The exact command is the pre-warm step in
+`work/society-s1/RUN_PLAN.md` (section 8). Pre-warmed, each of the check's three Lean
+steps takes 2–3 seconds for an `import Mathlib` file. In a cold VM each step takes about
+80 seconds, so the check exceeds its 240-second budget and records nothing. Reading only
+`.olean` and `.ilean` files is not enough: it leaves about 31–38 seconds per step (101
+seconds per check), because Lean v4.33 also loads the `.olean.private` parts (3.6 GB for
+Mathlib). The checker's `import Lean` self-test cannot detect a cold VM.
 
 | Component | Route | Pin status |
 | --- | --- | --- |

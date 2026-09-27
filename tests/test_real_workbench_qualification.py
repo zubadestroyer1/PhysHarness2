@@ -7,6 +7,7 @@ These tests allocate and remove local containers; they make no paid model calls.
 import base64
 import hashlib
 import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ import pytest
 from physharness.execution.local_docker import LocalDockerWorkspaceProvider
 from physharness.execution.types import CommandRequest, ExecutionError
 from physharness.orchestration.lean_session import LeanSession
+from physharness.orchestration.workspace_tools import CHECKER_SELF_TEST
 
 
 @pytest.mark.integration
@@ -151,6 +153,17 @@ async def test_real_login_shell_path():
     image = os.environ.get("PHYSHARNESS_WORKBENCH_IMAGE_DIGEST")
     if not host or not image:
         pytest.skip("Dedicated workbench endpoint and image digest are required")
+    # The workbench's tmpfs hides whatever the image ships in /etc/profile.d, so list the
+    # raw image's directory in a plain container first: it must be empty.
+    raw = subprocess.run(
+        ["docker", "--host", host, "run", "--rm", "--network", "none", "--entrypoint"]
+        + ["/bin/sh", image, "-c", "ls -A /etc/profile.d"],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert raw.returncode == 0 and raw.stdout == "", raw.stderr
     provider = LocalDockerWorkspaceProvider(
         docker_host=host, image_digest=image, timeout_seconds=180
     )
@@ -206,16 +219,20 @@ async def test_real_statement_check_end_to_end():
         SimpleNamespace(policy=SimpleNamespace(timeout_seconds=300), run=run, write=write)
     )
     real = "import Mathlib.Data.Real.Basic"
-    cases = [  # header, name, the node's signature, and what the source proves
-        ("import Lean", "physharness_checker_self_test", ": True", ": True := trivial"),
-        (real, "physharness_real_check", "(x : ℝ) : x + 0 = x", "(x : ℝ) : x + 0 = x := by simp"),
-        (real, "physharness_real_check", "(x : ℝ) : x + 0 = x", "(x : ℝ) : 0 + x = x := by simp"),
+
+    def real_case(proves):  # the node states x + 0 = x
+        source = f"{real}\n\ntheorem physharness_real_check {proves} := by simp\n"
+        return source, real, "physharness_real_check", "(x : ℝ) : x + 0 = x"
+
+    cases = [  # source, header, name and the node's signature
+        CHECKER_SELF_TEST,  # exactly what each society task's provision self-test checks
+        real_case("(x : ℝ) : x + 0 = x"),
+        real_case("(x : ℝ) : 0 + x = x"),
     ]
     try:
         await provider.create()
         verdicts = []
-        for index, (header, name, signature, proof) in enumerate(cases):
-            source = f"{header}\n\ntheorem {name} {proof}\n"
+        for index, (source, header, name, signature) in enumerate(cases):
             verdicts.append(
                 await session.verify_statement(
                     source, header, name, signature, operation_id=f"real-check-{index}"

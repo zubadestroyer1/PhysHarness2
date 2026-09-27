@@ -25,7 +25,7 @@ _IMAGE = re.compile(r"sha256:[0-9a-f]{64}\Z")
 # Login shells (bash -l) source /etc/profile, which resets PATH on Debian and drops the
 # image's /opt/lean/bin (S1: `bash -lc 'lake …'` failed 37 of 38 times). A small tmpfs at
 # /etc/profile.d holds one script that restores the image's own PATH. The image ships no
-# files there; the opt-in real-image test checks it.
+# files there, which the tmpfs would hide; the opt-in real-image test lists the raw image's.
 PROFILE_D_TMPFS = "/etc/profile.d:rw,noexec,nosuid,nodev,size=65536,mode=0755,uid=65532,gid=65532"
 PROFILE_SCRIPT_PATH = "/etc/profile.d/physharness-path.sh"
 _PROFILE_WRITER = (
