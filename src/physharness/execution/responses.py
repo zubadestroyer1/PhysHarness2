@@ -636,6 +636,13 @@ class ResponsesRuntime:
                 wait_seconds=round(wait, 3),
                 wait_source=source,
                 **_rate_limit_headers(error),
+                # The governor's view as the 429 arrived, before it pauses and cuts, to calibrate
+                # against the provider's headers; absent without a governor.
+                **(
+                    {"governor": self.token_governor.snapshot()}
+                    if self.token_governor is not None
+                    else {}
+                ),
             )
             if self.token_governor is not None:
                 self.token_governor.throttled(wait)  # every 429 pauses admission (R5, F10)

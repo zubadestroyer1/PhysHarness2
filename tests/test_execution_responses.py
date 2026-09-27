@@ -875,6 +875,44 @@ async def test_admission_is_the_input_bound_plus_the_output_sent(
     await client.close()
 
 
+async def test_a_governed_throttle_event_carries_the_governor_snapshot(tmp_path):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    headers = {
+        "retry-after-ms": "5",
+        "x-ratelimit-limit-tokens": "2000000",
+        "x-ratelimit-remaining-tokens": "0",
+    }
+    client = rate_limited_client(
+        [(429, refusal("rate_limit_exceeded"), headers), (200, response([message("done")]), {})],
+        [],
+    )
+    # About 1 token/s, so the level barely moves while the test runs.
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=5_000)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        client=client,
+        event_sink=emit,
+        token_governor=governor,
+    )
+    await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    (throttled,) = [e.payload for e in events if e.kind == "provider_throttled"]
+    # The governor's view when the 429 arrived, before it paused and cut, next to the provider's
+    # own: the bucket held 5,000 less the 4,106-token admission (10 input + 4,096 output).
+    assert (throttled["limit_tokens"], throttled["remaining_tokens"]) == (2_000_000, 0)
+    assert throttled["governor"] == {
+        "tokens_per_minute": 60,
+        "effective_tokens_per_minute": 60,
+        "level": 894,
+        "waiting": 0,
+        "paused_seconds": 0.0,
+    }
+    await client.close()
+
+
 async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
     events = []
 

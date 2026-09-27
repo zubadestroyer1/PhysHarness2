@@ -266,8 +266,16 @@ of letting them all meet 429s. It cannot see other processes, so set it to about
 limit divided by the number of processes that share it. Cross-process governance belongs to the
 model router (`PLAN.md` §6.1). The estimate follows OpenAI's rate-limit guidance, which counts
 the requested max output toward TPM. Validate it in a dev calibration before a paid arm enables
-the governor: compare `provider_throttled.limit_tokens` and `remaining_tokens` with the
-governor's `snapshot()`.
+the governor. With a governor, each `provider_throttled` event carries a `governor` key holding
+the governor's `snapshot()` as the 429 arrived, before it pauses and cuts:
+- `tokens_per_minute`;
+- `effective_tokens_per_minute`;
+- `level`, the tokens available;
+- `waiting`;
+- `paused_seconds`.
+
+Compare its `level` and `effective_tokens_per_minute` with the same event's `remaining_tokens` and
+`limit_tokens`. Without a governor the event has no `governor` key and is unchanged.
 
 ### Context budget (opt-in)
 

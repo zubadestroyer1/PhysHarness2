@@ -320,8 +320,10 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
   settlement refunds the unused output. The lower output cap recommended above therefore
   also lets the governor admit more requests at once. A 429 cuts the rate by 20% at most
   once per 30 s, and the rate recovers 5% of the limit every 10 s.
-- During the dev calibration, compare `provider_throttled.remaining_tokens` and
-  `limit_tokens` with the governor's `snapshot()` before any paid arm enables the governor.
+- During the dev calibration, before any paid arm enables the governor, compare each
+  `provider_throttled` event's `remaining_tokens` and `limit_tokens` with its
+  `governor.level` and `governor.effective_tokens_per_minute`. The `governor` field is the
+  governor's snapshot as the 429 arrived, and it is present only with a governor.
 
 ### Prices
 
