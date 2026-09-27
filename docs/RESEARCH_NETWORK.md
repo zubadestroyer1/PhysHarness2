@@ -129,8 +129,10 @@ tools, the prompts and the delivery shapes.
   - A node records its author branch.
   - Edges are `depends_on` (cycle-checked), `motivated_by`, `refutes`, `generalizes`,
     `specializes` and `duplicates`.
-  - The frontier ranks open nodes by root path, waiting dependents, neglect and live
-    claims. The score is attention, never proof.
+  - The frontier ranks open work by root path, waiting dependents, neglect and live
+    claims. A node proved by a complete or verified source of its current statement is
+    not open work, as for the long pole: it leaves the frontier and waits on nothing. The
+    score is attention, never proof.
 - **Status.** A node is `open` until its author abandons it (`abandoned`, with a reason) or
   the platform accepts or refutes it (`accepted`, `refuted`); nothing else moves a node
   (S1 audit #17). The independent verifier is the only arbiter: its receipt on the exact

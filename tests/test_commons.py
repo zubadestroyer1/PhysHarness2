@@ -550,6 +550,31 @@ def test_frontier_orders_root_path_and_dependents_first(lab):
     ] == order[:2]
 
 
+def test_proved_nodes_leave_the_frontier(lab):
+    """A lemma is proved by a complete source (only the goal is ever accepted): it is no
+    longer open work, nor an open dependent that waits on another node."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    ids = {
+        name: service.create_node(exp["id"], lemma(name), alpha, name)["id"]
+        for name in ("A", "B", "C")
+    }
+    service.link_nodes(exp["id"], goal["id"], "depends_on", ids["A"], beta, "goal-a")
+    service.link_nodes(exp["id"], ids["C"], "depends_on", ids["B"], beta, "c-b")
+
+    def frontier():
+        return service.query_nodes(exp["id"], beta, frontier=True)["items"]
+
+    before = frontier()
+    assert [item["id"] for item in before] == [ids["A"], goal["id"], ids["B"], ids["C"]]
+    assert before[2]["score_components"]["waiting_dependents"] == 1.0
+    publish(service, ids["A"], beta, "complete", "prove-a")
+    publish(service, ids["C"], beta, "complete", "prove-c")
+    after = frontier()
+    assert [item["id"] for item in after] == [goal["id"], ids["B"]]
+    assert after[1]["score_components"]["waiting_dependents"] == 0.0
+
+
 def test_frontier_reports_the_long_pole_and_a_hint(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     goal = service.ensure_goal_node(exp["id"], author)
