@@ -66,6 +66,12 @@ FATAL_TOOL_CODES = frozenset(
 LEASE_CONFLICT_CODES = frozenset({"LEASE_HELD", "TASK_NOT_RUNNABLE"})
 # Continuations that only waited: in a society they resume natively with a wake note (S1 #14).
 WAIT_REASONS = frozenset({"wait_for_tasks", "wait_for_peer", "wait_for_events"})
+# A parked event wait is checked at least this often even when the event head stands still: on
+# PostgreSQL an event can commit below a head the runner has already seen.
+EVENT_WAIT_MAX_STALE_SECONDS = 30
+# Endings a resumed society session takes before its first request. result_returned is not
+# one: a resumed joined recruit reads its children's results first.
+SCOPE_ENDINGS = frozenset({"scope_proved", "scope_closed"})
 
 
 def _validate_worker_preflight(report):
@@ -1838,11 +1844,11 @@ class ResearchTaskExecutor:
                 dispatcher=dispatcher,
                 event_sink=accounting,
             )
-            # A society builder asks _society_completion until its task's first model request
-            # is sent, at the loop top and again once the TPM governor admits it: a recruit
-            # whose work was delivered while it was queued makes none. A continuation resumes
-            # to read its joined results, so it is not asked.
-            delivered = {} if society and not referee and not prior_sessions else None
+            # A society builder asks _society_completion at the start of every session until
+            # its first model request is sent, at the loop top and again once the TPM governor
+            # admits it: a recruit whose work was delivered while it was queued or asleep makes
+            # no request. A later session ends only for its scope (SCOPE_ENDINGS).
+            delivered = {} if society and not referee else None
             if (stop_on_verified_target or delivered is not None) and (
                 "pre_generation_guard" in parameters
                 or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
@@ -1863,9 +1869,10 @@ class ResearchTaskExecutor:
                         holder,
                         lease["fence"],
                     )
-                    if reason is not None:
-                        delivered["reason"] = reason
-                    return reason is not None
+                    if reason is None or (prior_sessions and reason not in SCOPE_ENDINGS):
+                        return False
+                    delivered["reason"] = reason
+                    return True
 
                 runtime_kwargs["pre_generation_guard"] = pre_generation_guard
             if "boundary_hook" in parameters or any(
@@ -2397,7 +2404,8 @@ class ResearchTeamRunner:
         active_referees, research_attempted = set(), set()
         checks, checked_ids, verification_errors = {}, set(), []
         # Each event wait's last check, (event head, wall time, reason): a wait is checked again
-        # only once the head moves or its minimum sleep or deadline passes (S1 #14).
+        # only once the head moves, its minimum sleep or deadline passes, or the check is
+        # EVENT_WAIT_MAX_STALE_SECONDS old (S1 #14).
         wait_checks = {}
         stop_reason = None
         deadline = asyncio.get_running_loop().time() + manifest.timeout_seconds
@@ -2677,6 +2685,7 @@ class ResearchTeamRunner:
                             and last is not None
                             and last[0] == head
                             and wall < ticket.get("deadline_at", 0)
+                            and wall - last[1] < EVENT_WAIT_MAX_STALE_SECONDS
                             and not last[1] < ticket.get("min_sleep_until", 0) <= wall
                         ):
                             continue  # Nothing new since the last check.

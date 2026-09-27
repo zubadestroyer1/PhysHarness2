@@ -20,7 +20,7 @@ from test_sharing import approaches, artifact
 from test_society_metrics import metrics_tool
 from test_workspace_service import FakeVM
 
-from physharness import commons_discourse
+from physharness import commons_discourse, continuation
 from physharness.api import VerifyInput
 from physharness.commons import _lean_digest
 from physharness.commons_models import NodeCreate, NodePostCreate
@@ -2641,38 +2641,44 @@ async def test_a_scoped_recruit_proved_while_queued_makes_no_model_request(lab):
     assert task["return_result"]["summary"] == f"Node {id8} is proved as Commons.N{id8}; import it."
 
 
-async def test_a_scoped_recruit_proved_while_its_first_request_is_queued_sends_nothing(lab):
-    """The completion check stays live until the first request is sent: it runs again after
-    the TPM governor admits that request (S1 audit 3, M2)."""
-    service, author, exp, _, (alpha, _) = society_lab(lab)
+async def queued_scoped_recruit(service, author, exp, alpha):
+    """alpha's elaborated trace lemma and a queued, joined until_proved recruit scoped to it;
+    ``prove()`` publishes the lemma's complete proof as alpha."""
     agent, context = running(service, author, exp, alpha.branch_id)
     tools = profile(service, agent, context, workspace=FakeWorkspace())
     node = await call(tools, "commons_node", lemma_args())
     await call(
         tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
     )
-    id8 = node["id"][:8]
     recruited = await call(
         tools,
         "recruit",
-        {"brief": "Prove it.", "title": "Prover", "focus_node_id": id8, "until_proved": True},
+        {
+            "brief": "Prove it.",
+            "title": "Prover",
+            "focus_node_id": node["id"],
+            "until_proved": True,
+        },
     )
 
-    class ProvingGovernor(TokenRateGovernor):
-        """The recruiter proves the node while the recruit's first request waits here."""
+    async def prove():
+        published = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+        assert published["published"]["recorded"] is True
 
-        async def admit(self, **kwargs):
-            published = await call(tools, "lean_check", {"source": PROOF, "node_id": id8})
-            assert published["published"]["recorded"] is True
-            return await super().admit(**kwargs)
+    return node, recruited, prove
 
+
+def recording_executor(service, script, **options):
+    """An executor whose provider answers its n-th model request (from 1) with ``script(n)``;
+    ``creates`` lists every request sent."""
     creates = []
 
     async def route(request):
         if request.url.path.endswith("/input_tokens"):
             return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
         creates.append(json.loads(request.content))
-        return httpx.Response(200, json=response([message("Unneeded.")]))
+        items = script(len(creates))
+        return httpx.Response(200, json=response(items, response_id=f"r-{len(creates)}"))
 
     client = mock_client(route)
     executor = ResearchTaskExecutor(
@@ -2680,6 +2686,27 @@ async def test_a_scoped_recruit_proved_while_its_first_request_is_queued_sends_n
         prices=PRICES,
         runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
         limits=RuntimeLimits(max_turns=30),
+        **options,
+    )
+    return executor, client, creates
+
+
+async def test_a_scoped_recruit_proved_while_its_first_request_is_queued_sends_nothing(lab):
+    """The completion check stays live until the first request is sent: it runs again after
+    the TPM governor admits that request (S1 audit 3, M2)."""
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    _, recruited, prove = await queued_scoped_recruit(service, author, exp, alpha)
+
+    class ProvingGovernor(TokenRateGovernor):
+        """The recruiter proves the node while the recruit's first request waits here."""
+
+        async def admit(self, **kwargs):
+            await prove()
+            return await super().admit(**kwargs)
+
+    executor, client, creates = recording_executor(
+        service,
+        lambda n: [message("Unneeded.")],
         workspace_factory=lambda *_: ProvisionedWorkspace(),
         token_governor=ProvingGovernor(tokens_per_minute=10_000_000),
     )
@@ -2690,6 +2717,31 @@ async def test_a_scoped_recruit_proved_while_its_first_request_is_queued_sends_n
     assert result["status"] == "completed" and creates == []
     note = service.artifact_content(result["artifact_id"], author).decode()
     assert note == research_worker.COMPLETION_NOTES["scope_proved"]
+
+
+async def test_a_scoped_recruit_woken_after_its_node_was_proved_sends_nothing(lab, monkeypatch):
+    """Every session asks before its first request; a resumed one ends only for its scope."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    node, recruited, prove = await queued_scoped_recruit(service, author, exp, alpha)
+    wait = {"for": "events", "ids": [node["id"]], "timeout_seconds": 3600}
+    executor, client, creates = recording_executor(
+        service, lambda n: [tool_call("wait", wait, "w")]
+    )
+    try:
+        parked = await executor.execute(recruited["task_id"], author.project_id)
+        await prove()  # wakes the recruit's watch on its node
+        woke = await executor.execute(recruited["task_id"], author.project_id)
+    finally:
+        await client.close()
+    assert parked["status"] == "continuation" and woke["status"] == "completed"
+    assert len(creates) == 1  # only the request that parked it
+    note = service.artifact_content(woke["artifact_id"], author).decode()
+    assert note == research_worker.COMPLETION_NOTES["scope_proved"]
+    task = service.get_record("task", recruited["task_id"], author)
+    assert task["consumed_continuation"]["continuation_mode"] == "native"
+    id8 = node["id"][:8]
+    assert task["return_result"]["summary"] == f"Node {id8} is proved as Commons.N{id8}; import it."
 
 
 async def scoped_recruit(lab, *, detached=False):

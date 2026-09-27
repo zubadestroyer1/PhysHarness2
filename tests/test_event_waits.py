@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -27,6 +28,7 @@ from physharness.domain import ContextBudget, Principal, TaskCreate
 from physharness.errors import HarnessError
 from physharness.execution import ResponsesRuntime, RuntimeLimits
 from physharness.execution.admission import TokenRateGovernor
+from physharness.orchestration import research_worker
 from physharness.orchestration.research_worker import (
     ResearchTaskExecutor,
     ResearchTeamRunner,
@@ -627,6 +629,70 @@ async def test_a_new_event_wakes_a_checked_wait_through_the_runner(lab, monkeypa
     assert resumed["input"][: len(first["input"])] == first["input"]
     assert wake_notes(resumed) == [{"type": "wake", "reason": "relevant_update"}]
     assert "Try the trace lemma." in resumed["input"][-1]["content"]  # the compact update line
+
+
+async def test_a_stale_wait_check_is_repeated_without_new_events(lab, monkeypatch):
+    """A PostgreSQL event can commit below a head already seen, so a parked wait is checked
+    at least every EVENT_WAIT_MAX_STALE_SECONDS even while the head stands still."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, _ = society_lab(lab, referee_slots=0)
+    roots = [
+        service.create_task(TaskCreate(branch_id=branch["id"], objective=name), author, name)
+        for branch, name in zip(branches, ("Waiter", "Busy"), strict=True)
+    ]
+    reasons, status = [], service.peer_wait_status
+
+    def recording(*args):
+        result = status(*args)
+        reasons.append(result["reason"])
+        return result
+
+    monkeypatch.setattr(service, "peer_wait_status", recording)
+    skew, now = [0.0], research_worker.utcnow  # the runner's injected wall clock
+    monkeypatch.setattr(research_worker, "utcnow", lambda: now() + timedelta(seconds=skew[0]))
+    counts = {}
+    requests = {"Waiter": 0, "Busy": 0}
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        name = json.loads(json.loads(request.content)["input"][0]["content"])["objective"]
+        requests[name] += 1
+        if name == "Waiter":
+            wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+            return httpx.Response(200, json=response([tool_call("wait", wait, "w-1")]))
+        # Busy holds its slot, writing nothing, while the Waiter stays parked.
+        while not reasons:
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)  # a check owed to a move before Busy's request lands now
+        before = len(reasons)
+        await asyncio.sleep(1)  # four runner loops at an unchanged head
+        counts["quiet"] = len(reasons) - before
+        skew[0] = research_worker.EVENT_WAIT_MAX_STALE_SECONDS
+        for _ in range(40):
+            if len(reasons) > before:
+                break
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.5)  # and no more until it is stale again
+        counts["stale"] = len(reasons) - before
+        return httpx.Response(200, json=response([message("Busy done.")]))
+
+    runner, client = society_runner(service, route)
+    manifest = TeamRunManifest(
+        experiment_id=exp["id"],
+        project_id=author.project_id,
+        mode="replay",
+        task_ids=[root["id"] for root in roots],
+        max_concurrency=2,
+        timeout_seconds=20,
+    )
+    try:
+        report = await runner.run(manifest)
+    finally:
+        await client.close()
+    assert counts == {"quiet": 0, "stale": 1}
+    assert requests == {"Waiter": 1, "Busy": 1}
+    assert report["stop_reason"] == "SOCIETY_IDLE"  # once Busy is done, all wait
 
 
 def test_the_event_head_is_the_projects_latest_event(lab):

@@ -399,7 +399,10 @@ tools, the prompts and the delivery shapes.
     that source to its parent as an unverified result. A source of a since-changed
     statement does not count. If the node closes first, the task ends (`scope_closed`).
     A recruit whose node is proved or closed while it is still queued, or while its first
-    request waits for rate admission, ends before that request is sent.
+    request waits for rate admission, ends before that request is sent. Every later session,
+    such as a wake from a wait, is checked the same way, but ends there only for its scope
+    (`scope_proved`, `scope_closed`): a resumed joined recruit reads its children's results
+    before `result_returned` can end it.
   - Each of these endings waits until the recruit's own joined recruits have settled. Until
     then its task cannot complete, so the recruit keeps working and parks on its next
     final message through the joined-children handoff. When it resumes with their
@@ -464,7 +467,8 @@ tools, the prompts and the delivery shapes.
 
   Either wait resumes natively: the agent keeps its transcript and gets a short wake note
   (the reason, the awaited recruits' statuses and the long pole). The supervisor checks a
-  parked wait only when new events exist, or when its minimum sleep or timeout ends. A run
+  parked wait only when new events exist, when its minimum sleep or timeout ends, or at
+  least every 30 s (a PostgreSQL event can commit behind one already seen). A run
   whose agents all wait with nothing admissible stops with `SOCIETY_IDLE`; the waits keep
   their tickets, so a later run resumes them.
 - **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
