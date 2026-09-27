@@ -374,6 +374,7 @@ def test_goal_node_accepted_when_target_receipt_exists(lab, monkeypatch):
         "counts": {"none": 1},
         "conditional": True,
         "truncated": False,
+        "stubs": [],
     }
     listed = service.query_nodes(exp["id"], alpha, node_type="goal")["items"]
     assert listed[0]["status"] == "accepted" and listed[0]["status_derived"] is True
@@ -397,6 +398,7 @@ def test_rests_on_counts_sources(lab):
         "counts": {"verified": 1, "complete": 1, "partial": 1, "stub": 1, "none": 1},
         "conditional": True,
         "truncated": False,
+        "stubs": [ids[1]],
     }
     assert read["claimants"] == []
     assert read["edges_out"] == [
@@ -420,6 +422,7 @@ def test_rests_on_counts_sources(lab):
         "counts": {"verified": 1, "complete": 1},
         "conditional": False,
         "truncated": False,
+        "stubs": [],
     }
     # A source of an older statement proves nothing of the current one: resting on it is
     # conditional again.
@@ -428,11 +431,13 @@ def test_rests_on_counts_sources(lab):
         "counts": {"verified": 1, "stale": 1},
         "conditional": True,
         "truncated": False,
+        "stubs": [],
     }
     assert service.read_node(ids[0], beta)["rests_on"] == {
         "counts": {},
         "conditional": False,
         "truncated": False,
+        "stubs": [],
     }
 
 
@@ -702,7 +707,22 @@ def test_truncated_rests_on_is_conditional(lab, monkeypatch):
         "counts": {"complete": 2},
         "conditional": True,
         "truncated": True,
+        "stubs": [],
     }
+
+
+def test_rests_on_lists_stubs_nearest_first_and_bounded(lab, monkeypatch):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    ids = chain(service, exp["id"], alpha, 4, "b")
+    elaborated = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
+    for index in range(3):
+        service.set_lean_statement(
+            ids[index], None, f"b{index}", ": True", elaborated, alpha, f"stub-{index}"
+        )
+    assert service.read_node(ids[3], alpha)["rests_on"]["stubs"] == [ids[2], ids[1], ids[0]]
+    monkeypatch.setattr(commons, "MAX_EDGE_LIST", 2)
+    rests_on = service.read_node(ids[3], alpha)["rests_on"]
+    assert rests_on["stubs"] == [ids[2], ids[1]] and rests_on["counts"] == {"stub": 3}
 
 
 def test_new_node_edges_skip_cycle_walk_but_links_do_not(lab, monkeypatch):

@@ -79,6 +79,15 @@ def test_constitution_respects_policy_flags_and_length():
     # Playbook: present, labelled optional, and literature only when enabled.
     assert "Optional playbook" in full
     assert "1. Orient:" in full and "6. Submit." in full and "Get a referee" not in full
+    # Sketch-then-fill is optional: a skeleton's sorry lemmas become stub nodes.
+    assert (
+        "4. Optionally publish a Lean skeleton whose sorry lemmas become stub nodes "
+        "(lean_check with stubs=true)." in full
+    )
+    assert (
+        "5. Fill stubs by publishing their sources; submit the skeleton once none remain." in full
+    )
+    assert "holes" not in full
     assert "Explore: special cases, numerical experiments, literature." in full
     assert "Orient" not in bare
     no_literature = constitution(_policy(playbook=True), literature_enabled=False)

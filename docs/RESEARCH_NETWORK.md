@@ -256,6 +256,26 @@ tools, the prompts and the delivery shapes.
     flag. Every imported module must have a complete or verified source
     (`COMMONS_CLOSURE_INCOMPLETE`). Import cycles, more than 200 modules, a module with
     `#exit` or an unopened `end`, and an expansion over the size limit are refused.
+  - A skeleton is any node whose published source imports stub nodes; `lean_check(stubs=true)`
+    creates them. It is optional. With `node_id`, each top-level
+    `theorem X <signature> := sorry` (or `:= by sorry`) whose lines hold nothing else
+    becomes a stub:
+    - Its Lean header is the file's environment imports and its `open`, `set_option` and
+      `universe` lines before any other command; a header that is not plain refuses the
+      call. All stubs elaborate in one Lean run under it.
+    - Each one Lean elaborates becomes a `lemma` node (title its name, statement
+      "Stub in <node title>: <name>") with that elaborated Lean statement, and the node
+      `depends_on` it. A dependency of the node with the same Lean statement that already
+      imports is reused instead (`created: false`). One Lean rejects stays in the text
+      (`stub_needs_definition_node`, or `lean_infrastructure_failure` when Lean could not
+      judge it); the node's own theorem is never a stub.
+    - The platform deletes each stub's lines, imports its module right after the file's
+      imports, and checks and publishes that text as the node's module. The result adds
+      `stubs` (`lean_name`, `node_id`, `module`, `created`) and `skeleton_source`. The
+      skeleton imports its stubs, which is no cycle.
+    - Peers fill a stub by publishing a source of its statement. `commons_read` lists the
+      stubs a node still rests on (`rests_on.stubs`, nearest first, at most 50; `counts`
+      has the total). Submit the skeleton once none remain.
   - An opt-in real-image test (`tests/test_real_commons_flattening.py`) compiles a
     flattened two-module file in the workbench and passes the statement check on it. The
     independent verifier's first run on a flattened candidate is the first A/B smoke run.

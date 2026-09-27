@@ -197,18 +197,18 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
   1. Orient: restate the goal, and note known techniques and relevant library results.
   2. Explore: special cases, numerical experiments, literature.
   3. Conjecture and argue informally.
-  4. Sketch the Lean proof with holes.
-  5. Fill the holes.
+  4. Optionally publish a Lean skeleton whose sorry lemmas become stub nodes (lean_check with stubs=true).
+  5. Fill stubs by publishing their sources; submit the skeleton once none remain.
   6. Submit.
 - **Technique skills** were removed after S1 (never loaded).
 - Check-ins and stagnation nudges were removed after S1 (acted on 20% of the time; nudges never fired). The stagnation detector remains the loop guard.
-- **Sketch-then-fill formalization** (the draft–sketch–prove pattern):
-  1. From an informal proof, `lean_sketch` compiles a Lean skeleton with `sorry` holes to confirm the structure type-checks.
-  2. Each hole's goal is extracted as a statement and becomes a `lemma` node linked to its parent.
-  3. Holes are filled by automation first, then O-tier provers, then F-tier models.
-  4. Filled pieces recompose, and the whole proof goes to independent checking.
+- **Sketch-then-fill formalization** (the draft–sketch–prove pattern; optional, not a phase; S1 audit #21). A skeleton is any node whose published source imports stub nodes; `lean_check(stubs=true)` creates them, replacing S1's `lean_sketch` holes:
+  1. An agent writes the proof with top-level `theorem X … := sorry` lemmas and checks it with `lean_check(node_id=…, stubs=true)`.
+  2. Each sorry lemma that elaborates under the file's header becomes a `lemma` stub node the skeleton's node depends on (a dependency with the same Lean statement is reused); one that needs the skeleton's own definitions stays in its text.
+  3. The platform replaces each stub's lines with `import Commons.N…` and publishes that text as the node's module. Peers fill the stubs in parallel by publishing their sources.
+  4. Once none remain (`rests_on.stubs`), the skeleton goes to independent checking.
 
-  The blueprint and the proof structure stay in sync automatically.
+  The blueprint and the proof structure stay in sync: the skeleton's imports are its `depends_on` edges.
 - **Honesty rule.** No scaffold, hint or nudge is derived from a benchmark's hidden reference solution.
 
 ---
@@ -303,7 +303,7 @@ The independent verifier is the only arbiter; referees check plans (S1 audit #17
 
 - Formalization dominated the effort in the last run: the final proof was 606 lines.
 - O-tier models run the Lean feedback loops. F-tier models handle statements, strategy and hard steps.
-- Sketch-then-fill (§3.7) turns an informal proof into a Lean skeleton whose holes become nodes. The persistent Lean session (§3.6) cuts the cost of each iteration. Automation on a failing goal is opt-in (`automate=true`) since S1, where it exhausted the workbench's memory.
+- Sketch-then-fill (§3.7), which is optional, turns an informal proof into a Lean skeleton whose sorry lemmas become stub nodes (`lean_check(stubs=true)`, replacing `lean_sketch` holes): a skeleton is any node whose published source imports stub nodes. The persistent Lean session (§3.6) cuts the cost of each iteration. Automation on a failing goal is opt-in (`automate=true`) since S1, where it exhausted the workbench's memory.
 - Accepted nodes are immediately reusable library entries within the campaign. Retrieval is tested to actually return them; in the last run, lemma-bank searches returned nothing.
 - Agents may introduce definitions in a campaign-local namespace. Definitions are nodes, checked by Lean elaboration like any other.
 - Numerical and computational evidence stays evidence (computation nodes carry reproducibility metadata). It counts as proof only with a certificate checked in Lean (Wave 7).

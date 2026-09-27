@@ -45,8 +45,9 @@ def _playbook(literature_enabled: bool) -> list[str]:
         "Orient: restate the goal, and note known techniques and relevant library results.",
         explore,
         "Conjecture and argue informally.",
-        "Sketch the Lean proof with holes.",
-        "Fill the holes.",
+        "Optionally publish a Lean skeleton whose sorry lemmas become stub nodes "
+        "(lean_check with stubs=true).",
+        "Fill stubs by publishing their sources; submit the skeleton once none remain.",
         "Submit.",
     )
     return [f"{index}. {step}" for index, step in enumerate(steps, start=1)]

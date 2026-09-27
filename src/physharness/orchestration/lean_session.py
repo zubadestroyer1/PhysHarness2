@@ -550,6 +550,34 @@ def top_level_declarations(code: str) -> list[tuple[str, str, str]]:
     return found
 
 
+def declaration_spans(source: str) -> list[tuple[str, str, int, int]] | None:
+    """(keyword, name, first_line, last_line) of each top-level declaration, 1-based and
+    inclusive; None when comments or literals change the line structure.
+
+    A declaration runs to the line before the next command, so the last one runs to the end
+    of the file, trailing blank lines included.
+    """
+    code = lean_code(source)
+    if code.count("\n") != source.count("\n"):
+        return None
+    starts, blocks = [], 0
+    for match in _COMMAND.finditer(code):
+        keyword, line = match.group(1), code.count("\n", 0, match.start()) + 1
+        if keyword in _BLOCKS:
+            blocks += 1
+        elif keyword == "end":
+            blocks = max(0, blocks - 1)
+        named = keyword not in (*_BLOCKS, "end", "variable") and not blocks
+        name = _NAME.match(code, match.end()) if named else None
+        starts.append((keyword if name else None, name.group(1) if name else None, line))
+    total, spans = source.count("\n") + 1, []
+    for index, (keyword, name, line) in enumerate(starts):
+        if keyword is not None:
+            end = starts[index + 1][2] - 1 if index + 1 < len(starts) else total
+            spans.append((keyword, name, line, max(line, end)))
+    return spans
+
+
 def _with_universes(header: str, universes) -> str:
     """A hole node's header: the file header, then its ``universe`` line."""
     if not universes:

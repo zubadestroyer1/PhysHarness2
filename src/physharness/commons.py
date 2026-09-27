@@ -580,6 +580,7 @@ class CommonsMixin:
             ]
 
         sources = [views[i]["source"] for i in rests_on if i in views]
+        stubs = [i for i in rests_on if i in views and views[i]["source"] == "stub"]
         return {
             "node": self._goal_view(node, receipt),
             "edges_out": edges(edges_out),
@@ -588,6 +589,8 @@ class CommonsMixin:
                 "counts": dict(Counter(sources)),
                 "conditional": truncated or any(rank not in COMPLETE_RANKS for rank in sources),
                 "truncated": truncated,
+                # What is left to fill, nearest first; counts has the total.
+                "stubs": stubs[:MAX_EDGE_LIST],
             },
             "claimants": claimants,
             "recent_posts": recent_posts,
