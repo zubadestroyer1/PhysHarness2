@@ -138,7 +138,8 @@ tools, the prompts and the delivery shapes.
   (S1 audit #17). The independent verifier is the only arbiter: its receipt on the exact
   target accepts the goal. A node imported by an independently verified proof records
   that proof's receipt and the imported source's digest (`{receipt_id, sha256}`) in
-  `in_verified_proof` (shown by `commons_read`; the frontier counts only the entries for
+  `in_verified_proof` (shown by `commons_read`; a node whose current source is complete
+  is not open work and leaves the frontier, which otherwise counts only the entries for
   the node's current source); its status stays open. Source ranks are advisory and only
   verifier receipts are authority: the verifier certifies the target's axioms, not each
   imported lemma's. Only the receipt's platform-written `commons_modules` count, never
