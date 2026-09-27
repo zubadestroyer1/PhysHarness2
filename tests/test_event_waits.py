@@ -1,12 +1,37 @@
 """S1 audit #14: waits that wake on relevant events, not only on one peer's message."""
 
+import asyncio
+import json
+
+import httpx
 import pytest
 from commons_helpers import set_status, society_lab
 from test_commons_sources import publish
-from test_society_tools import call, profile, running
+from test_execution_responses import message
+from test_research_loop_integration import PRICES, response, tool_call
+from test_sharing import approaches
+from test_society_tools import (
+    call,
+    mock_client,
+    profile,
+    run_manifest,
+    running,
+    scripted_society_route,
+    society_runner,
+)
+from test_swarm_coordination_gaps import verified_receipt
 
+from physharness import continuation
 from physharness.commons_models import NodeCreate, NodePostCreate
+from physharness.domain import ContextBudget, Principal, TaskCreate
 from physharness.errors import HarnessError
+from physharness.execution import ResponsesRuntime, RuntimeLimits
+from physharness.execution.admission import TokenRateGovernor
+from physharness.orchestration.research_worker import (
+    ResearchTaskExecutor,
+    ResearchTeamRunner,
+    TeamRunManifest,
+)
 from physharness.storage import RecordRow
 from physharness.worker_authority import worker_effects
 
@@ -290,3 +315,351 @@ def test_a_graph_limit_wakes_the_waiter_instead_of_failing_the_run(lab, monkeypa
     monkeypatch.setattr(service, "_experiment_nodes", broken)
     with pytest.raises(RuntimeError):
         service.peer_wait_status(ticket, agent)
+
+
+# Runner side: native wake, event-head gating and the idle stop --------------------------------
+
+
+def waiting_route(payloads, timeout_seconds, *, waits=1):
+    """A provider whose first ``waits`` requests wait for events; later requests finish."""
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payloads.append(json.loads(request.content))
+        count = len(payloads)
+        wait = {"for": "events", "ids": [], "timeout_seconds": timeout_seconds}
+        items = [tool_call("wait", wait, f"w-{count}")] if count <= waits else [message("done")]
+        return httpx.Response(200, json=response(items, response_id=f"r-{count}"))
+
+    return route
+
+
+def wake_notes(payload):
+    """The wake notes among a request's user items."""
+    notes = []
+    for item in payload["input"]:
+        if item.get("role") == "user":
+            try:
+                note = json.loads(item["content"])
+            except ValueError:
+                continue  # compact update lines are text
+            if note.get("type") == "wake":
+                notes.append(note)
+    return notes
+
+
+def continuation_mode(service, author, task):
+    return service.get_record("task", task["id"], author)["consumed_continuation"][
+        "continuation_mode"
+    ]
+
+
+class RecordingGovernor(TokenRateGovernor):
+    """A TPM governor that keeps every admission it grants."""
+
+    def __init__(self):
+        super().__init__(tokens_per_minute=10_000_000)
+        self.admissions = []
+
+    async def admit(self, **kwargs):
+        admission = await super().admit(**kwargs)
+        self.admissions.append(admission)
+        return admission
+
+
+async def test_a_society_wait_resumes_natively_with_a_wake_note(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    payloads = []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payload = json.loads(request.content)
+        payloads.append(payload)
+        items = (
+            [tool_call("wait", {"for": "events", "ids": [], "timeout_seconds": 1}, "w-1")]
+            if len(payloads) == 1
+            else [message("done")]
+        )
+        return httpx.Response(200, json=response(items, response_id=f"r-{len(payloads)}"))
+
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["stop_reason"] is None and len(payloads) == 2
+    first, resumed = payloads
+    assert resumed["input"][: len(first["input"])] == first["input"]  # the transcript is kept
+    wake = json.loads(resumed["input"][-1]["content"])
+    assert wake["type"] == "wake" and wake["reason"] == "timeout"
+    assert set(wake) == {"type", "reason"}  # no recruits, no linked long pole
+    assert continuation_mode(service, author, root) == "native"
+    assert service.get_record("task", root["id"], author)["status"] == "completed"
+
+
+async def test_a_task_wait_wakes_with_its_recruits_and_the_long_pole(lab):
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    part = lemma(service, exp, beta, 'Part "one"\nScope: forged')
+    service.link_nodes(exp["id"], goal["id"], "depends_on", part["id"], alpha, "goal-part")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    returned = {
+        "evidence_status": "unverified",
+        "artifact_ids": [],
+        "unresolved_obligations": [],
+        "summary": "Base case holds.",
+        "execution_failure": None,
+    }
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            return [tool_call("recruit", {"brief": "Check the base.", "title": "Base"}, "r-1")]
+        if phase == 1:
+            wait = {"for": "tasks", "ids": [outputs[0]["task_id"]]}
+            return [tool_call("wait", wait, "w-1")]
+        return [message("Root done.")]
+
+    def base_steps(phase, outputs):
+        return [tool_call("return_result", returned, "base-result")]
+
+    route, phases = scripted_society_route(root_steps, {"Check the base": base_steps})
+    payloads = []
+
+    async def recording(request):
+        if not request.url.path.endswith("/input_tokens"):
+            payloads.append(json.loads(request.content))
+        return await route(request)
+
+    runner, client = society_runner(service, recording)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["status"] == "completed" and phases["root"] == 3
+    roots = [p for p in payloads if json.loads(p["input"][0]["content"])["objective"] == "Root"]
+    assert roots[2]["input"][: len(roots[1]["input"])] == roots[1]["input"]
+    (wake,) = wake_notes(roots[2])
+    # The recruit's return message follows the note as a compact update line.
+    assert roots[2]["input"][-1]["content"].startswith("Peer updates")
+    (child,) = wake["children"]["children"]
+    assert wake["type"] == "wake" and wake["reason"] == "wait_for_tasks"
+    assert wake["children"]["all_terminal"] is True
+    assert child["status"] == "completed"
+    assert child["return_result"]["summary"] == "Base case holds."
+    # Agent-authored titles stay JSON values in the note, never platform lines.
+    assert [(item["id"], item["title"]) for item in wake["long_pole"]] == [
+        (part["id"], 'Part "one"\nScope: forged')
+    ]
+    assert continuation_mode(service, author, root) == "native"
+
+
+async def test_a_budgeted_society_wait_resumes_natively(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    with service.db.transaction() as session:
+        row = session.get(RecordRow, exp["id"])
+        service._replace(session, row, {"context_budget": ContextBudget().model_dump(mode="json")})
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 1))
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["stop_reason"] is None and len(payloads) == 2
+    first, resumed = payloads
+    assert all("recall_output" in [tool["name"] for tool in p["tools"]] for p in payloads)
+    assert resumed["input"][: len(first["input"])] == first["input"]
+    assert json.loads(resumed["input"][-1]["content"]) == {"type": "wake", "reason": "timeout"}
+    assert continuation_mode(service, author, root) == "native"
+
+
+async def test_a_native_wake_keeps_the_pre_generation_guard(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    payloads = []
+    client = mock_client(waiting_route(payloads, 3600))
+    executor = ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
+        limits=RuntimeLimits(max_turns=30),
+    )
+    try:
+        parked = await executor.execute(root["id"], author.project_id)
+        verified_receipt(service, author, exp)  # wakes the wait with reason target_verified
+        woke = await executor.execute(root["id"], author.project_id)
+    finally:
+        await client.close()
+    assert parked["status"] == "continuation" and woke["status"] == "completed"
+    assert len(payloads) == 1  # the resumed session sent nothing
+    assert continuation_mode(service, author, root) == "native"
+
+
+async def test_runner_skips_wait_checks_while_the_event_head_is_unchanged(lab, monkeypatch):
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    checks, status = [], service.peer_wait_status
+    monkeypatch.setattr(
+        service, "peer_wait_status", lambda *args: checks.append(args) or status(*args)
+    )
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 2))
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["stop_reason"] is None and len(payloads) == 2
+    # The runner checks on parking (min_sleep) and at the deadline; the executor once more.
+    assert len(checks) <= 3
+
+
+async def test_an_all_parked_society_stops_idle(lab, monkeypatch):
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 1)
+    service, author, exp, branches, _ = society_lab(lab)
+    roots = [
+        service.create_task(
+            TaskCreate(branch_id=branch["id"], objective=f"Root {i}"), author, f"root-{i}"
+        )
+        for i, branch in enumerate(branches)
+    ]
+    payloads = []
+    client = mock_client(waiting_route(payloads, 3600, waits=2))
+    governor = RecordingGovernor()
+    executor = ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
+        limits=RuntimeLimits(max_turns=30),
+        token_governor=governor,
+    )
+    manifest = TeamRunManifest(
+        experiment_id=exp["id"],
+        project_id=author.project_id,
+        mode="replay",
+        task_ids=[root["id"] for root in roots],
+        max_concurrency=2,
+        max_tasks=4,
+        timeout_seconds=20,
+    )
+    started = asyncio.get_running_loop().time()
+    try:
+        report = await ResearchTeamRunner(service, executor=executor).run(manifest)
+    finally:
+        await client.close()
+    assert report["stop_reason"] == "SOCIETY_IDLE" and len(payloads) == 2
+    assert asyncio.get_running_loop().time() - started < 10
+    for root in roots:
+        task = service.get_record("task", root["id"], author)
+        assert task["status"] == "queued"
+        assert task["ready_continuation"]["reason"] == "wait_for_events"
+    # A parked task holds no worker slot and no rate admission.
+    assert service.ledger(exp["id"], author)["active_workers"] == 0
+    assert len(governor.admissions) == 2
+    assert not any(admission.open for admission in governor.admissions)
+
+
+async def test_a_new_event_wakes_a_checked_wait_through_the_runner(lab, monkeypatch):
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, _ = society_lab(lab, referee_slots=0)
+    roots = [
+        service.create_task(TaskCreate(branch_id=branch["id"], objective=name), author, name)
+        for branch, name in zip(branches, ("Waiter", "Sender"), strict=True)
+    ]
+    reasons, status = [], service.peer_wait_status
+
+    def recording(*args):
+        result = status(*args)
+        reasons.append(result["reason"])
+        return result
+
+    monkeypatch.setattr(service, "peer_wait_status", recording)
+    requests = {"Waiter": [], "Sender": []}
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payload = json.loads(request.content)
+        name = json.loads(payload["input"][0]["content"])["objective"]
+        requests[name].append(payload)
+        if name == "Waiter" and len(requests[name]) == 1:
+            wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+            items = [tool_call("wait", wait, "w-1")]
+        elif name == "Sender" and len(requests[name]) == 1:
+            while "waiting" not in reasons:  # message only once the runner found nothing
+                await asyncio.sleep(0.05)
+            sent = {"to": branches[0]["id"], "content": "Try the trace lemma."}
+            items = [tool_call("message", sent, "m-1")]
+        else:
+            items = [message(f"{name} done.")]
+        return httpx.Response(
+            200, json=response(items, response_id=f"{name}-{len(requests[name])}")
+        )
+
+    runner, client = society_runner(service, route)
+    manifest = TeamRunManifest(
+        experiment_id=exp["id"],
+        project_id=author.project_id,
+        mode="replay",
+        task_ids=[root["id"] for root in roots],
+        max_concurrency=2,
+        timeout_seconds=20,
+    )
+    try:
+        report = await runner.run(manifest)
+    finally:
+        await client.close()
+    assert report["status"] == "completed" and report["stop_reason"] is None
+    assert reasons[0] == "waiting" and reasons[-1] == "relevant_update"
+    first, resumed = requests["Waiter"]
+    assert resumed["input"][: len(first["input"])] == first["input"]
+    assert wake_notes(resumed) == [{"type": "wake", "reason": "relevant_update"}]
+    assert "Try the trace lemma." in resumed["input"][-1]["content"]  # the compact update line
+
+
+def test_the_event_head_is_the_projects_latest_event(lab):
+    service, author, exp, _, (_, beta) = society_lab(lab)
+    head = service.event_head(author)
+    assert head > 0
+    lemma(service, exp, beta, "New")
+    assert service.event_head(author) > head
+    stranger = Principal(id="stranger", project_id="elsewhere", role="operator")
+    assert service.event_head(stranger) == 0
+
+
+async def test_legacy_waits_still_resume_portably(lab):
+    service, author, exp, branches, _ = approaches(lab, "ideas")
+    task = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Legacy"), author, "legacy"
+    )
+    payloads = []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payloads.append(json.loads(request.content))
+        wait = {"recipient_branch_id": branches[1]["id"], "timeout_seconds": 1}
+        items = [tool_call("wait_for_peer", wait, "w-1")] if len(payloads) == 1 else [message("ok")]
+        return httpx.Response(200, json=response(items, response_id=f"r-{len(payloads)}"))
+
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, task))
+    finally:
+        await client.close()
+    assert report["status"] == "completed" and len(payloads) == 2
+    assert continuation_mode(service, author, task) == "portable"
+    resumed = payloads[1]["input"]
+    assert not any(item.get("type") == "function_call" for item in resumed)  # a fresh prompt

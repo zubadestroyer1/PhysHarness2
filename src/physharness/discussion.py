@@ -673,6 +673,20 @@ class DiscussionMixin:
     def _discussion_max_sequence(session):
         return session.scalar(select(func.max(EventRow.sequence))) or 0
 
+    def event_head(self, actor) -> int:
+        """The project's latest event sequence: unchanged, no wake condition that events
+        drive can have changed, so a supervisor rechecks event waits only when it moves."""
+        self._research_role(actor)
+        with self.db.sessions() as session:
+            return (
+                session.scalar(
+                    select(func.max(EventRow.sequence)).where(
+                        EventRow.project_id == actor.project_id
+                    )
+                )
+                or 0
+            )
+
     def _delivery_clauses(self, session, experiment, actor, reader_key, ack):
         """The event filters of a reader's deliveries after ``ack``: its subscribed topics'
         posts and, for an agent, messages to its branch. Empty when there are none."""

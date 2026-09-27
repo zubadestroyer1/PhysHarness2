@@ -461,6 +461,12 @@ tools, the prompts and the delivery shapes.
   parts. The wait result, the frontier (`commons_query(frontier=true)`) and a builder's
   prompt and compaction anchor (`long_pole` lines, or `long_pole_hint`) all show it.
   `for="tasks"` still waits for recruits.
+
+  Either wait resumes natively: the agent keeps its transcript and gets a short wake note
+  (the reason, the awaited recruits' statuses and the long pole). The supervisor checks a
+  parked wait only when new events exist, or when its minimum sleep or timeout ends. A run
+  whose agents all wait with nothing admissible stops with `SOCIETY_IDLE`; the waits keep
+  their tickets, so a later run resumes them.
 - **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
   least 8 hex characters of a record the agent can see; an ambiguous prefix returns
   `AMBIGUOUS_ID` with the candidates. Routing arguments (`message.to`, `wait.ids`) name

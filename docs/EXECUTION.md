@@ -27,6 +27,9 @@ The limits have different scopes when a research task hands off to a successor s
 
 - `max_turns` bounds one native session. Every continuation, native or portable, starts a
   fresh session with its own turn count, so a long task can take many more turns in total.
+- In a society, a wait (`wait_for_events`, `wait_for_tasks`) resumes natively: the transcript
+  is kept and a short wake note (reason, children, long pole) is appended. Other continuations
+  are unchanged.
 - A numeric `max_total_tokens` caps the task's whole continuation lineage. Successors start
   from the cumulative input+output usage of every predecessor, so a handoff never replenishes
   the guard. When the lineage reaches it, the runtime stops with `BUDGET_EXHAUSTED` and the task
@@ -349,11 +352,11 @@ without one. Under a budget:
   A/B; block sizes (`elide_every_turns`) of 8 to 20 are recommended for it. Larger blocks break
   the cache less often but keep stale outputs longer.
 - **Tool digest.** The session record's `tool_definition_digest` covers the tools actually sent,
-  including `recall_output`. If the digest changes between a joined-children wait and its wake,
-  for example because the runtime stops accepting the budget, that in-flight native handoff falls
-  back to a portable continuation. A budgeted wait whose digest is unchanged still resumes
-  natively. The bound above treats the tools array as one element, so adding the recall tool is
-  counted once, at its full size.
+  including `recall_output`. If the digest changes between a joined-children or society wait and
+  its wake, for example because the runtime stops accepting the budget, that in-flight native
+  handoff falls back to a portable continuation. A budgeted wait whose digest is unchanged still
+  resumes natively. The bound above treats the tools array as one element, so adding the recall
+  tool is counted once, at its full size.
 
 The `research_lean` context profile sets the compaction threshold to
 `min(96,000, window − max_output − 8,192)`. It is independent of `context_budget`, but is meant to
