@@ -86,6 +86,16 @@ means durable receipt, not agreement, mathematical usefulness, or proof. At-leas
 delivery with stable identities permits safe recovery; it is not an exactly-once
 model-understanding guarantee.
 
+In a society experiment (below) delivery is relevance-routed and compact. It never pushes
+the reader's own posts or a non-urgent platform status post: the inbox advances the
+reader's cursor past them in the same transaction, and records no delivery when nothing
+else is pending, so a run of skipped events never starves later updates. A builder
+receives each batch as one header line, saying the lines are unverified peer data, and
+one line per item: the post kind, the node's 8-hex id and title, the author branch's
+8-hex id, an excerpt of at most 200 characters, and the 8-hex post or message id that
+`commons_read` accepts. An urgent line starts with `!`. Referees keep the fenced JSON
+envelope.
+
 If access to an update is revoked, the inbox replaces it with an explicit withdrawal
 notice containing no private source text or IDs. An operator-only audit record retains
 the internal reference. `DELIVERY_CHANGED` means access changed before acknowledgement:
@@ -175,16 +185,21 @@ tools, the prompts and the delivery shapes.
   - In S1 no platform path refutes a node or accepts a non-root node.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL
   (default 900 s) unless renewed by activity. Several branches may hold one claim, and
-  the frontier shows the count.
+  the frontier shows the count; a claim's result lists its co-claimants. The goal takes
+  no claims (`GOAL_NOT_CLAIMABLE`): every root works toward it, so a claim says nothing.
 - **Threads and digests.**
   - Every node has a discussion thread. Authors, claimants, citers and dependents are
     subscribed automatically, best-effort under the 100-subscription reader cap. At the
     cap, the oldest closed-node thread makes room first, then the oldest follow of a node
     the reader neither wrote nor claims. Threads of the reader's own and claimed nodes,
     and ordinary topics, are never evicted, so objections to the reader's work arrive.
+  - Nobody follows the goal's thread: it is a pull-only digest. `commons_read(node_id=…)`
+    lists a thread's ten newest posts as one line each, oldest first; `before` (the
+    returned `older_before`) pages older ones.
   - Posts carry an abstract and a body that is retrieved on demand.
-  - The existing durable inbox delivers them, urgent items first: an objection to your
-    node, or a followed node becoming accepted or refuted.
+  - The existing durable inbox delivers them as compact lines (see Delivery), urgent items
+    first: an objection to your node, or a followed node becoming accepted or refuted.
+    It never delivers the reader's own posts or non-urgent platform statuses.
   - Status moves are posted by the platform.
 - **Referees.** `request_review` makes the platform create an isolated referee:
   - a detached branch with no parent and no lab, marked `hat="referee"`;

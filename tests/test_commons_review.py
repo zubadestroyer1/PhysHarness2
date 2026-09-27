@@ -718,9 +718,10 @@ def test_sound_review_referees_node_and_posts_status(lab):
     assert updated["status"] == "refereed"
     assert updated["status_evidence"]["review_ids"] == [review["id"]]
     assert updated["status_evidence"]["counts"] == {"sound": 1, "gaps": 0, "wrong": 0}
-    (item,) = drain(service, exp["id"], alpha)["items"]
-    assert item["attributed_to"] == PLATFORM and item["post_kind"] == "update"
-    assert item["excerpt"].startswith("Status informal → refereed")
+    # The status post is on the thread; a non-urgent status is not pushed (S1 audit #13).
+    assert drain(service, exp["id"], alpha)["items"] == []
+    thread = service.read_node(node["id"], alpha)["recent_posts"]
+    assert "[update] from platform: Status informal → refereed" in thread[-1]
     (submitted,) = events(service, author, "commons.review_submitted")
     assert submitted["aggregate_id"] == review["id"]
     assert submitted["payload"] == {
@@ -1121,7 +1122,6 @@ def test_set_lean_statement_authority_and_bounds(lab, clock):
         )
         assert (error.code, error.status) == ("INVALID_LEAN_STATEMENT", 422)
     goal = service.ensure_goal_node(exp["id"], author)
-    service.claim_node(goal["id"], "claim", beta, "claim-goal")
     error = rejected(
         lambda: service.set_lean_statement(goal["id"], None, "g", "True", ELABORATED, beta, "g")
     )
@@ -1174,8 +1174,9 @@ def test_record_local_compile_requires_formal_statement_and_completion(lab):
         "backend": "lake-env-lean",
         "axioms": COMPILED["axioms"],
     }
-    (item,) = drain(service, exp["id"], alpha)["items"]
-    assert item["excerpt"].startswith("Status formally_stated → compiles_locally")
+    assert drain(service, exp["id"], alpha)["items"] == []  # not urgent, so not pushed
+    thread = service.read_node(node["id"], alpha)["recent_posts"]
+    assert "[update] from platform: Status formally_stated → compiles_locally" in thread[-1]
     # A second compile of a compiled node records nothing.
     again = service.record_local_compile(node["id"], "d" * 64, built, beta, "again")
     assert again["recorded"] is False
@@ -1483,7 +1484,6 @@ def verify(service, agent, source, *, assurance="independent_kernel"):
 def test_goal_accepted_hook_on_verified_target_receipt(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     goal = service.ensure_goal_node(exp["id"], author)
-    service.claim_node(goal["id"], "claim", beta, "follow-goal")
     # A kernel-only receipt is not independent acceptance.
     kernel = verify(service, alpha, "kernel proof", assurance="kernel")
     assert kernel["status"] == "verified" and kernel["assurance"] == "kernel"
@@ -1496,10 +1496,11 @@ def test_goal_accepted_hook_on_verified_target_receipt(lab):
     assert stored["status_evidence"] == {"receipt_id": receipt["id"]}
     (moved,) = events(service, author, "commons.node_status")
     assert moved["payload"]["to"] == "accepted" and moved["aggregate_id"] == goal["id"]
-    # The platform status post reaches the goal thread's subscribers as urgent news.
-    (item,) = drain(service, exp["id"], beta)["items"]
-    assert item["excerpt"] == "Status formally_stated → accepted: independent kernel receipt"
-    assert item["urgent"] is True and item["attributed_to"] == PLATFORM
+    # The goal thread is pull-only: nothing is pushed, and the status post is read on demand.
+    assert drain(service, exp["id"], beta)["items"] == []
+    assert service.read_node(goal["id"], beta)["recent_posts"][-1].endswith(
+        "[update] from platform: Status formally_stated → accepted: independent kernel receipt"
+    )
     # A later receipt leaves the accepted goal alone.
     later = verify(service, alpha, "another proof")
     assert later["status"] == "verified"

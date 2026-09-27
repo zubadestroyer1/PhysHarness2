@@ -24,7 +24,7 @@ from .commons_models import (
 from .domain import Principal, digest_json, new_id, utcnow
 from .errors import HarnessError
 from .knowledge.index import tokens
-from .storage import EdgeRow, RecordRow, record_json_text
+from .storage import EdgeRow, EventRow, RecordRow, record_json_text
 
 PLATFORM = "commons-platform"  # Principal id used for platform-authored inserts/posts
 EDGE_PREFIX = "commons:"
@@ -40,6 +40,7 @@ ROOT_PATH_SCORE = 3.0
 MAX_WAITING_DEPENDENTS = 5
 NEGLECT_MINUTES = 30
 MAX_NEGLECT = 3.0
+RECENT_POSTS = 10  # read_node's pull digest of a node's thread
 
 
 def _platform(project_id):
@@ -474,7 +475,37 @@ class CommonsMixin:
             and self._in_scope(session, row, actor)
         }
 
-    def read_node(self, node_id, actor):
+    def _thread_digest(self, session, row, actor, before):
+        """The node thread's newest posts as one line each, oldest first, and the sequence
+        that pages older ones (None when there are none)."""
+        topic_id = row.payload.get("topic_id")
+        if not topic_id:
+            return [], None
+        query = select(EventRow).where(
+            EventRow.project_id == row.project_id,
+            EventRow.kind == "discussion.post_created",
+            EventRow.aggregate_id == topic_id,
+        )
+        if before is not None:
+            query = query.where(EventRow.sequence < before)
+        events = list(
+            session.scalars(query.order_by(EventRow.sequence.desc()).limit(RECENT_POSTS + 1))
+        )
+        shown = events[:RECENT_POSTS]
+        lines = []
+        for event in reversed(shown):
+            post = session.get(RecordRow, event.payload["post_id"])
+            if post is None or not self._in_scope(session, post, actor):
+                continue
+            p = post.payload
+            text = " ".join((p.get("abstract") or p["content"]).split())[:200]
+            lines.append(
+                f"{post.id[:8]} [{p['post_kind']}] from "
+                f"{(p.get('branch_id') or 'platform')[:8]}: {text}"
+            )
+        return lines, shown[-1].sequence if len(events) > RECENT_POSTS else None
+
+    def read_node(self, node_id, actor, *, before=None):
         self._research_role(actor)
         with self.db.sessions() as session:
             # Hold the scope rows so per-row authorization does not reload them.
@@ -496,6 +527,7 @@ class CommonsMixin:
                 {identifier for _, identifier in edges_out + edges_in} | set(rests_on),
             )
             claimants = self._active_claims(session, row.id)[:MAX_PAGE]
+            recent_posts, older_before = self._thread_digest(session, row, actor, before)
         receipt = self._goal_receipt(experiment_id, actor, [node, *summaries.values()])
         views = {i: self._goal_view(summary, receipt) for i, summary in summaries.items()}
 
@@ -522,6 +554,8 @@ class CommonsMixin:
                 "truncated": truncated,
             },
             "claimants": claimants,
+            "recent_posts": recent_posts,
+            "older_before": older_before,
         }
 
     def _experiment_nodes(self, session, experiment, actor):

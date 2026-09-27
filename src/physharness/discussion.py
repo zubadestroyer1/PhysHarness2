@@ -441,6 +441,7 @@ class DiscussionMixin:
                 "experiment_id": topic["experiment_id"],
                 "topic_id": topic_row.id,
                 "post_id": record["id"],
+                **({"branch_id": data.get("branch_id")} if data.get("node_id") else {}),
             },
             created_at=utcnow().isoformat(),
         )
@@ -672,6 +673,52 @@ class DiscussionMixin:
     def _discussion_max_sequence(session):
         return session.scalar(select(func.max(EventRow.sequence))) or 0
 
+    def _delivery_clauses(self, session, experiment, actor, reader_key, ack):
+        """The event filters of a reader's deliveries after ``ack``: its subscribed topics'
+        posts and, for an agent, messages to its branch. Empty when there are none."""
+        subscriptions = list(
+            session.scalars(
+                select(RecordRow)
+                .where(
+                    RecordRow.project_id == actor.project_id,
+                    RecordRow.kind == "discussion_subscription",
+                    record_json_text("experiment_id") == experiment.id,
+                    record_json_text("reader_key") == reader_key,
+                    RecordRow.payload["subscribed"].as_boolean().is_(True),
+                )
+                .limit(101)
+            )
+        )
+        if len(subscriptions) > 100:
+            raise HarnessError(
+                "SUBSCRIPTION_LIMIT", "Reader subscriptions exceed the supported bound."
+            )
+        starts = {r.payload["topic_id"]: r.payload["start_sequence"] for r in subscriptions}
+        clauses = [
+            and_(
+                EventRow.kind == "discussion.post_created",
+                EventRow.aggregate_id == topic_id,
+                EventRow.sequence > max(ack, start),
+                EventRow.payload["experiment_id"].as_string() == experiment.id,
+            )
+            for topic_id, start in starts.items()
+        ]
+        if actor.role == "agent":
+            clauses.append(
+                and_(
+                    EventRow.kind == "message.created",
+                    EventRow.aggregate_id == actor.branch_id,
+                    EventRow.sequence > ack,
+                )
+            )
+        return clauses
+
+    @staticmethod
+    def _push_skip(post, item, actor):
+        """Society push never echoes the reader's own posts or non-urgent platform statuses."""
+        own = actor.branch_id is not None and post.get("branch_id") == actor.branch_id
+        return own or (post.get("platform_status") is not None and not item.get("urgent"))
+
     def discussion_updates(self, experiment_id, actor, *, after=None, limit=10):
         self._research_role(actor)
         if not 1 <= limit <= 10:
@@ -710,41 +757,7 @@ class DiscussionMixin:
                     "next_cursor": pending.payload["end_sequence"],
                     "redelivered": True,
                 }
-            subscriptions = list(
-                session.scalars(
-                    select(RecordRow)
-                    .where(
-                        RecordRow.project_id == actor.project_id,
-                        RecordRow.kind == "discussion_subscription",
-                        record_json_text("experiment_id") == experiment_id,
-                        record_json_text("reader_key") == reader_key,
-                        RecordRow.payload["subscribed"].as_boolean().is_(True),
-                    )
-                    .limit(101)
-                )
-            )
-            if len(subscriptions) > 100:
-                raise HarnessError(
-                    "SUBSCRIPTION_LIMIT", "Reader subscriptions exceed the supported bound."
-                )
-            starts = {r.payload["topic_id"]: r.payload["start_sequence"] for r in subscriptions}
-            eligible_posts = [
-                and_(
-                    EventRow.kind == "discussion.post_created",
-                    EventRow.aggregate_id == topic_id,
-                    EventRow.sequence > max(ack, start),
-                    EventRow.payload["experiment_id"].as_string() == experiment.id,
-                )
-                for topic_id, start in starts.items()
-            ]
-            if actor.role == "agent":
-                eligible_posts.append(
-                    and_(
-                        EventRow.kind == "message.created",
-                        EventRow.aggregate_id == actor.branch_id,
-                        EventRow.sequence > ack,
-                    )
-                )
+            eligible_posts = self._delivery_clauses(session, experiment, actor, reader_key, ack)
             if not eligible_posts:
                 return {"delivery_id": None, "items": [], "next_cursor": ack, "redelivered": False}
             events = list(
@@ -760,6 +773,8 @@ class DiscussionMixin:
             )
             items = []
             withdrawals = []
+            society = bool(experiment.payload.get("society"))
+            processed = ack
             for event in events:
                 source_kind = "message" if event.kind == "message.created" else "discussion_post"
                 source_id = (
@@ -781,18 +796,30 @@ class DiscussionMixin:
                     topic = session.get(RecordRow, safe_post["topic_id"])
                     if topic.payload.get("node_id"):
                         excerpt = self._node_thread_item(session, safe_post, topic, actor)
+                        if society and self._push_skip(safe_post, excerpt, actor):
+                            processed = event.sequence
+                            continue
                     else:
                         excerpt = self._discussion_excerpt(safe_post)
                 if len(json.dumps(items + [excerpt], ensure_ascii=False).encode("utf-8")) > 12000:
                     break
                 items.append(excerpt)
+                processed = event.sequence
                 if len(items) == limit:
                     break
             if not items:
-                return {"delivery_id": None, "items": [], "next_cursor": ack, "redelivered": False}
-            # The cursor is the highest delivered sequence; urgent node-thread items come first.
-            # The sort is stable, so sequence order holds within each group.
-            end = max(item["sequence"] for item in items)
+                if processed > ack:  # only skipped events: advance past them, deliver nothing
+                    self._replace(session, reader, {"ack_sequence": processed})
+                return {
+                    "delivery_id": None,
+                    "items": [],
+                    "next_cursor": processed,
+                    "redelivered": False,
+                }
+            # The cursor is the highest handled sequence (the last item's, without skips);
+            # urgent node-thread items come first. The sort is stable, so sequence order holds
+            # within each group.
+            end = processed
             items.sort(key=lambda item: not item.get("urgent", False))
             delivery = self._insert(
                 session,

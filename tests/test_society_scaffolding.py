@@ -43,7 +43,8 @@ SKILLS = sorted(
 NORMS = [
     "Informal work is welcome.",
     "State evidence status honestly.",
-    "Claim before sinking effort.",
+    "Claim the node you work on before sinking effort (the goal takes no claims; read its "
+    "thread on demand).",
     "Post failures.",
     "Cite what you use.",
     "Recruit when a piece can proceed independently.",

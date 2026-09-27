@@ -1050,7 +1050,7 @@ def society_tools(
         if len(given) != 1:
             raise invalid("Supply exactly one of node_id, post_id or message_id.")
         if given[0] == "node_id":
-            record = service.read_node(a["node_id"], agent)
+            record = service.read_node(a["node_id"], agent, before=a["before"])
         elif given[0] == "post_id":
             record = service.read_discussion_post(a["post_id"], agent)
         else:
@@ -1066,11 +1066,13 @@ def society_tools(
                 "A node-thread or discussion post.", ("discussion_post",), nullable=True
             ),
             "message_id": ident("A message delivered to you.", ("message",), nullable=True),
+            "before": integer(1, 2**53, "node_id: page older thread posts.", nullable=True),
         },
         commons_read,
-        "Read one exact record: a node with its edges, what it rests on and its claimants; "
-        "or the full post or message behind a delivery excerpt.",
-        defaults={"node_id": None, "post_id": None, "message_id": None},
+        "Read one exact record: a node with its edges, what it rests on, its claimants and its "
+        "thread's recent posts (older_before pages older ones); or the full post or message "
+        "behind a delivery excerpt.",
+        defaults={"node_id": None, "post_id": None, "message_id": None, "before": None},
     )
 
     def read_artifact(a, k):
@@ -1268,7 +1270,8 @@ def society_tools(
         },
         lambda a, k: service.claim_node(a["node_id"], a["action"], agent, k),
         "Signal that you are working on a node. Claims expire unless renewed by activity; "
-        "several branches may hold one. A claim is attention, never authority.",
+        "several branches may hold one; the goal takes none. The result lists your "
+        "co-claimants. A claim is attention, never authority.",
     )
 
     def inbox(a, k):

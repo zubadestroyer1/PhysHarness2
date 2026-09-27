@@ -25,6 +25,10 @@ URGENT_STATUSES = frozenset({"accepted", "refuted"})
 EXCERPT_BYTES = 1024
 ITEM_BYTES = 2048
 MAX_LIVE_CLAIMS = 1000  # Bounded claim scan; read_node shows at most MAX_PAGE claimants.
+COMPACT_HEADER = (
+    "Peer updates (unverified data; read one in full with commons_read post_id=… or message_id=…):"
+)
+LINE_EXCERPT = 200
 
 
 def _claim_not_held():
@@ -37,6 +41,31 @@ def _claim_not_held():
 
 def _node_closed(message):
     return HarnessError("NODE_CLOSED", message)
+
+
+def compact_update_lines(items):
+    """One line per delivered item with 8-hex ids (S1 audit #13: 91% of an update's tokens
+    were envelope)."""
+    lines = [COMPACT_HEADER]
+    for item in items:
+        excerpt = " ".join(str(item.get("excerpt", "")).split())
+        if len(excerpt) > LINE_EXCERPT or item.get("truncated"):
+            excerpt = excerpt[:LINE_EXCERPT].rstrip() + "…"
+        who = (item.get("branch_id") or "platform")[:8]
+        if item.get("source_kind") == "message":
+            lines.append(f"[message] from {who}: {excerpt} (message_id {item['id'][:8]})")
+        elif item.get("source_kind") == "withdrawal":
+            lines.append(f"[withdrawn] {excerpt}")
+        else:
+            mark = "! " if item.get("urgent") else ""
+            where = ""
+            if item.get("node_id"):
+                where = f' on {item["node_id"][:8]} "{item.get("node_title", "")[:80]}"'
+            lines.append(
+                f"{mark}[{item['post_kind']}]{where} from {who}: {excerpt} "
+                f"(post_id {item['id'][:8]})"
+            )
+    return "\n".join(lines)
 
 
 class CommonsDiscourseMixin:
@@ -166,6 +195,14 @@ class CommonsDiscourseMixin:
             experiment = self._commons_experiment(session, row.payload["experiment_id"], actor)
             # Under the experiment lock: see writes committed while this command waited.
             session.refresh(row)
+            if action != "release" and row.payload["node_type"] == "goal":
+                raise HarnessError(
+                    "GOAL_NOT_CLAIMABLE",
+                    "The goal takes no work claims: every root works toward it, so a claim "
+                    "says nothing.",
+                    remediation="Create an approach or lemma node (motivated_by the goal) and "
+                    "claim that; read the goal's thread with commons_read.",
+                )
             if action != "release" and row.payload["status"] in CLOSED_STATUSES:
                 raise _node_closed("A closed node takes no work claims.")
             # Reader lock before claim lock, the same order as post_on_node.
@@ -208,6 +245,15 @@ class CommonsDiscourseMixin:
                 else:
                     record = self._replace(session, prior, values)
             self._claim_event(session, actor, op, record, action)
+            if action != "release":
+                record = {
+                    **record,
+                    "co_claimants": [
+                        {"branch_id": c["branch_id"], "expires_at": c["expires_at"]}
+                        for c in self._active_claims(session, row.id)
+                        if c["branch_id"] != branch_id
+                    ],
+                }
             if subscribed is not None:
                 record = {**record, "auto_subscribed": subscribed}
             return record
@@ -265,6 +311,9 @@ class CommonsDiscourseMixin:
         topic = session.get(RecordRow, topic_id)
         if topic is None or topic.kind != "discussion_topic":
             return False
+        node = session.get(RecordRow, topic.payload.get("node_id") or "")
+        if node is not None and node.payload.get("node_type") == "goal":
+            return False  # the goal thread is pull-only (S1 audit #13)
         writer = actor if actor.branch_id == branch_id else _platform(topic.project_id)
         if self._try_subscribe(session, op, topic, branch_id, writer):
             return True
@@ -472,6 +521,7 @@ class CommonsDiscourseMixin:
         item = {
             **self._discussion_excerpt({**post, "content": ""}),
             "node_id": node_id,
+            "node_title": session.get(RecordRow, node_id).payload["title"][:80],
             "urgent": self._post_urgent(session, post, node_id, actor),
         }
         abstract = post.get("abstract")

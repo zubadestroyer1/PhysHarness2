@@ -298,7 +298,8 @@ async def simulate(society, export_directory):
     isolated = await call(A, "message", {"to": informal["branch_id"], "content": "Be kind."})
     assert isolated["error"]["code"] == "REFEREE_ISOLATED"
 
-    # 4. The referee submits sound: L becomes refereed, and A's inbox has the status post.
+    # 4. The referee submits sound: L becomes refereed. The status post is on L's thread, but
+    # neither it (not urgent) nor A's own finding is pushed to A (S1 audit #13).
     referee = society.referee(informal)
     # The referee reads the node as fenced, untrusted author data.
     read = await call(referee, "commons_read", {"node_id": L})
@@ -311,14 +312,12 @@ async def simulate(society, export_directory):
     )
     assert verdict["node_status"] == "refereed" and verdict["cross_model"] is True
     inbox = await call(A, "inbox", {})
-    status = [item for item in inbox["items"] if item["excerpt"].startswith("Status")]
-    assert [(item["node_id"], item["urgent"]) for item in status] == [(L, False)]
-    assert status[0]["excerpt"].startswith("Status informal → refereed")
-    post = await call(A, "commons_read", {"post_id": status[0]["retrieval_id"]})
+    assert inbox["items"] == [] and inbox["delivery_id"] is None
+    thread = (await call(A, "commons_read", {"node_id": L}))["recent_posts"]
+    (status,) = [line for line in thread if "Status informal → refereed" in line]
+    # A digest line's 8-hex id reads the full post.
+    post = await call(A, "commons_read", {"post_id": status.split(" ")[0]})
     assert post["platform_status"]["to"] == "refereed"
-    acked = await call(A, "inbox", {"ack_delivery_id": inbox["delivery_id"]})
-    assert acked["acknowledged_delivery_id"] == inbox["delivery_id"]
-    assert acked["items"] == [] and acked["delivery_id"] is None  # nothing redelivered
 
     # 5. B cites L in its own work.
     cited = await call(
@@ -381,8 +380,8 @@ async def simulate(society, export_directory):
         *sketch["hole_nodes"].values(),
     }
 
-    # 9. A referee objection on B's node arrives urgent-first in B's inbox, ahead of the
-    # earlier status posts on L that B follows since citing it.
+    # 9. A referee objection on B's node arrives urgent in B's inbox; the earlier status posts
+    # on L, which B follows since citing it, are not urgent and were not pushed.
     gaps = await call(
         B, "commons_node", {"action": "request_review", "node_id": M, "scope": "informal"}
     )
@@ -397,13 +396,13 @@ async def simulate(society, export_directory):
         },
     )
     assert objection["node_status"] == "informal" and objection["objection_post_id"]
-    items = (await call(B, "inbox", {}))["items"]
-    first = items[0]
+    inbox = await call(B, "inbox", {})
+    (first,) = inbox["items"]
     assert (first["node_id"], first["urgent"], first["post_kind"]) == (M, True, "objection")
     assert first["id"] == objection["objection_post_id"]
-    earlier = [item for item in items[1:] if item["node_id"] == L]
-    assert earlier and all(not item["urgent"] for item in earlier)
-    assert all(item["sequence"] < first["sequence"] for item in earlier)
+    acked = await call(B, "inbox", {"ack_delivery_id": inbox["delivery_id"]})
+    assert acked["acknowledged_delivery_id"] == inbox["delivery_id"]
+    assert acked["items"] == [] and acked["delivery_id"] is None  # nothing redelivered
     await call(C, "commons_claim", {"node_id": L, "action": "release"})
 
     # 10. Metrics over the canonical export, read back as the tool reads an export directory

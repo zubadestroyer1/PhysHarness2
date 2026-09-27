@@ -12,6 +12,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import select
 
+from ..commons_discourse import compact_update_lines
 from ..commons_review import (
     REFEREE_FRONTIER_NOTE,
     REFEREE_HAT,
@@ -1816,7 +1817,13 @@ class ResearchTaskExecutor:
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
             ):
                 update_source, update_ack = discussion_delivery_hooks(
-                    self.service, agent, task_id, holder, lease["fence"]
+                    self.service,
+                    agent,
+                    task_id,
+                    holder,
+                    lease["fence"],
+                    # Referees keep the fenced JSON envelope.
+                    render=compact_update_lines if society and not referee else None,
                 )
                 runtime_kwargs["update_source"] = update_source
                 runtime_kwargs["update_ack"] = update_ack

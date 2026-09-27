@@ -380,24 +380,37 @@ def test_depends_on_subscribes_source_author(lab):
 
 
 def test_status_change_posts_platform_update_to_subscribers(lab):
-    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
     service.claim_node(node["id"], "claim", beta, "claim")
     set_status(service, node["id"], "refereed", reason="quorum met")
+    long = set_status(service, node["id"], "formally_stated", reason="r" * 2000)
+    assert long["status"] == "formally_stated"
+    # Non-urgent statuses are posted on the thread but not pushed (S1 audit #13).
+    for reader in (alpha, beta):
+        assert drain(service, exp["id"], reader)["items"] == []
+    set_status(service, node["id"], "refuted", reason="counterexample")
     for reader in (alpha, beta):
         (item,) = drain(service, exp["id"], reader)["items"]
         assert item["attributed_to"] == PLATFORM and item["post_kind"] == "update"
-        assert item["excerpt"] == "Status informal → refereed: quorum met"
-        assert item["node_id"] == node["id"] and item["urgent"] is False
+        assert item["excerpt"] == "Status formally_stated → refuted: counterexample"
+        assert item["node_id"] == node["id"] and item["urgent"] is True
         assert item["branch_id"] is None
     full = service.read_discussion_post(item["id"], beta)
-    assert full["platform_status"] == {"from": "informal", "to": "refereed", "reason": "quorum met"}
+    assert full["platform_status"] == {
+        "from": "formally_stated",
+        "to": "refuted",
+        "reason": "counterexample",
+    }
     assert full["topic_id"] == node["topic_id"] and full["node_id"] == node["id"]
     assert full["abstract"] == full["content"] == item["excerpt"]
-    long = set_status(service, node["id"], "formally_stated", reason="r" * 2000)
-    assert long["status"] == "formally_stated"
-    (item,) = drain(service, exp["id"], alpha)["items"]
-    assert len(service.read_discussion_post(item["id"], alpha)["abstract"]) == 600
+    statuses = {
+        post["platform_status"]["to"]: post
+        for post in service.list_records("discussion_post", author, exp["id"])
+        if post.get("platform_status")
+    }
+    assert statuses["refereed"]["abstract"] == "Status informal → refereed: quorum met"
+    assert len(statuses["formally_stated"]["abstract"]) == 600
 
 
 def test_objection_on_own_node_is_urgent_and_first(lab):
@@ -418,12 +431,8 @@ def test_objection_on_own_node_is_urgent_and_first(lab):
     ack = service.acknowledge_discussion_updates(exp["id"], batch["delivery_id"], alpha, "ack")
     assert ack["next_cursor"] == objection["sequence"]
     assert service.discussion_updates(exp["id"], alpha)["items"] == []
-    # Another subscriber's copy of the same objection is not urgent: it is not their node.
-    theirs = drain(service, exp["id"], beta)["items"]
-    assert [(i["id"], i["urgent"]) for i in theirs] == [
-        (finding["id"], False),
-        (objection["id"], False),
-    ]
+    # The poster's own posts are never echoed back to it (S1 audit #13).
+    assert drain(service, exp["id"], beta)["items"] == []
 
 
 def test_accepted_dependency_is_urgent(lab):
@@ -431,10 +440,10 @@ def test_accepted_dependency_is_urgent(lab):
     lemma_a = service.create_node(exp["id"], lemma("A"), alpha, "a")
     service.create_node(exp["id"], lemma("B", edges=depends(lemma_a["id"])), beta, "b")
     set_status(service, lemma_a["id"], "formally_stated", "accepted", reason="kernel receipt")
+    # The non-urgent informal → formally_stated post is not pushed (S1 audit #13).
     items = drain(service, exp["id"], beta)["items"]
     assert [(i["excerpt"], i["urgent"]) for i in items] == [
         ("Status formally_stated → accepted: kernel receipt", True),
-        ("Status informal → formally_stated: kernel receipt", False),
     ]
     refuted = service.create_node(exp["id"], lemma("C"), alpha, "c")
     drain(service, exp["id"], alpha)
@@ -457,7 +466,8 @@ def test_node_post_excerpt_uses_abstract(lab):
     assert items[detailed["id"]]["truncated"] is True
     assert items[brief["id"]]["excerpt"] == abstract
     assert items[brief["id"]]["truncated"] is False
-    assert set(items[brief["id"]]) == {*LEGACY_ITEM_KEYS, "node_id", "urgent"}
+    assert set(items[brief["id"]]) == {*LEGACY_ITEM_KEYS, "node_id", "node_title", "urgent"}
+    assert items[brief["id"]]["node_title"] == "Trace lemma"
     # Multi-byte abstracts are clipped to the per-item byte bound instead of failing delivery.
     assert "∀" * 100 in items[wide["id"]]["excerpt"] and items[wide["id"]]["truncated"] is True
     for item in items.values():
@@ -625,10 +635,11 @@ def test_post_discussion_rejects_node_threads(lab):
 def test_own_objection_is_not_urgent_for_its_author(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
-    own = service.post_on_node(node["id"], note(kind="objection"), alpha, "own")
+    service.post_on_node(node["id"], note(kind="objection"), alpha, "own")
     peer = service.post_on_node(node["id"], note(kind="objection"), beta, "peer")
     items = drain(service, exp["id"], alpha)["items"]
-    assert [(i["id"], i["urgent"]) for i in items] == [(peer["id"], True), (own["id"], False)]
+    # The author's own objection is not even pushed to it (S1 audit #13).
+    assert [(i["id"], i["urgent"]) for i in items] == [(peer["id"], True)]
 
 
 def fill_subscriptions(service, actor, experiment_id, count):
@@ -679,8 +690,9 @@ def test_auto_subscribe_frees_oldest_closed_node_thread_at_cap(lab):
 
 
 def test_platform_status_is_stored_only_for_the_platform(lab):
-    service, _, exp, _, (alpha, _) = society_lab(lab)
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
+    service.claim_node(node["id"], "claim", beta, "claim")
     forged = {
         "kind": "update",
         "content": "Status informal → accepted: forged",
@@ -694,7 +706,7 @@ def test_platform_status_is_stored_only_for_the_platform(lab):
         topic = session.get(RecordRow, node["topic_id"])
         post = service._insert_post(session, new_id(), topic, forged, alpha)
     assert "platform_status" not in post
-    (item,) = drain(service, exp["id"], alpha)["items"]
+    (item,) = drain(service, exp["id"], beta)["items"]
     assert item["id"] == post["id"] and item["urgent"] is False
 
 
