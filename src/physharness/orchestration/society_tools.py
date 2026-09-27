@@ -622,9 +622,10 @@ def society_tools(
                 },
             },
             lambda a, k: workspace_tools.run(a, k),
-            "Run a command in the offline workspace VM (python3, lake, lean, ...). For Lean use "
-            "cwd='/opt/sources/physlib' and pass files by their /work paths. Exit status and "
-            "output are evidence, never proof acceptance.",
+            "Run a command in the offline workspace VM (python3, lake, lean, ...). Pass argv "
+            "directly (['lake', 'env', 'lean', '/work/F.lean']) or through bash -c; login "
+            "shells work too. For Lean use cwd='/opt/sources/physlib' and pass files by their "
+            "/work paths. Exit status and output are evidence, never proof acceptance.",
         )
         add(
             "read_file",

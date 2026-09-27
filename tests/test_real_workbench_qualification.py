@@ -7,6 +7,7 @@ This test allocates and removes two local containers; it makes no paid model cal
 import base64
 import hashlib
 import os
+from pathlib import Path
 
 import pytest
 
@@ -140,3 +141,37 @@ async def test_real_isolated_workbench_checkpoint_and_science():
     finally:
         await first.close()
         await second.close()
+
+
+@pytest.mark.integration
+async def test_real_login_shell_path():
+    host = os.environ.get("PHYSHARNESS_WORKBENCH_DOCKER_HOST")
+    image = os.environ.get("PHYSHARNESS_WORKBENCH_IMAGE_DIGEST")
+    if not host or not image:
+        pytest.skip("Dedicated workbench endpoint and image digest are required")
+    provider = LocalDockerWorkspaceProvider(
+        docker_host=host, image_digest=image, timeout_seconds=180
+    )
+
+    async def run(arguments, operation_id):
+        request = CommandRequest(operation_id=operation_id, max_output_bytes=65536, **arguments)
+        return (await provider.run(request)).model_dump()
+
+    try:
+        await provider.create()
+        login = await run(
+            {
+                "argv": ["bash", "-lc", "command -v lake && command -v lean"],
+                "cwd": ".",
+                "timeout_seconds": 30,
+            },
+            "login-path",
+        )
+        assert login["exit_code"] == 0, login["stderr"]
+        assert [Path(line).name for line in login["stdout"].split()] == ["lake", "lean"]
+        listed = await run(
+            {"argv": ["ls", "-A", "/etc/profile.d"], "cwd": ".", "timeout_seconds": 30}, "ls"
+        )
+        assert listed["stdout"].split() == ["physharness-path.sh"]
+    finally:
+        await provider.close()

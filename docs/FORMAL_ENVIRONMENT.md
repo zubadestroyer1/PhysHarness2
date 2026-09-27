@@ -146,6 +146,11 @@ builder as
 `sha256:1830c99e8c5abc0ade48d98860d541f7f50eb6f1cdfefde2395315e1290debc5`, and the
 opt-in real-image workbench tests passed against it.
 
+Each workbench container mounts a 64 KiB tmpfs at `/etc/profile.d` holding
+`physharness-path.sh`, which restores the image's `PATH` for login shells (`bash -lc`). The
+image ships no files there; `tests/test_real_workbench_qualification.py` checks this and a
+login-shell `lake` lookup on a real container.
+
 An engineering capacity observation at N=8 with this digest passed on 2026-09-26 UTC
 (`production_qualified=false`):
 - 8 workbenches were admitted and the 9th was refused;
