@@ -422,11 +422,16 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
    user agrees, and it is labelled contaminated.
 7. **Operator stop** at the user's request.
 8. **Idle society (`SOCIETY_IDLE`, automatic after the S1 remediation).** The runner
-   stops when every agent waits, nothing is admissible and no new event has arrived: no
-   task is running, every pending society task waits (on events or on its recruits, at
-   least one on events), and each event wait found nothing at the current event head,
-   which has not moved since. Nothing in the run could wake them, so it stops rather than
-   burn wall clock until W. The waits keep their tickets, so a later `run-team` resumes
+   stops when every agent waits and only the waits' own timeouts could still wake them:
+   no task of the experiment is running or queued (this runner's, another runner's or a
+   worker's), every pending society task waits (on events, at least one, or on a recruit
+   that is still live), each event wait found nothing at the current wake-event head,
+   which has not moved since (model-turn accounting never moves it), no parked scoped
+   recruit's node is proved, closed or restated, and no verification receipt is queued.
+   A second such observation at least 1 s after the first, with every wait checked
+   again, confirms it. The runner then stops rather than sleep out those timeouts (up to
+   3,600 s) or burn wall clock until W; the constitution and the `wait` tool tell agents
+   that such a run ends. The waits keep their tickets, so a later `run-team` resumes
    them. Export and report as for any stop, and ask the user before resuming.
 
 Every stop produces an honest report of the frontier, obstacles and partial results

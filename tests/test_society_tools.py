@@ -70,6 +70,7 @@ from physharness.orchestration.workspace_tools import WorkspacePolicy, Workspace
 from physharness.orchestration.workspaces import WorkspaceBroker
 from physharness.storage import RecordRow
 from physharness.verification.boundary import MAX_CANDIDATE_CHARACTERS
+from physharness.worker_authority import worker_effects
 from physharness.workforce_models import ConfigureWorkforceRequest, RecruitResearcherRequest
 
 # Recorded from the pre-change code (research_worker.research_tools before Task 9).
@@ -506,6 +507,13 @@ def test_society_catalog_widest():
     # Platform evidence is never a model argument.
     assert "compile_result" not in definition(dispatcher, "lean_check")["parameters"]["properties"]
     assert "elaboration" not in definition(dispatcher, "commons_node")["parameters"]["properties"]
+
+
+def test_the_wait_tool_and_the_constitution_say_an_all_waiting_run_ends():
+    """Final review B-M3: waiting is free, but a run whose agents all wait ends."""
+    ending = "If every agent waits and nothing can wake them, the run ends."
+    assert ending in definition(widest(), "wait")["description"]
+    assert ending in constitution(policy_dict(), literature_enabled=False)
 
 
 async def test_catalog_has_find_declaration_and_no_retired_tools():
@@ -2883,10 +2891,12 @@ async def scoped_recruit(lab, *, detached=False):
     return SimpleNamespace(
         service=service,
         author=author,
+        author_agent=agent,
         exp=exp,
         node=node,
         tools=tools,
         recruit=recruit,
+        context=recruit_context,
         recruit_tools=profile(service, recruit, recruit_context, workspace=FakeWorkspace()),
         completion=completion,
         record=record,
@@ -2932,7 +2942,9 @@ async def test_scoped_recruit_ends_when_anyone_publishes_its_source(lab):
     assert scoped.record()["return_result"] == returned
 
 
-async def test_scoped_recruit_ignores_a_source_of_a_changed_statement(lab):
+async def test_scoped_recruit_ends_when_its_node_is_restated(lab):
+    """Final review B-M4: no source of the new statement proves the scoped one, so a restated
+    node ends its recruit as a closed scope."""
     scoped = await scoped_recruit(lab)
     changed = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
     await call(
@@ -2940,13 +2952,85 @@ async def test_scoped_recruit_ignores_a_source_of_a_changed_statement(lab):
         "commons_node",
         {"action": "set_lean_statement", "node_id": scoped.node["id"], **changed},
     )
+    assert scoped.completion() == "scope_closed"
     proof = PROOF.replace("(1 : Nat) + 1 = 2", "(2 : Nat) + 2 = 4")
     checked = await call(
         scoped.tools, "lean_check", {"source": proof, "node_id": scoped.node["id"]}
     )
     assert checked["published"]["recorded"] is True
-    assert scoped.completion() is None  # a complete source, but not of the scoped statement
+    assert scoped.completion() == "scope_closed"  # a complete source, of another statement
     assert scoped.record().get("return_result") is None
+
+
+async def test_a_recruit_whose_node_was_restated_ends_with_a_note(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    recruited = await call(
+        tools,
+        "recruit",
+        {
+            "brief": "Prove it.",
+            "title": "Prover",
+            "focus_node_id": node["id"],
+            "until_proved": True,
+        },
+    )
+    changed = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **changed}
+    )
+    result, seen = await run_worker(
+        service, author, recruited["task_id"], workspace_factory=lambda *_: ProvisionedWorkspace()
+    )
+    assert result["status"] == "completed" and seen["payloads"] == []
+    note = service.artifact_content(result["artifact_id"], author).decode()
+    assert note == (
+        research_worker.COMPLETION_NOTES["scope_closed"] + " " + research_worker.SCOPE_RESTATED_NOTE
+    )
+    assert note.endswith("The node's statement changed after recruitment.")
+    task = service.get_record("task", recruited["task_id"], author)
+    assert task["return_result"]["summary"] == note  # what the parent reads
+
+
+@pytest.mark.parametrize("status", ["completed", "blocked"])
+async def test_a_finished_society_task_releases_its_claims(lab, status):
+    """Final review B-M8: a finished task's claims end with it, not after the claim TTL, so
+    node messages and claimant lists skip its branch. The platform's focus claim for a new
+    recruit (made before it had a lease) is the recruit's too."""
+    scoped = await scoped_recruit(lab)
+    service, author, exp = scoped.service, scoped.author, scoped.exp
+    other = await call(scoped.tools, "commons_node", lemma_args(title="Gap lemma"))
+    holder, fence = scoped.context["holder"], scoped.context["fence"]
+    with worker_effects(scoped.recruit, scoped.record()["id"], holder, fence):
+        service.claim_node(other["id"], "claim", scoped.recruit, "recruit-claims")
+    held = service.branch_claims(exp["id"], scoped.recruit)["items"]
+    assert {item["node_id"] for item in held} == {scoped.node["id"], other["id"]}
+    kept = service.branch_claims(exp["id"], scoped.author_agent)["items"]
+    evidence = service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="research_output", content="Done."),
+        author,
+        "evidence",
+    )
+    service.finish_task(
+        scoped.record()["id"], holder, fence, [evidence["id"]], status, OPERATOR, "finish"
+    )
+    assert service.branch_claims(exp["id"], scoped.recruit)["items"] == []
+    assert service.branch_claims(exp["id"], scoped.author_agent)["items"] == kept
+    releases = [
+        event["payload"]
+        for event in service.events(author, limit=1000)
+        if event["kind"] == "commons.node_claim" and event["payload"]["action"] == "release"
+    ]
+    assert {(e["node_id"], e["branch_id"]) for e in releases} == {
+        (scoped.node["id"], scoped.recruit.branch_id),
+        (other["id"], scoped.recruit.branch_id),
+    }
+    assert not any(e["new_claimant"] for e in releases)
 
 
 async def test_scoped_recruit_waits_for_its_own_joined_recruits(lab):

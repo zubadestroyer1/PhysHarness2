@@ -8,8 +8,7 @@ from datetime import UTC, datetime
 
 from ..commons_discourse import _one_line
 from ..domain import canonical_json
-from ..errors import HarnessError
-from ..storage import RecordRow
+from ..memory import checked_target
 
 TARGET_FIELDS = (
     "title",
@@ -43,29 +42,10 @@ def _focus_line(claim):
 
 def _checked_target(service, experiment, agent):
     """The target, refused unless its identity and canonical review are consistent: the
-    checks PortableMemory.working_context makes before a legacy prompt."""
+    check PortableMemory.working_context makes before a legacy prompt."""
     with service.db.sessions() as session:
         current = service._get(session, "experiment", experiment["id"], agent)
-        target = service._get(session, "problem", current.payload["problem_id"], agent)
-        if target.payload["target_digest"] != current.payload["target_digest"]:
-            raise HarnessError("CONTEXT_TARGET_INVALID", "Experiment and target identities differ.")
-        if target.payload.get("review_id"):
-            review = session.get(RecordRow, target.payload["review_id"])
-            if (
-                not review
-                or review.kind != "review"
-                or review.project_id != agent.project_id
-                or review.payload.get("problem_id") != target.id
-                or review.payload.get("target_digest") != target.payload["target_digest"]
-                or review.payload.get("decision") != target.payload.get("semantic_review")
-            ):
-                raise HarnessError(
-                    "CONTEXT_REVIEW_INVALID", "Target review identity is inconsistent."
-                )
-        elif target.payload.get("semantic_review") != "pending":
-            raise HarnessError(
-                "CONTEXT_REVIEW_INVALID", "A reviewed target requires its canonical review."
-            )
+        target, _ = checked_target(service, session, current, agent)
         return copy.deepcopy(target.payload)
 
 

@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import timedelta
+from types import SimpleNamespace
 
 import httpx
 import pytest
@@ -12,7 +13,12 @@ from test_execution_responses import message
 from test_research_loop_integration import PRICES, response, tool_call
 from test_sharing import approaches
 from test_society_tools import (
+    LEAN,
+    PROOF,
+    FakeWorkspace,
     call,
+    finish_task,
+    lemma_args,
     mock_client,
     profile,
     run_manifest,
@@ -22,9 +28,9 @@ from test_society_tools import (
 )
 from test_swarm_coordination_gaps import verified_receipt
 
-from physharness import continuation
+from physharness import continuation, discussion
 from physharness.commons_models import NodeCreate, NodePostCreate
-from physharness.domain import ContextBudget, Principal, TaskCreate
+from physharness.domain import ArtifactCreate, ContextBudget, Principal, TaskCreate, new_id
 from physharness.errors import HarnessError
 from physharness.execution import ResponsesRuntime, RuntimeLimits
 from physharness.execution.admission import TokenRateGovernor
@@ -71,6 +77,37 @@ def test_routed_peer_post_wakes_and_own_or_unrelated_posts_do_not(lab):
         mine["id"], NodePostCreate(kind="objection", abstract="Gap."), beta, "peer"
     )
     assert service.peer_wait_status(ticket, agent)["reason"] == "relevant_update"
+
+
+def test_a_relevant_update_behind_a_hundred_skipped_events_wakes(lab):
+    """Final review B-M1: the scan pages past skipped events (here the waiter's own posts)."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    mine = lemma(service, exp, alpha, "Mine")
+    agent, ticket = park(service, author, exp, alpha.branch_id)
+    for i in range(100):
+        own = NodePostCreate(kind="finding", abstract=f"Note {i}.")
+        service.post_on_node(mine["id"], own, alpha, f"own-{i}")
+    assert reason(service, ticket, agent) == "waiting"
+    service.post_on_node(
+        mine["id"], NodePostCreate(kind="objection", abstract="Gap."), beta, "peer"
+    )
+    assert reason(service, ticket, agent) == "relevant_update"
+
+
+@pytest.mark.parametrize(("own_posts", "woken"), [(3, "relevant_update"), (4, "waiting")])
+def test_the_update_scan_is_bounded(lab, monkeypatch, own_posts, woken):
+    monkeypatch.setattr(discussion, "UPDATE_SCAN_PAGE", 2)
+    monkeypatch.setattr(discussion, "MAX_UPDATE_SCAN", 4)
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    mine = lemma(service, exp, alpha, "Mine")
+    agent, ticket = park(service, author, exp, alpha.branch_id)
+    for i in range(own_posts):
+        own = NodePostCreate(kind="finding", abstract=f"Note {i}.")
+        service.post_on_node(mine["id"], own, alpha, f"own-{i}")
+    service.post_on_node(
+        mine["id"], NodePostCreate(kind="objection", abstract="Gap."), beta, "peer"
+    )
+    assert reason(service, ticket, agent) == woken
 
 
 def test_a_message_to_the_waiter_wakes_it(lab):
@@ -295,6 +332,96 @@ def test_the_long_pole_is_recomputed_only_when_the_graph_changes(lab, monkeypatc
     service.link_nodes(exp["id"], second["id"], "motivated_by", first["id"], beta, "more")
     assert reason(service, ticket, agent) == "long_pole_changed"
     assert len(loads) == 2
+
+
+def test_a_wait_at_an_unchanged_graph_reads_the_long_pole_memo_under_the_lock(lab, monkeypatch):
+    """Final review B-M9: the ticket's long-pole ids come from the memo, so a wait request
+    at an unchanged graph computes the long pole only for its reply, after its command."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    part = lemma(service, exp, beta, "Part")
+    service.link_nodes(exp["id"], goal["id"], "depends_on", part["id"], beta, "goal-part")
+    park(service, author, exp, alpha.branch_id)  # the first request fills the memo
+    commands, calls = [], []
+    execute, compute = service._execute, service._goal_long_pole
+
+    def command(*args, **kwargs):
+        commands.append(True)
+        try:
+            return execute(*args, **kwargs)
+        finally:
+            commands.pop()
+
+    monkeypatch.setattr(service, "_execute", command)
+    monkeypatch.setattr(
+        service, "_goal_long_pole", lambda *a, **k: calls.append(bool(commands)) or compute(*a, **k)
+    )
+    agent, context = running(service, author, exp, alpha.branch_id)
+    with worker_effects(agent, context["task_id"], context["holder"], context["fence"]):
+        waited = service.request_event_wait(context["task_id"], [], 600, agent, "again")
+    assert calls == [False]  # only the reply's long pole, outside the command
+    assert waited["intent"]["peer_wait"]["long_pole_ids"] == [part["id"]]
+    assert [item["id"] for item in waited["long_pole"]] == [part["id"]]
+
+
+async def scoped_waiter(service, author, exp, alpha, *, helper=False):
+    """A joined until_proved recruit of alpha's elaborated trace lemma, parked on events;
+    with ``helper``, it first recruits a joined helper of its own (``helper_id``).
+    ``tools`` are those of alpha, the node's author."""
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    brief = {"brief": "Prove it.", "title": "Prover", "focus_node_id": node["id"]}
+    recruited = await call(tools, "recruit", {**brief, "until_proved": True})
+    task = service.get_record("task", recruited["task_id"], author)
+    recruit, recruit_context = running(service, author, exp, task["branch_id"], task=task)
+    helper_id = None
+    if helper:
+        recruit_tools = profile(service, recruit, recruit_context, workspace=FakeWorkspace())
+        lookup = {"brief": "Look up.", "title": "Lookup"}
+        helper_id = (await call(recruit_tools, "recruit", lookup))["task_id"]
+    with worker_effects(recruit, task["id"], recruit_context["holder"], recruit_context["fence"]):
+        waited = service.request_event_wait(task["id"], [], 600, recruit, "recruit-waits")
+    ticket = {**waited["intent"]["peer_wait"], "min_sleep_until": 0}
+    return SimpleNamespace(
+        node=node, tools=tools, recruit=recruit, ticket=ticket, helper_id=helper_id
+    )
+
+
+@pytest.mark.parametrize("delivery", ["proved", "closed", "restated"])
+async def test_a_scoped_waiter_wakes_once_its_scope_is_delivered(lab, delivery):
+    """Final review B-I2: a scoped recruit's wait watches its own node, so it wakes (and then
+    ends) once the node is proved, closed or restated, with or without a live claim."""
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    scoped = await scoped_waiter(service, author, exp, alpha)
+    node_id = scoped.node["id"]
+    assert reason(service, scoped.ticket, scoped.recruit) == "waiting"
+    if delivery == "proved":
+        await call(scoped.tools, "lean_check", {"source": PROOF, "node_id": node_id})
+    elif delivery == "closed":
+        set_status(service, node_id, "abandoned")
+    else:
+        changed = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
+        await call(
+            scoped.tools,
+            "commons_node",
+            {"action": "set_lean_statement", "node_id": node_id, **changed},
+        )
+    assert reason(service, scoped.ticket, scoped.recruit) == "scope_delivered"
+
+
+async def test_a_scoped_waiter_is_woken_by_its_scope_only_once_it_can_end(lab):
+    """A scoped recruit ends only once its own joined recruits settle; until then a wake for
+    its delivered scope would only cost it a request (and repeat on its next wait)."""
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    scoped = await scoped_waiter(service, author, exp, alpha, helper=True)
+    set_status(service, scoped.node["id"], "abandoned")
+    assert reason(service, scoped.ticket, scoped.recruit) == "waiting"
+    finish_task(service, scoped.helper_id)
+    assert reason(service, scoped.ticket, scoped.recruit) == "scope_delivered"
 
 
 def test_a_graph_limit_wakes_the_waiter_instead_of_failing_the_run(lab, monkeypatch):
@@ -800,14 +927,27 @@ async def test_the_wake_note_carries_the_watched_events_detail(lab, monkeypatch)
     ]
 
 
-def test_the_event_head_is_the_projects_latest_event(lab):
-    service, author, exp, _, (_, beta) = society_lab(lab)
-    head = service.event_head(author)
+def test_the_event_head_moves_only_on_events_that_can_wake_a_waiter(lab):
+    """Final review B-I3: model-turn accounting and other experiments' commons events leave
+    the head alone, so they cause no wake checks."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    lemma(service, exp, beta, "First")
+    head = service.event_head(author, exp["id"])
     assert head > 0
+    with service.db.transaction() as session:  # what every model request writes
+        for kind in ("resources.reserved", "resources.settled"):
+            service._event(session, author, new_id(), kind, exp["id"], {"id": new_id()})
+    assert service.event_head(author, exp["id"]) == head
+    _, _, other, _, (stranger, _) = society_lab(lab, prefix="other")
+    lemma(service, other, stranger, "Elsewhere")
+    assert service.event_head(author, exp["id"]) == head
     lemma(service, exp, beta, "New")
-    assert service.event_head(author) > head
+    moved = service.event_head(author, exp["id"])
+    assert moved > head
+    service.send_society_message(beta.branch_id, alpha.branch_id, "Hi.", [], beta, "m")
+    assert service.event_head(author, exp["id"]) > moved
     stranger = Principal(id="stranger", project_id="elsewhere", role="operator")
-    assert service.event_head(stranger) == 0
+    assert service.event_head(stranger, exp["id"]) == 0
 
 
 async def test_legacy_waits_still_resume_portably(lab, monkeypatch):
@@ -837,3 +977,289 @@ async def test_legacy_waits_still_resume_portably(lab, monkeypatch):
     resumed = payloads[1]["input"]
     assert not any(item.get("type") == "function_call" for item in resumed)  # a fresh prompt
     assert heads == []  # a legacy run never reads the event head
+
+
+# Final review: scoped recruits, wake-check cost and the idle stop ------------------------------
+
+
+async def test_a_parked_scoped_recruit_wakes_when_a_peer_proves_its_node(lab, monkeypatch):
+    """Final review B-I2 (the probe): a joined recruit parks on events with its focus claim
+    lapsed, then a peer publishes its node's complete source. The recruit wakes and ends
+    scope_proved without another request, and its parent resumes: no false SOCIETY_IDLE."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    node = service.read_node(node["id"], agent)["node"]
+    finish_task(service, context["task_id"])  # alpha's writer leaves no live task
+    root = service.create_task(
+        TaskCreate(branch_id=branches[1]["id"], objective="Root"), author, "root"
+    )
+    reasons, proved, status = [], [], service.peer_wait_status
+
+    def proving(ticket, actor):
+        result = status(ticket, actor)
+        reasons.append(result["reason"])
+        if result["reason"] == "waiting" and not proved:
+            proved.append(ticket["task_id"])
+            recruit = Principal(
+                id="lapse",
+                role="agent",
+                project_id=author.project_id,
+                experiment_id=exp["id"],
+                branch_id=ticket["branch_id"],
+            )
+            service.claim_node(node["id"], "release", recruit, "lapse")  # the claim lapsed
+            digest = node["lean_statement_sha256"]
+            publish(service, node["id"], alpha, "complete", "alpha", lean_statement_sha256=digest)
+        return result
+
+    monkeypatch.setattr(service, "peer_wait_status", proving)
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            brief = {"brief": "Prove it.", "title": "Prover", "focus_node_id": node["id"]}
+            return [tool_call("recruit", {**brief, "until_proved": True}, "r-1")]
+        if phase == 1:
+            return [tool_call("wait", {"for": "tasks", "ids": [outputs[0]["task_id"]]}, "w-1")]
+        return [message("Root done.")]
+
+    def prover_steps(phase, outputs):
+        wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+        return [tool_call("wait", wait, "w-2")] if phase == 0 else [message("Unneeded.")]
+
+    route, phases = scripted_society_route(root_steps, {"Prove it": prover_steps})
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["stop_reason"] is None and report["status"] == "completed"
+    assert phases["Prove it"] == 1 and phases["root"] == 3  # no request after the proof
+    assert "scope_delivered" in reasons
+    recruit = service.get_record("task", proved[0], author)
+    assert recruit["status"] == "completed"
+    source = service.read_node(node["id"], alpha)["node"]["lean_source"]
+    assert recruit["return_result"]["artifact_ids"][0] == source["artifact_id"]
+    note = service.artifact_content(recruit["evidence_ids"][0], author).decode()
+    assert note == research_worker.COMPLETION_NOTES["scope_proved"]
+    assert service.get_record("task", root["id"], author)["status"] == "completed"
+
+
+def waiter_and_peer(service, author, branches, peer="Busy"):
+    return [
+        service.create_task(TaskCreate(branch_id=branch["id"], objective=name), author, name)
+        for branch, name in zip(branches, ("Waiter", peer), strict=True)
+    ]
+
+
+def recorded_reasons(service, monkeypatch):
+    """Every wait check's reason, in order."""
+    reasons, status = [], service.peer_wait_status
+
+    def recording(*args):
+        result = status(*args)
+        reasons.append(result["reason"])
+        return result
+
+    monkeypatch.setattr(service, "peer_wait_status", recording)
+    return reasons
+
+
+def objective_of(request):
+    return json.loads(json.loads(request.content)["input"][0]["content"])["objective"]
+
+
+async def test_a_busy_peers_model_turns_do_not_recheck_a_parked_waiter(lab, monkeypatch):
+    """Final review B-I3: every model request writes resources.* events; they never move the
+    gating head, so a parked waiter is not checked again while a peer works."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    monkeypatch.setattr(research_worker, "EVENT_WAIT_MIN_RECHECK_SECONDS", 0)  # the head alone
+    service, author, exp, branches, _ = society_lab(lab, referee_slots=0)
+    roots = waiter_and_peer(service, author, branches)
+    reasons = recorded_reasons(service, monkeypatch)
+    counts, turns = {}, []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        if objective_of(request) == "Waiter":
+            wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+            return httpx.Response(200, json=response([tool_call("wait", wait, "w-1")]))
+        turns.append(len(turns))
+        if len(turns) == 1:
+            while not reasons:
+                await asyncio.sleep(0.05)
+            await asyncio.sleep(0.5)  # any check still owed lands before the burst
+            counts["before"] = len(reasons)
+        await asyncio.sleep(0.3)  # the runner loops while each turn is in flight
+        if len(turns) < 6:
+            read = {"action": "read", "query": f"note {len(turns)}", "text": None}
+            items = [tool_call("library_notes", read, f"n-{len(turns)}")]
+        else:
+            counts["after"] = len(reasons)
+            items = [message("Busy done.")]
+        return httpx.Response(200, json=response(items, response_id=f"busy-{len(turns)}"))
+
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(manifest_for(exp, author, roots))
+    finally:
+        await client.close()
+    assert len(turns) == 6 and counts["after"] == counts["before"]
+    kinds = [event["kind"] for event in service.events(author, limit=1000)]
+    assert kinds.count("resources.settled") >= 6  # the burst happened
+    assert report["stop_reason"] == "SOCIETY_IDLE"
+
+
+async def test_a_moving_head_rechecks_a_waiter_at_most_every_two_seconds(lab, monkeypatch):
+    """Final review B-I3: however often wake-relevant events arrive, a parked waiter is
+    checked at most once per EVENT_WAIT_MIN_RECHECK_SECONDS."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, _ = society_lab(lab, referee_slots=0)
+    roots = waiter_and_peer(service, author, branches)
+    reasons = recorded_reasons(service, monkeypatch)
+    heads, head = iter(range(10**9, 2 * 10**9)), service.event_head
+    counts = {}
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        if objective_of(request) == "Waiter":
+            wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+            return httpx.Response(200, json=response([tool_call("wait", wait, "w-1")]))
+        while not reasons:
+            await asyncio.sleep(0.05)
+        monkeypatch.setattr(service, "event_head", lambda *args: next(heads))  # always moving
+        before = len(reasons)
+        await asyncio.sleep(3)  # about twelve runner loops
+        counts["during"] = len(reasons) - before
+        monkeypatch.setattr(service, "event_head", head)
+        return httpx.Response(200, json=response([message("Busy done.")]))
+
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(manifest_for(exp, author, roots))
+    finally:
+        await client.close()
+    assert 1 <= counts["during"] <= 2
+    assert report["stop_reason"] == "SOCIETY_IDLE"
+
+
+async def test_a_recruit_finished_elsewhere_after_the_snapshot_keeps_the_run_going(
+    lab, monkeypatch
+):
+    """Final review B-M2: another runner may finish an awaited recruit between this loop's
+    snapshot and its idle check. The fresh read must still show a live child for every task
+    wait, or the parent, which can now run, would be stopped."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    reasons = recorded_reasons(service, monkeypatch)
+    finished, capacity = [], service.research_capacity
+
+    def racing(experiment_id, actor):
+        # A ticking loop reads capacity after its snapshot; the helper's wait was checked.
+        if "waiting" in reasons and not finished:
+            helper = next(
+                task
+                for task in service.list_records("task", author, exp["id"])
+                if task.get("delegated_from_task_id") == root["id"]
+            )
+            finish_task(service, helper["id"])  # another runner's work, no event
+            finished.append(helper["id"])
+        return capacity(experiment_id, actor)
+
+    monkeypatch.setattr(service, "research_capacity", racing)
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            return [tool_call("recruit", {"brief": "Help out.", "title": "Helper"}, "r-1")]
+        if phase == 1:
+            return [tool_call("wait", {"for": "tasks", "ids": [outputs[0]["task_id"]]}, "w-1")]
+        return [message("Root done.")]
+
+    def helper_steps(phase, outputs):
+        return [tool_call("wait", {"for": "events", "ids": [], "timeout_seconds": 3600}, "w-2")]
+
+    route, phases = scripted_society_route(root_steps, {"Help out": helper_steps})
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert finished and report["stop_reason"] != "SOCIETY_IDLE"
+    assert phases["root"] == 3
+    assert service.get_record("task", root["id"], author)["status"] == "completed"
+
+
+async def test_a_queued_verification_receipt_keeps_the_run_going(lab, monkeypatch):
+    """Final review B-M2: an external verifier may still process a queued receipt, and an
+    accepted target wakes every waiter; the runner does not stop idle before that."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    candidate = service.create_artifact(
+        ArtifactCreate(
+            experiment_id=exp["id"],
+            kind="lean_source",
+            content="theorem target : (1 : Nat) = 1 := by rfl",
+        ),
+        author,
+        "candidate",
+    )
+    receipt = service.verify_candidate(exp["id"], candidate["id"], True, author, "verify")
+    assert receipt["status"] == "queued"
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 3600))
+    try:
+        report = await runner.run(
+            manifest_for(exp, author, [root], process_verifications=False, timeout_seconds=4)
+        )
+    finally:
+        await client.close()
+    assert report["stop_reason"] == "TEAM_TIMEOUT" and len(payloads) == 1
+
+
+async def test_an_event_behind_the_seen_head_is_found_before_an_idle_stop(lab, monkeypatch):
+    """Final review B-M2: on PostgreSQL an event can commit behind a head the runner has seen.
+    The idle stop needs a second observation, at least a second later, that checks every
+    wait again, so such an event still wakes its waiter."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    reasons, sent, status = [], [], service.peer_wait_status
+
+    def behind(ticket, actor):
+        result = status(ticket, actor)
+        reasons.append(result["reason"])
+        if result["reason"] == "waiting" and not sent:
+            frozen = service.event_head(actor, exp["id"])
+            monkeypatch.setattr(service, "event_head", lambda *args: frozen)
+            sent.append(
+                service.send_society_message(
+                    beta.branch_id, branches[0]["id"], "Try traces.", [], beta, "late"
+                )
+            )
+        return result
+
+    monkeypatch.setattr(service, "peer_wait_status", behind)
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 3600))
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert sent and report["stop_reason"] is None and len(payloads) == 2
+    assert reasons[-1] == "relevant_update"
+    assert wake_notes(payloads[1]) == [{"type": "wake", "reason": "relevant_update"}]

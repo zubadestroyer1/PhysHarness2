@@ -326,8 +326,9 @@ tools, the prompts and the delivery shapes.
     flattened two-module file in the workbench and passes the statement check on it. The
     independent verifier's first run on a flattened candidate is the first A/B smoke run.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL
-  (default 900 s) unless renewed by activity. Several branches may claim one node; a
-  claim's result lists its co-claimants and their routes. The goal takes no claims
+  (default 900 s) unless renewed by activity, and ends when its task finishes, in any
+  terminal status (a recruit's focus claim with it). Several branches may claim one node;
+  a claim's result lists its co-claimants and their routes. The goal takes no claims
   (`GOAL_NOT_CLAIMABLE`): every root works toward it, so a claim says nothing.
   - `claim` may declare a `route` (the method tried, 1–200 characters) and a
     `time_box_minutes` (5–240). Every renewal is capped at the box, so the claim lapses
@@ -430,8 +431,13 @@ tools, the prompts and the delivery shapes.
     statement digest and module). The task ends by
     itself (`scope_proved`) once the node has a `complete` or `verified` source of that
     statement, published by the recruit or anyone else; a joined recruit then returns
-    that source to its parent as an unverified result. A source of a since-changed
-    statement does not count. If the node closes first, the task ends (`scope_closed`).
+    that source to its parent as an unverified result. If the node closes first, or its
+    statement changes after recruitment, the task ends (`scope_closed`); a source of the
+    new statement cannot prove the scoped one, and the output then says that the node's
+    statement changed after recruitment. A parked recruit's wait watches its node, so
+    each of these endings wakes it (`scope_delivered`), whether or not it still claims
+    the node, and it ends without another request; with joined recruits of its own
+    pending, the wake waits for them (see below).
     A recruit whose node is proved or closed while it is still queued, or while its first
     request waits for rate admission, ends before that request is sent. Every later session,
     such as a wake from a wait, is checked the same way, but ends there only for its scope
@@ -480,7 +486,7 @@ tools, the prompts and the delivery shapes.
 - **Waiting.** `wait(for="events")` releases the worker slot, at no model cost, until the
   first of these (S1 audit #14):
   - a post or message that push would deliver to the waiter (its own posts and non-urgent
-    platform statuses do not count);
+    platform statuses do not count; the check reads past up to 1,000 such events);
   - news on a watched node (a status change, a new claimant, a new edge from it, or a
     first source publication or rank increase) or from a watched branch (a new
     node, a new claimant, such a publication or a node-thread post). Claim renewals,
@@ -489,7 +495,10 @@ tools, the prompts and the delivery shapes.
     such as a review outcome or an acceptance, names none and wakes everyone);
   - a change in the goal's long pole, checked once another branch or the platform has
     changed the graph or restated a node (the comparison is of state, so the waiter's own
-    change then shows up too). One recompute per graph state serves every poll and waiter;
+    change then shows up too). One recompute per graph state serves every wait request,
+    poll and waiter;
+  - for a scoped recruit, its own node proved, closed or restated (`scope_delivered`),
+    once its own joined recruits have settled;
   - the timeout (default 1,800 s, at most 3,600 s).
 
   The first 20 s are a minimum sleep (shorter only for a shorter timeout), so a burst of
@@ -509,12 +518,18 @@ tools, the prompts and the delivery shapes.
   Either wait resumes natively: the agent keeps its transcript and gets a short wake note
   (the reason; its detail, which is a watched event's kind and `aggregate_id` or a
   `wait_error`'s code; the awaited recruits' statuses; and the long pole). The supervisor
-  checks a parked wait only when new events exist, when its minimum sleep or timeout ends,
-  or at least every 30 s (a PostgreSQL event can commit behind one already seen). A run
-  stops with `SOCIETY_IDLE` when all its agents wait with nothing admissible: no other task
-  of the experiment is queued or running (another runner's or worker's work could still
-  wake them), and a synthesis that is due has been scheduled first. The waits keep their
-  tickets, so a later run resumes them.
+  checks a parked wait only when an event that can wake a waiter arrives (a node, claim,
+  edge, source, statement or post event of the experiment, a message, or a task's end;
+  never model-turn accounting), when its minimum sleep or timeout ends, or at least every
+  30 s (a PostgreSQL event can commit behind one already seen); and at most once every
+  2 s, except at its timeout. A run stops with `SOCIETY_IDLE` when all its agents wait and
+  only their timeouts could wake them: no other task of the experiment is queued or
+  running (another runner's or worker's work could still wake them), every task wait has
+  a live recruit, no verification receipt is queued, and a synthesis that is due has been
+  scheduled first. A second such observation at least 1 s after the first, with every
+  wait checked again, confirms the stop. The constitution and the `wait` tool tell agents
+  that a run whose agents all wait ends. The waits keep their tickets, so a later run
+  resumes them.
 - **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
   least 8 hex characters of a record the agent can see; an ambiguous prefix returns
   `AMBIGUOUS_ID` with the candidates. Routing arguments (`message.to`, `wait.ids`) name

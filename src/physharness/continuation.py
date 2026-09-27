@@ -2,9 +2,10 @@
 
 from collections import OrderedDict
 
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, or_, select, union_all
 
-from .commons_sources import RANKS
+from .commons_models import is_open
+from .commons_sources import COMPLETE_RANKS, RANKS, _statement_digest, source_state
 from .domain import digest_json, utcnow
 from .errors import HarnessError
 from .execution.types import ExecutionError
@@ -40,12 +41,52 @@ LONG_POLE_CACHE_SIZE = 256
 # Long-pole ids per (experiment id, its latest LONG_POLE_KINDS event sequence): the graph is
 # unchanged until the next such event, so one recompute serves every poll and waiter.
 _long_pole_ids = OrderedDict()
+# The event kinds that can wake a parked waiter, and so move the supervisor's gating head:
+# the watch and long-pole kinds, a scoped recruit's node restated, posts, and the terminal
+# events of awaited tasks. Model-turn accounting (resources.*) and tool bookkeeping never do.
+# Message events name no experiment, so they count project-wide.
+WAKE_KINDS = (
+    *dict.fromkeys(NODE_WATCH_KINDS + BRANCH_WATCH_KINDS + LONG_POLE_KINDS),
+    "commons.lean_statement_set",
+    "task.completed",
+    "task.failed",
+    "task.blocked",
+)
+PROJECT_WAKE_KINDS = ("message.created",)
 
 
 def _not_by(branch_id):
     """Events another branch or the platform caused: a waiter's own moves are not news."""
     branch = EventRow.payload["branch_id"].as_string()
     return or_(branch.is_(None), branch != branch_id)
+
+
+def _graph_events(experiment):
+    """The events that can move the experiment's long pole."""
+    return (
+        EventRow.project_id == experiment.project_id,
+        EventRow.kind.in_(LONG_POLE_KINDS),
+        EventRow.payload["experiment_id"].as_string() == experiment.id,
+    )
+
+
+def scope_restated(scope, node):
+    """Whether a scoped recruit's node has another statement than the one it was recruited
+    for; no source of the new statement proves the scoped one."""
+    return _statement_digest(node) != scope["lean_statement_sha256"]
+
+
+def scope_ending(scope, node):
+    """How a scoped recruit's work is delivered (S1 audit #23), or None: ``scope_proved``
+    once the node has a complete source of the scoped statement, published by anyone;
+    ``scope_closed`` once the node is closed or restated after recruitment."""
+    if scope_restated(scope, node):
+        return "scope_closed"
+    if source_state(node) in COMPLETE_RANKS:
+        return "scope_proved"
+    if not is_open(node["status"]):
+        return "scope_closed"
+    return None
 
 
 class ContinuationMixin:
@@ -355,6 +396,7 @@ class ContinuationMixin:
                     "recovery_evidence_artifact_id": evidence_artifact_id,
                 },
             )
+            self._release_task_claims(session, actor, op, task)
             for resource_id in (reservation.id, slot.id):
                 self._event(
                     session,
@@ -1151,9 +1193,11 @@ class ContinuationMixin:
                 if row.kind == "branch":  # referees stay isolated, as for messages
                     self._guard_referee_branch(row, actor)
                 watched[row.kind].append(identifier)
-            long_pole, _ = self._goal_long_pole(
-                session, experiment, actor, self._live_claims(session, experiment)
+            # From the memo: the long pole is recomputed under the lock only for a new graph.
+            graph_head = session.scalar(
+                select(func.max(EventRow.sequence)).where(*_graph_events(experiment))
             )
+            long_pole_ids = self._long_pole_ids_at(session, experiment, actor, graph_head)
             now = utcnow()
             # Updates wake from the acknowledged delivery position, as a peer wait's reply
             # does; watched and long-pole events only from those after this request.
@@ -1167,7 +1211,7 @@ class ContinuationMixin:
                 "watch_branch_ids": watched["branch"],
                 "after_sequence": reader.payload["ack_sequence"] if reader else 0,
                 "event_after": self._discussion_max_sequence(session),
-                "long_pole_ids": [item["id"] for item in long_pole],
+                "long_pole_ids": sorted(long_pole_ids),
                 "requested_at": now.isoformat(),
                 "deadline_at": now.timestamp() + timeout_seconds,
                 "min_sleep_until": now.timestamp()
@@ -1193,20 +1237,24 @@ class ContinuationMixin:
                     "deadline_at": peer_wait["deadline_at"],
                 },
             )
-            return {
-                "task_id": task_id,
-                "intent": intent,
-                "revision": result["revision"],
-                "long_pole": long_pole,
-            }
+            return {"task_id": task_id, "intent": intent, "revision": result["revision"]}
 
-        return self._execute(
+        result = self._execute(
             actor,
             key,
             "task.event-wait",
             {"task_id": task_id, "watch_ids": watch_ids, "timeout_seconds": timeout_seconds},
             action,
         )
+        # The reply's long pole, with claimants, is read after the command releases its lock.
+        with self.db.sessions() as session:
+            experiment = self._get(
+                session, "experiment", result["intent"]["peer_wait"]["experiment_id"], actor
+            )
+            long_pole, _ = self._goal_long_pole(
+                session, experiment, actor, self._live_claims(session, experiment)
+            )
+        return {**result, "long_pole": long_pole}
 
     def _wait_ended(self, session, peer_wait, actor):
         """The waiter's experiment, and whether it was cancelled or the waiting task ended."""
@@ -1303,10 +1351,13 @@ class ContinuationMixin:
         experiment_id = peer_wait["experiment_id"]
         with self.db.sessions() as session:
             _, ended = self._wait_ended(session, peer_wait, actor)
+            delivered = not ended and self._scope_delivered(session, peer_wait, actor)
         if ended:
             return status(True, "cancelled")
         if self.verified_target_receipt(experiment_id, actor):
             return status(True, "target_verified")
+        if delivered:
+            return status(True, "scope_delivered")
         now = utcnow().timestamp()
         if now >= peer_wait.get("deadline_at", 0):
             return status(True, "timeout")
@@ -1328,6 +1379,30 @@ class ContinuationMixin:
             # whole run; it wakes only this waiter, which can see the error for itself.
             return status(True, "wait_error", {"code": error.code})
         return status(False, "waiting")
+
+    @staticmethod
+    def _scope_delivered(session, peer_wait, actor):
+        """Whether the waiter is a scoped recruit that can end now: its work is delivered
+        (``scope_ending``), claim or no claim, and none of its own joined recruits is pending.
+        Until they settle it cannot end, so a wake would only cost it a request."""
+        task = session.get(RecordRow, peer_wait.get("task_id") or "")
+        if task is None or task.kind != "task" or task.project_id != actor.project_id:
+            return False
+        scope = task.payload.get("scope")
+        node = session.get(RecordRow, scope["node_id"]) if scope else None
+        if node is None or node.kind != "commons_node" or scope_ending(scope, node.payload) is None:
+            return False
+        pending = session.scalar(
+            select(RecordRow.id)
+            .where(
+                RecordRow.project_id == actor.project_id,
+                RecordRow.kind == "task",
+                RecordRow.payload["reply_to_parent_task_id"].as_string() == task.id,
+                RecordRow.payload["status"].as_string().not_in(["completed", "failed", "blocked"]),
+            )
+            .limit(1)
+        )
+        return pending is None
 
     @staticmethod
     def _watched_event(session, experiment, peer_wait):
@@ -1371,11 +1446,7 @@ class ContinuationMixin:
         """Whether the goal's long pole differs from the wait's. Checked only once another
         branch or the platform has changed the graph since the wait began; the comparison is
         of state, so the waiter's own change shows up alongside such a change."""
-        graph_events = (
-            EventRow.project_id == experiment.project_id,
-            EventRow.kind.in_(LONG_POLE_KINDS),
-            EventRow.payload["experiment_id"].as_string() == experiment.id,
-        )
+        graph_events = _graph_events(experiment)
         moved = session.scalar(
             select(EventRow.sequence)
             .where(
@@ -1393,13 +1464,44 @@ class ContinuationMixin:
                 *graph_events, EventRow.sequence > peer_wait["event_after"]
             )
         )
+        ids = self._long_pole_ids_at(session, experiment, actor, head)
+        return ids != set(peer_wait.get("long_pole_ids") or [])
+
+    def _long_pole_ids_at(self, session, experiment, actor, head):
+        """The goal's long-pole ids at graph head ``head`` (the experiment's latest
+        LONG_POLE_KINDS event), computed once per graph state for every request and check."""
         ids = _long_pole_ids.get((experiment.id, head))
         if ids is None:
             items, _ = self._goal_long_pole(session, experiment, actor)
             ids = _long_pole_ids[experiment.id, head] = frozenset(item["id"] for item in items)
             while len(_long_pole_ids) > LONG_POLE_CACHE_SIZE:
                 _long_pole_ids.popitem(last=False)
-        return ids != set(peer_wait.get("long_pole_ids") or [])
+        return ids
+
+    def event_head(self, actor, experiment_id) -> int:
+        """The latest event that can wake one of the experiment's waiters (``WAKE_KINDS``):
+        while it stands still, no event-driven wake condition can have changed, so a
+        supervisor checks parked event waits again only when it moves."""
+        self._research_role(actor)
+        project = EventRow.project_id == actor.project_id
+        experiment = EventRow.payload["experiment_id"].as_string() == experiment_id
+        # One indexed maximum per kind: events_discussion_experiment_sequence serves each.
+        heads = union_all(
+            *(
+                select(func.max(EventRow.sequence).label("head")).where(
+                    project, EventRow.kind == kind, experiment
+                )
+                for kind in WAKE_KINDS
+            ),
+            *(
+                select(func.max(EventRow.sequence).label("head")).where(
+                    project, EventRow.kind == kind
+                )
+                for kind in PROJECT_WAKE_KINDS
+            ),
+        ).subquery()
+        with self.db.sessions() as session:
+            return session.scalar(select(func.max(heads.c.head))) or 0
 
     def handoff_intent(self, task_id, holder, fence, actor):
         with self.db.sessions() as session:

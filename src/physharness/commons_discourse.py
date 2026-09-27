@@ -343,6 +343,29 @@ class CommonsDiscourseMixin:
             inputs["keep_route"] = True
         return self._execute(actor, key, "commons.claim", inputs, apply)
 
+    def _release_task_claims(self, session, actor, op, task):
+        """Release a finished society task's live claims at once rather than at their TTL,
+        so node messages and claimant lists skip its branch. They are the branch's claims
+        the task made or renewed, and the focus claim the platform made for a new recruit
+        before it had a lease (no task); another task of the branch keeps its own."""
+        experiment = session.get(RecordRow, task.payload["experiment_id"])
+        if experiment is None or not experiment.payload.get("society"):
+            return
+        branch_id, now = task.payload["branch_id"], _now()
+        rows = self._live_claim_rows(
+            session, task.project_id, experiment.id, now, branch_id=branch_id
+        )
+        for row in list(rows):
+            self.db.command_lock(
+                session, self._digest(["commons-claim", row.payload["node_id"], branch_id])
+            )
+            session.refresh(row)  # under the claim lock, as claim_node reads it
+            owner = row.payload.get("task_id")
+            if not self._claim_live(row.payload, now) or owner not in {task.id, None}:
+                continue
+            record = self._replace(session, row, {"released": True})
+            self._claim_event(session, actor, op, record, "release", new_claimant=False)
+
     def _touch_node(self, session, row, actor, op):
         """Record activity on a node and extend the actor's live claim on it, if any."""
         self._replace(session, row, {"last_activity_at": utcnow().isoformat()})

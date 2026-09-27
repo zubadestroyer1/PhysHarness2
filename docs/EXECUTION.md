@@ -568,10 +568,15 @@ The report lists queued tasks left by a task-count limit or unmet dependencies.
 
 In a society, a wait (`wait_for_events`, `wait_for_tasks`) resumes natively: the transcript is
 kept and a short wake note (reason, detail, children, long pole) is appended. Other continuations
-are unchanged. The supervisor checks a parked event wait again only when the project's event head
-moves, its minimum sleep or deadline passes, or its last check is 30 s old. It stops with
+are unchanged. The supervisor checks a parked event wait again only when the experiment's
+wake-event head moves (events that can wake a waiter; model-turn `resources.*` accounting never
+moves it), its minimum sleep or deadline passes, or its last check is 30 s old, and at most once
+every 2 s except at its deadline. A woken wait runs without another check. It stops with
 `SOCIETY_IDLE` once every pending task waits, every event wait found nothing at the current head,
-no other task of the experiment is queued or running, and a due synthesis has been scheduled.
+no other task of the experiment is queued or running, every task wait has a live child, no parked
+scoped recruit's work is delivered, no verification receipt is queued, and a due synthesis has
+been scheduled; a second such observation at least 1 s later, with every wait checked again,
+confirms the stop.
 
 When enabled, one independent verification worker at a time calls the existing canonical
 `process_verification` route under a verifier identity. It handles receipts on the selected

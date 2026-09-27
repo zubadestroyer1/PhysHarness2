@@ -1894,7 +1894,8 @@ def society_tools(
             "Sleep at no cost until something relevant happens, then resume with your context "
             "intact. for='events' wakes on a post or message routed to you, an event on a "
             "watched node or branch, a change in the goal's long pole, or the timeout; "
-            "for='tasks' wakes when your recruits finish. Takes effect after this response.",
+            "for='tasks' wakes when your recruits finish. Takes effect after this response. "
+            "If every agent waits and nothing can wake them, the run ends.",
             defaults={"ids": [], "timeout_seconds": None},
         )
 

@@ -11,6 +11,11 @@ from .domain import Principal, new_id, utcnow
 from .errors import HarnessError
 from .storage import EventRow, RecordRow, record_json_text
 
+# An event wait's scan for a relevant update reads delivery events in pages of this size, at
+# most MAX_UPDATE_SCAN of them in all.
+UPDATE_SCAN_PAGE = 100
+MAX_UPDATE_SCAN = 1000
+
 
 class DiscussionMixin:
     @staticmethod
@@ -673,20 +678,6 @@ class DiscussionMixin:
     def _discussion_max_sequence(session):
         return session.scalar(select(func.max(EventRow.sequence))) or 0
 
-    def event_head(self, actor) -> int:
-        """The project's latest event sequence: unchanged, no wake condition that events
-        drive can have changed, so a supervisor rechecks event waits only when it moves."""
-        self._research_role(actor)
-        with self.db.sessions() as session:
-            return (
-                session.scalar(
-                    select(func.max(EventRow.sequence)).where(
-                        EventRow.project_id == actor.project_id
-                    )
-                )
-                or 0
-            )
-
     def _delivery_clauses(self, session, experiment, actor, reader_key, ack):
         """The event filters of a reader's deliveries after ``ack``: its subscribed topics'
         posts and, for an agent, messages to its branch. Empty when there are none."""
@@ -734,31 +725,44 @@ class DiscussionMixin:
         return own or (post.get("platform_status") is not None and not item.get("urgent"))
 
     def _pending_update(self, session, experiment, actor, after) -> bool:
-        """Whether the reader has a message or a post that push would deliver after ``after``;
-        at most 100 events are scanned (an event wait's ``relevant_update``)."""
+        """Whether the reader has a message or a post that push would deliver after ``after``
+        (an event wait's ``relevant_update``). The scan pages past skipped events, such as
+        the reader's own posts, up to MAX_UPDATE_SCAN events."""
         reader_key = self._discussion_reader_key(experiment.id, actor)
         clauses = self._delivery_clauses(session, experiment, actor, reader_key, after)
         if not clauses:
             return False
-        events = session.scalars(
-            select(EventRow)
-            .where(EventRow.project_id == actor.project_id, or_(*clauses))
-            .order_by(EventRow.sequence)
-            .limit(100)
-        )
         society = bool(experiment.payload.get("society"))
-        for event in events:
-            if event.kind == "message.created":
-                return True
-            post = session.get(RecordRow, event.payload["post_id"])
-            if post is None or not self._in_scope(session, post, actor):
-                continue
-            node_id = post.payload.get("node_id")
-            if not (society and node_id):
-                return True
-            urgent = self._post_urgent(session, post.payload, node_id, actor)
-            if not self._push_skip(post.payload, {"urgent": urgent}, actor):
-                return True
+        cursor, scanned = after, 0
+        while scanned < MAX_UPDATE_SCAN:
+            page = min(UPDATE_SCAN_PAGE, MAX_UPDATE_SCAN - scanned)
+            events = list(
+                session.scalars(
+                    select(EventRow)
+                    .where(
+                        EventRow.project_id == actor.project_id,
+                        EventRow.sequence > cursor,
+                        or_(*clauses),
+                    )
+                    .order_by(EventRow.sequence)
+                    .limit(page)
+                )
+            )
+            for event in events:
+                if event.kind == "message.created":
+                    return True
+                post = session.get(RecordRow, event.payload["post_id"])
+                if post is None or not self._in_scope(session, post, actor):
+                    continue
+                node_id = post.payload.get("node_id")
+                if not (society and node_id):
+                    return True
+                urgent = self._post_urgent(session, post.payload, node_id, actor)
+                if not self._push_skip(post.payload, {"urgent": urgent}, actor):
+                    return True
+            if len(events) < page:
+                return False
+            cursor, scanned = events[-1].sequence, scanned + len(events)
         return False
 
     def discussion_updates(self, experiment_id, actor, *, after=None, limit=10):

@@ -71,6 +71,7 @@ class CollaborationMixin:
                     "ready_continuation": None,
                 },
             )
+            self._release_task_claims(session, actor, op, task)
             self._event(
                 session,
                 actor,
@@ -707,6 +708,7 @@ class CollaborationMixin:
                     else task.payload.get("return_result"),
                 },
             )
+            self._release_task_claims(session, actor, op, task)
             if (
                 status == "blocked"
                 and task.payload.get("research_progress_status") == "recovery_exhausted"
