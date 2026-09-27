@@ -95,6 +95,12 @@ retains named volumes; `down -v` destroys them. Never recommend volume deletion 
 recovery procedure. A local PostgreSQL dump and local artifact copy can aid development recovery,
 but cross-store consistency must be checked before treating them as a reproducibility package.
 
+A SQLite database runs in WAL mode with `synchronous=FULL`. Recent commits live in the
+`harness.db-wal` file beside `harness.db`, with a `harness.db-shm` index, so the database needs a
+local filesystem (WAL does not work over a network share). Back it up with the SQLite backup API
+(`sqlite3 harness.db ".backup copy.db"`), or stop the harness, run
+`PRAGMA wal_checkpoint(TRUNCATE)` and copy. Never copy `harness.db` alone.
+
 ## Fault-injection and scale qualification
 
 Before wave 3 qualification, inject failures around provider dispatch/response, usage commit,

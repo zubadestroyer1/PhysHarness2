@@ -44,6 +44,33 @@ MAX_STAGNATION_SUGGESTIONS = 10
 MAX_STAGNATION_SUGGESTION_CHARS = 200
 # A provider rate-limit refusal waits at most this long per attempt before a resend.
 MAX_RATE_LIMIT_WAIT_SECONDS = 30.0
+# Response fields a checkpoint keeps. The rest is the provider's echo of the request (tools,
+# instructions, settings): kept as a digest; the session record holds the tool digest.
+STORED_RESPONSE_FIELDS = frozenset(
+    {
+        "id",
+        "object",
+        "created_at",
+        "completed_at",
+        "model",
+        "status",
+        "output",
+        "usage",
+        "incomplete_details",
+        "error",
+        "service_tier",
+    }
+)
+
+
+def _response_record(native: dict[str, Any]) -> dict[str, Any]:
+    """The billing- and recovery-relevant fields plus a digest of the request echo."""
+    record = {key: value for key, value in native.items() if key in STORED_RESPONSE_FIELDS}
+    record["request_echo_sha256"] = digest(
+        {key: value for key, value in native.items() if key not in STORED_RESPONSE_FIELDS}
+    )
+    return record
+
 
 _DURATION_PART = re.compile(r"([0-9]+(?:\.[0-9]+)?)(ms|h|m|s)")
 
@@ -325,6 +352,7 @@ class ResponsesRuntime:
         except ValueError:
             raise ExecutionError("INVALID_CONFIG", "Invalid durable stagnation state") from None
         self._active: dict[str, asyncio.Task[Any]] = {}
+        self._saved: dict[str, RuntimeCheckpoint] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -391,8 +419,11 @@ class ResponsesRuntime:
 
         return on_wait
 
-    async def _save(self, session: RuntimeSession, state: dict[str, Any]) -> None:
-        await self.store.save(RuntimeCheckpoint.build(session, state))
+    async def _save(self, session: RuntimeSession, state: dict[str, Any]) -> RuntimeCheckpoint:
+        checkpoint = RuntimeCheckpoint.build(session, state)
+        await self.store.save(checkpoint)
+        self._saved[session.id] = checkpoint
+        return checkpoint
 
     async def _abandon_refused(
         self, session: RuntimeSession, state: dict[str, Any], operation_id: str
@@ -418,7 +449,10 @@ class ResponsesRuntime:
             or state.get("terminal_response_pending")
         ):
             return
-        batch = await self.update_source(RuntimeCheckpoint.build(session, state))
+        saved = self._saved.get(session.id)
+        batch = await self.update_source(
+            saved if saved is not None else RuntimeCheckpoint.build(session, state)
+        )
         if not isinstance(batch, dict):
             raise ExecutionError("INVALID_UPDATES", "Update source returned an invalid batch")
         delivery_id, items = batch.get("delivery_id"), batch.get("items")
@@ -699,10 +733,11 @@ class ResponsesRuntime:
                 }
                 await self._save(session, state)
             await self._advance_active_input(session, state, native)
+        saved = None
         if state.get("settled_boundary") is not True:
             state["settled_boundary"] = True
-            await self._save(session, state)
-        handoff = await self._maybe_handoff(session, state, native)
+            saved = await self._save(session, state)
+        handoff = await self._maybe_handoff(session, state, native, checkpoint=saved)
         if handoff is not None:
             return handoff
         return await self._run(session, state, "", append_prompt=False)
@@ -879,7 +914,7 @@ class ResponsesRuntime:
                     operation_id=operation_id,
                 )
             state["settled_boundary"] = False
-            state["responses"].append(native)
+            state["responses"].append(_response_record(native))
             session.native_session_id = response.id
             session.turns += 1
             if response.usage is None:
@@ -987,8 +1022,8 @@ class ResponsesRuntime:
                         )
                     await self._advance_active_input(session, state, native)
                     state["settled_boundary"] = True
-                    await self._save(session, state)
-                    handoff = await self._maybe_handoff(session, state, native)
+                    saved = await self._save(session, state)
+                    handoff = await self._maybe_handoff(session, state, native, checkpoint=saved)
                     if handoff is not None:
                         return handoff
                     continue
@@ -1007,9 +1042,9 @@ class ResponsesRuntime:
                     },
                 )
                 state["terminal_response_pending"] = True
-                await self._save(session, state)
+                saved = await self._save(session, state)
                 handoff = await self._maybe_handoff(
-                    session, state, native, output_text=text, artifacts=[artifact]
+                    session, state, native, output_text=text, artifacts=[artifact], checkpoint=saved
                 )
                 if handoff is not None:
                     return handoff
@@ -1028,8 +1063,8 @@ class ResponsesRuntime:
             await self._run_calls(session, state, native, calls)
             await self._advance_active_input(session, state, native)
             state["settled_boundary"] = True
-            await self._save(session, state)
-            handoff = await self._maybe_handoff(session, state, native)
+            saved = await self._save(session, state)
+            handoff = await self._maybe_handoff(session, state, native, checkpoint=saved)
             if handoff is not None:
                 return handoff
 
@@ -1116,8 +1151,10 @@ class ResponsesRuntime:
                     "max_context_tokens": session.limits.max_context_tokens,
                     "max_output_tokens": session.limits.max_output_tokens,
                 }
-                await self._save(session, state)
-                handoff = await self._maybe_handoff(session, state, {"output": []})
+                saved = await self._save(session, state)
+                handoff = await self._maybe_handoff(
+                    session, state, {"output": []}, checkpoint=saved
+                )
                 if handoff is not None:
                     return handoff
             raise ExecutionError("CONTEXT_LIMIT", "Active request exceeds context token limit")
@@ -1256,11 +1293,10 @@ class ResponsesRuntime:
                             ),
                         },
                     }
-                results[tool_operation] = {
-                    "identity": identity,
-                    "result": result,
-                    "visible_output": visible_output,
-                }
+                entry = {"identity": identity, "result": result}
+                if visible_output is not result:
+                    entry["visible_output"] = visible_output
+                results[tool_operation] = entry
             state["input"].append(
                 {
                     "type": "function_call_output",
@@ -1308,10 +1344,13 @@ class ResponsesRuntime:
         *,
         output_text: str = "",
         artifacts: list[OutputArtifact] | None = None,
+        checkpoint: RuntimeCheckpoint | None = None,
     ) -> RuntimeResult | None:
         if self.boundary_hook is None:
             return None
-        request = await self.boundary_hook(RuntimeCheckpoint.build(session, state))
+        request = await self.boundary_hook(
+            checkpoint if checkpoint is not None else RuntimeCheckpoint.build(session, state)
+        )
         if request is None:
             return None
         if request == {"complete_reason": "target_verified"}:
@@ -1336,8 +1375,7 @@ class ResponsesRuntime:
         ):
             raise ExecutionError("INVALID_CONTINUATION", "Boundary hook returned invalid reason")
         session.status = "handed_off"
-        await self._save(session, state)
-        terminal = RuntimeCheckpoint.build(session, state)
+        terminal = await self._save(session, state)
         return RuntimeResult(
             session=session,
             output_text=output_text,

@@ -107,6 +107,14 @@ and must return JSON objects. JSON Schema validates every argument. Tool errors 
 Handlers are trusted control-plane code: they must authorize project access and reserve their
 own budgets before starting children or external work. There is no implicit native subagent tool.
 
+A stored response keeps only `STORED_RESPONSE_FIELDS` (`id`, `object`, `created_at`,
+`completed_at`, `model`, `status`, `output`, `usage`, `incomplete_details`, `error` and
+`service_tier`) plus `request_echo_sha256`, a digest of the rest: the provider's echo of the
+request (tools, instructions and settings). A response from a different model than requested is
+kept whole as evidence. Checkpoints saved with full echoes still load. A `tool_results` entry
+stores `visible_output` only when a stagnation signal changed it; replay otherwise uses `result`.
+`update_source` and `boundary_hook` receive the checkpoint that was just saved, not a rebuilt copy.
+
 Optional async `event_sink(RuntimeEvent)` receives `generation_started`, `generation_aborted`,
 `usage`, `tool_completed`, and `completed`. The generation-start event contains the input/output
 token reservation and fires before billable generation. A core ledger can veto generation by
@@ -143,6 +151,8 @@ G1 covers the bytes the model sees and the pinned freeze tests (F7), so these ch
 experiments too.
 - The `usage` wait totals (`rate_limit_waits`, `rate_limit_wait_seconds`).
 - The `provider_throttled` events.
+- Stored responses keep only `STORED_RESPONSE_FIELDS` plus `request_echo_sha256`.
+- A `tool_results` entry omits an unchanged `visible_output`.
 
 ## Official Codex SDK
 

@@ -14,6 +14,7 @@ from physharness.execution import (
     SQLiteRuntimeStore,
     ToolDispatcher,
 )
+from physharness.execution.responses import STORED_RESPONSE_FIELDS
 
 
 def response(items, text="", response_id="resp_1"):
@@ -802,4 +803,68 @@ async def test_fatal_tool_error_mid_batch_stops_later_calls(tmp_path):
         "uncertain",
         dispatched[0],
     )
+    await client.close()
+
+
+async def test_stored_response_omits_request_echo_and_duplicate_output(tmp_path):
+    tools = [
+        {"type": "function", "name": "double", "parameters": {"type": "object"}, "strict": True}
+    ]
+    first = {
+        **response([double_call()]),
+        "tools": tools,
+        "instructions": "echoed",
+        "tool_choice": "auto",
+    }
+    client = client_for(
+        [first, {**response([message("4")], response_id="resp_2"), "tools": tools * 2}], []
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        dispatcher=double_dispatcher(),
+        client=client,
+    )
+    result = await runtime.start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
+    state = (await runtime.checkpoint(result.session.id)).native_state
+    stored = state["responses"]
+    assert all(set(r) <= STORED_RESPONSE_FIELDS | {"request_echo_sha256"} for r in stored)
+    assert stored[0]["request_echo_sha256"] != stored[1]["request_echo_sha256"]
+    assert stored[0]["output"] == [double_call()]
+    assert set(state["tool_results"][f"{result.session.id}:call_1"]) == {"identity", "result"}
+    await client.close()
+
+
+async def test_hooks_reuse_saved_checkpoint(tmp_path, monkeypatch):
+    from physharness.execution import RuntimeCheckpoint
+
+    builds, hooked, original = [], [], RuntimeCheckpoint.build.__func__
+    monkeypatch.setattr(
+        RuntimeCheckpoint,
+        "build",
+        classmethod(lambda cls, session, state: builds.append(1) or original(cls, session, state)),
+    )
+
+    async def boundary(checkpoint):
+        hooked.append(checkpoint.state_digest)
+
+    async def source(checkpoint):
+        return {"delivery_id": None, "items": []}
+
+    async def ack(delivery_id):
+        raise AssertionError("nothing to acknowledge")
+
+    client = client_for(
+        [response([double_call()]), response([message("4")], response_id="resp_2")], []
+    )
+    store = RecordingStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(
+        store=store,
+        dispatcher=double_dispatcher(),
+        client=client,
+        boundary_hook=boundary,
+        update_source=source,
+        update_ack=ack,
+    )
+    await runtime.start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert len(hooked) == 2 and len(builds) == len(store.shapes)
     await client.close()
