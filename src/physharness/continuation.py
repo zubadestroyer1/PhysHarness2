@@ -1379,7 +1379,12 @@ class ContinuationMixin:
         )
         if moved is None:
             return False
-        head = session.scalar(select(func.max(EventRow.sequence)).where(*graph_events))
+        # The graph's latest event; bounded below by the one found, so the scan stays short.
+        head = session.scalar(
+            select(func.max(EventRow.sequence)).where(
+                *graph_events, EventRow.sequence > peer_wait["event_after"]
+            )
+        )
         ids = _long_pole_ids.get((experiment.id, head))
         if ids is None:
             items, _ = self._goal_long_pole(session, experiment, actor)
