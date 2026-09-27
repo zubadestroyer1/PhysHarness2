@@ -94,9 +94,7 @@
     },
     "scaffolding": {
       "playbook": true,
-      "skills": true,
-      "checkin_every_turns": 12,
-      "stagnation_nudges": true
+      "skills": true
     }
   }
 }

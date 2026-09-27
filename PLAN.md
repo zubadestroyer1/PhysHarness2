@@ -196,15 +196,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
   6. Fill the holes.
   7. Submit.
 - **Technique skills** (`load_skill`): short, curated notes on methods common in mathematical physics, each with when it applies, typical pitfalls, and pointers into Mathlib/Physlib. Examples: energy and Lyapunov methods, Grönwall and comparison arguments, variational methods, spectral and perturbation arguments, fixed-point and compactness arguments, convexity and operator inequalities for quantum information, symmetry arguments. Tool recipes (interval arithmetic, SOS certificates, the Lean sketch workflow) are skills too.
-- **Progress check-ins.** Every so often (configurable by turns or spend), the runtime asks for a short structured self-assessment: current subgoal, confidence, blocker, next step. It is posted as an `update` on the agent's node, so it doubles as a status report for the society.
-- **Stagnation nudges.** When the existing stagnation detector sees no progress, the agent receives *suggestions*:
-  - try a special case or a numerical experiment;
-  - search the literature;
-  - request a referee;
-  - recruit a collaborator;
-  - switch approach;
-  - hand over to fresh eyes.
-  Repeated stagnation informs the allocator (§4.3).
+- Check-ins and stagnation nudges were removed after S1 (acted on 20% of the time; nudges never fired). The stagnation detector remains the loop guard.
 - **Sketch-then-fill formalization** (the draft–sketch–prove pattern):
   1. From an informal proof, `lean_sketch` compiles a Lean skeleton with `sorry` holes to confirm the structure type-checks.
   2. Each hole's goal is extracted as a statement and becomes a `lemma` node linked to its parent.

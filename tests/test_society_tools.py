@@ -44,14 +44,7 @@ from physharness.orchestration.research_worker import (
     TeamRunManifest,
     research_tools,
 )
-from physharness.orchestration.society_prompt import (
-    checkin_note,
-    constitution,
-    referee_checkin_note,
-    referee_constitution,
-    referee_stagnation_suggestions,
-    stagnation_suggestions,
-)
+from physharness.orchestration.society_prompt import constitution, referee_constitution
 from physharness.orchestration.society_tools import (
     SOCIETY_TOOL_NAMES,
     society_tools,
@@ -607,11 +600,7 @@ def test_note_and_prompt_tool_names_exist_in_catalog():
         "submit_for_verification",
     }
     assert required <= set(SOCIETY_TOOL_NAMES)
-    texts = [
-        constitution(policy_dict(), literature_enabled=True),
-        checkin_note(),
-        *stagnation_suggestions(literature_enabled=True),
-    ]
+    texts = [constitution(policy_dict(), literature_enabled=True)]
     for entry in list_skills():
         body = load_skill(entry["name"])["text"].split("---", 2)[2]
         texts.append(re.sub(r"`[^`]*`", "", body))  # Lean names sit in backticks
@@ -640,12 +629,7 @@ def test_referee_texts_name_only_referee_tools(literature_enabled):
     )
     policy = policy_dict()
     constitution_text = referee_constitution(policy, literature_enabled=literature_enabled)
-    texts = [
-        constitution_text,
-        referee_checkin_note(),
-        *referee_stagnation_suggestions(literature_enabled=literature_enabled),
-    ]
-    mentioned = mentioned_tools(texts)
+    mentioned = mentioned_tools([constitution_text])
     assert "submit_review" in mentioned and mentioned <= allowed, mentioned - allowed
     # Every technique note offered to a referee names only tools a referee profile can have.
     [skills] = [line for line in constitution_text.splitlines() if "load_skill" in line]
@@ -1329,8 +1313,7 @@ async def test_fetch_source_hides_screen_numbers_and_records_fetch(lab):
 
 
 async def test_worker_society_prompt_contains_constitution_and_frontier(lab):
-    scaffolding = ScaffoldingPolicy(checkin_every_turns=2)
-    service, author, exp, branches, (alpha, _beta) = society_lab(lab, scaffolding=scaffolding)
+    service, author, exp, branches, (alpha, _beta) = society_lab(lab)
     node = service.create_node(
         exp["id"],
         NodeCreate(node_type="lemma", title="Trace lemma", statement="The trace is additive."),
@@ -1372,21 +1355,12 @@ async def test_worker_society_prompt_contains_constitution_and_frontier(lab):
     ]
     assert node["id"] in {item["id"] for item in outputs[0]["items"]}
     kwargs = seen["kwargs"]
-    assert kwargs["stagnation_suggestions"] == stagnation_suggestions(literature_enabled=False)
-    assert [await kwargs["turn_note"](turns) for turns in (0, 1, 2, 3, 4)] == [
-        None,
-        None,
-        checkin_note(),
-        None,
-        checkin_note(),
-    ]
     sessions = service.list_records("session", author, exp["id"])
     assert sessions[0]["tool_definition_digest"] == digest_json(kwargs["dispatcher"].definitions)
 
 
 async def test_worker_referee_prompt_uses_referee_texts(lab):
-    scaffolding = ScaffoldingPolicy(checkin_every_turns=2)
-    service, author, exp, branches, (alpha, beta) = society_lab(lab, scaffolding=scaffolding)
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
     node = service.create_node(
         exp["id"],
         NodeCreate(node_type="lemma", title="Trace lemma", statement="The trace is additive."),
@@ -1418,17 +1392,16 @@ async def test_worker_referee_prompt_uses_referee_texts(lab):
         # A referee delegates nothing, so it has no delegated task to wait for.
         assert view["capacity_guidance"]["optional_wait_for_delegated_task"] is False
         assert worker_view["capacity_guidance"]["optional_wait_for_delegated_task"] is True
-    kwargs = seen["kwargs"]
-    assert kwargs["stagnation_suggestions"] == referee_stagnation_suggestions(
-        literature_enabled=False
+
+
+async def test_society_worker_passes_no_check_in_or_nudge_hooks(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    task = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Society objective"), author, "task"
     )
-    assert [await kwargs["turn_note"](turns) for turns in (0, 1, 2, 3, 4)] == [
-        None,
-        None,
-        referee_checkin_note(),
-        None,
-        referee_checkin_note(),
-    ]
+    result, seen = await run_worker(service, author, task["id"])
+    assert result["status"] == "completed"
+    assert not {"turn_note", "stagnation_suggestions"} & set(seen["kwargs"])
 
 
 @pytest.mark.parametrize("kind", ["masked_reference", "note"])

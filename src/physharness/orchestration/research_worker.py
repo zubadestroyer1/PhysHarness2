@@ -53,14 +53,7 @@ from .research_network import (
     register_network_tools,
     root_lineage,
 )
-from .society_prompt import (
-    checkin_note,
-    constitution,
-    referee_checkin_note,
-    referee_constitution,
-    referee_stagnation_suggestions,
-    stagnation_suggestions,
-)
+from .society_prompt import constitution, referee_constitution
 from .workspace_tools import WorkspaceTools
 
 log = logging.getLogger(__name__)
@@ -1832,24 +1825,6 @@ class ResearchTaskExecutor:
                 runtime_kwargs["admission_priority"] = _admission_priority(task, branch)
             if pass_budget:
                 runtime_kwargs["context_budget"] = ContextBudget.model_validate(context_budget)
-            if society:
-                scaffolding = society["scaffolding"]
-                every = scaffolding["checkin_every_turns"]
-                if every and ("turn_note" in parameters or accepts_any):
-
-                    async def turn_note(turns_completed):
-                        if turns_completed > 0 and turns_completed % every == 0:
-                            return referee_checkin_note() if referee else checkin_note()
-                        return None
-
-                    runtime_kwargs["turn_note"] = turn_note
-                if scaffolding["stagnation_nudges"] and (
-                    "stagnation_suggestions" in parameters or accepts_any
-                ):
-                    suggest = referee_stagnation_suggestions if referee else stagnation_suggestions
-                    runtime_kwargs["stagnation_suggestions"] = suggest(
-                        literature_enabled=literature_enabled
-                    )
             runtime = self.runtime_factory(**runtime_kwargs)
             native_compatible = native_compatible and callable(
                 getattr(runtime, "start_from_handoff", None)

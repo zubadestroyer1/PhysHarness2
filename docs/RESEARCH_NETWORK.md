@@ -265,11 +265,10 @@ A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` reject
 that lists the available tools. Rejections count per native session whatever the name,
 so a model that keeps inventing names reaches the stagnation warning after four and the
 stagnation handoff after eight. That warning is separate from the repeated-read warning,
-so neither silences the other. Optional check-ins and stagnation nudges are switched
-per campaign. The finite supervisor runs the referee tasks its own lineages request,
-and synthesis tasks that have no parent branch. A platform-rooted task it runs (a
-referee, or a parentless synthesis) adds its lineage to the run's own, so a review
-that such a task requests runs in the same run. Every society run adopts a queued
+so neither silences the other. The finite supervisor runs the referee tasks its own
+lineages request, and synthesis tasks that have no parent branch. A platform-rooted
+task it runs (a referee, or a parentless synthesis) adds its lineage to the run's own,
+so a review that such a task requests runs in the same run. Every society run adopts a queued
 parentless synthesis, so two concurrent runs may pick the same one; the run that finds
 it already leased skips it without recording an outcome. A lease conflict on a synthesis
 the run scheduled itself is still recorded as its outcome.

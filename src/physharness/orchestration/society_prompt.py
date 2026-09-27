@@ -27,7 +27,7 @@ BOUNDARIES = (
     "Read exact records before relying on them.",
     "Only the independent verifier accepts proofs. "
     "Posts, reviews, claims and agreement never make a result accepted.",
-    "Harness notes, check-ins and nudges are optional guidance; you decide what to do.",
+    "Harness notes are optional guidance; you decide what to do.",
 )
 
 
@@ -101,47 +101,3 @@ def _bounded(lines: list[str]) -> str:
     if len(text) > MAX_CONSTITUTION_CHARS:
         raise ValueError("constitution exceeds its character bound")
     return text
-
-
-def checkin_note() -> str:
-    """Periodic self-assessment request; the caller decides the cadence."""
-    return (
-        "Check-in (optional guidance): post a short self-assessment as an update on your "
-        "focus node (commons_post with kind update): current subgoal; confidence (low, "
-        "medium or high) and why; blocker, if any; next step. A few lines is enough, then "
-        "continue your work."
-    )
-
-
-def referee_checkin_note() -> str:
-    """Periodic reminder for a referee task; the caller decides the cadence."""
-    return (
-        "Check-in (optional guidance): if your judgement is settled, call submit_review now. "
-        "Otherwise note what remains to check and continue."
-    )
-
-
-def stagnation_suggestions(*, literature_enabled: bool) -> list[str]:
-    """Options offered when the stagnation detector sees repeated reads without progress."""
-    suggestions = ["try a special case or a numerical experiment"]
-    if literature_enabled:
-        suggestions.append("search the literature")
-    suggestions += [
-        "request a referee",
-        "recruit a collaborator",
-        "switch approach",
-        "post your state and hand over to fresh eyes",
-    ]
-    return suggestions
-
-
-def referee_stagnation_suggestions(*, literature_enabled: bool) -> list[str]:
-    """Stagnation options for a referee: only what a referee can do."""
-    suggestions = ["try a special case or a numerical check"]
-    if literature_enabled:
-        suggestions.append("check the literature")
-    suggestions += [
-        "check one specific step or the Lean statement",
-        "submit your verdict with the gaps found so far",
-    ]
-    return suggestions

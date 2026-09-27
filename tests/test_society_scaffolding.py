@@ -1,4 +1,4 @@
-"""Optional society scaffolding: skills, constitution, check-ins and stagnation nudges."""
+"""Optional society scaffolding: skills, constitution and the stagnation loop detector."""
 
 import itertools
 import json
@@ -8,9 +8,10 @@ from importlib import resources
 import httpx
 import pytest
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 from test_execution_responses import message, response
 
-from physharness.domain import canonical_json
+from physharness.domain import ScaffoldingPolicy, canonical_json
 from physharness.errors import HarnessError
 from physharness.execution import (
     ExecutionError,
@@ -22,14 +23,7 @@ from physharness.execution import (
 )
 from physharness.execution import types as execution_types
 from physharness.execution.stagnation import signal_message
-from physharness.orchestration.society_prompt import (
-    checkin_note,
-    constitution,
-    referee_checkin_note,
-    referee_constitution,
-    referee_stagnation_suggestions,
-    stagnation_suggestions,
-)
+from physharness.orchestration.society_prompt import constitution, referee_constitution
 from physharness.skills import list_skills, load_skill
 
 SKILLS = sorted(
@@ -69,13 +63,17 @@ def _policy(*, playbook: bool, skills: bool) -> dict:
         "cross_lab_direct_messages": False,
         "referee_quorum": 1,
         "literature": {"mode": "off", "blocked_sources": []},
-        "scaffolding": {
-            "playbook": playbook,
-            "skills": skills,
-            "checkin_every_turns": 12,
-            "stagnation_nudges": True,
-        },
+        "scaffolding": {"playbook": playbook, "skills": skills},
     }
+
+
+@pytest.mark.parametrize("field", ["checkin_every_turns", "stagnation_nudges"])
+def test_scaffolding_policy_names_removed_fields(field):
+    with pytest.raises(ValidationError) as error:
+        ScaffoldingPolicy.model_validate({field: None})
+    message = str(error.value)
+    assert f"ScaffoldingPolicy.{field} was removed" in message
+    assert "Delete it from the plan." in message
 
 
 def test_skills_listed_and_loadable_and_bounded():
@@ -152,19 +150,6 @@ def test_constitution_respects_policy_flags_and_length():
     assert not any(name in bare for name in SKILLS)
 
 
-def test_checkin_note_and_suggestions_are_short_optional_guidance():
-    note = checkin_note()
-    assert len(note) <= 600
-    for field in ("subgoal", "confidence", "blocker", "next step", "update"):
-        assert field in note
-    with_literature = stagnation_suggestions(literature_enabled=True)
-    without = stagnation_suggestions(literature_enabled=False)
-    assert "search the literature" in with_literature
-    assert not any("literature" in item for item in without)
-    assert [item for item in with_literature if "literature" not in item] == without
-    assert 5 <= len(without) <= 8 and all(0 < len(item) <= 80 for item in with_literature)
-
-
 def test_referee_constitution_keeps_the_boundaries_without_a_playbook():
     full = referee_constitution(_policy(playbook=True, skills=True), literature_enabled=True)
     bare = referee_constitution(_policy(playbook=False, skills=False), literature_enabled=False)
@@ -185,20 +170,6 @@ def test_referee_constitution_keeps_the_boundaries_without_a_playbook():
     assert "lean-sketch-then-fill" not in full
     assert "load_skill" not in bare
     assert not any(name in bare for name in SKILLS)
-
-
-def test_referee_checkin_note_and_suggestions_offer_only_referee_work():
-    note = referee_checkin_note()
-    assert len(note) <= 600 and "submit_review" in note
-    assert "focus node" not in note and "update" not in note
-    with_literature = referee_stagnation_suggestions(literature_enabled=True)
-    without = referee_stagnation_suggestions(literature_enabled=False)
-    assert any("literature" in item for item in with_literature)
-    assert not any("literature" in item for item in without)
-    assert [item for item in with_literature if "literature" not in item] == without
-    assert all(0 < len(item) <= 80 for item in with_literature)
-    for item in with_literature:
-        assert not any(word in item for word in ("referee", "recruit", "hand over")), item
 
 
 def test_signal_message_unchanged_without_suggestions():
