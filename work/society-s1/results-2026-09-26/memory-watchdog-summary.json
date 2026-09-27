@@ -1,0 +1,150 @@
+{
+ "source": "host watchdog log, kern.memorystatus_level sampled every 20 s (100 = fully free; warn <35, stop <20)",
+ "log_coverage_utc": [
+  "2026-09-26T03:04:24Z",
+  "2026-09-26T12:06:34Z"
+ ],
+ "total_samples": 1626,
+ "gaps_over_60s": 0,
+ "overall_min": 73,
+ "overall_max": 91,
+ "warn_or_stop_events": 0,
+ "arm_window_definition": "earliest session created_at to latest session last_save_at/last_turn_ended_at in the arm",
+ "arms": {
+  "calibration-doeblin": {
+   "window_utc": [
+    "08:42:30Z",
+    "08:45:27Z"
+   ],
+   "samples": 9,
+   "min": 87,
+   "max": 89
+  },
+  "calibration-doeblin-r2": {
+   "window_utc": [
+    "09:00:29Z",
+    "09:06:47Z"
+   ],
+   "samples": 19,
+   "min": 89,
+   "max": 90
+  },
+  "calibration-aperiodic": {
+   "window_utc": [
+    "09:08:53Z",
+    "09:26:26Z"
+   ],
+   "samples": 52,
+   "min": 88,
+   "max": 90
+  },
+  "pilot-doeblin": {
+   "window_utc": [
+    "09:33:38Z",
+    "09:39:50Z"
+   ],
+   "samples": 19,
+   "min": 89,
+   "max": 90
+  },
+  "S": {
+   "window_utc": [
+    "09:42:04Z",
+    "09:46:13Z"
+   ],
+   "samples": 13,
+   "min": 89,
+   "max": 90
+  },
+  "S-r2": {
+   "window_utc": [
+    "09:50:24Z",
+    "10:20:13Z"
+   ],
+   "samples": 90,
+   "min": 89,
+   "max": 90
+  },
+  "I-01": {
+   "window_utc": [
+    "10:30:49Z",
+    "10:48:13Z"
+   ],
+   "samples": 53,
+   "min": 90,
+   "max": 90
+  },
+  "I-02": {
+   "window_utc": [
+    "10:30:54Z",
+    "10:44:31Z"
+   ],
+   "samples": 41,
+   "min": 90,
+   "max": 90
+  },
+  "I-03": {
+   "window_utc": [
+    "10:52:33Z",
+    "11:06:41Z"
+   ],
+   "samples": 42,
+   "min": 89,
+   "max": 90
+  },
+  "I-04": {
+   "window_utc": [
+    "10:52:38Z",
+    "11:06:27Z"
+   ],
+   "samples": 41,
+   "min": 89,
+   "max": 90
+  },
+  "I-05": {
+   "window_utc": [
+    "11:10:42Z",
+    "11:25:12Z"
+   ],
+   "samples": 43,
+   "min": 90,
+   "max": 90
+  },
+  "I-06": {
+   "window_utc": [
+    "11:10:47Z",
+    "11:22:29Z"
+   ],
+   "samples": 35,
+   "min": 90,
+   "max": 90
+  },
+  "I-07": {
+   "window_utc": [
+    "11:28:40Z",
+    "11:45:40Z"
+   ],
+   "samples": 51,
+   "min": 90,
+   "max": 90
+  },
+  "I-08": {
+   "window_utc": [
+    "11:28:45Z",
+    "11:42:20Z"
+   ],
+   "samples": 41,
+   "min": 90,
+   "max": 90
+  },
+  "single": {
+   "window_utc": [
+    "11:50:25Z",
+    "12:04:19Z"
+   ],
+   "samples": 42,
+   "min": 90,
+   "max": 90
+  }
+ }
+}

@@ -9,6 +9,7 @@ import os
 import re
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
+from functools import partial
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -37,6 +38,69 @@ ToolHandler = Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]]
 MAX_TURN_NOTE_CHARS = 4_000
 MAX_STAGNATION_SUGGESTIONS = 10
 MAX_STAGNATION_SUGGESTION_CHARS = 200
+# A provider rate-limit refusal waits at most this long per attempt before a resend.
+MAX_RATE_LIMIT_WAIT_SECONDS = 30.0
+
+
+def _rate_limit_wait(error: Exception, fallback: float) -> float | None:
+    """Seconds to wait before resending a request the provider refused for rate limiting.
+
+    Only an HTTP 429 with code `rate_limit_exceeded` qualifies: the provider refused the
+    request before doing any work, so nothing was generated or charged. Quota exhaustion
+    (`insufficient_quota`) and every other error return None and keep their existing path.
+    """
+    if getattr(error, "status_code", None) != 429:
+        return None
+    if getattr(error, "code", None) != "rate_limit_exceeded":
+        return None
+    headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    for name, scale in (("retry-after-ms", 0.001), ("retry-after", 1.0)):
+        try:
+            hinted = float(headers.get(name)) * scale
+        except (TypeError, ValueError):
+            continue
+        if hinted > 0:
+            return min(hinted, MAX_RATE_LIMIT_WAIT_SECONDS)
+    return min(fallback, MAX_RATE_LIMIT_WAIT_SECONDS)
+
+
+async def _resend_rate_limited(
+    send: Callable[[], Awaitable[Any]],
+    deadline: float,
+    *,
+    operation_id: str | None = None,
+    abandon: Callable[[], Awaitable[None]] | None = None,
+) -> Any:
+    """Await `send`, resending it while the provider refuses it for rate limiting.
+
+    A refusal did no work, so nothing is in flight while waiting. When the next wait would
+    pass the deadline, or the wait is interrupted, `abandon` runs before the error
+    propagates; giving up raises a definite, retryable PROVIDER_RATE_LIMITED.
+    """
+    backoff = 1.0
+    while True:
+        try:
+            return await send()
+        except Exception as error:
+            wait = _rate_limit_wait(error, backoff)
+            if wait is None:
+                raise
+            if asyncio.get_running_loop().time() + wait >= deadline:
+                if abandon is not None:
+                    await abandon()
+                raise ExecutionError(
+                    "PROVIDER_RATE_LIMITED",
+                    "Provider rate limit refused the request until the wall-clock limit",
+                    operation_id=operation_id,
+                    retryable=True,
+                ) from error
+        try:
+            await asyncio.sleep(wait)
+        except BaseException:
+            if abandon is not None:
+                await abandon()
+            raise
+        backoff *= 2
 
 
 def _safe_provider_field(value: Any, *, maximum: int) -> str | None:
@@ -222,6 +286,17 @@ class ResponsesRuntime:
 
     async def _save(self, session: RuntimeSession, state: dict[str, Any]) -> None:
         await self.store.save(RuntimeCheckpoint.build(session, state))
+
+    async def _abandon_refused(
+        self, session: RuntimeSession, state: dict[str, Any], operation_id: str
+    ) -> None:
+        """Every send was refused and none is in flight: release the reservation at zero.
+
+        As with usage, the operation is cleared only after its accounting succeeds, so a
+        failed or interrupted release leaves the session uncertain rather than definite.
+        """
+        await self._emit("generation_aborted", session, operation_id, reason="rate_limited")
+        state["pending_operation"] = None
 
     async def _receive_updates(
         self, session: RuntimeSession, state: dict[str, Any], *, changed_retry: bool = False
@@ -681,12 +756,16 @@ class ResponsesRuntime:
                 k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
             }
             try:
-                count = await client.responses.input_tokens.count(
-                    model=session.model.model,
-                    input=state["input"],
-                    tools=self.dispatcher.definitions,
-                    parallel_tool_calls=False,
-                    **count_params,
+                count = await _resend_rate_limited(
+                    partial(
+                        client.responses.input_tokens.count,
+                        model=session.model.model,
+                        input=state["input"],
+                        tools=self.dispatcher.definitions,
+                        parallel_tool_calls=False,
+                        **count_params,
+                    ),
+                    deadline,
                 )
             except Exception as exc:
                 if getattr(exc, "status_code", None) != 400:
@@ -789,16 +868,24 @@ class ResponsesRuntime:
                 state["pending_operation"] = None
                 await self._emit("generation_aborted", session, operation_id, reason="timeout")
                 raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
-            response = await client.responses.create(
-                model=session.model.model,
-                input=state["input"],
-                tools=self.dispatcher.definitions,
-                parallel_tool_calls=False,
-                max_output_tokens=output_reservation,
-                store=False,
-                include=["reasoning.encrypted_content"],
-                extra_headers={"X-Client-Request-Id": operation_id},
-                **params,
+            # A rate-limit refusal did no work, so the same operation and reservation
+            # are resent; giving up releases the reservation at zero instead.
+            response = await _resend_rate_limited(
+                partial(
+                    client.responses.create,
+                    model=session.model.model,
+                    input=state["input"],
+                    tools=self.dispatcher.definitions,
+                    parallel_tool_calls=False,
+                    max_output_tokens=output_reservation,
+                    store=False,
+                    include=["reasoning.encrypted_content"],
+                    extra_headers={"X-Client-Request-Id": operation_id},
+                    **params,
+                ),
+                deadline,
+                operation_id=operation_id,
+                abandon=partial(self._abandon_refused, session, state, operation_id),
             )
             native = response.model_dump(mode="json", exclude_none=True)
             if native.get("model") != session.model.model:

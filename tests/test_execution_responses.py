@@ -417,3 +417,156 @@ async def test_explicit_resume_can_continue_interruption_before_billable_request
     assert result.output_text == "continued" and result.session.turns == 1
     await client.close()
     await restored.client.close()
+
+
+def rate_limited_client(replies, requests, counts=()):
+    """Replies are (status, body, headers); input-token counts succeed once `counts` is spent."""
+    counts = list(counts)
+
+    def handler(request):
+        requests.append((str(request.url), request.headers.get("X-Client-Request-Id")))
+        if str(request.url).endswith("/input_tokens"):
+            if counts:
+                status, body, headers = counts.pop(0)
+                return httpx.Response(status, json=body, headers=headers)
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        status, body, headers = replies.pop(0)
+        return httpx.Response(status, json=body, headers=headers)
+
+    return AsyncOpenAI(
+        api_key="test-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+def refusal(code):
+    return {"error": {"message": "limit", "type": "tokens", "param": None, "code": code}}
+
+
+async def test_rate_limit_refusal_resends_the_same_generation(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    client = rate_limited_client(
+        [
+            (429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"}),
+            (429, refusal("rate_limit_exceeded"), {}),
+            (200, response([message("done")]), {}),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=emit
+    )
+    started = time.monotonic()
+    result = await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert result.output_text == "done"
+    assert result.session.status == "completed"
+    assert result.session.input_tokens == 10
+    creates = [ident for url, ident in requests if not url.endswith("/input_tokens")]
+    # One generation: three sends under one operation, one start, one usage.
+    assert len(creates) == 3 and len(set(creates)) == 1
+    assert len([e for e in events if e.kind == "generation_started"]) == 1
+    assert len([e for e in events if e.kind == "usage"]) == 1
+    # The second refusal has no hint; the fallback has doubled once, to 2 s.
+    assert time.monotonic() - started >= 1.0
+    await client.close()
+
+
+async def test_quota_exhaustion_is_not_resent(tmp_path):
+    requests = []
+    client = rate_limited_client(
+        [(429, refusal("insufficient_quota"), {"retry-after-ms": "5"})], requests
+    )
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client)
+    with pytest.raises(ExecutionError):
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert len([url for url, _ in requests if not url.endswith("/input_tokens")]) == 1
+    await client.close()
+
+
+async def test_rate_limit_wait_never_passes_the_deadline(tmp_path):
+    requests = []
+    client = rate_limited_client(
+        [(429, refusal("rate_limit_exceeded"), {"retry-after": "20"})], requests
+    )
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client)
+    started = time.monotonic()
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=2))
+    assert error.value.code == "PROVIDER_RATE_LIMITED" and error.value.retryable
+    assert time.monotonic() - started < 2.0
+    assert len([url for url, _ in requests if not url.endswith("/input_tokens")]) == 1
+    await client.close()
+
+
+async def test_rate_limit_give_up_releases_the_reservation_at_zero(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event.kind)
+
+    client = rate_limited_client(
+        [(429, refusal("rate_limit_exceeded"), {"retry-after": "20"})], requests
+    )
+    store = SQLiteRuntimeStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, client=client, event_sink=emit)
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=2))
+    (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
+    checkpoint = await runtime.checkpoint(session_id)
+    # Every send was refused and none is in flight, so the outcome is definite.
+    assert error.value.code == "PROVIDER_RATE_LIMITED"
+    assert checkpoint.session.status == "failed"
+    assert checkpoint.native_state["pending_operation"] is None
+    assert events == ["generation_started", "generation_aborted"]
+    await client.close()
+
+
+async def test_interrupting_a_rate_limit_wait_is_definite(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event.kind)
+
+    client = rate_limited_client(
+        [(429, refusal("rate_limit_exceeded"), {"retry-after": "20"})], requests
+    )
+    store = SQLiteRuntimeStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, client=client, event_sink=emit)
+    running = asyncio.create_task(
+        runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    )
+    while not any(url.endswith("/responses") for url, _ in requests):
+        await asyncio.sleep(0.01)
+    await asyncio.sleep(0.05)
+    session_id = next(iter(runtime._active))
+    assert await runtime.interrupt(session_id)
+    with pytest.raises(asyncio.CancelledError):
+        await running
+    checkpoint = await runtime.checkpoint(session_id)
+    assert checkpoint.session.status == "interrupted"
+    assert checkpoint.native_state["pending_operation"] is None
+    assert events == ["generation_started", "generation_aborted"]
+    await client.close()
+
+
+async def test_rate_limited_token_count_is_resent(tmp_path):
+    requests = []
+    client = rate_limited_client(
+        [(200, response([message("done")]), {})],
+        requests,
+        counts=[(429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"})],
+    )
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client)
+    result = await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert result.output_text == "done"
+    assert [url.rsplit("/", 1)[-1] for url, _ in requests] == [
+        "input_tokens",
+        "input_tokens",
+        "responses",
+    ]
+    await client.close()
