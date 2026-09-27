@@ -556,14 +556,19 @@ class CommonsDiscourseMixin:
 
     def _post_route_compiled(self, session, row, branch_id, route, op):
         """Tell the node's other live claimants that a route compiled, so they may stop theirs
-        (urgent only for them; see ``_post_urgent``)."""
+        (urgent only for them; see ``_post_urgent``).
+
+        The route is agent text inside a platform note, so it is rendered like a node title:
+        one line, as a quoted JSON string.
+        """
         topic = session.get(RecordRow, row.payload.get("topic_id") or "")
         if topic is None or topic.kind != "discussion_topic":
             return
         by = f" by {branch_id[:8]}" if branch_id else ""
+        quoted = json.dumps(_one_line(route), ensure_ascii=False) if route else None
         abstract = (
             f"Node {row.id[:8]} compiled{by}"
-            + (f" (route: {route})" if route else "")
+            + (f" (route: {quoted})" if quoted else "")
             + "; consider stopping your route."
         )
         self._insert_post(

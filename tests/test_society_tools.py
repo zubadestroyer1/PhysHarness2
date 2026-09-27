@@ -1026,6 +1026,26 @@ async def test_commons_claim_declares_a_route_and_a_time_box(lab):
     assert blank["error"]["code"] == "INVALID_CLAIM"
 
 
+async def test_lean_check_on_a_peer_claimed_node_records_a_fresh_claim(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, alpha_context = running(service, author, exp, branches[0]["id"])
+    beta, beta_context = running(service, author, exp, branches[1]["id"])
+    alpha_tools = profile(service, alpha, alpha_context)
+    node = await call(alpha_tools, "commons_node", lemma_args())
+    await call(
+        alpha_tools, "commons_claim", {"node_id": node["id"], "action": "claim", "route": "Banach"}
+    )
+    beta_tools = profile(service, beta, beta_context, workspace=FakeWorkspace())
+    checked = await call(beta_tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert checked["claimed"] is True
+    claimants = {c["branch_id"]: c for c in service.read_node(node["id"], alpha)["claimants"]}
+    assert {branch: claim["route"] for branch, claim in claimants.items()} == {
+        alpha.branch_id: "Banach",
+        beta.branch_id: None,
+    }
+    assert claimants[beta.branch_id]["task_id"] == beta_context["task_id"]
+
+
 async def test_lean_check_automation_is_off_by_default(lab):
     service, author, exp, branches, (alpha, beta) = society_lab(lab)
     agent, context = running(service, author, exp, alpha.branch_id)
