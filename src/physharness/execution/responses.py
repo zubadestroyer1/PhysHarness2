@@ -492,11 +492,8 @@ class ResponsesRuntime:
         # Each running session's previous request, for the P1 input bound; never persisted.
         self._last_request: dict[str, dict[str, Any]] = {}
         # Each running session's tool results awaiting announcement, in call order: (operation,
-        # name, signal, stagnation snapshot). Announced only after a save that holds them. A
-        # recall has no stored result, so its name is None and only its signal is announced.
-        self._unannounced: dict[
-            str, list[tuple[str, str | None, str | None, dict[str, Any] | None]]
-        ] = {}
+        # name, signal, stagnation snapshot). Announced only after a save that holds them.
+        self._unannounced: dict[str, list[tuple[str, str, str | None, dict[str, Any] | None]]] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -1073,8 +1070,7 @@ class ResponsesRuntime:
         durable. A sink error is only logged, so the original failure still propagates."""
         await self._save(session, state)
         for tool_operation, name, signal, snapshot in self._unannounced.pop(session.id, []):
-            if name is not None:
-                await self._emit_telemetry("tool_completed", session, tool_operation, name=name)
+            await self._emit_telemetry("tool_completed", session, tool_operation, name=name)
             if signal is not None:
                 await self._emit_telemetry(
                     signal, session, tool_operation, stagnation_state=snapshot
@@ -1665,23 +1661,21 @@ class ResponsesRuntime:
                 }
             )
             state["pending_operation"] = None
-            if not recall or signal is not None:
-                unannounced.append(
-                    (
-                        tool_operation,
-                        None if recall else call["name"],
-                        signal,
-                        dict(state["stagnation"]) if signal is not None else None,
-                    )
+            unannounced.append(
+                (
+                    tool_operation,
+                    call["name"],
+                    signal,
+                    dict(state["stagnation"]) if signal is not None else None,
                 )
+            )
 
     async def _emit_completed(self, session: RuntimeSession) -> None:
         """Announce tool results only after the save that made them durable."""
         unannounced = self._unannounced.get(session.id, [])
         while unannounced:
             tool_operation, name, signal, snapshot = unannounced.pop(0)
-            if name is not None:
-                await self._emit("tool_completed", session, tool_operation, name=name)
+            await self._emit("tool_completed", session, tool_operation, name=name)
             if signal is not None:
                 await self._emit(signal, session, tool_operation, stagnation_state=snapshot)
 

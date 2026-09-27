@@ -1528,7 +1528,7 @@ async def test_a_registered_recall_output_is_rejected_under_a_budget(tmp_path):
     await client.close()
 
 
-async def test_a_recall_is_unstored_and_announces_only_its_stagnation_signal(tmp_path):
+async def test_a_recall_is_unstored_but_announced_like_any_call(tmp_path):
     requests, events = [], []
 
     async def emit(event):
@@ -1554,7 +1554,12 @@ async def test_a_recall_is_unstored_and_announces_only_its_stagnation_signal(tmp
         for e in events
         if e.kind in {"tool_completed", "stagnation_warning"}
     ]
-    assert announced == [("tool_completed", "a"), ("stagnation_warning", "p4")]
+    assert announced == [
+        *[("tool_completed", call_id) for call_id in ("a", "p1", "p2", "p3", "p4")],
+        ("stagnation_warning", "p4"),
+    ]
+    names = [e.payload["name"] for e in events if e.kind == "tool_completed"]
+    assert names == ["observe", *["recall_output"] * 4]
     state = (await runtime.checkpoint(result.session.id)).native_state
     assert list(state["tool_results"]) == [f"{result.session.id}:a"]
     assert "_research_runtime_signal" in json.loads(outputs_of(creates_of(requests)[-1])["p4"])

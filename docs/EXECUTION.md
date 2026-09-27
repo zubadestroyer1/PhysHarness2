@@ -277,10 +277,10 @@ without one. Under a budget:
   the session's own archives, then the inherited ones, and matches the call ID from any session
   in the lineage; the latest match wins. An unknown ID returns a `RECALL_NOT_FOUND` error
   envelope. A recall is a pure read. It sets no pending marker, never reaches the dispatcher, is
-  never stored in `tool_results` and is never capped. It emits no `tool_completed`. Stagnation
-  counts it as a read, and a signal it raises is announced after the save that holds it. It is not
-  part of the society tool catalog, and a dispatcher that registers its own `recall_output` under
-  a budget fails with `INVALID_CONFIG`.
+  never stored in `tool_results` and is never capped. Like any call, it emits `tool_completed`
+  (and any stagnation signal, since stagnation counts it as a read) after the save that holds its
+  output, so tool-call metrics count recalls. It is not part of the society tool catalog, and a
+  dispatcher that registers its own `recall_output` under a budget fails with `INVALID_CONFIG`.
 - **Tool digest.** The session record's `tool_definition_digest` covers the tools actually sent,
   including `recall_output`. If the digest changes between a joined-children wait and its wake,
   for example because the runtime stops accepting the budget, that in-flight native handoff falls
