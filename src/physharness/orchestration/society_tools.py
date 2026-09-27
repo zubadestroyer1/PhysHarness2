@@ -704,9 +704,10 @@ def society_tools(
                 {"source": source_property, "automate": BOOLEAN},
                 lambda a, k: lean().check(a["source"], automate=a["automate"], operation_id=k),
                 "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
-                "automation on holes (automate=true) and #print axioms. Evidence for your "
-                "review only; only the independent verifier accepts proofs.",
-                defaults={"automate": True},
+                "automation on holes (automate=true; off by default, since automation can "
+                "exhaust the workbench's memory) and #print axioms. Evidence for your review "
+                "only; only the independent verifier accepts proofs.",
+                defaults={"automate": False},
             )
         else:
             add(
@@ -718,7 +719,8 @@ def society_tools(
                 },
                 lean_check,
                 "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
-                "automation on holes (automate=true) and the file's own #print axioms output. "
+                "automation on holes (automate=true; off by default, since automation can "
+                "exhaust the workbench's memory) and the file's own #print axioms output. "
                 "With node_id, a complete check runs the platform's statement check and, when "
                 "it passes, records a local compile, which moves a formally_stated node to "
                 "compiles_locally; it also renews your claim. The file header must hold the "
@@ -730,7 +732,7 @@ def society_tools(
                 "collects the theorem's axioms itself: only propext, Classical.choice and "
                 "Quot.sound count. It runs in your workspace VM; only the independent verifier "
                 "accepts proofs.",
-                defaults={"node_id": None, "automate": True},
+                defaults={"node_id": None, "automate": False},
             )
 
         async def lean_sketch(a, k):

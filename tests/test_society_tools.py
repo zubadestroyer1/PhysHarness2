@@ -1031,6 +1031,23 @@ async def test_commons_node_actions_dispatch(lab):
     assert goal_edit["error"]["code"] == "GOAL_NODE_RESERVED"
 
 
+async def test_lean_check_automation_is_off_by_default(lab):
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace()
+    tools = profile(service, agent, context, workspace=workspace)
+    created = await call(tools, "commons_node", lemma_args())
+    await call(tools, "lean_check", {"source": PROOF})
+    assert workspace.lean.calls == [("check", False)]
+    requested = service.request_review(created["id"], "informal", beta, "review")
+    task = service.get_record("task", requested["review_task_id"], author)
+    judge, judge_context = running(service, author, exp, requested["branch_id"], task=task)
+    judge_space = FakeWorkspace()
+    judge_tools = profile(service, judge, judge_context, workspace=judge_space)
+    await call(judge_tools, "lean_check", {"source": PROOF})
+    assert judge_space.lean.calls == [("check", False)]
+
+
 async def test_lean_check_records_local_compile_for_node(lab, clock):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
@@ -1066,7 +1083,7 @@ async def test_lean_check_records_local_compile_for_node(lab, clock):
     assert checked["claim_renewed"] is True
     claimants = service.read_node(node["id"], alpha)["claimants"]
     assert claimants[0]["expires_at"] == clock.now + 900
-    plain = await call(tools, "lean_check", {"source": PROOF})
+    plain = await call(tools, "lean_check", {"source": PROOF, "automate": True})
     assert "local_compile" not in plain and workspace.lean.calls[-1] == ("check", True)
     # An incomplete compile of a formally stated node is not recorded.
     second = await call(tools, "commons_node", lemma_args(title="Second", **LEAN))

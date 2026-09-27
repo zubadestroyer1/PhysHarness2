@@ -479,6 +479,7 @@ async def test_definite_transfer_refusal_is_replayed_without_quarantine(lab):
                 workspace["id"], expected_execution_id="vm-123", operation_id="export"
             )
         assert error.value.code == "WORKSPACE_TRANSFER_REJECTED"
+        assert error.value.message == "definite helper refusal; VM is available."
     assert len(refusals) == 1
     assert broker.inspect(workspace["id"])["status"] == "ready"
     await broker.destroy(
