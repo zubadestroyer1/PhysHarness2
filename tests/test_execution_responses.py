@@ -6,6 +6,7 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 
+from physharness.domain import canonical_json
 from physharness.execution import (
     ExecutionError,
     ModelConfig,
@@ -728,12 +729,84 @@ async def test_tool_turn_save_sequence_is_pinned(tmp_path):
         await runtime.start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
     ).output_text == "4"
     assert store.shapes == TODAY_SAVE_SHAPES
-    assert [u.rsplit("/", 1)[-1] for u, _ in requests] == [
-        "input_tokens",
-        "responses",
-        "input_tokens",
-        "responses",
-    ]
+    assert [u.rsplit("/", 1)[-1] for u, _ in requests] == ["input_tokens", "responses", "responses"]
+    await client.close()
+
+
+async def test_count_runs_once_per_run_then_estimates(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    client = client_for(
+        [
+            response([double_call("c1")]),
+            response([double_call("c2")], response_id="r2"),
+            response([message("8")], response_id="r3"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        dispatcher=double_dispatcher(),
+        client=client,
+        event_sink=emit,
+    )
+    await runtime.start(
+        "compute", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    assert [u.rsplit("/", 1)[-1] for u, _ in requests] == ["input_tokens"] + ["responses"] * 3
+    creates = [p for u, p in requests if u.endswith("/responses")]
+    started = [e.payload for e in events if e.kind == "generation_started"]
+    assert [p["input_tokens_counted"] for p in started] == [True, False, False]
+    for n in (1, 2):  # instructions and tools are unchanged, so only appended items count (P1)
+        appended = creates[n]["input"][len(creates[n - 1]["input"]) :]
+        # The last billed input, plus the appended bytes, plus the 2,048 margin floor.
+        assert (
+            started[n]["input_tokens_estimate"]
+            == 10 + sum(len(canonical_json(item).encode("utf-8")) for item in appended) + 2048
+        )
+    await client.close()
+
+
+def test_input_bound_counts_changed_elements_and_credits_nothing_removed():
+    from physharness.execution.responses import _input_bound, _request_elements
+
+    def size(element):
+        return len(canonical_json(element).encode("utf-8"))
+
+    tools, items = [{"name": "a"}], [{"n": 1}, {"n": 2}, {"n": 3}]
+    before = _request_elements({}, tools, items)
+    previous = {"epoch": 0, "digests": [sha for sha, _ in before], "tokens": 100}
+    replaced = [{"n": 1}, {"elided": True}, {"n": 3}, {"n": 4}]  # an elided item and a new one
+    assert _input_bound(previous, _request_elements({}, tools, replaced), 0) == (
+        100 + size({"elided": True}) + size({"n": 4}) + 2048
+    )
+    wider = [*tools, {"name": "recall_output"}]  # new instructions and tools; two items removed
+    assert _input_bound(
+        previous, _request_elements({"instructions": "new"}, wider, items[:1]), 0
+    ) == (100 + size("new") + size(wider) + 2048)
+    assert _input_bound(previous, before, 1) is None  # a compaction epoch voids the bound
+    assert _input_bound({**previous, "tokens": 200_000}, before, 0) == 204_000  # 2% above the floor
+
+
+async def test_cumulative_budget_near_limit_counts_exactly(tmp_path):
+    requests = []
+    client = client_for(
+        [response([double_call()]), response([message("4")], response_id="r2")], requests
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), dispatcher=double_dispatcher(), client=client
+    )
+    # 12,400 - 15 used - a ~2,300-token estimate (2,048 of it margin) leaves less
+    # than max_output + 8,192.
+    await runtime.start(
+        "compute",
+        ModelConfig(model="exact-model"),
+        RuntimeLimits(max_total_tokens=12_400, max_output_tokens=4_096),
+    )
+    assert [u.rsplit("/", 1)[-1] for u, _ in requests] == ["input_tokens", "responses"] * 2
     await client.close()
 
 

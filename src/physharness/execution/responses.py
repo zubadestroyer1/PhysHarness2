@@ -17,6 +17,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from ..domain import canonical_json
+from .context_policy import CONTEXT_MARGIN
 from .parameters import validate_responses_parameters
 from .stagnation import observe as observe_stagnation
 from .stagnation import signal_message, successor_state
@@ -44,6 +45,9 @@ MAX_STAGNATION_SUGGESTIONS = 10
 MAX_STAGNATION_SUGGESTION_CHARS = 200
 # A provider rate-limit refusal waits at most this long per attempt before a resend.
 MAX_RATE_LIMIT_WAIT_SECONDS = 30.0
+# P1: the input bound's safety margin is max(2,048 tokens, ceil(2% of the bound)).
+BOUND_MARGIN_FLOOR = 2_048
+BOUND_MARGIN_PERCENT = 2
 # Response fields a checkpoint keeps. The rest is the provider's echo of the request (tools,
 # instructions, settings): kept as a digest; the session record holds the tool digest.
 STORED_RESPONSE_FIELDS = frozenset(
@@ -188,6 +192,52 @@ def _safe_provider_field(value: Any, *, maximum: int) -> str | None:
     return value if re.fullmatch(r"[A-Za-z0-9_.\[\]-]+", value) else None
 
 
+def _provider_rejection(error: Exception) -> tuple[str, str | None, str | None]:
+    """The harness code plus the bounded provider code and parameter of an HTTP 400."""
+    provider_code = _safe_provider_field(getattr(error, "code", None), maximum=80)
+    provider_param = _safe_provider_field(getattr(error, "param", None), maximum=160)
+    schema = provider_code == "invalid_function_parameters" or bool(
+        provider_param and provider_param.startswith("tools")
+    )
+    return (
+        "PROVIDER_TOOL_SCHEMA_INVALID" if schema else "MODEL_REQUEST_INVALID",
+        provider_code,
+        provider_param,
+    )
+
+
+def _request_elements(
+    params: dict[str, Any], tools: list[dict[str, Any]], items: list[Any]
+) -> list[tuple[str, int]]:
+    """P1's positional request elements as (sha256, UTF-8 size) of their canonical JSON: the
+    instructions (null when absent), the tools array, then each input item."""
+    elements = []
+    for element in (params.get("instructions"), tools, *items):
+        raw = canonical_json(element).encode("utf-8")
+        elements.append((hashlib.sha256(raw).hexdigest(), len(raw)))
+    return elements
+
+
+def _input_bound(
+    previous: dict[str, Any] | None, elements: list[tuple[str, int]], epoch: int
+) -> int | None:
+    """A sound upper bound on a request's input tokens, margin included (G4, P1), or None to count.
+
+    ``previous`` is this session's last request in the current ``_run``: its element digests, its
+    compaction epoch and the input tokens the provider billed for it. Each element that is not
+    byte-identical to the element at the same position adds at most its canonical UTF-8 size (a
+    byte-level tokenizer emits no more tokens than bytes); removed content earns no credit. A
+    compaction rewrites the input (a new epoch), which voids the bound.
+    """
+    if previous is None or previous["epoch"] != epoch:
+        return None
+    old = previous["digests"]
+    raw = previous["tokens"] + sum(
+        size for index, (sha, size) in enumerate(elements) if index >= len(old) or old[index] != sha
+    )
+    return raw + max(BOUND_MARGIN_FLOOR, (raw * BOUND_MARGIN_PERCENT + 99) // 100)
+
+
 def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
     """Input and output tokens used by a session and every predecessor in its lineage."""
     state = checkpoint.native_state
@@ -199,10 +249,12 @@ def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
 
 @dataclass(frozen=True, kw_only=True)
 class _Prepared:
-    """A counted request with its reservation, not yet sent."""
+    """A counted or bounded request with its reservation, not yet sent."""
 
     params: dict[str, Any]
     input_tokens: int
+    counted: bool
+    digests: tuple[str, ...]
     input_reservation: int
     output_reservation: int
     remaining: int | None
@@ -353,6 +405,8 @@ class ResponsesRuntime:
             raise ExecutionError("INVALID_CONFIG", "Invalid durable stagnation state") from None
         self._active: dict[str, asyncio.Task[Any]] = {}
         self._saved: dict[str, RuntimeCheckpoint] = {}
+        # Each running session's previous request, for the P1 input bound; never persisted.
+        self._last_request: dict[str, dict[str, Any]] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -426,14 +480,19 @@ class ResponsesRuntime:
         return checkpoint
 
     async def _abandon_refused(
-        self, session: RuntimeSession, state: dict[str, Any], operation_id: str
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        operation_id: str,
+        *,
+        reason: str = "rate_limited",
     ) -> None:
         """Every send was refused and none is in flight: release the reservation at zero.
 
         As with usage, the operation is cleared only after its accounting succeeds, so a
         failed or interrupted release leaves the session uncertain rather than definite.
         """
-        await self._emit("generation_aborted", session, operation_id, reason="rate_limited")
+        await self._emit("generation_aborted", session, operation_id, reason=reason)
         state["pending_operation"] = None
 
     async def _receive_updates(
@@ -881,6 +940,7 @@ class ResponsesRuntime:
             ) from exc
         finally:
             self._active.pop(session.id, None)
+            self._last_request.pop(session.id, None)
 
     async def _loop(
         self, session: RuntimeSession, state: dict[str, Any], deadline: float
@@ -927,6 +987,11 @@ class ResponsesRuntime:
                 )
             session.input_tokens += response.usage.input_tokens
             session.output_tokens += response.usage.output_tokens
+            self._last_request[session.id] = {
+                "epoch": state.get("active_input_epoch", 0),
+                "digests": prepared.digests,
+                "tokens": response.usage.input_tokens,
+            }
             state["input"].extend(native["output"])
             await self._save(session, state)
             await self._emit(
@@ -1075,54 +1140,57 @@ class ResponsesRuntime:
         client: Any,
         deadline: float,
     ) -> _Prepared | RuntimeResult:
-        """Count the active input, check the budgets and size the reservation."""
+        """Count or bound the active input, check the budgets and size the reservation."""
         params = dict(session.model.parameters)
         # Popped here, not left in params, so it cannot clash with the explicit
         # keyword passed to the count and create calls below.
         parallel = bool(params.pop("parallel_tool_calls", False))
-        count_params = {
-            k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
-        }
-        try:
-            count = await _resend_rate_limited(
-                partial(
-                    client.responses.input_tokens.count,
-                    model=session.model.model,
-                    input=state["input"],
-                    tools=self.dispatcher.definitions,
-                    parallel_tool_calls=parallel,
-                    **count_params,
-                ),
-                deadline,
-                on_wait=self._throttle_hook(session, None, []),
-            )
-        except Exception as exc:
-            if getattr(exc, "status_code", None) != 400:
-                raise
-            provider_code = _safe_provider_field(getattr(exc, "code", None), maximum=80)
-            provider_param = _safe_provider_field(getattr(exc, "param", None), maximum=160)
-            tool_schema = provider_code == "invalid_function_parameters" or bool(
-                provider_param and provider_param.startswith("tools")
-            )
-            code = "PROVIDER_TOOL_SCHEMA_INVALID" if tool_schema else "MODEL_REQUEST_INVALID"
-            preflight_id = identifier()
-            state["preflight_error"] = {
-                "stage": "input_token_count",
-                "operation_id": preflight_id,
-                "provider_code": provider_code,
-                "provider_param": provider_param,
+        tools = self.dispatcher.definitions
+        elements = _request_elements(params, tools, state["input"])
+        bound = _input_bound(
+            self._last_request.get(session.id), elements, state.get("active_input_epoch", 0)
+        )
+        if bound is None or self._near_limit(session, state, bound):
+            count_params = {
+                k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
             }
-            await self._save(session, state)
-            raise ExecutionError(
-                code,
-                "Provider rejected the model request before generation",
-                operation_id=preflight_id,
-                remediation=(
-                    "Inspect the bounded preflight provider code and parameter "
-                    "in the durable runtime checkpoint."
-                ),
-            ) from exc
-        input_tokens = count.input_tokens
+            try:
+                count = await _resend_rate_limited(
+                    partial(
+                        client.responses.input_tokens.count,
+                        model=session.model.model,
+                        input=state["input"],
+                        tools=tools,
+                        parallel_tool_calls=parallel,
+                        **count_params,
+                    ),
+                    deadline,
+                    on_wait=self._throttle_hook(session, None, []),
+                )
+            except Exception as exc:
+                if getattr(exc, "status_code", None) != 400:
+                    raise
+                code, provider_code, provider_param = _provider_rejection(exc)
+                preflight_id = identifier()
+                state["preflight_error"] = {
+                    "stage": "input_token_count",
+                    "operation_id": preflight_id,
+                    "provider_code": provider_code,
+                    "provider_param": provider_param,
+                }
+                await self._save(session, state)
+                raise ExecutionError(
+                    code,
+                    "Provider rejected the model request before generation",
+                    operation_id=preflight_id,
+                    remediation=(
+                        "Inspect the bounded preflight provider code and parameter "
+                        "in the durable runtime checkpoint."
+                    ),
+                ) from exc
+            input_tokens, counted = count.input_tokens, True
+        else:
+            input_tokens, counted = bound, False
         remaining = (
             session.limits.max_total_tokens
             - state.get("cumulative_input_offset", 0)
@@ -1169,11 +1237,33 @@ class ResponsesRuntime:
         return _Prepared(
             params=params,
             input_tokens=input_tokens,
+            counted=counted,
+            digests=tuple(sha for sha, _ in elements),
             input_reservation=input_reservation,
             output_reservation=output_reservation,
             remaining=remaining,
             parallel_tool_calls=parallel,
         )
+
+    @staticmethod
+    def _near_limit(session: RuntimeSession, state: dict[str, Any], tokens: int) -> bool:
+        """Whether an estimate is close enough to a limit that only an exact count may decide."""
+        limits = session.limits
+        if (
+            limits.max_context_tokens is not None
+            and tokens + limits.max_output_tokens > limits.max_context_tokens - CONTEXT_MARGIN
+        ):
+            return True
+        if limits.max_total_tokens is not None:
+            used = (
+                state.get("cumulative_input_offset", 0)
+                + state.get("cumulative_output_offset", 0)
+                + session.input_tokens
+                + session.output_tokens
+            )
+            if limits.max_total_tokens - used - tokens < limits.max_output_tokens + CONTEXT_MARGIN:
+                return True
+        return False
 
     async def _send(
         self,
@@ -1200,6 +1290,8 @@ class ResponsesRuntime:
                 model=session.model.model,
                 input_tokens_reserved=prepared.input_reservation,
                 output_tokens_reserved=prepared.output_reservation,
+                input_tokens_estimate=prepared.input_tokens,
+                input_tokens_counted=prepared.counted,
             )
         except BaseException:
             # The provider request has not been sent. A reservation hook
@@ -1216,24 +1308,43 @@ class ResponsesRuntime:
         # A rate-limit refusal did no work, so the same operation and reservation
         # are resent; giving up releases the reservation at zero instead.
         waits: list[float] = []
-        response = await _resend_rate_limited(
-            partial(
-                client.responses.create,
-                model=session.model.model,
-                input=state["input"],
-                tools=self.dispatcher.definitions,
-                parallel_tool_calls=prepared.parallel_tool_calls,
-                max_output_tokens=prepared.output_reservation,
-                store=False,
-                include=["reasoning.encrypted_content"],
-                extra_headers={"X-Client-Request-Id": operation_id},
-                **prepared.params,
-            ),
-            deadline,
-            operation_id=operation_id,
-            abandon=partial(self._abandon_refused, session, state, operation_id),
-            on_wait=self._throttle_hook(session, operation_id, waits),
-        )
+        try:
+            response = await _resend_rate_limited(
+                partial(
+                    client.responses.create,
+                    model=session.model.model,
+                    input=state["input"],
+                    tools=self.dispatcher.definitions,
+                    parallel_tool_calls=prepared.parallel_tool_calls,
+                    max_output_tokens=prepared.output_reservation,
+                    store=False,
+                    include=["reasoning.encrypted_content"],
+                    extra_headers={"X-Client-Request-Id": operation_id},
+                    **prepared.params,
+                ),
+                deadline,
+                operation_id=operation_id,
+                abandon=partial(self._abandon_refused, session, state, operation_id),
+                on_wait=self._throttle_hook(session, operation_id, waits),
+            )
+        except Exception as error:
+            # A 400 means the provider refused the request before generating anything.
+            if getattr(error, "status_code", None) != 400:
+                raise
+            code, provider_code, provider_param = _provider_rejection(error)
+            state["preflight_error"] = {
+                "stage": "create",
+                "operation_id": operation_id,
+                "provider_code": provider_code,
+                "provider_param": provider_param,
+            }
+            # Emit, then clear, as for a rate-limit give-up: a failed release stays uncertain.
+            await self._abandon_refused(session, state, operation_id, reason="request_invalid")
+            raise ExecutionError(
+                code,
+                "Provider rejected the model request before generation",
+                operation_id=operation_id,
+            ) from error
         return _Sent(
             response=response,
             operation_id=operation_id,

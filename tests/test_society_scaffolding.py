@@ -351,7 +351,10 @@ async def test_turn_note_not_repeated_after_resume_at_same_boundary(tmp_path):
         store=store, client=client, dispatcher=_read_dispatcher(), turn_note=turn_note
     )
     with pytest.raises(ExecutionError) as failure:
-        await runtime.start("objective", ModelConfig(model="exact-model"), RuntimeLimits())
+        # Near the cumulative guard every request is counted, so count 2 still fails.
+        await runtime.start(
+            "objective", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=12_400)
+        )
     assert failure.value.code == "PROVIDER_FAILED"
     session_id = store.db.execute("SELECT id FROM runtime_sessions").fetchone()[0]
     checkpoint = await store.load(session_id)

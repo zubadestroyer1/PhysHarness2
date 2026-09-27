@@ -84,10 +84,22 @@ result = await runtime.start(
 ```
 
 This is a genuine `AsyncOpenAI.responses.create` tool loop. The real SDK's
-`responses.input_tokens.count` preflights each request. The next output cap is bounded by
-remaining cumulative tokens. A provider consumption discrepancy raises a limit violation and
-stops further turns. No aliases or substitute models are selected by the adapter. Parameters
-supported here are `instructions`, `reasoning`, `text`, `temperature`, `top_p`, `service_tier`,
+`responses.input_tokens.count` counts the first request of every start, continuation, resume or
+handoff; a native wake is a new run, so it counts too. It also counts any request whose estimate
+plus the output cap comes within 8,192 tokens (`CONTEXT_MARGIN`) of the context window or of the
+cumulative guard. Otherwise the input is bounded without a count. The bound is the last billed
+input, plus the canonical UTF-8 bytes of every request element that differs from the element at
+the same position in the previous request, plus a margin of the larger of 2,048 tokens and 2% of
+that sum. The elements are the instructions, the tools array and each input item, and removed
+content earns no credit. The previous request's element digests stay in runtime memory for the
+current run only, so a restart counts again. A compaction voids the bound. The count or the bound
+feeds the budget checks and the input reservation. A 400 from `create` means the request was not
+sent: it is recorded as `preflight_error` (stage `create`), then
+`generation_aborted(reason="request_invalid")` releases the reservation at zero, and the session
+fails without being left uncertain. The next output cap is bounded by remaining cumulative
+tokens. A provider consumption discrepancy raises a limit violation and stops further turns.
+No aliases or substitute models are selected by the adapter. Parameters supported here are
+`instructions`, `reasoning`, `text`, `temperature`, `top_p`, `service_tier`,
 `context_management`, and `parallel_tool_calls`. Unsupported provider parameter/model combinations
 fail at the provider.
 
@@ -153,6 +165,10 @@ experiments too.
 - The `provider_throttled` events.
 - Stored responses keep only `STORED_RESPONSE_FIELDS` plus `request_echo_sha256`.
 - A `tool_results` entry omits an unchanged `visible_output`.
+- `generation_started` carries `input_tokens_estimate` (the exact count or the margin-inclusive
+  bound) and `input_tokens_counted`.
+- `preflight_error.stage` may be `create`, with the generation's operation ID, after a 400 from
+  `create`; its `generation_aborted` has `reason="request_invalid"`.
 
 ## Official Codex SDK
 
@@ -336,7 +352,7 @@ process isolation and durable delivery.
 ## Continuation, duplicate calls, and authority
 
 Responses checkpoints are independent snapshots. Every continuation saves `running` before
-awaiting input-token preflight. The in-process active-session guard prevents concurrent calls
+its first provider call. The in-process active-session guard prevents concurrent calls
 through one adapter, and canonical research workers additionally acquire a durable task lease.
 Custom shared runtime stores must provide controller-side serialization; the generic
 `RuntimeStore` protocol is not a distributed lock.

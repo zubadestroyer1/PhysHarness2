@@ -1111,3 +1111,98 @@ def test_completed_result_rejects_unsafe_or_inconsistent_checkpoint(mutation):
     with pytest.raises(ExecutionError) as error:
         ResponsesRuntime.completed_result(RuntimeCheckpoint.build(session, state))
     assert error.value.code == "COMPLETED_RESULT_INVALID"
+
+
+def observe_dispatcher(result=None):
+    dispatcher = ToolDispatcher()
+
+    async def observe(arguments, operation_id):
+        return result if result is not None else {"seen": True}
+
+    dispatcher.register(
+        "observe",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        observe,
+    )
+    return dispatcher
+
+
+COMPACTING = {"context_management": [{"type": "compaction", "compact_threshold": 40_000}]}
+
+WIDE = RuntimeLimits(max_context_tokens=64_000, max_output_tokens=1_000, max_total_tokens=None)
+
+
+async def test_compaction_epoch_invalidates_the_estimate(tmp_path):
+    requests = []
+    client = sdk_client(
+        [
+            response([compaction_item("one"), call_item("a")], "r1"),
+            response([call_item("b")], "r2"),
+            response([text_item("done")], "r3"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(),
+    )
+    await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
+    assert [p.rsplit("/", 1)[-1] for p, _ in requests] == [
+        "input_tokens",
+        "responses",
+        "input_tokens",
+        "responses",
+        "responses",
+    ]
+    await client.close()
+
+
+async def test_create_400_is_pre_generation_not_uncertain(tmp_path):
+    events = []
+
+    def handle(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "private schema text",
+                    "type": "invalid_request_error",
+                    "param": "tools[0].parameters",
+                    "code": "invalid_function_parameters",
+                }
+            },
+        )
+
+    async def emit(event):
+        events.append(event)
+
+    client = AsyncOpenAI(
+        api_key="test-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    )
+    store = SQLiteRuntimeStore(tmp_path / "sessions.db")
+    with pytest.raises(ExecutionError) as error:
+        await ResponsesRuntime(store=store, client=client, event_sink=emit).start(
+            "work", ModelConfig(model="exact-model"), RuntimeLimits()
+        )
+    assert error.value.code == "PROVIDER_TOOL_SCHEMA_INVALID"
+    assert [(e.kind, e.payload.get("reason")) for e in events] == [
+        ("generation_started", None),
+        ("generation_aborted", "request_invalid"),
+    ]
+    saved = RuntimeCheckpoint.model_validate_json(
+        store.db.execute("SELECT data FROM runtime_sessions").fetchone()[0]
+    )
+    assert (saved.session.status, saved.native_state["pending_operation"]) == ("failed", None)
+    assert saved.native_state["preflight_error"] == {
+        "stage": "create",
+        "operation_id": events[0].operation_id,
+        "provider_code": "invalid_function_parameters",
+        "provider_param": "tools[0].parameters",
+    }
+    assert "private" not in saved.model_dump_json()
+    await client.close()
