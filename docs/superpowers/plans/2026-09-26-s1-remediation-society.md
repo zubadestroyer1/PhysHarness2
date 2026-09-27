@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, pydantic v2, SQLAlchemy 2 (SQLite and PostgreSQL), Alembic, the OpenAI Responses runtime (mocked in tests), Lean 4 with Mathlib/Physlib in the local Docker workbench, pytest.
 
-**Spec:** `work/society-s1/audit-2026-09-26/AUDIT.md` (lands with PR #33; until then read it at `../s1-audit/work/society-s1/audit-2026-09-26/AUDIT.md`, with its reports `society.md`, `scaffolding.md`, `proofpath.md` and `tools.md`). Binding rulings: `.superpowers/sdd/2026-09-26-s1-audit-remediation/RULINGS.md` (sections Global and Society lane). Design inputs: `.superpowers/sdd/2026-09-26-s1-audit-remediation/maps/workbench-tools.md`, `commons.md` and `comms-prompts.md`. Rulings override the maps where they differ.
+**Spec:** `work/society-s1/audit-2026-09-26/AUDIT.md` (merged in #33), with its reports `society.md`, `scaffolding.md`, `proofpath.md` and `tools.md` in the same directory. The binding rulings are summarised in this plan's Global Constraints.
 
 ## Global Constraints
 
@@ -18,7 +18,7 @@
 - **G4.** Runtime reservations are the runtime lane's; this plan changes none.
 - **G5.** No database migrations except Task 20's `library_notes` table. New state goes in JSON payloads. Every stored S1 record stays readable: read new keys with `.get(key, default)` and map legacy values (for example legacy node statuses read as `open`).
 - **G6.** Out of scope, listed as next steps in the PR descriptions: #25 (a harder target), the paid A/B validation run (needs an explicit budget), #12d (olean-based imports), warm-REPL reuse, raising or splitting the org TPM limit.
-- **G7.** Never run `uv sync`. Tests: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest <file> -q`. `ruff check` and `ruff format --check` on `src tests tools infra migrations` must be clean. No absolute `/Users/...` paths or usernames in anything committed. Commit with `git -c user.name=Kieran -c user.email=88352982+zubadestroyer1@users.noreply.github.com commit …`, and end the message with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never push; never touch other worktrees or branches; never call a paid API. Docker/Colima only on the `physharness-pilot` profile, and only in Task 2 and Task 13's one real-image timing check for the `find_declaration` index builder (F13); never the `default` or `tbscience` profiles.
+- **G7.** Never run `uv sync`. Tests: `PYTHONPATH=src .venv/bin/python -m pytest <file> -q`. `ruff check` and `ruff format --check` on `src tests tools infra migrations` must be clean. No absolute `/Users/...` paths or usernames in anything committed. Commit with `git -c user.name=Kieran -c user.email=88352982+zubadestroyer1@users.noreply.github.com commit …`, and end the message with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Never push; never touch other worktrees or branches; never call a paid API. Docker/Colima only on the `physharness-pilot` profile, and only in Task 2 and Task 13's one real-image timing check for the `find_declaration` index builder (F13); never any other Colima profile.
 - **G8.** Keep the whole suite green after every task. Update the docs that describe changed behaviour in the same task (`docs/RESEARCH_NETWORK.md`, `PLAN.md`, `docs/EXECUTION.md`, `work/society-s1/RUN_PLAN.md`, `docs/FORMAL_ENVIRONMENT.md`).
 - **S1 (#1).** Run the statement checker from the uploaded workspace-relative paths, with no `/tmp` staging. Self-test it at provision in `WorkspaceTools._ensure`, cached per process per workbench image; failure is `STATEMENT_CHECK_UNAVAILABLE` (fatal). Log `statement_check_unavailable` at ERROR through the JSON logger `extra`.
 - **S2 (#2).** A small tmpfs at `/etc/profile.d` in `local_docker._create_once` holds one PATH script written once per container; the image's own `/etc/profile.d` must be empty (checked on the real image). Reword the `shell` description. Verify on a real `physharness-pilot` container; if infeasible, STOP and report; never rebuild images.
@@ -45,6 +45,13 @@
 ---
 
 ## Tier 0 (one PR, base `main`)
+
+> **As shipped (Tier 0).** The Tier-0 PR differs from the tasks below in these ways:
+> - **Task 1b was added.** The checker imports only the Lean modules it uses, not `Lean`, so an `import Lean` file no longer OOMs the 2 GiB workbench. The statement check assumes a pre-warmed VM (`work/society-s1/RUN_PLAN.md`, section 8).
+> - **Task 2:** the profile-write step catches `BaseException` and quarantines the container. Its real test, `test_real_login_shell_path`, checks the login-shell `PATH` and lists the raw image's `/etc/profile.d`.
+> - **The final review's fixes:** the routing arguments `message.to` and `wait.ids` resolve a prefix only among their own targets; a failed checker self-test provisions no later workspace; `TASK_PENDING_CAP` is retryable.
+>
+> See `docs/FORMAL_ENVIRONMENT.md` (Workbench v2) and `docs/RESEARCH_NETWORK.md` for the details.
 
 ### Task 1: Statement checker runs from the workspace, self-tests at provision, alarms on failure (#1)
 
@@ -168,7 +175,7 @@ def test_society_catalog_self_tests_the_checker_for_builders_only():
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_statement_check.py tests/test_society_tools.py -q -k "workspace_paths or read_only or logged_at_error or self_test or builders_only"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_statement_check.py tests/test_society_tools.py -q -k "workspace_paths or read_only or logged_at_error or self_test or builders_only"`
 Expected: FAIL (the script still stages to `/tmp`; `_CHECKER_SELF_TESTS` does not exist; the read-only test returns `statement_check_unavailable`).
 
 - [ ] **Step 3: Run the checker from its workspace upload** (`lean_session.py`)
@@ -263,7 +270,7 @@ def _checker_unavailable(template_id):
 - [ ] **Step 6: Docs.** `docs/FORMAL_ENVIRONMENT.md`: in the local-compile paragraph add "The checker runs from its upload in the workspace (`.physharness/`); the workbench root, `/tmp` included, is read-only. A society task self-tests it once per process and image when it first provisions a workspace, and a failed self-test stops the task with `STATEMENT_CHECK_UNAVAILABLE`. The uploaded checker now lives under `/work/.physharness`, so (unlike its old `/tmp` staging) it persists into checkpoints and handoff archives. A workspace a handoff restores is already provisioned before `society_tools()` sets `checker_self_test`, so its self-test is skipped for that workspace's lifetime; this is accepted (rare, and the checker it inherited was already self-tested once)." `docs/RESEARCH_NETWORK.md:138-141`: add the same self-test sentence after "any failure to run it records nothing".
 - [ ] **Step 7: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_statement_check.py tests/test_lean_session.py tests/test_society_tools.py tests/test_worker_vm_tools.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_statement_check.py tests/test_lean_session.py tests/test_society_tools.py tests/test_worker_vm_tools.py -q`
 Expected: PASS (the real-Lean tests skip without a toolchain).
 
 - [ ] **Step 8: Commit**
@@ -382,7 +389,7 @@ async def test_real_login_shell_path_and_statement_check():
 
 - [ ] **Step 2: Run the unit tests to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_local_docker_workbench.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_local_docker_workbench.py -q`
 Expected: FAIL (`PROFILE_D_TMPFS` is undefined).
 
 - [ ] **Step 3: Implement** (`local_docker.py`)
@@ -423,7 +430,7 @@ _PROFILE_WRITER = (
   - `society_tools.py` `shell` description becomes: `"Run a command in the offline workspace VM (python3, lake, lean, ...). Pass argv directly (['lake', 'env', 'lean', '/work/F.lean']) or through bash -c; login shells work too. For Lean use cwd='/opt/sources/physlib' and pass files by their /work paths. Exit status and output are evidence, never proof acceptance."`
 - [ ] **Step 4: Run the unit tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_local_docker_workbench.py tests/test_workbench_failure_classification.py tests/test_worker_predispatch_rejection.py tests/test_workspace_cleanup_authority.py tests/test_society_tools.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_local_docker_workbench.py tests/test_workbench_failure_classification.py tests/test_worker_predispatch_rejection.py tests/test_workspace_cleanup_authority.py tests/test_society_tools.py -q`
 Expected: PASS. A test whose scripted runner answers every `exec` in order may need its expected sequence extended by the one profile write; change only that expectation.
 
 - [ ] **Step 5: Verify on a real container (the `physharness-pilot` profile only).** Run from this worktree:
@@ -443,7 +450,7 @@ docker --host "$DOCKER_HOST" run --rm --network none --read-only --user 65532:65
   --entrypoint /bin/bash "$IMAGE" -lc 'command -v lake; echo "lake=$?"'
 # (c) the fix and Task 1's checker, through the provider:
 PHYSHARNESS_WORKBENCH_DOCKER_HOST="$DOCKER_HOST" PHYSHARNESS_WORKBENCH_IMAGE_DIGEST="$IMAGE" \
-  PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_real_workbench_qualification.py -q
+  PYTHONPATH=src .venv/bin/python -m pytest tests/test_real_workbench_qualification.py -q
 docker --host "$DOCKER_HOST" ps --all --filter label=physharness.workbench=true --format '{{.Names}}'  # empty
 colima stop --profile physharness-pilot       # only if it was Stopped before this step
 ```
@@ -538,7 +545,7 @@ def test_task_caps_report_budget_not_input(lab):
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_tools.py tests/test_research_workforce.py tests/test_workspace_service.py tests/test_memory.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_tools.py tests/test_research_workforce.py tests/test_workspace_service.py tests/test_memory.py -q`
 Expected: FAIL in exactly the new and extended tests (automation `True`; generic messages).
 
 - [ ] **Step 3: Implement**
@@ -586,7 +593,7 @@ def _cap_reached(code, what, limit, used):
   - `PLAN.md:172`: "On failure, the check can run automation … (`automate=true`; off by default since S1, where it exhausted the 2 GiB workbench 14 of 14 times) …".
 - [ ] **Step 4: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_tools.py tests/test_research_workforce.py tests/test_workspace_service.py tests/test_memory.py tests/test_commons_review.py tests/test_workspace_cleanup_authority.py tests/test_workbench_failure_classification.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_tools.py tests/test_research_workforce.py tests/test_workspace_service.py tests/test_memory.py tests/test_commons_review.py tests/test_workspace_cleanup_authority.py tests/test_workbench_failure_classification.py -q`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -679,7 +686,7 @@ async def test_society_tools_accept_prefixes_for_id_arguments(lab):
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_id_prefixes.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_id_prefixes.py -q`
 Expected: FAIL (`HarnessService` has no `resolve_id`; the tool calls return `NOT_FOUND`).
 
 - [ ] **Step 3: The resolver** (`service.py`, after `get_record`; `ID_PREFIX` and `MAX_PREFIX_CANDIDATES` at module level near `MICRO_USD`)
@@ -775,7 +782,7 @@ def _resolved(value, path, resolve, kinds):
 - [ ] **Step 5: Docs.** `docs/RESEARCH_NETWORK.md`, society section, new bullet: "**Ids.** Every society tool id argument accepts the full id or a unique prefix of at least 8 hex characters of a record the agent can see; an ambiguous prefix returns `AMBIGUOUS_ID` with the candidates."
 - [ ] **Step 6: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_id_prefixes.py tests/test_society_tools.py tests/test_commons.py tests/test_commons_discourse.py tests/test_society_simulation.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_id_prefixes.py tests/test_society_tools.py tests/test_commons.py tests/test_commons_discourse.py tests/test_society_simulation.py -q`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -836,7 +843,7 @@ async def test_society_worker_passes_no_check_in_or_nudge_hooks(lab):
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_scaffolding.py tests/test_society_tools.py -q -k "removed_fields or no_check_in"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_scaffolding.py tests/test_society_tools.py -q -k "removed_fields or no_check_in"`
 Expected: FAIL (the fields validate; the kwargs contain `turn_note`).
 
 - [ ] **Step 3: Implement**
@@ -879,7 +886,7 @@ REMOVED_SCAFFOLDING_FIELDS = {
 - [ ] **Step 5: Docs.** `PLAN.md` §3.7: replace the check-in and nudge bullets with "Check-ins and stagnation nudges were removed after S1 (acted on 20% of the time; nudges never fired). The stagnation detector remains the loop guard." `docs/RESEARCH_NETWORK.md`: delete "Optional check-ins and stagnation nudges are switched per campaign." `RUN_PLAN.md`: where it lists the S1 scaffolding settings, add "(S1 only; removed in the S1 remediation)".
 - [ ] **Step 6: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_scaffolding.py tests/test_society_tools.py tests/test_run_control.py tests/test_execution_responses.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_scaffolding.py tests/test_society_tools.py tests/test_run_control.py tests/test_execution_responses.py -q`
 Expected: PASS (`tests/test_run_control.py` validates the edited example plan).
 
 - [ ] **Step 7: Commit**
@@ -970,7 +977,7 @@ def test_message_rate_limit_is_a_budget_and_the_window_slides(lab):
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_messages.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_messages.py -q`
 Expected: FAIL (`send_society_message` does not exist; branches carry `lab`).
 
 - [ ] **Step 3: Policy.** In `domain.py` remove `lab_size_max` and `cross_lab_direct_messages` from `SocietyPolicy`, add `messages_per_minute: int = Field(default=12, ge=1, le=600)`, and:
@@ -1071,7 +1078,7 @@ REMOVED_SOCIETY_FIELDS = {
 - [ ] **Step 8: Docs.** PLAN.md §2.4 replace the Labs bullet with: "**No labs (S1 remediation).** Labs blocked the one useful hand-off in S1 and decided nothing else. Sparsity now comes from relevance routing (updates reach a node's author, claimants, citers and dependents, never a goal-thread broadcast), a per-sender message rate limit (`messages_per_minute`), and declared alternative routes at genuine choice points (§4.4)." §3.3: `message` (a branch or a node's workers). §4.1: drop "labs". §4.2 step 2: "Each distinct approach becomes an approach node." §4.6: "The campaign budget is split into agent reservations; sub-budgets by graph region remain future work." §8: drop "labs". §10 herding row: "Relevance routing, message rate limit, declared alternative routes, fresh-eyes reseeding, cross-model referees". `docs/RESEARCH_NETWORK.md`: delete the node-lab sentence and the Labs bullet; add a Messages bullet with the rules above; update the tool table's `message` row.
 - [ ] **Step 9: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_messages.py tests/test_society_tools.py tests/test_commons.py tests/test_commons_review.py tests/test_commons_postgresql.py tests/test_society_simulation.py tests/test_society_metrics.py tests/test_run_control.py tests/test_society_scaffolding.py tests/test_research_workforce.py tests/test_sharing.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_messages.py tests/test_society_tools.py tests/test_commons.py tests/test_commons_review.py tests/test_commons_postgresql.py tests/test_society_simulation.py tests/test_society_metrics.py tests/test_run_control.py tests/test_society_scaffolding.py tests/test_research_workforce.py tests/test_sharing.py -q`
 Expected: PASS.
 
 - [ ] **Step 10: Commit**
@@ -1149,7 +1156,7 @@ async def test_referee_prompt_is_packet_target_and_referee_constitution(lab):
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_tools.py -q -k "lean_view or packet_target or distinct_models"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_tools.py -q -k "lean_view or packet_target or distinct_models"`
 Expected: FAIL (`society_brief` does not exist; the prompt still has `research_brief`).
 
 - [ ] **Step 3: The view** (`src/physharness/orchestration/society_brief.py`)
@@ -1241,7 +1248,7 @@ def society_prompt_view(
 - [ ] **Step 6: Docs.** `docs/RESEARCH_NETWORK.md`: "A society prompt holds the task objective, the target's six fields (title, informal and formal statement, target theorem, assumptions, definitions), the constitution, and when non-empty the top five frontier lines, the long pole, the agent's claimed nodes, its strategy, the models (when they differ), the synthesis scope, the continuation reason and ordinal, its handoff notes and joined results. The compaction anchor is the same view, re-read live. A referee's prompt is its fenced review packet, the target and the referee constitution." `PLAN.md` §3.2 item 1: add "(the society anchor is the same lean view as its prompt)".
 - [ ] **Step 7: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_tools.py tests/test_society_simulation.py tests/test_swarm_coordination_gaps.py tests/test_joined_delegation.py tests/test_network_runtime.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_tools.py tests/test_society_simulation.py tests/test_swarm_coordination_gaps.py tests/test_joined_delegation.py tests/test_network_runtime.py -q`
 Expected: PASS, including `test_worker_legacy_prompt_unchanged`.
 
 - [ ] **Step 8: Commit**
@@ -1362,7 +1369,7 @@ async def test_society_worker_receives_compact_update_lines(lab):
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_relevance_routing.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_relevance_routing.py -q`
 Expected: FAIL (`COMPACT_HEADER` does not exist).
 
 - [ ] **Step 3: Claims and subscriptions** (`commons_discourse.py`)
@@ -1435,7 +1442,7 @@ def compact_update_lines(items):
 - [ ] **Step 8: Docs.** `docs/RESEARCH_NETWORK.md` Delivery and "Threads and digests": society deliveries are compact lines with 8-hex ids; never the reader's own posts; non-urgent platform statuses are not pushed; the goal takes no claims and nobody follows its thread (read it with `commons_read(node_id=<goal>)`, `before` pages older posts). PLAN.md §2.4 Delivery: same, and "the goal thread is a pull-only digest".
 - [ ] **Step 9: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_relevance_routing.py tests/test_research_discussion.py tests/test_commons_discourse.py tests/test_commons_review.py tests/test_network_runtime.py tests/test_society_tools.py tests/test_society_simulation.py tests/test_society_scaffolding.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_relevance_routing.py tests/test_research_discussion.py tests/test_commons_discourse.py tests/test_commons_review.py tests/test_network_runtime.py tests/test_society_tools.py tests/test_society_simulation.py tests/test_society_scaffolding.py -q`
 Expected: PASS, including `test_legacy_discussion_delivery_shape_unchanged`.
 
 - [ ] **Step 10: Commit**
@@ -1511,7 +1518,7 @@ def test_modules_are_unique_even_when_ids_share_eight_hex(lab, monkeypatch):
   Also (specified, same file): `test_verified_source_is_replaced_only_by_its_publisher_or_the_author` (a node with a Lean statement; a third branch from `service.create_branch` cannot replace beta's verified source; beta and the author alpha can); `test_publication_refused_when_the_statement_changed` (record carries the old digest → `reason == "statement_changed"`); `test_import_edges_are_depends_on_and_skip_cycles` (`imports` naming another node adds a `depends_on` edge; a cycle is skipped, not raised); `test_query_matches_lean_name_and_filters_by_source` (`query_nodes(text=<lean_name>)` finds it; `source="complete"` / `"stub"` / `"none"` filter).
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_commons_sources.py tests/test_society_tools.py -q -k "publish or module or rank or complete"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_commons_sources.py tests/test_society_tools.py -q -k "publish or module or rank or complete"`
 Expected: FAIL (no `lean_module`, no `record_lean_source`).
 
 - [ ] **Step 3: Modules** (`commons.py`). `_node_payload` adds `"lean_module": fields.get("lean_module")` and `"lean_source": None`. In `create_node` choose `node_id = new_id()` first and insert with `record_id=node_id` and `lean_module=self._new_module(session, experiment, node_id)`:
@@ -1582,7 +1589,7 @@ def _source_rank(node, result, verdict):
 - [ ] **Step 7: Docs.** `docs/RESEARCH_NETWORK.md`, new "Lemma store" bullet: a clean `lean_check` with `node_id` publishes the file as the node's module `Commons.N<8 hex>`, ranked `verified` (the statement check passed with standard axioms), `complete` (no `sorry`, the check could not judge) or `partial`; higher ranks replace lower ones, a verified source only by its publisher or the author; publishing claims the node; imports become `depends_on` edges.
 - [ ] **Step 8: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_commons_sources.py tests/test_society_tools.py tests/test_statement_check.py tests/test_commons.py tests/test_commons_review.py tests/test_society_simulation.py tests/test_id_prefixes.py tests/test_memory.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_commons_sources.py tests/test_society_tools.py tests/test_statement_check.py tests/test_commons.py tests/test_commons_review.py tests/test_society_simulation.py tests/test_id_prefixes.py tests/test_memory.py -q`
 Expected: PASS.
 
 - [ ] **Step 9: Commit**
@@ -1669,7 +1676,7 @@ def test_cycles_exit_unbalanced_scopes_stubs_and_size_are_handled():
   `tests/test_society_tools.py` (specified; build them on Task 9's test): `test_peer_import_expands_and_records_a_depends_on_edge` — alpha publishes `trace_add` on node L; beta's `lean_check` of `f"import {module}\n\ntheorem uses : (1 : Nat) + 1 = 2 := trace_add\n"` with `node_id` M: `workspace.lean.sources[-1]` contains `theorem trace_add` and no `import Commons`; `checked["commons"] == {"modules": [module], "closure_complete": True, "stubs": []}`; `read_node(M)["edges_out"]` has `depends_on` L. `test_submit_with_commons_imports_verifies_one_flattened_artifact` — a `FakeWorkspace` subclass whose `read` returns `{"text": text}` and whose `store_workspace_artifact(arguments, operation_id, agent)` creates a real `lean_source` artifact through the service; the result's `expanded_artifact_id` artifact has `provenance["commons"][0]["module"] == module` and a queued receipt exists for it. `test_submit_refuses_an_incomplete_closure` — importing a stub gives `COMMONS_CLOSURE_INCOMPLETE` listing it.
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_commons_sources.py tests/test_society_tools.py -q -k "inline or hoisted or sectioned or cycles or unchanged or peer_import or flattened or incomplete_closure"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_commons_sources.py tests/test_society_tools.py -q -k "inline or hoisted or sectioned or cycles or unchanged or peer_import or flattened or incomplete_closure"`
 Expected: FAIL (`inline_commons` does not exist).
 
 - [ ] **Step 3: The inliner** (`commons_sources.py`; imports `re`, `dataclass`, `lean_code`):
@@ -1767,7 +1774,7 @@ def inline_commons(source, resolve, *, max_bytes):
 - [ ] **Step 6: Docs.** Lemma store bullet: imports, stubs, the flattened submission (the verifier still checks one `Solution.lean`; its provenance lists the inlined modules). `docs/FORMAL_ENVIRONMENT.md`: one sentence that a society submission importing commons modules is flattened by the platform before verification.
 - [ ] **Step 7: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_commons_sources.py tests/test_society_tools.py tests/test_society_simulation.py tests/test_statement_check.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_commons_sources.py tests/test_society_tools.py tests/test_society_simulation.py tests/test_statement_check.py -q`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
@@ -1839,7 +1846,7 @@ async def test_commons_fetch_writes_modules_and_a_flat_file(lab):
 
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_metrics.py tests/test_society_tools.py -q -k "provenance or commons_fetch"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_metrics.py tests/test_society_tools.py -q -k "provenance or commons_fetch"`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
@@ -1857,7 +1864,7 @@ Expected: FAIL.
 - [ ] **Step 4: Docs.** `RUN_PLAN.md` §7 "Citation and reuse rate" row adds the new metric names. `docs/RESEARCH_NETWORK.md`: `commons_fetch` in the tool table's Commons row; the workspace-privacy sentence in the Lemma store bullet.
 - [ ] **Step 5: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_metrics.py tests/test_society_tools.py tests/test_society_scaffolding.py tests/test_society_simulation.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_metrics.py tests/test_society_tools.py tests/test_society_scaffolding.py tests/test_society_simulation.py -q`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -1938,7 +1945,7 @@ def test_a_verified_proof_accepts_the_nodes_it_imports(lab):
   Also (specified): `test_set_lean_statement_never_moves_status_and_reports_dependents` (a node another node imports: `dependents == 1`, status unchanged); `test_only_the_author_changes_a_statement_with_a_verified_source` (a claimant gets `NODE_AUTHORITY`); `test_rests_on_counts_sources` (replaces `tests/test_commons.py::test_rests_on_counts_dependency_statuses`: counts keyed `verified`/`complete`/`partial`/`stub`/`none`, `conditional` true while any dependency is below `complete`); `test_forged_artifact_provenance_does_not_accept_unused_nodes` (security, F8: build the accepted-proof scenario as in `test_a_verified_proof_accepts_the_nodes_it_imported`, but create the `flat` artifact with a forged `provenance={"commons": commons}` naming `used["id"]` with its real, matching `lean_source.sha256` — and call `service.verify_candidate(exp["id"], flat["id"], False, beta, "verify-flat")` directly, with no `commons_modules`, exactly as `api.py`'s verify endpoint would; after `process_verification` accepts the goal, `used["id"]`'s status stays `open` — the forged, caller-writable `provenance.commons` is never read for acceptance, only a receipt's own `commons_modules`).
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_commons_review.py -q -k "legacy_statuses or moves_nothing or accepts_the_nodes"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_commons_review.py -q -k "legacy_statuses or moves_nothing or accepts_the_nodes"`
 Expected: FAIL.
 
 - [ ] **Step 3: Statuses** (`commons_models.py`):
@@ -1965,7 +1972,7 @@ def public_status(status):
 - [ ] **Step 8: Docs.** RESEARCH_NETWORK: "Status" bullet — nodes are `open` until the author abandons them or the platform accepts or refutes them; a node inside an independently verified proof becomes `accepted`; S1's ladder values read as open. Referees bullet: plan reviews only, `REVIEW_UNNEEDED` for compiled nodes, verdicts recorded and negative ones posted as objections, panel bound unchanged, no fidelity reviews or vetoes. PLAN.md §2.2 and §5.2 say the same (the verifier is the only arbiter; referees check plans); §3.1 norm 7 and §3.7 playbook as in Step 6. IMPLEMENTATION_STATUS and FORMAL_ENVIRONMENT: "`compiles_locally`" → "a `verified` source rank".
 - [ ] **Step 9: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_commons_review.py tests/test_commons.py tests/test_commons_discourse.py tests/test_society_tools.py tests/test_statement_check.py tests/test_society_scaffolding.py tests/test_society_simulation.py tests/test_society_metrics.py tests/test_commons_postgresql.py tests/test_commons_sources.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_commons_review.py tests/test_commons.py tests/test_commons_discourse.py tests/test_society_tools.py tests/test_statement_check.py tests/test_society_scaffolding.py tests/test_society_simulation.py tests/test_society_metrics.py tests/test_commons_postgresql.py tests/test_commons_sources.py -q`
 Expected: PASS; `nodes_by_status` in metrics still reports raw stored values.
 
 - [ ] **Step 10: Commit**
@@ -2033,7 +2040,7 @@ def test_index_ranks_names_suggests_and_reads_bounded(tmp_path):
   `tests/test_society_tools.py`: `test_catalog_has_find_declaration_and_no_retired_tools` — `widest()` and `referee_catalog()` contain `find_declaration` and none of `RETIRED_SOCIETY_TOOLS`; a dispatched `find_declaration` call reaches a `FakeWorkspace.find_declaration` (add it: record the call, return `{"rows": [], "exact": False}`). Update `REFEREE_TOOLS` (drop `search_library`, `read_source`, `inbox`, `load_skill`; add `find_declaration` after `lean_check`). `tests/test_society_scaffolding.py`: `test_scaffolding_policy_names_removed_fields` gains `"skills"`.
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_declaration_index.py tests/test_society_tools.py tests/test_society_scaffolding.py -q -k "index or find_declaration or removed_fields"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_declaration_index.py tests/test_society_tools.py tests/test_society_scaffolding.py -q -k "index or find_declaration or removed_fields"`
 Expected: FAIL (no script, no tool).
 
 - [ ] **Step 3: The guest script.** CLI `query --index P --root D [--root D] --mode name|type -- QUERY` and `read --root D [--root D] PATH LINE`; prints one JSON object.
@@ -2069,7 +2076,7 @@ Expected: FAIL (no script, no tool).
 - [ ] **Step 8: Docs.** PLAN.md §3.3 table: Lean `lean_check`; Library `find_declaration`; drop `inbox`, `lean_sketch`, `load_skill`; §3.7: "Technique skills were removed after S1 (never loaded)." RESEARCH_NETWORK tool table likewise.
 - [ ] **Step 9: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_declaration_index.py tests/test_society_tools.py tests/test_society_scaffolding.py tests/test_society_metrics.py tests/test_statement_check.py tests/test_society_simulation.py tests/test_run_control.py tests/test_execution_claude.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_declaration_index.py tests/test_society_tools.py tests/test_society_scaffolding.py tests/test_society_metrics.py tests/test_statement_check.py tests/test_society_simulation.py tests/test_run_control.py tests/test_execution_claude.py -q`
 Expected: PASS.
 
 - [ ] **Step 10: Commit**
@@ -2134,7 +2141,7 @@ async def test_skeleton_publication_creates_linked_stub_nodes(lab):
   Also (specified): `test_a_stub_that_needs_a_skeleton_definition_is_not_created` (`FakeLean(elaborates=lambda h, n, s: n != "step_two")`: `step_two` reported `{"created": False, "reason": "stub_needs_definition_node"}` and stays in the skeleton text); `test_filling_a_stub_with_another_signature_is_not_published` (`lean_check` on the stub node with a source declaring `theorem step_one : (1 : Nat) + 1 = 3 := …` → `published["reason"] == "statement_not_found"`).
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_tools.py -q -k "spans or skeleton or stub"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_tools.py -q -k "spans or skeleton or stub"`
 Expected: FAIL.
 
 - [ ] **Step 3: Spans** (`lean_session.py`):
@@ -2175,7 +2182,7 @@ def declaration_spans(source: str) -> list[tuple[str, str, int, int]] | None:
 - [ ] **Step 5: Prompt and docs.** `_playbook` steps "Sketch the Lean proof with holes." / "Fill the holes." become "Optionally publish a Lean skeleton whose sorry lemmas become stub nodes (lean_check with stubs=true)." / "Fill stubs by publishing their sources; submit the skeleton once none remain." (update the copy in `tests/test_society_scaffolding.py`). RESEARCH_NETWORK: "A skeleton is any node whose published source imports stub nodes; `lean_check(stubs=true)` creates them. It is optional." PLAN.md §3.7 sketch-then-fill and §5.3: the same, replacing `lean_sketch` holes.
 - [ ] **Step 6: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_tools.py tests/test_lean_session.py tests/test_society_scaffolding.py tests/test_commons_sources.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_tools.py tests/test_lean_session.py tests/test_society_scaffolding.py tests/test_commons_sources.py -q`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -2226,7 +2233,7 @@ async def test_until_proved_needs_an_elaborated_focus_statement(lab):
   Also (specified): `test_joined_recruit_ends_after_return_result` — `society_runner` with a route that answers the root (objective "Root") with a `recruit` call, then a final message, and the recruit (objective starting "Look up") with `return_result` at phase 0; the recruit makes exactly one provider request, its task is `completed`, and the root's joined handoff proceeds; `test_scoped_recruit_completes_once_its_node_has_a_complete_source` — a recruit with `until_proved` whose phase 0 is `lean_check(node_id=<scope>)` of `PROOF`: no second recruit request, task `completed`, and a recorded `return_result` naming the published artifact; `test_boundary_hook_completion_reasons` in `tests/test_network_runtime.py` next to `:59` — `ResponsesRuntime._maybe_handoff` accepts each `COMPLETION_REASONS` member and rejects `{"complete_reason": "other"}` with `INVALID_CONTINUATION`.
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_tools.py tests/test_network_runtime.py -q -k "scope or until_proved or return_result or completion_reasons"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_tools.py tests/test_network_runtime.py -q -k "scope or until_proved or return_result or completion_reasons"`
 Expected: FAIL.
 
 - [ ] **Step 3: Objective and tool.** `HATS["librarian"] = "look up library names, signatures and duplicates for this brief, then return"`. `_recruit_objective(brief, focus, hat, *, detached, scope=None)` appends, after the hat line:
@@ -2250,7 +2257,7 @@ SCOPE_DETACHED = (
 - [ ] **Step 6: Docs.** RESEARCH_NETWORK Recruits bullet: the scope paragraph, `until_proved`, and "a joined recruit's session ends after `return_result`". PLAN.md §3.4 librarian: "library names, signatures and duplicates for one brief, then return".
 - [ ] **Step 7: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_tools.py tests/test_network_runtime.py tests/test_joined_delegation.py tests/test_society_messages.py tests/test_society_scaffolding.py tests/test_society_simulation.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_tools.py tests/test_network_runtime.py tests/test_joined_delegation.py tests/test_society_messages.py tests/test_society_scaffolding.py tests/test_society_simulation.py -q`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
@@ -2332,7 +2339,7 @@ def test_min_sleep_debounces_and_the_deadline_wakes(lab):
   Also (specified): `test_wait_tool_parks_on_events_and_shows_the_long_pole` (tool call `wait(for="events", ids=[<node id8>])` returns `long_pole` and records intent reason `wait_for_events`); `test_frontier_reports_the_long_pole_and_a_hint` (`tests/test_commons.py`: without goal edges `long_pole` is the most-waited-on open node, or empty with `long_pole_hint`); `test_legacy_peer_wait_tickets_still_wake` (a ticket without `kind` keeps today's reasons; the existing `tests/test_swarm_coordination_gaps.py` tests cover it — run them).
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_event_waits.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_event_waits.py -q`
 Expected: FAIL (`request_event_wait` does not exist).
 
 - [ ] **Step 3: Long pole** (`commons.py`, static, beside `_frontier`): open non-goal nodes on the goal's `depends_on` closure that depend on no other open node, oldest `created_at` first; when there are none, the open nodes with the most open dependents, requiring at least one open dependent (ties all kept); when no open node has any open dependent either, `([], "Link depends_on edges from the goal to its parts to show its long pole.")` — the static hint, never every open node (a maximum of zero ties them all). `open_minutes` from `created_at`; `claimants` from live claim rows (`{"branch_id", "route": payload.get("route")}`). `query_nodes(frontier=True)` returns `long_pole` (and `long_pole_hint` when set). The prompt (Task 7's `society_prompt_view`) and the compaction anchor read this same `query_nodes(frontier=True)["long_pole"]` computation, so they cannot diverge.
@@ -2341,7 +2348,7 @@ Expected: FAIL (`request_event_wait` does not exist).
 - [ ] **Step 6: Docs.** RESEARCH_NETWORK Waiting bullet (the conditions, the 20 s minimum sleep, the long pole in the wait result and the frontier). PLAN.md §3.1: "wait, which releases its worker slot until a relevant event (a routed post or message, a watched node or branch, a long-pole change) or a timeout".
 - [ ] **Step 7: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_event_waits.py tests/test_commons.py tests/test_swarm_coordination_gaps.py tests/test_society_tools.py tests/test_society_scaffolding.py tests/test_research_discussion.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_event_waits.py tests/test_commons.py tests/test_swarm_coordination_gaps.py tests/test_society_tools.py tests/test_society_scaffolding.py tests/test_research_discussion.py -q`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
@@ -2397,7 +2404,7 @@ async def test_a_society_wait_resumes_natively_with_a_wake_note(lab):
   Also (specified): `test_runner_skips_wait_checks_while_the_event_head_is_unchanged` (monkeypatch `service.peer_wait_status` with a counter; a root parked with `timeout_seconds=2` and no events is checked at most 3 times, not every 0.25 s loop); `test_an_all_parked_society_stops_idle` (monkeypatch `continuation.EVENT_WAIT_MIN_SLEEP_SECONDS` to `0` or `1` so a ticket's minimum sleep cannot race the manifest timeout; build a `TeamRunManifest` directly, with `task_ids` listing both roots — not `run_manifest`, whose `task_ids=[root_task["id"]]` cannot take a second root — and a `timeout_seconds` well above the patched minimum sleep; two roots each wait for events with `timeout_seconds=3600`; the report's `stop_reason == "SOCIETY_IDLE"` within the manifest timeout and both tasks stay non-terminal); `test_legacy_waits_still_resume_portably` (a legacy `wait_for_peer` continuation stays `portable`; `tests/test_swarm_coordination_gaps.py::test_waiting_peer_releases_capacity_and_resumes_on_reply` passes unchanged).
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_event_waits.py -q -k "natively or head or idle"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_event_waits.py -q -k "natively or head or idle"`
 Expected: FAIL (the resumed request restarts from a fresh prompt).
 
 - [ ] **Step 3: Native wake.** Keep the executor pre-check's `peer_status` in a local `wake_status` (`None` when no check ran). `native_compatible` accepts `ready["reason"] == "joined_children" or (society and ready["reason"] in WAIT_REASONS)`, with the existing model, limits, tool-digest and workspace checks. When `native_compatible and society and ready["reason"] in WAIT_REASONS`, pass `canonical_json(wake)` instead of `prompt` to `start_from_handoff`, where `wake = {"type": "wake", "reason": (wake_status or {}).get("reason") or ready["reason"]}`, plus `children = self.service.delegated_task_statuses(task_id, ready["wait_task_ids"], agent)` when it waited on tasks and `long_pole = query_nodes(..., frontier=True, limit=1).get("long_pole")` when non-empty. (`start_from_handoff` keeps the original anchor, so compaction is unaffected.) The routed posts arrive at the next boundary through Task 8's compact lines.
@@ -2405,7 +2412,7 @@ Expected: FAIL (the resumed request restarts from a fresh prompt).
 - [ ] **Step 5: Docs.** `docs/EXECUTION.md`: "In a society, a wait (`wait_for_events`, `wait_for_tasks`) resumes natively: the transcript is kept and a short wake note (reason, children, long pole) is appended. Other continuations are unchanged." RESEARCH_NETWORK Waiting bullet: wake checks run only when new events exist; a run whose agents all wait with nothing admissible stops with `SOCIETY_IDLE`.
 - [ ] **Step 6: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_event_waits.py tests/test_swarm_coordination_gaps.py tests/test_joined_delegation.py tests/test_controller_continuation.py tests/test_society_tools.py tests/test_network_runtime.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_event_waits.py tests/test_swarm_coordination_gaps.py tests/test_joined_delegation.py tests/test_controller_continuation.py tests/test_society_tools.py tests/test_network_runtime.py -q`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -2468,7 +2475,7 @@ def test_society_admission_is_by_dollars_and_caps_ignore_referees(lab):
   Also (specified): `test_runner_reserves_referee_slots` (`society_lab(lab, concurrency=3, referee_slots=1)` — the database must allow three concurrent tasks before the runner's own pool split does; monkeypatch `continuation.EVENT_WAIT_MIN_SLEEP_SECONDS` to `0` or `1` and build a `TeamRunManifest` directly with `max_concurrency=3` and `task_ids` listing all three roots — not `run_manifest`, whose `task_ids=[root_task["id"]]` cannot take more than one root — with one requested referee: at most two research tasks run at once, and the referee starts while two roots run — record start order in the route); `test_referee_slots_zero_or_concurrency_one_keep_the_shared_pool` (the existing `run_manifest` with concurrency 1 behaves as before); `test_runner_task_limit_ignores_referee_attempts` (`max_tasks=1` still runs the root's referee); `test_configure_workforce_accepts_only_a_floor` (the API model validates without caps; the MCP tool body omits `admission_floor_usd` when unset).
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_admission.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_admission.py -q`
 Expected: FAIL (caps are required; no floor).
 
 - [ ] **Step 3: Admission** (`workforce.py`):
@@ -2501,7 +2508,7 @@ def _usd(units):
 - [ ] **Step 5: Docs.** RESEARCH_NETWORK: society admission is by dollars (`admission_floor_usd`; no floor by default — `None` reads as `0`, so only an operator who sets a floor gets an early "budget, not input" `ADMISSION_BUDGET` refusal on top of the ledger's own hard stop at `max_cost`); count caps are an optional operator guard that ignores referees; referees run in `referee_slots` of `max_concurrency`. RUN_PLAN.md: mark the `max_total_tasks = 1 + referee allowance` arithmetic "S1 only". `run-plan.example.json`: add `"referee_slots": 2`. Rewrite `tests/test_commons_review.py::test_request_review_is_admitted_like_recruitment` to assert a referee is admitted past a full task cap and refused on an operator-set dollar floor.
 - [ ] **Step 6: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_society_admission.py tests/test_research_workforce.py tests/test_commons_review.py tests/test_society_tools.py tests/test_run_control.py tests/test_run_cli.py tests/test_research_budget_wait.py tests/test_network_postgres.py tests/test_society_simulation.py tests/test_joined_delegation.py tests/test_event_waits.py tests/test_swarm_coordination_gaps.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_society_admission.py tests/test_research_workforce.py tests/test_commons_review.py tests/test_society_tools.py tests/test_run_control.py tests/test_run_cli.py tests/test_research_budget_wait.py tests/test_network_postgres.py tests/test_society_simulation.py tests/test_joined_delegation.py tests/test_event_waits.py tests/test_swarm_coordination_gaps.py -q`
 Expected: PASS. Run the whole society suite here, not a subset: with no default admission floor, this is where a stale assumption of an implicit floor would show up.
 
 - [ ] **Step 7: Commit**
@@ -2559,7 +2566,7 @@ def test_distinct_routes_keep_the_frontier_score(lab):
   Also (specified): `test_a_compiled_route_is_urgent_for_other_claimants_only` (beta claims alpha's node with route "B"; alpha publishes a `complete` source through `record_lean_source`; beta's `discussion_updates` has an urgent item whose excerpt contains "compiled by" and "consider stopping your route"; alpha gets none); `test_time_box_is_bounded` (`time_box_minutes=4` or `241` → `INVALID_CLAIM`, 422; a route over 200 characters likewise).
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_commons_discourse.py -q -k "route or time_box or compiled"`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_commons_discourse.py -q -k "route or time_box or compiled"`
 Expected: FAIL.
 
 - [ ] **Step 3: Implement**
@@ -2571,7 +2578,7 @@ Expected: FAIL.
 - [ ] **Step 4: Docs.** PLAN.md §2.3: routes and time boxes; the frontier rewards distinct routes; the kill note. §4.4: "Declared alternative routes at genuine choice points, with time boxes and the compile note, replace labs as the diversity mechanism." RESEARCH_NETWORK Claims bullet likewise.
 - [ ] **Step 5: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_commons_discourse.py tests/test_commons_sources.py tests/test_relevance_routing.py tests/test_event_waits.py tests/test_society_tools.py tests/test_society_scaffolding.py tests/test_commons_postgresql.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_commons_discourse.py tests/test_commons_sources.py tests/test_relevance_routing.py tests/test_event_waits.py tests/test_society_tools.py tests/test_society_scaffolding.py tests/test_commons_postgresql.py -q`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -2638,7 +2645,7 @@ def test_the_checked_in_seed_covers_the_s1_audit_findings():
   `tests/test_infrastructure.py`: add `"library_notes"` to the table set of `test_migration_creates_real_schema_and_can_revert` and `assert "CREATE TABLE library_notes" in sql` to `test_postgresql_offline_migration_generates_real_sql` (the frozen-contract test then compares columns and index DDL automatically). `tests/test_commons_postgresql.py`: `test_library_notes_on_the_backend(backend_lab)` appends, re-appends with the same key, and reads with a query on SQLite and, when `PHYSHARNESS_TEST_DATABASE_URL` is set, PostgreSQL. `tests/test_society_tools.py` (specified): a non-exact `find_declaration` (`FakeWorkspace.find_declaration` returning `{"rows": [], "exact": False}`) after an appended note about `Matrix.dotProduct` returns that note under `library_notes`; the constitution holds exactly one line starting "Library notes:" and no note text.
 - [ ] **Step 2: Run them to verify they fail**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_library_notes.py tests/test_infrastructure.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_library_notes.py tests/test_infrastructure.py -q`
 Expected: FAIL (no table, no mixin).
 
 - [ ] **Step 3: Table and migration.** `storage.py`:
@@ -2713,7 +2720,7 @@ def downgrade():
 - [ ] **Step 7: Docs.** RESEARCH_NETWORK: a Library notes bullet (scope: project and environment digest; 2,000 characters; 200 per pin; seeded from the S1 audit; surfaced by `find_declaration`). PLAN.md §3.2: "4. **Library notes.** Shared, per Mathlib pin, across a project's experiments." RUN_PLAN §7 `other` list: add `library_notes`.
 - [ ] **Step 8: Run the tests**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_library_notes.py tests/test_infrastructure.py tests/test_commons_postgresql.py tests/test_society_tools.py tests/test_society_metrics.py tests/test_society_scaffolding.py -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest tests/test_library_notes.py tests/test_infrastructure.py tests/test_commons_postgresql.py tests/test_society_tools.py tests/test_society_metrics.py tests/test_society_scaffolding.py -q`
 Expected: PASS (PostgreSQL cases skip without `PHYSHARNESS_TEST_DATABASE_URL`).
 
 - [ ] **Step 9: Commit**
@@ -2740,12 +2747,12 @@ git -c user.name=Kieran -c user.email=88352982+zubadestroyer1@users.noreply.gith
 - [ ] **Step 3: Scrub.** `git diff main --name-only | xargs grep -n -e "/Users/" -e "$(whoami)" || true` must print nothing (no absolute home paths, no local username).
 - [ ] **Step 4: Full suite**
 
-Run: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest -q`
+Run: `PYTHONPATH=src .venv/bin/python -m pytest -q`
 Expected: PASS (opt-in real-image, real-Lean and PostgreSQL tests skip without their environment variables).
 
 - [ ] **Step 5: Ruff**
 
-Run: `../pr27-qualification/.venv/bin/python -m ruff check src tests tools infra migrations && ../pr27-qualification/.venv/bin/python -m ruff format --check src tests tools infra migrations`
+Run: `.venv/bin/python -m ruff check src tests tools infra migrations && .venv/bin/python -m ruff format --check src tests tools infra migrations`
 Expected: no findings. (Fix with `ruff format src tests tools infra migrations` and re-run the suite if it changed anything.)
 
 - [ ] **Step 6: Commit**
@@ -2755,7 +2762,7 @@ git add PLAN.md docs/RESEARCH_NETWORK.md docs/IMPLEMENTATION_STATUS.md src/physh
 git -c user.name=Kieran -c user.email=88352982+zubadestroyer1@users.noreply.github.com commit -m "docs: bring the plan and research-network docs in line with the remediated society" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 7: PR notes (for the society PR body; not a committed file).** List the G6 next steps (#25 harder target; the paid A/B run, which needs a budget; #12d olean imports; warm-REPL reuse; the org TPM limit). List what the A/B must measure against S-r2: first-two-minute division of labour (the goal broadcast is gone), post-contribution spend, wake counts and reasons, messages refused by the rate limit, parallel routes opened at the long pole, recruit lifetime, cross-branch imports in the accepted proof. Note that the audit extractor (`../s1-audit/…/scripts/extract.py`, `scaffold/composition.py`) must learn the compact update lines and the new prompt keys before comparing arms.
+- [ ] **Step 7: PR notes (for the society PR body; not a committed file).** List the G6 next steps (#25 harder target; the paid A/B run, which needs a budget; #12d olean imports; warm-REPL reuse; the org TPM limit). List what the A/B must measure against S-r2: first-two-minute division of labour (the goal broadcast is gone), post-contribution spend, wake counts and reasons, messages refused by the rate limit, parallel routes opened at the long pole, recruit lifetime, cross-branch imports in the accepted proof. Note that the audit extractor (`work/society-s1/audit-2026-09-26/scripts/extract.py`, `scripts/scaffold/composition.py`) must learn the compact update lines and the new prompt keys before comparing arms.
 
 ---
 
