@@ -21,6 +21,7 @@ from .commons_models import (
     STATUSES,
     NodeCreate,
 )
+from .commons_sources import SOURCE_STATES, node_module, source_state
 from .domain import Principal, digest_json, new_id, utcnow
 from .errors import HarnessError
 from .knowledge.index import tokens
@@ -162,6 +163,8 @@ class CommonsMixin:
             "lean_statement_sha256": _lean_digest(header, name, statement),
             "lean_elaborated": False,
             "lean_writer": fields.get("lean_writer"),
+            "lean_module": fields.get("lean_module"),
+            "lean_source": None,
             "status": fields["status"],
             "status_reason": fields["status_reason"],
             "status_evidence": dict(fields.get("status_evidence") or {}),
@@ -296,6 +299,28 @@ class CommonsMixin:
                 "EVIDENCE_SCOPE", "A referenced artifact is private or outside the experiment."
             )
 
+    def _new_module(self, session, experiment, node_id):
+        """`Commons.N` + 8 hex of the id, lengthened to 12 or 16 when an experiment node
+        already holds that name (S1 audit #12; 8 hex collide at ~0.3% for 5,000 nodes)."""
+        hexid = node_id.replace("-", "")
+        for width in (8, 12, 16):
+            module = "Commons.N" + hexid[:width]
+            taken = (
+                select(RecordRow.id)
+                .where(
+                    RecordRow.project_id == experiment.project_id,
+                    RecordRow.kind == "commons_node",
+                    record_json_text("experiment_id") == experiment.id,
+                    RecordRow.id.startswith(node_id[:8])
+                    if width == 8
+                    else record_json_text("lean_module") == module,
+                )
+                .limit(1)
+            )
+            if session.scalar(taken) is None:
+                return module
+        raise HarnessError("COMMONS_MODULE_COLLISION", "No unique module name for this node.")
+
     def create_node(self, experiment_id, request: NodeCreate, actor, key):
         self._research_role(actor)
         if request.node_type == "goal":
@@ -314,6 +339,7 @@ class CommonsMixin:
                 self._node_evidence(session, identifier, experiment, actor)
             # The node belongs to its author branch's lab (None for lab-less authors).
             author = session.get(RecordRow, actor.branch_id) if actor.branch_id else None
+            node_id = new_id()  # The module name derives from the id.
             record = self._insert(
                 session,
                 "commons_node",
@@ -325,10 +351,12 @@ class CommonsMixin:
                         status="informal",
                         status_reason="proposed",
                         lean_writer=_writer(actor) if request.lean_statement else None,
+                        lean_module=self._new_module(session, experiment, node_id),
                     ),
                     "branch_id": actor.branch_id,
                     "lab": author.payload.get("lab") if author is not None else None,
                 },
+                record_id=node_id,
             )
             self._event(
                 session,
@@ -340,6 +368,7 @@ class CommonsMixin:
                     "experiment_id": experiment_id,
                     "node_id": record["id"],
                     "node_type": request.node_type,
+                    "branch_id": actor.branch_id,
                 },
             )
             record = self._open_node_thread(session, op, experiment, record, actor)
@@ -634,6 +663,8 @@ class CommonsMixin:
             for key in ("id", "node_type", "title", "status", "lab", "lean_name", "citation_count")
         }
         item["statement"] = node["statement"][:300]
+        item["module"] = node_module(node)
+        item["source"] = source_state(node)
         if node.get("status_derived"):
             item["status_derived"] = True
         return item
@@ -685,6 +716,7 @@ class CommonsMixin:
         frontier=False,
         after=None,
         limit=20,
+        source=None,
     ):
         self._research_role(actor)
         if type(limit) is not int or not 1 <= limit <= MAX_PAGE:
@@ -694,11 +726,14 @@ class CommonsMixin:
         if (
             (status is not None and status not in STATUSES)
             or (node_type is not None and node_type not in NODE_TYPES)
+            or (source is not None and source not in SOURCE_STATES)
             or (text is not None and (not isinstance(text, str) or len(text) > MAX_QUERY_TEXT))
             or (after is not None and not isinstance(after, str))
         ):
             raise HarnessError(
-                "INVALID_QUERY", "Use a known status and node type and bounded text.", status=422
+                "INVALID_QUERY",
+                "Use a known status, node type and source and bounded text.",
+                status=422,
             )
         if frontier and after is not None:
             raise HarnessError(
@@ -720,9 +755,20 @@ class CommonsMixin:
                 return False
             if node_type is not None and node["node_type"] != node_type:
                 return False
+            if source is not None and source_state(node) != source:
+                return False
             if wanted is None:
                 return True
-            corpus = f"{node['title']} {node['statement']} {node.get('lean_statement') or ''}"
+            corpus = " ".join(
+                (
+                    node["title"],
+                    node["statement"],
+                    node.get("lean_statement") or "",
+                    node.get("lean_name") or "",
+                    # Without "Commons.", which every module shares and would match any node.
+                    node_module(node).removeprefix("Commons."),
+                )
+            )
             return bool(wanted & tokens(corpus))
 
         selected = [node for node in nodes if matches(node)]

@@ -3,9 +3,11 @@
 import json
 
 import pytest
+from commons_helpers import society_lab
 from test_research_services import accepted_fixture
 from test_sharing import approaches, artifact
 
+from physharness.commons_models import NodeCreate
 from physharness.domain import ArtifactCreate, Principal, TaskCreate
 from physharness.errors import HarnessError
 from physharness.memory import HISTORY_KINDS, PortableMemory
@@ -415,3 +417,40 @@ def test_checkpoint_does_not_issue_after_artifact_upload_outlives_task_lease(lab
     assert not [
         a for a in service.list_records("artifact", broker.actor) if a.get("context_format")
     ]
+
+
+def test_working_context_skips_node_modules_for_the_active_source_candidate(lab):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="L", statement="L."), alpha, "node"
+    )
+    candidate = service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="lean_source", content="candidate"),
+        alpha,
+        "candidate",
+    )
+    # The newer lean_source is the node's module (a lemma), not the branch's candidate.
+    module = service.create_artifact(
+        ArtifactCreate(
+            experiment_id=exp["id"],
+            kind="lean_source",
+            content="lemma",
+            provenance={"node_id": node["id"], "module": node["lean_module"]},
+        ),
+        alpha,
+        "module",
+    )
+    record = {
+        "rank": "complete",
+        "bytes": 5,
+        "statement_check": None,
+        "lean_statement_sha256": None,
+        "imports": [],
+    }
+    assert service.record_lean_source(node["id"], module["id"], record, alpha, "publish")[
+        "recorded"
+    ]
+    assert module["created_at"] > candidate["created_at"]
+    view = PortableMemory(service).working_context(alpha.branch_id, alpha, page_size=0)
+    active = view["readable_work"]["active_source"]
+    assert active["reference"]["id"] == candidate["id"] and active["content"] == "candidate"

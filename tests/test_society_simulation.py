@@ -361,7 +361,7 @@ async def simulate(society, export_directory):
     assert checked["local_compile"]["status_evidence"]["axioms"] == {
         LEMMA["lean_name"]: ["propext"]
     }
-    assert checked["claim_renewed"] is True
+    assert checked["claimed"] is True
     assert society.node(L)["status"] == "compiles_locally"
 
     # 8. A sketches the goal's proof with two holes: two linked lemma nodes appear.

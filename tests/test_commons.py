@@ -107,7 +107,12 @@ def test_create_node_attribution_and_event(lab):
     assert len(node["lean_statement_sha256"]) == 64
     created = events(service, beta, "commons.node_created")
     assert [e["payload"] for e in created] == [
-        {"experiment_id": exp["id"], "node_id": node["id"], "node_type": "lemma"}
+        {
+            "experiment_id": exp["id"],
+            "node_id": node["id"],
+            "node_type": "lemma",
+            "branch_id": alpha.branch_id,
+        }
     ]
     plain = service.create_node(exp["id"], lemma(title="Plain"), alpha, "plain")
     assert plain["lean_statement_sha256"] is None

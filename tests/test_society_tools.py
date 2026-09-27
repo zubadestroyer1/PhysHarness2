@@ -47,6 +47,9 @@ from physharness.orchestration.research_worker import (
 from physharness.orchestration.society_prompt import constitution, referee_constitution
 from physharness.orchestration.society_tools import (
     SOCIETY_TOOL_NAMES,
+    STATEMENT_REJECTIONS,
+    _publication_refusal,
+    _source_rank,
     society_tools,
     statement_found,
 )
@@ -224,10 +227,11 @@ class FakeLean:
         self.axioms = {"trace_add": ["propext"], "other": ["Classical.choice"]}
         self.checked_axioms, self.verdict = ["propext"], None
         self.elaborates = elaborates or (lambda header, name, signature: True)
-        self.calls = []
+        self.calls, self.sources = [], []
 
     async def check(self, source, *, automate, operation_id, timeout=120):
         self.calls.append(("check", automate))
+        self.sources.append(source)
         return {
             "backend": "repl",
             "ok": True,
@@ -1068,7 +1072,7 @@ async def test_lean_check_records_local_compile_for_node(lab, clock):
     }
     # The statement check judged the node's own statement, not the file's text.
     assert ("verify", *LEAN.values()) in workspace.lean.calls
-    assert checked["claim_renewed"] is True
+    assert checked["claimed"] is True
     claimants = service.read_node(node["id"], alpha)["claimants"]
     assert claimants[0]["expires_at"] == clock.now + 900
     plain = await call(tools, "lean_check", {"source": PROOF, "automate": True})
@@ -1084,7 +1088,148 @@ async def test_lean_check_records_local_compile_for_node(lab, clock):
         tools, "lean_check", {"source": PROOF, "node_id": second["id"], "automate": False}
     )
     assert partial["local_compile"] == {"recorded": False, "reason": "The compile was incomplete."}
-    assert partial["claim_renewed"] is False  # CLAIM_NOT_HELD is not an error here
+    # An incomplete check still publishes a partial module, and publishing claims the node.
+    assert partial["published"]["rank"] == "partial" and partial["claimed"] is True
+
+
+async def test_lean_check_publishes_a_verified_module_for_its_node(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    created = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **LEAN}
+    )
+    checked = await call(tools, "lean_check", {"source": PROOF, "node_id": created["id"]})
+    node = service.read_node(created["id"], agent)["node"]
+    assert node["lean_module"] == "Commons.N" + created["id"][:8]
+    assert checked["published"] == {
+        "recorded": True,
+        "module": node["lean_module"],
+        "rank": "verified",
+        "replaced": False,
+    }
+    assert checked["claimed"] is True
+    assert [c["branch_id"] for c in service.read_node(node["id"], agent)["claimants"]] == [
+        alpha.branch_id
+    ]
+    artifact = service.get_record("artifact", node["lean_source"]["artifact_id"], agent)
+    assert (
+        artifact["artifact_kind"] == "lean_source"
+        and artifact["sha256"] == node["lean_source"]["sha256"]
+    )
+    assert artifact["provenance"] == {"node_id": node["id"], "module": node["lean_module"]}
+    assert node["lean_source"]["statement_check"] == {
+        "ok": True,
+        "reason": None,
+        "axioms": ["propext"],
+    }
+    assert node["lean_source"]["task_id"] == context["task_id"]
+    assert node["lean_source"]["lean_statement_sha256"] == _lean_digest(*LEAN.values())
+    assert service.artifact_content(artifact["id"], agent) == PROOF.encode()
+
+
+async def test_without_a_working_checker_a_source_stops_at_complete(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace()
+    workspace.lean.verdict = {
+        "ok": False,
+        "reason": "statement_check_unavailable",
+        "axioms": None,
+        "detail": None,
+        "backend": "lean_statement_check",
+    }
+    tools = profile(service, agent, context, workspace=workspace)
+    created = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **LEAN}
+    )
+    checked = await call(tools, "lean_check", {"source": PROOF, "node_id": created["id"]})
+    assert checked["published"]["rank"] == "complete"
+    node = service.read_node(created["id"], agent)["node"]
+    assert node["lean_source"]["rank"] == "complete"
+    assert node["lean_source"]["statement_check"] == {
+        "ok": False,
+        "reason": "statement_check_unavailable",
+        "axioms": None,
+    }
+
+
+async def test_lean_check_publishes_only_what_the_statement_check_does_not_reject(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace()
+    tools = profile(service, agent, context, workspace=workspace)
+    created = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **LEAN}
+    )
+    module = "Commons.N" + created["id"][:8]
+    workspace.lean.verdict = {
+        "ok": False,
+        "reason": "statement_mismatch",
+        "axioms": None,
+        "detail": None,
+        "backend": "lean_statement_check",
+    }
+    rejected = await call(tools, "lean_check", {"source": PROOF, "node_id": created["id"]})
+    assert rejected["published"] == {
+        "recorded": False,
+        "module": module,
+        "reason": "statement_mismatch",
+    }
+    # The one statement check serves both the publication and the local compile.
+    assert rejected["local_compile"] == {"recorded": False, "reason": "statement_mismatch"}
+    assert [entry[0] for entry in workspace.lean.calls].count("verify") == 1
+    missing = await call(
+        tools,
+        "lean_check",
+        {"source": "import Mathlib\n\ntheorem x : True := trivial\n", "node_id": created["id"]},
+    )
+    assert missing["published"] == {
+        "recorded": False,
+        "module": module,
+        "reason": "statement_not_found",
+    }
+    exited = await call(
+        tools, "lean_check", {"source": PROOF + "#exit\n", "node_id": created["id"]}
+    )
+    assert exited["published"]["reason"] == "exit_command"
+    assert service.read_node(created["id"], agent)["node"]["lean_source"] is None
+    # A node without a Lean statement ranks by the file's own axiom report.
+    plain = await call(tools, "commons_node", lemma_args(title="Plain"))
+    workspace.lean.verdict = None
+    workspace.lean.axioms = {"x": ["propext"]}
+    clean = await call(tools, "lean_check", {"source": PROOF, "node_id": plain["id"]})
+    assert clean["published"]["rank"] == "complete"
+    assert clean["local_compile"] == {"recorded": False, "reason": "no_lean_statement"}
+    workspace.lean.axioms = {"x": ["sorryAx"]}
+    sorried = await call(tools, "lean_check", {"source": PROOF, "node_id": plain["id"]})
+    assert sorried["published"] == {
+        "recorded": False,
+        "module": "Commons.N" + plain["id"][:8],
+        "reason": "lower_rank",
+        "rank": "complete",
+    }
+
+
+def test_publication_refusals_and_source_ranks():
+    node, clean = {"node_type": "lemma", **LEAN}, {"ok": True, "complete": True}
+    clean["axioms"] = {"trace_add": ["propext"]}
+    assert _publication_refusal(PROOF, {"node_type": "goal"}, clean) == "goal_node"
+    assert _publication_refusal(PROOF, node, {**clean, "ok": False}) == "lean_errors"
+    assert _publication_refusal(PROOF, node, clean) is None
+    assert _source_rank(node, {**clean, "complete": False}, None) == "partial"
+    passed = {"ok": True, "reason": None, "axioms": ["propext"]}
+    assert _source_rank(node, clean, passed) == "verified"
+    assert _source_rank(node, clean, {**passed, "axioms": ["sorryAx"]}) == "partial"
+    for reason in STATEMENT_REJECTIONS:
+        assert _source_rank(node, clean, {"ok": False, "reason": reason, "axioms": None}) is None
+    # A check that could not judge leaves the file's own report for the node's theorem.
+    unjudged = {"ok": False, "reason": "statement_check_unavailable", "axioms": None}
+    assert _source_rank(node, clean, unjudged) == "complete"
+    assert _source_rank(node, {**clean, "axioms": {}}, unjudged) == "partial"
 
 
 async def test_lean_sketch_creates_linked_hole_nodes(lab):
@@ -2294,7 +2439,7 @@ async def test_referee_tools_stay_within_the_assignment(lab):
     )
     checked = await call(tools, "lean_check", {"source": PROOF})
     assert checked["complete"] is True and "local_compile" not in checked
-    assert "claim_renewed" not in checked
+    assert "claimed" not in checked and "published" not in checked
     objection = {"kind": "objection", "abstract": "Step 2 is unjustified.", "body": "Why."}
     posted = await call(tools, "commons_post", {"node_id": node["id"], **objection})
     assert posted["node_id"] == node["id"] and posted["kind"] == "objection"

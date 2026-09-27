@@ -28,6 +28,7 @@ from ..commons_models import (
     CLOSED_STATUSES,
     EDGE_RELATIONS,
     NODE_TYPES,
+    STANDARD_AXIOMS,
     STATUSES,
     NodeCreate,
     NodePostCreate,
@@ -39,7 +40,8 @@ from ..commons_review import (
     fence_author_data,
     is_referee_task,
 )
-from ..domain import Principal
+from ..commons_sources import SOURCE_STATES, node_module
+from ..domain import ArtifactCreate, Principal
 from ..errors import HarnessError
 from ..execution import ToolDispatcher
 from ..execution.e2b import FILE_LIMIT as E2B_FILE_BYTES
@@ -141,6 +143,8 @@ FOCUS_EXCERPT = 2000
 MAX_SKETCH_MESSAGES = 5
 MAX_TOOL_NAME = 100  # Of a model-supplied name echoed in a rejection.
 POST_KINDS = ("question", "finding", "objection", "attempt_failed", "synthesis", "update")
+# Statement-check verdicts that the file does not prove the node's statement: no publication.
+STATEMENT_REJECTIONS = frozenset({"statement_mismatch", "kernel_rejected", "theorem_missing"})
 NODE_ACTIONS = ("create", "link", "set_lean_statement", "abandon", "request_review")
 # Fields each commons_node action reads; any other field must stay at its default.
 ACTION_FIELDS = {
@@ -421,6 +425,39 @@ def _compile_refusal(source, node):
     return None
 
 
+def _publication_refusal(source, node, result):
+    """Why a checked file cannot be the node's module, or None (S1 audit #12)."""
+    if node.get("node_type") == "goal":
+        return "goal_node"
+    if not result["ok"]:
+        return "lean_errors"
+    if "#exit" in source:
+        return "exit_command"
+    name, statement = node.get("lean_name"), node.get("lean_statement")
+    if name and statement:
+        refusal = _compile_refusal(source, node)
+        if refusal is not None:
+            return refusal
+        if not statement_found(source, name, statement):
+            return "statement_not_found"
+    return None
+
+
+def _source_rank(node, result, verdict):
+    """verified, complete or partial; None when the statement check rejected the file.
+    Without a working checker (S1: it never ran) a source stops at complete."""
+    if not result["complete"]:
+        return "partial"
+    name, reported = node.get("lean_name"), result.get("axioms") or {}
+    if verdict is None:  # no Lean statement: the file's own axiom report is all there is
+        return "complete" if set().union(*reported.values()) <= STANDARD_AXIOMS else "partial"
+    if verdict.get("ok"):
+        return "verified" if axiom_refusal({name: verdict["axioms"]}, name) is None else "partial"
+    if verdict.get("reason") in STATEMENT_REJECTIONS:
+        return None
+    return "complete" if axiom_refusal(reported, name) is None else "partial"
+
+
 def _write_limit_bytes(workspace_tools):
     """The provider's per-file upload limit in bytes, when it has a smaller one."""
     broker = getattr(workspace_tools, "broker", None)
@@ -682,14 +719,73 @@ def society_tools(
             result = await lean().check(a["source"], automate=a["automate"], operation_id=k)
             if node is None:
                 return result
+            published, verdict = await publish(node, a["source"], result, k)
             return {
                 **result,
-                "local_compile": await local_compile(node, a["source"], result, k),
-                "claim_renewed": renew_claim(node["id"], k),
+                "published": published,
+                "local_compile": local_compile(node, a["source"], result, verdict, k),
+                "claimed": claim(node["id"], k),
             }
 
-        async def local_compile(node, source, result, key):
-            """Record a local compile only on the statement check's verdict.
+        async def publish(node, source, result, key):
+            """Publish a clean check as the node's ranked module; returns the publication and
+            the statement check's verdict (None when it did not run)."""
+            module = node_module(node)
+            refusal = _publication_refusal(source, node, result)
+            if refusal is not None:
+                return {"recorded": False, "module": module, "reason": refusal}, None
+            header, name, statement = (
+                node.get("lean_header"),
+                node.get("lean_name"),
+                node.get("lean_statement"),
+            )
+            verdict = None
+            if result["complete"] and name and statement:
+                try:
+                    verdict = await lean().verify_statement(
+                        source,
+                        header or "",
+                        name,
+                        statement,
+                        operation_id=f"{key}:statement-check",
+                    )
+                except HarnessError as error:
+                    if error.code in FATAL_TOOL_CODES:
+                        raise
+                    verdict = {"ok": False, "reason": error.code, "axioms": None}
+            rank = _source_rank(node, result, verdict)
+            if rank is None:
+                return {"recorded": False, "module": module, "reason": verdict["reason"]}, verdict
+            artifact = service.create_artifact(
+                ArtifactCreate(
+                    experiment_id=experiment_id,
+                    branch_id=agent.branch_id,
+                    kind="lean_source",
+                    content=source,
+                    provenance={"node_id": node["id"], "module": module},
+                ),
+                agent,
+                f"{key}:source",
+            )
+            record = {
+                "rank": rank,
+                "bytes": len(source.encode("utf-8")),
+                "statement_check": None
+                if verdict is None
+                else {field: verdict[field] for field in ("ok", "reason", "axioms")},
+                "lean_statement_sha256": _lean_digest(header, name, statement),
+                "imports": [],
+            }
+            published = _soft(
+                lambda: service.record_lean_source(
+                    node["id"], artifact["id"], record, agent, f"{key}:publish"
+                )
+            )
+            return published, verdict
+
+        def local_compile(node, source, result, verdict, key):
+            """Record a local compile only on the statement check's verdict (``publish`` runs
+            the check once for both).
 
             The check's answer, not the session's ``axioms`` (the file's own ``#print axioms``
             output, which the file can redefine), decides.
@@ -709,18 +805,8 @@ def society_tools(
                 }
             if not result["complete"]:
                 return {"recorded": False, "reason": "The compile was incomplete."}
-            try:
-                verdict = await lean().verify_statement(
-                    source,
-                    node.get("lean_header") or "",
-                    name,
-                    statement,
-                    operation_id=f"{key}:statement-check",
-                )
-            except HarnessError as error:
-                if error.code in FATAL_TOOL_CODES:
-                    raise
-                return {"recorded": False, "reason": error.code}
+            if verdict is None:
+                return {"recorded": False, "reason": "statement_check_not_run"}
             if not verdict["ok"]:
                 refused = {"recorded": False, "reason": verdict["reason"]}
                 if verdict.get("detail"):
@@ -743,13 +829,13 @@ def society_tools(
                 )
             )
 
-        def renew_claim(node_id, key):
+        def claim(node_id, key):
             try:
-                service.claim_node(node_id, "renew", agent, f"{key}:renew")
+                service.claim_node(node_id, "claim", agent, f"{key}:claim")
             except HarnessError as error:
                 if error.code in FATAL_TOOL_CODES:
                     raise
-                return False  # CLAIM_NOT_HELD, NODE_CLOSED: the check result still stands.
+                return False  # NODE_CLOSED, say: the check result still stands.
             return True
 
         source_property = text(MAX_SOURCE, "Complete Lean file, imports first; 30,000 UTF-8 bytes.")
@@ -781,10 +867,14 @@ def society_tools(
                 "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
                 "automation on holes (automate=true; off by default, since automation can "
                 "exhaust the workbench's memory) and the file's own #print axioms output. "
-                "With node_id, a complete check runs the platform's statement check and, when "
-                "it passes, records a local compile, which moves a formally_stated node to "
-                "compiles_locally; it also renews your claim. The file header must hold the "
-                "node's lean_header lines, the file must have no variable or #exit command, and "
+                "With node_id, a clean check publishes the file as the node's module "
+                "Commons.N<8 hex>, ranked verified (the statement check passed on standard "
+                "axioms), complete (no sorry; the check could not judge) or partial; a higher "
+                "rank replaces a lower one, and publishing claims the node. A complete check "
+                "runs the platform's statement check and, when it passes, also records a local "
+                "compile, which moves a formally_stated node to compiles_locally. The file "
+                "header must hold the node's lean_header lines, the file must have no variable "
+                "or #exit command, and "
                 "it must declare theorem <lean_name> <lean_statement> := ... once, outside "
                 "comments, namespaces and sections. The check then compiles the file, has the "
                 "kernel re-check every declaration in it, checks that the theorem's elaborated "
@@ -1022,9 +1112,16 @@ def society_tools(
     add(
         "commons_query",
         {
-            "text": text(2000, "Words to match in titles and statements.", nullable=True),
+            "text": text(
+                2000,
+                "Words to match in titles, statements, Lean names and module names.",
+                nullable=True,
+            ),
             "status": choice(STATUSES, "Only nodes with this status.", nullable=True),
             "node_type": choice(NODE_TYPES, "Only nodes of this type.", nullable=True),
+            "source": choice(
+                SOURCE_STATES, "Only nodes whose source has this rank.", nullable=True
+            ),
             "frontier": {
                 "type": "boolean",
                 "description": "Rank open work (root path, waiting dependents, neglect, "
@@ -1039,6 +1136,7 @@ def society_tools(
             "text": None,
             "status": None,
             "node_type": None,
+            "source": None,
             "frontier": False,
             "after": None,
             "limit": 10,

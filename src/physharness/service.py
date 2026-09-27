@@ -22,6 +22,7 @@ from .collaboration import CollaborationMixin
 from .commons import CommonsMixin
 from .commons_discourse import CommonsDiscourseMixin
 from .commons_review import CommonsReviewMixin
+from .commons_sources import CommonsSourceMixin
 from .continuation import ContinuationMixin
 from .discussion import DiscussionMixin
 from .domain import (
@@ -121,6 +122,7 @@ class HarnessService(
     CommonsDiscourseMixin,
     CommonsMixin,
     CommonsReviewMixin,
+    CommonsSourceMixin,
     ContinuationMixin,
     DiscussionMixin,
     ResearchMixin,

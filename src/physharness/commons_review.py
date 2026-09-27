@@ -715,8 +715,9 @@ class CommonsReviewMixin:
         )
 
     def referee_may_read_artifact(self, node_id, artifact_id, actor) -> bool:
-        """Whether a referee of this node may open an artifact: one its own branch stored,
-        or one the node or another branch's post on the node's thread cites as evidence.
+        """Whether a referee of this node may open an artifact: one its own branch stored, the
+        node's published source, or one the node or another branch's post on the node's
+        thread cites as evidence.
 
         Only the scope a referee adds; the read itself applies the usual visibility rules. The
         referee's own posts never widen it (it could cite anything it can see). The thread
@@ -727,6 +728,10 @@ class CommonsReviewMixin:
         with self.db.sessions() as session:
             node = self._get(session, "commons_node", node_id, actor)
             if artifact_id in node.payload.get("artifact_ids", []):
+                return True
+            # The node's published source (its module) is the node's own evidence.
+            source = node.payload.get("lean_source") or {}
+            if source.get("artifact_id") and artifact_id == source["artifact_id"]:
                 return True
             artifact = session.get(RecordRow, artifact_id) if isinstance(artifact_id, str) else None
             if (

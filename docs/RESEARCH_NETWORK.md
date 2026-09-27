@@ -185,6 +185,25 @@ tools, the prompts and the delivery shapes.
     another writer's fidelity reviews or demotes a formal node; it proposes a change on
     the thread instead.
   - In S1 no platform path refutes a node or accepts a non-root node.
+- **Lemma store.** Every node is a Lean module, `Commons.N<8 hex>` (8 hex of its id, or
+  12 or 16 when an experiment node already holds that name). `commons_query` reports it
+  (`module`) with the node's source rank (`source`); `commons_read` shows the node's
+  `lean_module` and published `lean_source`.
+  - A clean `lean_check` with `node_id` (no Lean errors, no `#exit`, and for a node with
+    a Lean statement the local-compile gates above) publishes the file as the node's
+    module, a `lean_source` artifact ranked `verified` (the statement check passed with
+    standard axioms), `complete` (no `sorry`, but the check could not judge; a node with
+    no Lean statement ranks on the file's own axiom report) or `partial`. A statement
+    check that rejects the file publishes nothing.
+  - Higher ranks replace lower ones, and an equal rank replaces its peer, except that a
+    verified source is replaced only by its publisher or the node's author. A verified
+    source of an older Lean statement counts as complete.
+  - Publishing claims the node, and the source's imports become `depends_on` edges (one
+    that would close a cycle is skipped). A node with an elaborated Lean statement and no
+    source reports `stub`; `commons_query(source=…)` filters by rank, and its text also
+    matches Lean and module names.
+  - A node module is that node's lemma, not the branch's submission candidate: the
+    working context's active source skips it.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL
   (default 900 s) unless renewed by activity. Several branches may hold one claim, and
   the frontier shows the count; a claim's result lists its co-claimants. The goal takes
@@ -275,9 +294,10 @@ Its frontier's node titles and statements arrive fenced as untrusted author data
 its review packet, since they may come from the author of the node it reviews. So does
 everything its `commons_read`, `commons_query`, `inbox` and `read_artifact` return,
 except platform-written cursors, offsets and delivery ids. `read_artifact` opens the
-referee's own artifacts and those that the node, or another branch's post on its thread,
-cites: the referee's own posts never widen that scope, and the thread search reads the
-earliest posts first and fails closed past its bound.
+referee's own artifacts, the node's published source, and those that the node, or
+another branch's post on its thread, cites: the referee's own posts never widen that
+scope, and the thread search reads the earliest posts first and fails closed past its
+bound.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
 that lists the available tools. Rejections count per native session whatever the name,
 so a model that keeps inventing names reaches the stagnation warning after four and the
