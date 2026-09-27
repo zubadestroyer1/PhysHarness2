@@ -132,6 +132,7 @@ OTHER = frozenset(
         "search_literature",
         "fetch_source",
         "notebook",
+        "library_notes",
         "load_skill",
         "read_artifact",
         # Legacy profile.

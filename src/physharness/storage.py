@@ -179,6 +179,25 @@ class EdgeRow(Base):
     project_id: Mapped[str] = mapped_column(String(200), index=True)
 
 
+class LibraryNoteRow(Base):
+    """Agent-written facts about one pinned Lean/Mathlib environment, shared by a project's
+    experiments (S1 audit #24): the one table the S1 remediation adds."""
+
+    __tablename__ = "library_notes"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    project_id: Mapped[str] = mapped_column(String(200))
+    environment_digest: Mapped[str] = mapped_column(String(64))
+    experiment_id: Mapped[str] = mapped_column(String(36))
+    author: Mapped[str] = mapped_column(String(200))
+    text: Mapped[str] = mapped_column(String(2000))
+    created_at: Mapped[str] = mapped_column(String(40))
+    __table_args__ = (
+        Index(
+            "library_notes_project_environment", "project_id", "environment_digest", "created_at"
+        ),
+    )
+
+
 class Database:
     def __init__(self, url: str):
         self.url = url

@@ -161,6 +161,15 @@ def test_commons_smoke(backend_lab):
     ]
 
 
+def test_library_notes_on_the_backend(backend_lab):
+    service, _, exp, _, (alpha, beta) = society_lab(backend_lab)
+    appended = service.append_library_note("`Foo.bar` was renamed `Foo.baz`.", alpha, "n1")
+    again = service.append_library_note("`Foo.bar` was renamed `Foo.baz`.", alpha, "n1")
+    assert again == appended
+    found = service.library_notes(beta, query="Foo.bar")
+    assert [note["text"] for note in found["notes"]] == ["`Foo.bar` was renamed `Foo.baz`."]
+
+
 class _Capture:
     """A session stand-in that records the statements the commons queries build."""
 

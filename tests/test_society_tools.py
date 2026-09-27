@@ -120,6 +120,10 @@ class CatalogOnlyService:
         # No records exist in this catalog-only double; every id passes through unresolved.
         return identifier
 
+    def library_notes(self, actor, *, query=None, limit=20):
+        # No notes exist in this catalog-only double; find_declaration's wrapper tolerates it.
+        return {"environment_digest": "x", "notes": []}
+
 
 @pytest.mark.parametrize("sharing", ["none", "ideas"])
 @pytest.mark.parametrize("with_task", [False, True])
@@ -444,8 +448,8 @@ def test_society_catalog_widest():
     assert tuple(names(dispatcher)) == tuple(n for n in SOCIETY_TOOL_NAMES if n != "submit_review")
     assert tuple(names(referee)) == REFEREE_TOOLS
     assert set(names(dispatcher)) | set(names(referee)) == set(SOCIETY_TOOL_NAMES)
-    # 22 tools in all: 21 for a worker at most, and 15 for a referee.
-    assert (len(SOCIETY_TOOL_NAMES), len(names(dispatcher)), len(REFEREE_TOOLS)) == (22, 21, 15)
+    # 23 tools in all: 22 for a worker at most, and 15 for a referee.
+    assert (len(SOCIETY_TOOL_NAMES), len(names(dispatcher)), len(REFEREE_TOOLS)) == (23, 22, 15)
     for item in dispatcher.definitions + referee.definitions:
         schema = item["parameters"]
         assert item["strict"] is True and schema["additionalProperties"] is False
@@ -486,6 +490,24 @@ async def test_catalog_has_find_declaration_and_no_retired_tools():
     schema = definition(dispatcher, "find_declaration")
     assert list(schema["parameters"]["properties"]) == ["query", "mode", "path", "line", "verify"]
     assert "never a whole file" in schema["description"]
+
+
+async def test_find_declaration_surfaces_library_notes_on_a_weak_hit(lab):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    note = "`Matrix.dotProduct` is not a declaration; use the root-namespace `dotProduct`."
+    service.append_library_note(note, alpha, "note-1")
+    dispatcher = society_tools(
+        service, beta, beta.branch_id, task_context=None, workspace_tools=FakeWorkspace()
+    )
+    found = await call(dispatcher, "find_declaration", {"query": "Matrix.dotProduct"})
+    assert found["library_notes"] == [note]
+    # No query, or an exact hit, adds no library_notes key (FakeWorkspace is always inexact).
+    read_mode = await call(dispatcher, "find_declaration", {"path": "mathlib/Foo.lean", "line": 1})
+    assert "library_notes" not in read_mode
+    text = constitution(policy_dict(), literature_enabled=True)
+    pointer = [line for line in text.splitlines() if line.startswith("Library notes:")]
+    assert len(pointer) == 1
+    assert note not in text
 
 
 def test_society_schemas_bound_arrays_without_string_length_keywords():
@@ -545,6 +567,7 @@ def test_society_catalog_without_literature_or_review():
         "message",
         "verification_status",
         "notebook",
+        "library_notes",
     ]
 
 
@@ -2760,6 +2783,7 @@ async def test_every_society_tool_dispatches_without_tool_failure(lab):
             },
         ),
         (tools, "notebook", {"action": "read"}),
+        (tools, "library_notes", {"action": "read"}),
         (tools, "verification_status", {"receipt_id": receipt["id"], "wait_seconds": 0}),
         (tools, "submit_for_verification", {"path": "Proof.lean", "sha256": "e" * 64}),
         (

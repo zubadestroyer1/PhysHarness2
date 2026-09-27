@@ -97,6 +97,7 @@ SOCIETY_TOOL_NAMES = (
     "submit_for_verification",
     "verification_status",
     "notebook",
+    "library_notes",
     "return_result",
     "submit_review",
 )
@@ -963,6 +964,18 @@ def society_tools(
                 defaults={"node_id": None, "automate": False},
             )
 
+        async def find_declaration(a, k):
+            result = await workspace_tools.find_declaration(a, k)
+            # A failed index build carries no "exact" key: treat it as inexact, too.
+            if a["query"] and not result.get("exact"):
+                found = [
+                    note["text"]
+                    for note in service.library_notes(agent, query=a["query"], limit=2)["notes"]
+                ]
+                if found:
+                    result = {**result, "library_notes": found}
+            return result
+
         add(
             "find_declaration",
             {
@@ -985,7 +998,7 @@ def society_tools(
                     "description": "Also #check the top row's exact signature in Lean (slower).",
                 },
             },
-            lambda a, k: workspace_tools.find_declaration(a, k),
+            find_declaration,
             "Find pinned Mathlib and Physlib declarations: ranked rows "
             "'Name signature — path:line' (at most 20) with did-you-mean names when nothing "
             "matches exactly. With path and line, read ±40 lines (at most 4,000 bytes) around a "
@@ -1664,6 +1677,31 @@ def society_tools(
             "summary": None,
             "evidence_ids": [],
         },
+    )
+
+    def library_notes(a, k):
+        if a["action"] == "append":
+            if a["text"] is None:
+                raise invalid("library_notes append requires text.")
+            return service.append_library_note(a["text"], agent, k)
+        return service.library_notes(agent, query=a["query"], limit=20)
+
+    add(
+        "library_notes",
+        {
+            "action": choice(("read", "append"), "read the notes, or append one fact."),
+            "query": text(200, "read: words to match (optional).", nullable=True),
+            "text": text(
+                MAX_NOTE_TEXT,
+                "append: one fact you checked in Lean (a rename, an absence, a working API).",
+                nullable=True,
+            ),
+        },
+        library_notes,
+        "Shared notes about this pinned Mathlib/Physlib environment, kept across experiments: "
+        "renamed APIs, known absences, working recipes. Read before guessing names; append a "
+        "fact once you have checked it in Lean.",
+        defaults={"query": None, "text": None},
     )
     # Task-specific ----------------------------------------------------------------------
     if task_context and tool_task and tool_task.get("reply_to_parent_task_id"):

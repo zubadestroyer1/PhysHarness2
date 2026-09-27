@@ -370,6 +370,13 @@ tools, the prompts and the delivery shapes.
   experiment but a referee's, since addressing a branch reads nothing of it), its
   delegated child tasks, or its peer branches. A prefix that names none or several of
   them is refused exactly as an unknown full id, so it reveals no other record.
+- **Library notes.** A project-scoped table of shared facts about one pinned Mathlib and
+  Physlib environment (`environment_digest`): renamed declarations, known absences and
+  working recipes an agent has checked in Lean, so a later agent at the same pin stops
+  rediscovering them (S1 audit #24). A note is at most 2,000 characters, and a project's
+  notes at one pin are capped at 200. The `library_notes` tool reads (optionally by a
+  query) or appends one; a checked-in seed covers the S1 audit's findings, and
+  `find_declaration` surfaces the closest two notes on a weak (non-exact) hit.
 
 Society workers get the consolidated profile in
 `src/physharness/orchestration/society_tools.py`. It has 26 tools in all; a worker's

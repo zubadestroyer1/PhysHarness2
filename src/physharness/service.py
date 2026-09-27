@@ -38,6 +38,7 @@ from .domain import (
     utcnow,
 )
 from .errors import HarnessError
+from .library_notes import LibraryNotesMixin
 from .orchestration.pricing import ModelPrice
 from .research import ResearchMixin
 from .storage import (
@@ -126,6 +127,7 @@ class HarnessService(
     CommonsSourceMixin,
     ContinuationMixin,
     DiscussionMixin,
+    LibraryNotesMixin,
     ResearchMixin,
     WorkforceMixin,
 ):

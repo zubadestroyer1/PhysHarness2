@@ -438,8 +438,8 @@ exactly one bucket; `tests/test_society_metrics.py` enforces this. A tool in no 
   verification tools. The Lean and library tools also count as `lean_formalization`;
   `shell` calls that run `lake` or `lean` do not, because events carry only tool names.
 - `other` (memory, knowledge, literature and skills): society `search_literature`,
-  `fetch_source`, `notebook`, `load_skill`, `read_artifact`; legacy `checkpoint_context`,
-  `checkpoint_research_notes`, `history_page`, `index_page`, `read_artifact`,
+  `fetch_source`, `notebook`, `library_notes`, `load_skill`, `read_artifact`; legacy
+  `checkpoint_context`, `checkpoint_research_notes`, `history_page`, `index_page`, `read_artifact`,
   `read_artifact_chunk`, `read_dependency_bundle`, `read_scientific_record`,
   `research_graph_page`, `restart_brief`, `restore_context`, `search_knowledge`,
   `store_artifact`, `working_context`.

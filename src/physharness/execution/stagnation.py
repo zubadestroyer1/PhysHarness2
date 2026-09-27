@@ -74,6 +74,8 @@ NON_PROGRESS_TOOLS = READ_TOOLS | frozenset(
         "notebook",
         "commons_claim",
         "wait",
+        # S1 remediation: shared notes are memory, like the notebook.
+        "library_notes",
     }
 )
 COMMAND_TOOLS = frozenset({"run_command", "shell"})

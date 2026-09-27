@@ -58,6 +58,8 @@ def constitution(policy: dict, *, literature_enabled: bool) -> str:
         *(f"- {norm}" for norm in NORMS),
         "",
         *BOUNDARIES,
+        "Library notes: library_notes(action='read') holds shared facts about this Mathlib "
+        "pin (renamed APIs, known absences); append one when you have checked it.",
     ]
     if scaffolding["playbook"]:
         lines += [
