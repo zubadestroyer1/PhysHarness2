@@ -550,7 +550,7 @@ async def test_interrupting_a_rate_limit_wait_is_definite(tmp_path):
     checkpoint = await runtime.checkpoint(session_id)
     assert checkpoint.session.status == "interrupted"
     assert checkpoint.native_state["pending_operation"] is None
-    assert events == ["generation_started", "generation_aborted"]
+    assert events == ["generation_started", "provider_throttled", "generation_aborted"]
     await client.close()
 
 
@@ -569,6 +569,85 @@ async def test_rate_limited_token_count_is_resent(tmp_path):
         "input_tokens",
         "responses",
     ]
+    await client.close()
+
+
+async def test_rate_limit_wait_emits_provider_throttled_event(tmp_path):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    leaky = {
+        "error": {
+            "message": "Rate limit reached for org-SECRET123",
+            "type": "tokens",
+            "param": None,
+            "code": "rate_limit_exceeded",
+        }
+    }
+    headers = {
+        "retry-after-ms": "5",
+        "x-ratelimit-limit-tokens": "2000000",
+        "x-ratelimit-remaining-tokens": "0",
+        "x-ratelimit-reset-tokens": "6m0s",
+        "x-ratelimit-reset-requests": "20ms",
+    }
+    client = rate_limited_client(
+        [
+            (429, leaky, headers),
+            (429, refusal("rate_limit_exceeded"), {"retry-after": "0.01"}),
+            (200, response([message("done")]), {}),
+        ],
+        [],
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=emit
+    )
+    await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    throttled = [e for e in events if e.kind == "provider_throttled"]
+    assert throttled[0].payload == {
+        "attempt": 1,
+        "wait_seconds": 0.005,
+        "wait_source": "retry-after-ms",
+        "limit_tokens": 2000000,
+        "remaining_tokens": 0,
+        "reset_tokens_seconds": 360.0,
+        "reset_requests_seconds": 0.02,
+    }
+    assert throttled[1].payload == {
+        "attempt": 2,
+        "wait_seconds": 0.01,
+        "wait_source": "retry-after",
+    }
+    assert {e.operation_id for e in throttled} == {events[0].operation_id}
+    assert "SECRET" not in json.dumps([e.payload for e in events])
+    usage = next(e for e in events if e.kind == "usage").payload
+    assert (usage["rate_limit_waits"], usage["rate_limit_wait_seconds"]) == (2, 0.015)
+    await client.close()
+
+
+async def test_rate_limited_count_is_announced_but_not_totalled(tmp_path):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    client = rate_limited_client(
+        [(200, response([message("done")]), {})],
+        [],
+        counts=[(429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"})],
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=emit
+    )
+    await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    # A count has no operation and no reservation: its wait is announced, not added to usage (F11).
+    assert [(e.operation_id, e.payload) for e in events if e.kind == "provider_throttled"] == [
+        (None, {"attempt": 1, "wait_seconds": 0.005, "wait_source": "retry-after-ms"})
+    ]
+    usage = next(e for e in events if e.kind == "usage").payload
+    assert (usage["rate_limit_waits"], usage["rate_limit_wait_seconds"]) == (0, 0.0)
     await client.close()
 
 

@@ -103,6 +103,19 @@ Optional async `event_sink(RuntimeEvent)` receives `generation_started`, `genera
 token reservation and fires before billable generation. A core ledger can veto generation by
 raising. If the runtime deadline expires before the provider request, `generation_aborted` releases
 that reservation with zero usage.
+
+A 429 with code `rate_limit_exceeded` did no work, whether it refused the count or the create, so
+the same request is resent. The wait follows the provider's hint (`retry-after-ms`, then
+`retry-after`) or a doubling backoff, capped at 30 s per wait. `provider_throttled` is emitted once
+per wait. It carries the attempt, the wait, its source and bounded header numbers, never the error
+text. A sink failure is logged and ignored. A create's event carries the generation's operation id.
+A count's event has none. `usage` reports the create's wait totals. A count has no operation or
+reservation, so its waits appear only as events. The runtime gives up when the next wait would
+outlast the deadline or when the wait is interrupted. The give-up is definite:
+`generation_aborted(reason="rate_limited")` releases the reservation at zero, and only then is the
+marker cleared. The session fails with retryable `PROVIDER_RATE_LIMITED`, and the executor blocks
+the task for an operator to resume.
+
 The usage event includes the stable operation ID and actual native usage; reconciliation should
 be idempotent by operation ID. If the provider response was persisted but delivery of a usage
 callback failed, reconcile from the saved native response. The adapter does not implement a
@@ -114,6 +127,13 @@ requires reconciliation. A session's total token budget persists across `continu
 `start_from_handoff` and `start(..., predecessor=checkpoint)` seed a successor with its
 lineage's cumulative usage, so the budget also persists across a task's continuations.
 `interrupt` cancels the active local coroutine; provider completion/billing may remain uncertain.
+
+### Stored shape changes (G3 infrastructure, all experiments)
+
+G1 covers the bytes the model sees and the pinned freeze tests (F7), so these changes reach legacy
+experiments too.
+- The `usage` wait totals (`rate_limit_waits`, `rate_limit_wait_seconds`).
+- The `provider_throttled` events.
 
 ## Official Codex SDK
 

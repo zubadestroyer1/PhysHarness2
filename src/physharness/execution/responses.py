@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 from collections.abc import Awaitable, Callable
@@ -35,6 +36,8 @@ from .types import (
     identifier,
 )
 
+log = logging.getLogger(__name__)
+
 ToolHandler = Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]]
 MAX_TURN_NOTE_CHARS = 4_000
 MAX_STAGNATION_SUGGESTIONS = 10
@@ -42,13 +45,55 @@ MAX_STAGNATION_SUGGESTION_CHARS = 200
 # A provider rate-limit refusal waits at most this long per attempt before a resend.
 MAX_RATE_LIMIT_WAIT_SECONDS = 30.0
 
+_DURATION_PART = re.compile(r"([0-9]+(?:\.[0-9]+)?)(ms|h|m|s)")
 
-def _rate_limit_wait(error: Exception, fallback: float) -> float | None:
-    """Seconds to wait before resending a request the provider refused for rate limiting.
+_DURATION_SCALE = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
+
+_RATE_LIMIT_COUNTS = (
+    ("x-ratelimit-limit-tokens", "limit_tokens"),
+    ("x-ratelimit-remaining-tokens", "remaining_tokens"),
+    ("x-ratelimit-limit-requests", "limit_requests"),
+    ("x-ratelimit-remaining-requests", "remaining_requests"),
+)
+
+_RATE_LIMIT_RESETS = (
+    ("x-ratelimit-reset-tokens", "reset_tokens_seconds"),
+    ("x-ratelimit-reset-requests", "reset_requests_seconds"),
+)
+
+
+def _duration_seconds(value: Any) -> float | None:
+    """Seconds in a provider duration such as ``6m0s`` or ``20ms``; None if malformed."""
+    if not isinstance(value, str) or not 0 < len(value) <= 32:
+        return None
+    parts = _DURATION_PART.findall(value)
+    if not parts or "".join(number + unit for number, unit in parts) != value:
+        return None
+    return round(sum(float(number) * _DURATION_SCALE[unit] for number, unit in parts), 3)
+
+
+def _rate_limit_headers(error: Exception) -> dict[str, int | float]:
+    """Bounded numbers from rate-limit headers; never the message, which names the org."""
+    headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    fields: dict[str, int | float] = {}
+    for header, name in _RATE_LIMIT_COUNTS:
+        if isinstance(value := headers.get(header), str) and re.fullmatch(r"[0-9]{1,15}", value):
+            fields[name] = int(value)
+    for header, name in _RATE_LIMIT_RESETS:
+        if (seconds := _duration_seconds(headers.get(header))) is not None:
+            fields[name] = seconds
+    return fields
+
+
+def _rate_limit_wait(error: Exception, fallback: float) -> tuple[float, str] | None:
+    """Seconds and source to wait before resending a request the provider refused for
+    rate limiting.
 
     Only an HTTP 429 with code `rate_limit_exceeded` qualifies: the provider refused the
     request before doing any work, so nothing was generated or charged. Quota exhaustion
     (`insufficient_quota`) and every other error return None and keep their existing path.
+    The source is the provider hint used (`retry-after-ms` or `retry-after`), or `"backoff"`
+    for the doubling fallback.
     """
     if getattr(error, "status_code", None) != 429:
         return None
@@ -61,8 +106,8 @@ def _rate_limit_wait(error: Exception, fallback: float) -> float | None:
         except (TypeError, ValueError):
             continue
         if hinted > 0:
-            return min(hinted, MAX_RATE_LIMIT_WAIT_SECONDS)
-    return min(fallback, MAX_RATE_LIMIT_WAIT_SECONDS)
+            return min(hinted, MAX_RATE_LIMIT_WAIT_SECONDS), name
+    return min(fallback, MAX_RATE_LIMIT_WAIT_SECONDS), "backoff"
 
 
 async def _resend_rate_limited(
@@ -71,21 +116,25 @@ async def _resend_rate_limited(
     *,
     operation_id: str | None = None,
     abandon: Callable[[], Awaitable[None]] | None = None,
+    on_wait: Callable[[int, float, str, Exception], Awaitable[None]] | None = None,
 ) -> Any:
     """Await `send`, resending it while the provider refuses it for rate limiting.
 
     A refusal did no work, so nothing is in flight while waiting. When the next wait would
     pass the deadline, or the wait is interrupted, `abandon` runs before the error
-    propagates; giving up raises a definite, retryable PROVIDER_RATE_LIMITED.
+    propagates; giving up raises a definite, retryable PROVIDER_RATE_LIMITED. When given,
+    `on_wait(attempt, seconds, source, error)` performs each wait instead of `asyncio.sleep`,
+    under the same interrupt guard, so an error it raises also abandons the request.
     """
-    backoff = 1.0
+    backoff, attempt = 1.0, 0
     while True:
         try:
             return await send()
         except Exception as error:
-            wait = _rate_limit_wait(error, backoff)
-            if wait is None:
+            hint = _rate_limit_wait(error, backoff)
+            if hint is None:
                 raise
+            wait, source = hint
             if asyncio.get_running_loop().time() + wait >= deadline:
                 if abandon is not None:
                     await abandon()
@@ -95,8 +144,9 @@ async def _resend_rate_limited(
                     operation_id=operation_id,
                     retryable=True,
                 ) from error
+            attempt, refused = attempt + 1, error  # `error` is unbound after this block
         try:
-            await asyncio.sleep(wait)
+            await (on_wait(attempt, wait, source, refused) if on_wait else asyncio.sleep(wait))
         except BaseException:
             if abandon is not None:
                 await abandon()
@@ -137,6 +187,8 @@ class _Sent:
 
     response: Any
     operation_id: str
+    rate_limit_waits: int = 0
+    rate_limit_wait_seconds: float = 0.0
 
 
 class ToolDispatcher:
@@ -303,6 +355,40 @@ class ResponsesRuntime:
                     kind=kind, session_id=session.id, operation_id=operation_id, payload=payload
                 )
             )
+
+    async def _emit_telemetry(
+        self, kind: str, session: RuntimeSession, operation_id: str | None = None, **payload: Any
+    ) -> None:
+        """Observability only: a sink failure is logged and never turns a request that was
+        certainly not sent into an uncertain one."""
+        try:
+            await self._emit(kind, session, operation_id, **payload)
+        except Exception:
+            log.warning(
+                "runtime_telemetry_failed",
+                extra={"event_kind": kind, "session_id": session.id, "operation_id": operation_id},
+            )
+
+    def _throttle_hook(
+        self, session: RuntimeSession, operation_id: str | None, waits: list[float]
+    ) -> Callable[[int, float, str, Exception], Awaitable[None]]:
+        """The on_wait hook of one provider call: record and announce each rate-limit wait,
+        then wait it out."""
+
+        async def on_wait(attempt: int, wait: float, source: str, error: Exception) -> None:
+            waits.append(wait)
+            await self._emit_telemetry(
+                "provider_throttled",
+                session,
+                operation_id,
+                attempt=attempt,
+                wait_seconds=round(wait, 3),
+                wait_source=source,
+                **_rate_limit_headers(error),
+            )
+            await asyncio.sleep(wait)
+
+        return on_wait
 
     async def _save(self, session: RuntimeSession, state: dict[str, Any]) -> None:
         await self.store.save(RuntimeCheckpoint.build(session, state))
@@ -816,6 +902,8 @@ class ResponsesRuntime:
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 native_usage=response.usage.model_dump(mode="json"),
+                rate_limit_waits=sent.rate_limit_waits,
+                rate_limit_wait_seconds=sent.rate_limit_wait_seconds,
             )
             # Clear only after authoritative accounting succeeds. The checkpoint
             # retains the native response and correlation ID if settlement fails.
@@ -967,6 +1055,7 @@ class ResponsesRuntime:
                     **count_params,
                 ),
                 deadline,
+                on_wait=self._throttle_hook(session, None, []),
             )
         except Exception as exc:
             if getattr(exc, "status_code", None) != 400:
@@ -1084,6 +1173,7 @@ class ResponsesRuntime:
             raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
         # A rate-limit refusal did no work, so the same operation and reservation
         # are resent; giving up releases the reservation at zero instead.
+        waits: list[float] = []
         response = await _resend_rate_limited(
             partial(
                 client.responses.create,
@@ -1100,8 +1190,14 @@ class ResponsesRuntime:
             deadline,
             operation_id=operation_id,
             abandon=partial(self._abandon_refused, session, state, operation_id),
+            on_wait=self._throttle_hook(session, operation_id, waits),
         )
-        return _Sent(response=response, operation_id=operation_id)
+        return _Sent(
+            response=response,
+            operation_id=operation_id,
+            rate_limit_waits=len(waits),
+            rate_limit_wait_seconds=round(sum(waits), 3),
+        )
 
     async def _run_calls(
         self,
