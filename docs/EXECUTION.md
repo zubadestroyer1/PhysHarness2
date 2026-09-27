@@ -279,7 +279,9 @@ native state are exactly as described above. The fields and their defaults are:
 - `max_output_chars`: 24,000 (at least 20,000), or `null` for no cap. A truncated view may exceed
   it by its envelope, about 150 characters plus the tool name and call ID.
 
-The executor passes `ResponsesRuntime(context_budget=...)` only when the field is set. `start`
+The executor passes `ResponsesRuntime(context_budget=...)` only when the field is set. A runtime
+that cannot accept `context_budget` is refused with `CONTEXT_BUDGET_UNSUPPORTED` before any provider
+request, so a budgeted experiment never runs silently unbudgeted. `start`
 stores the policy in native state under `context_budget`, and `start_from_handoff` copies it, so a
 continuation keeps the policy its lineage started with, even when its own runtime was built
 without one. Under a budget:
@@ -366,6 +368,13 @@ experiments too.
   stays at the full input rate, since a cache hit is never guaranteed in advance.
 - A checkpoint chunk has no `artifact.created` event and no command row of its own; each save is
   one `runtime.save` transaction.
+- The `native_checkpoint` manifest row has no `artifact.created` event and no
+  `runtime-artifact:{state_digest}` command row either. The console's incremental refresh
+  therefore misses manifest rows until a reload.
+- Without `context_management`, which covers every `general`-profile experiment, a request that
+  is not counted reserves its P1 bound, which is never below the exact count reserved before.
+  Holds are therefore larger, so an experiment at the edge of its envelope can hit
+  `BUDGET_EXCEEDED` one request earlier.
 - Smaller input reservations under `context_management`: `generation_started.input_tokens_reserved`
   and `settled_response.input_reserved` hold the count plus the bound's margin, or the bound, not
   the whole window, while that value plus 8,192 is at most `compact_threshold`.

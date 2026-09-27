@@ -2266,7 +2266,8 @@ async def test_the_input_bound_stays_sound_through_elision_blocks(tmp_path):
     await client.close()
 
 
-# The creates of a 7-call run without a budget, as BASE (c1f16af) sent them.
+# The creates of a 7-call run without a budget. The digest is the same at the mid-lane commit
+# c1f16af and at origin/main 9333b25, so the freeze covers the whole lane (G1).
 UNBUDGETED_REQUESTS_SHA256 = "765670738ca10f826d661a232eac444b8a15f4f0c82017342baa63612f52dde2"
 
 

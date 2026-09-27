@@ -175,24 +175,41 @@ class CanonicalRuntimeStore:
             self._save_checkpoint(checkpoint)
 
     def _warm_chunk_cache(self, session_id):
-        """After a restart, learn this session's stored chunks once so they are reused."""
+        """After a restart, learn this session's stored chunks once so they are reused.
+
+        Chunk rows commit in the same transaction as the session record, so a session without a
+        record has none: a new session's first save skips the scan of the experiment's artifacts,
+        which would otherwise block the shared event loop.
+        """
         if session_id in self._warm_sessions:
             return
         with self.service.db.sessions() as session:
-            for row in session.scalars(
-                select(RecordRow)
+            published = session.scalar(
+                select(RecordRow.id)
                 .where(
                     RecordRow.project_id == self.actor.project_id,
-                    RecordRow.kind == "artifact",
-                    RecordRow.payload["artifact_kind"].as_string() == "native_checkpoint_chunk",
-                    RecordRow.payload["experiment_id"].as_string() == self.experiment_id,
-                    RecordRow.payload["provenance"]["task_id"].as_string() == self.task_id,
-                    RecordRow.payload["provenance"]["session_id"].as_string() == session_id,
+                    RecordRow.kind == "session",
+                    RecordRow.payload["native_record_id"].as_string() == session_id,
                 )
-                .order_by(RecordRow.id)
-            ):
-                digest = row.payload["sha256"]
-                self._chunk_cache.setdefault((session_id, digest), {"id": row.id, "sha256": digest})
+                .limit(1)
+            )
+            if published is not None:
+                for row in session.scalars(
+                    select(RecordRow)
+                    .where(
+                        RecordRow.project_id == self.actor.project_id,
+                        RecordRow.kind == "artifact",
+                        RecordRow.payload["artifact_kind"].as_string() == "native_checkpoint_chunk",
+                        RecordRow.payload["experiment_id"].as_string() == self.experiment_id,
+                        RecordRow.payload["provenance"]["task_id"].as_string() == self.task_id,
+                        RecordRow.payload["provenance"]["session_id"].as_string() == session_id,
+                    )
+                    .order_by(RecordRow.id)
+                ):
+                    digest = row.payload["sha256"]
+                    self._chunk_cache.setdefault(
+                        (session_id, digest), {"id": row.id, "sha256": digest}
+                    )
         self._warm_sessions.add(session_id)
 
     def _save_checkpoint(self, checkpoint):
@@ -1749,6 +1766,16 @@ class ResearchTaskExecutor:
             accepts_any = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
             context_budget = experiment.get("context_budget")
             pass_budget = bool(context_budget) and ("context_budget" in parameters or accepts_any)
+            if context_budget and not pass_budget:
+                # Never drop a budget silently: a budgeted arm would quietly become the control.
+                raise HarnessError(
+                    "CONTEXT_BUDGET_UNSUPPORTED",
+                    "This runtime cannot apply the experiment's context_budget.",
+                    remediation=(
+                        "Run the experiment on a runtime that accepts context_budget (the "
+                        "Responses runtime), or create it without context_budget."
+                    ),
+                )
             # The digest covers the tools actually sent, so it must be set before
             # native_compatible reads it, or every budgeted wait would resume portably (F8).
             store.tool_definition_digest = digest_json(

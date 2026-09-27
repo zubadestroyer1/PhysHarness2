@@ -357,6 +357,149 @@ async def test_restart_dedupes_existing_chunks_without_cache(native_store):
 
 
 @pytest.mark.asyncio
+async def test_a_new_sessions_first_save_scans_no_chunks(native_store):
+    from sqlalchemy import event
+
+    service, actor, experiment, task, store, session = native_store
+    scans = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "native_checkpoint_chunk" in (
+            statement + str(parameters)
+        ):
+            scans.append(statement)
+
+    history = [{"content": "x" * 4096, "id": str(i)} for i in range(80)]
+    restarted = CanonicalRuntimeStore(
+        service, actor, experiment["id"], task["id"], "worker", store.fence
+    )
+    event.listen(service.db.engine, "before_cursor_execute", capture)
+    try:
+        await store.save(RuntimeCheckpoint.build(session, {"input": history}))
+        first_save = len(scans)
+        await restarted.save(
+            RuntimeCheckpoint.build(session, {"input": [*history, {"content": "y", "id": "80"}]})
+        )
+    finally:
+        event.remove(service.db.engine, "before_cursor_execute", capture)
+    # Chunk rows commit with the session record, so a session without one has no chunks to learn.
+    assert first_save == 0
+    assert len(scans) == 1  # a restarted store still learns a published session's chunks
+
+
+def base_save(native_store, checkpoint):
+    """Save ``checkpoint`` with the rows BASE (origin/main 9333b25) wrote: each chunk and the
+    manifest as an artifact command of its own, then one ``runtime-save`` for the pointer."""
+    from sqlalchemy import select
+
+    from physharness.storage import RecordRow
+    from physharness.worker_authority import worker_effects
+
+    service, actor, experiment, task, store, _ = native_store
+    provenance = {"task_id": task["id"], "session_id": checkpoint.session.id}
+
+    def artifact(kind, content, key):
+        request = ArtifactCreate(
+            experiment_id=experiment["id"],
+            kind=kind,
+            content=content,
+            media_type="application/json",
+            provenance=provenance,
+        )
+        return service.create_artifact(request, actor, key)
+
+    def put_chunk(content):
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        key = f"runtime-chunk:{task['id']}:{checkpoint.session.id}:{digest}"
+        return artifact("native_checkpoint_chunk", content, key)
+
+    with worker_effects(actor, task["id"], store.holder, store.fence, require_active=False):
+        data = encode(checkpoint, put_chunk)
+        manifest = artifact(
+            "native_checkpoint", canonical_json(data), f"runtime-artifact:{checkpoint.state_digest}"
+        )
+
+        def publish(session, op):
+            service._fenced(session, task["id"], store.holder, store.fence)
+            row = session.scalar(
+                select(RecordRow).where(
+                    RecordRow.project_id == actor.project_id,
+                    RecordRow.kind == "session",
+                    RecordRow.payload["native_record_id"].as_string() == checkpoint.session.id,
+                )
+            )
+            values = {
+                "experiment_id": experiment["id"],
+                "task_id": task["id"],
+                "native_record_id": checkpoint.session.id,
+                "runtime": checkpoint.session.runtime,
+                "model": checkpoint.session.model.model_dump(mode="json"),
+                "status": checkpoint.session.status,
+                "checkpoint_artifact_id": manifest["id"],
+                "input_tokens": checkpoint.session.input_tokens,
+                "output_tokens": checkpoint.session.output_tokens,
+                "tool_definition_digest": None,
+            }
+            record = (
+                service._replace(session, row, values)
+                if row
+                else service._insert(session, "session", actor, values)
+            )
+            service._event(
+                session,
+                actor,
+                op,
+                "session.saved",
+                record["id"],
+                {
+                    "experiment_id": experiment["id"],
+                    "task_id": task["id"],
+                    "revision": record["revision"],
+                },
+            )
+            return record
+
+        service._execute(
+            actor, f"runtime-save:{checkpoint.state_digest}", "runtime.save", data, publish
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_session_saved_by_base_loads_continues_and_replays(native_store):
+    service, actor, experiment, task, store, session = native_store
+    history = [{"content": "x" * 4096, "id": str(i)} for i in range(80)]
+    old = RuntimeCheckpoint.build(session, {"input": history, "settled_boundary": True})
+    base_save(native_store, old)
+
+    def restart():
+        return CanonicalRuntimeStore(
+            service, actor, experiment["id"], task["id"], "worker", store.fence
+        )
+
+    def chunk_rows():
+        return sum(
+            a["artifact_kind"] == "native_checkpoint_chunk"
+            for a in service.list_records("artifact", actor)
+        )
+
+    resumed = restart()
+    assert await resumed.load(session.id) == old
+    continued = RuntimeCheckpoint.build(
+        session,
+        {"input": [*history, {"content": "y", "id": "80"}], "settled_boundary": True},
+    )
+    await resumed.save(continued)
+    rows = chunk_rows()
+    # After another restart, re-saving either checkpoint replays its committed save. The warm
+    # cache reproduces BASE's chunk ids, so there is no IDEMPOTENCY_CONFLICT and no new row.
+    again = restart()
+    await again.save(old)
+    await again.save(continued)
+    assert chunk_rows() == rows
+    assert await again.load(session.id) == continued
+
+
+@pytest.mark.asyncio
 async def test_stale_fence_cannot_publish_new_chunked_checkpoint(native_store):
     service, actor, _, _, store, session = native_store
     first = RuntimeCheckpoint.build(session, {"input": ["first"]})

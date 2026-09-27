@@ -583,11 +583,9 @@ async def test_executor_passes_shared_governor_and_role_priority(lab):
     assert KeywordRuntime.seen["admission_priority"] == 0  # a root is on the critical path
 
 
-@pytest.mark.asyncio
-async def test_executor_passes_context_budget_and_digests_recall_tool(lab):
-    from physharness.domain import ExperimentCreate, digest_json
-    from physharness.execution.responses import RECALL_OUTPUT_TOOL
-    from physharness.orchestration.research_worker import ResearchTaskExecutor
+def budgeted_task(lab):
+    """A started experiment with ``context_budget`` set, and its root task."""
+    from physharness.domain import ExperimentCreate
 
     service, actor, _ = lab
     _, problem = setup_experiment(lab)
@@ -602,7 +600,16 @@ async def test_executor_passes_context_budget_and_digests_recall_tool(lab):
         actor,
         "budgeted-experiment",
     )
-    service, actor, experiment, task = started_task(lab, budgeted)
+    return started_task(lab, budgeted)
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_context_budget_and_digests_recall_tool(lab):
+    from physharness.domain import digest_json
+    from physharness.execution.responses import RECALL_OUTPUT_TOOL
+    from physharness.orchestration.research_worker import ResearchTaskExecutor
+
+    service, actor, experiment, task = budgeted_task(lab)
     executor = ResearchTaskExecutor(service, prices=PRICES, runtime_factory=KeywordRuntime)
     assert (await executor.execute(task["id"], actor.project_id))["status"] == "completed"
     assert KeywordRuntime.seen["context_budget"].elide_every_turns == 8
@@ -610,3 +617,26 @@ async def test_executor_passes_context_budget_and_digests_recall_tool(lab):
     assert record["tool_definition_digest"] == digest_json(
         [*KeywordRuntime.seen["dispatcher"].definitions, RECALL_OUTPUT_TOOL]
     )
+
+
+@pytest.mark.asyncio
+async def test_executor_refuses_a_budget_the_runtime_cannot_apply(lab):
+    from physharness.errors import HarnessError
+    from physharness.orchestration.research_worker import ResearchTaskExecutor
+
+    built = []
+
+    class Unbudgeted(UsageRuntime):  # takes no context_budget keyword
+        def __init__(self, store, dispatcher, event_sink):
+            built.append(True)
+            super().__init__(store, dispatcher, event_sink)
+
+    service, actor, experiment, task = budgeted_task(lab)
+    executor = ResearchTaskExecutor(service, prices=PRICES, runtime_factory=Unbudgeted)
+    with pytest.raises(HarnessError) as refused:
+        await executor.execute(task["id"], actor.project_id)
+    # A budgeted arm never runs silently unbudgeted, and the refusal precedes any provider request.
+    assert refused.value.code == "CONTEXT_BUDGET_UNSUPPORTED"
+    assert built == []
+    assert service.get_record("task", task["id"], actor)["status"] == "blocked"
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0
