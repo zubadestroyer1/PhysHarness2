@@ -47,7 +47,6 @@ _long_pole_ids = OrderedDict()
 # Message events name no experiment, so they count project-wide.
 WAKE_KINDS = (
     *dict.fromkeys(NODE_WATCH_KINDS + BRANCH_WATCH_KINDS + LONG_POLE_KINDS),
-    "commons.lean_statement_set",
     "task.completed",
     "task.failed",
     "task.blocked",
