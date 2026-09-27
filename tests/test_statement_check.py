@@ -762,6 +762,23 @@ async def test_unavailable_checker_fails_fast_and_logs(self_tests, caplog):
     assert checks == []  # the per-image verdict is cached for the process
 
 
+async def test_failed_self_test_provisions_no_later_workspace(self_tests):
+    first, provisions, _ = provisioning_tools(BROKEN)
+    with pytest.raises(HarnessError):
+        await first._ensure()
+    assert len(provisions) == 1
+    later, provisions, checks = provisioning_tools(BROKEN)
+    with pytest.raises(HarnessError) as error:
+        await later._ensure()
+    assert error.value.code == "STATEMENT_CHECK_UNAVAILABLE"
+    assert provisions == [] and checks == [] and later.workspace is None
+    later.checker_self_test = False  # a referee's workspace needs no checker
+    await later._ensure()
+    other, provisions, _ = provisioning_tools(OK_VERDICT, template_id="image-b")
+    await other._ensure()  # each image is judged on its own
+    assert len(provisions) == 1 and self_tests == {"image-a": False, "image-b": True}
+
+
 async def test_checker_self_test_timeout_is_retried_and_off_by_default(self_tests):
     timed_out = {**OK_VERDICT, "ok": False, "reason": "check_timeout", "axioms": None}
     tools, _, checks = provisioning_tools(timed_out)

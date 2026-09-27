@@ -83,6 +83,9 @@ class WorkspaceTools:
             )
 
     async def _ensure(self):
+        if self.checker_self_test and _CHECKER_SELF_TESTS.get(self.policy.template_id) is False:
+            # The image's checker already failed: provision no VM whose compiles can't be judged.
+            raise _checker_unavailable(self.policy.template_id)
         if self.workspace is None:
             self.workspace = await self.broker.provision(
                 cost_bound_usd=str(self.policy.cost_bound_usd),
@@ -90,8 +93,6 @@ class WorkspaceTools:
             )
             if self.checker_self_test:
                 await self._self_test_checker()
-        elif self.checker_self_test and _CHECKER_SELF_TESTS.get(self.policy.template_id) is False:
-            raise _checker_unavailable(self.policy.template_id)
         return self.workspace
 
     async def _self_test_checker(self):

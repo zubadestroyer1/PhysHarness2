@@ -330,6 +330,33 @@ def test_native_checkpoint_cannot_enter_portable_history(lab):
         assert kind.value.details["kind"] == "commons_node"
 
 
+def test_readable_private_artifact_is_refused_by_its_kind(lab):
+    service, author, _, _, (alpha, _) = approaches(lab, "none")
+    checkpoint = service.create_artifact(
+        ArtifactCreate(
+            experiment_id=alpha.experiment_id,
+            branch_id=alpha.branch_id,
+            kind="checkpoint",
+            content='{"approach":"earlier"}',
+        ),
+        author.model_copy(update={"role": "operator"}),
+        "checkpoint",
+    )
+    memory = PortableMemory(service)
+    with pytest.raises(HarnessError) as exc:
+        capture(memory, alpha.branch_id, alpha, evidence_ids=[checkpoint["id"]])
+    assert exc.value.code == "CONTEXT_EVIDENCE_KIND"
+    assert exc.value.message == (
+        "A checkpoint artifact is private platform state, not portable evidence; cite one of: "
+        "artifact, claim, program, source, task, verification."
+    )
+    assert exc.value.details == {
+        "kind": "artifact",
+        "artifact_kind": "checkpoint",
+        "allowed": sorted(HISTORY_KINDS),
+    }
+
+
 def test_rehashed_summary_cannot_claim_authority(lab):
     from physharness.domain import canonical_json, digest_json
 

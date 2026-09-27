@@ -715,9 +715,17 @@ async def test_sdk_nonzero_helper_exit_preserves_vm(tmp_path):
             )
         )
     )
-    with pytest.raises(ExecutionError, match="preserved"):
+    with pytest.raises(ExecutionError) as error:
         await p.download_file("missing", expected_execution_id="vm-source")
+    # A read changes no file; the broker appends "; VM is available." to this definite refusal.
+    assert error.value.code == "WORKSPACE_TRANSFER_REJECTED"
+    assert (
+        str(error.value) == "Workspace helper completed the read unsuccessfully; /work is unchanged"
+    )
     sandbox.kill.assert_not_awaited()
+    assert not p._quarantined
+    with pytest.raises(ExecutionError, match="VM preserved; operation may have changed files"):
+        await p.upload_file("written", b"x", expected_execution_id="vm-source")
     assert not p._quarantined
 
 

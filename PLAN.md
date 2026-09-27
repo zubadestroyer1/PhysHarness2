@@ -306,7 +306,7 @@ The final root proof is always checked against this fixed statement. Agent-inven
 
 - Formalization dominated the effort in the last run: the final proof was 606 lines.
 - O-tier models run the Lean feedback loops. F-tier models handle statements, strategy and hard steps.
-- Sketch-then-fill (§3.7) turns an informal proof into a Lean skeleton whose holes become nodes. The persistent Lean session and automation-on-failure (§3.6) cut the cost of each iteration.
+- Sketch-then-fill (§3.7) turns an informal proof into a Lean skeleton whose holes become nodes. The persistent Lean session (§3.6) cuts the cost of each iteration. Automation on a failing goal is opt-in (`automate=true`) since S1, where it exhausted the workbench's memory.
 - Accepted nodes are immediately reusable library entries within the campaign. Retrieval is tested to actually return them; in the last run, lemma-bank searches returned nothing.
 - Agents may introduce definitions in a campaign-local namespace. Definitions are nodes with fidelity checks.
 - Numerical and computational evidence stays evidence (computation nodes carry reproducibility metadata). It counts as proof only with a certificate checked in Lean (Wave 7).
