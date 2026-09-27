@@ -1367,6 +1367,8 @@ class ResearchTaskExecutor:
                     record_stagnation,
                 )
             if event.kind == "generation_started":
+                if delivered is not None:
+                    delivered["sent"] = True  # this request goes out: stop asking
                 inp, out = (
                     event.payload["input_tokens_reserved"],
                     event.payload["output_tokens_reserved"],
@@ -1836,9 +1838,10 @@ class ResearchTaskExecutor:
                 dispatcher=dispatcher,
                 event_sink=accounting,
             )
-            # A society builder asks _society_completion once, before its task's first model
-            # request: a recruit whose work was delivered while it was queued makes none. A
-            # continuation resumes to read its joined results, so it is not asked.
+            # A society builder asks _society_completion until its task's first model request
+            # is sent, at the loop top and again once the TPM governor admits it: a recruit
+            # whose work was delivered while it was queued makes none. A continuation resumes
+            # to read its joined results, so it is not asked.
             delivered = {} if society and not referee and not prior_sessions else None
             if (stop_on_verified_target or delivered is not None) and (
                 "pre_generation_guard" in parameters
@@ -1852,15 +1855,17 @@ class ResearchTaskExecutor:
                         is not None
                     ):
                         return True
-                    if delivered is None or "reason" in delivered:
+                    if delivered is None or delivered.get("sent"):
                         return False
-                    delivered["reason"] = self._society_completion(
+                    reason = self._society_completion(
                         self.service.get_record("task", task_id, actor),
                         agent,
                         holder,
                         lease["fence"],
                     )
-                    return delivered["reason"] is not None
+                    if reason is not None:
+                        delivered["reason"] = reason
+                    return reason is not None
 
                 runtime_kwargs["pre_generation_guard"] = pre_generation_guard
             if "boundary_hook" in parameters or any(

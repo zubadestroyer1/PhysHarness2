@@ -398,8 +398,8 @@ tools, the prompts and the delivery shapes.
     statement, published by the recruit or anyone else; a joined recruit then returns
     that source to its parent as an unverified result. A source of a since-changed
     statement does not count. If the node closes first, the task ends (`scope_closed`).
-    A recruit whose node is proved or closed while it is still queued ends before its
-    first model request.
+    A recruit whose node is proved or closed while it is still queued, or while its first
+    request waits for rate admission, ends before that request is sent.
   - Each of these endings waits until the recruit's own joined recruits have settled. Until
     then its task cannot complete, so the recruit keeps working and parks on its next
     final message through the joined-children handoff. When it resumes with their

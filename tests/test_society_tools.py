@@ -36,6 +36,7 @@ from physharness.domain import (
 )
 from physharness.errors import HarnessError
 from physharness.execution import ExecutionError, ResponsesRuntime, RuntimeLimits
+from physharness.execution.admission import TokenRateGovernor
 from physharness.execution.stagnation import observe, successor_state
 from physharness.execution.types import GUEST_PYTHON
 from physharness.knowledge.literature import LiteratureBroker
@@ -2638,6 +2639,57 @@ async def test_a_scoped_recruit_proved_while_queued_makes_no_model_request(lab):
     assert note == research_worker.COMPLETION_NOTES["scope_proved"]
     task = service.get_record("task", recruited["task_id"], author)
     assert task["return_result"]["summary"] == f"Node {id8} is proved as Commons.N{id8}; import it."
+
+
+async def test_a_scoped_recruit_proved_while_its_first_request_is_queued_sends_nothing(lab):
+    """The completion check stays live until the first request is sent: it runs again after
+    the TPM governor admits that request (S1 audit 3, M2)."""
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    id8 = node["id"][:8]
+    recruited = await call(
+        tools,
+        "recruit",
+        {"brief": "Prove it.", "title": "Prover", "focus_node_id": id8, "until_proved": True},
+    )
+
+    class ProvingGovernor(TokenRateGovernor):
+        """The recruiter proves the node while the recruit's first request waits here."""
+
+        async def admit(self, **kwargs):
+            published = await call(tools, "lean_check", {"source": PROOF, "node_id": id8})
+            assert published["published"]["recorded"] is True
+            return await super().admit(**kwargs)
+
+    creates = []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        creates.append(json.loads(request.content))
+        return httpx.Response(200, json=response([message("Unneeded.")]))
+
+    client = mock_client(route)
+    executor = ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
+        limits=RuntimeLimits(max_turns=30),
+        workspace_factory=lambda *_: ProvisionedWorkspace(),
+        token_governor=ProvingGovernor(tokens_per_minute=10_000_000),
+    )
+    try:
+        result = await executor.execute(recruited["task_id"], author.project_id)
+    finally:
+        await client.close()
+    assert result["status"] == "completed" and creates == []
+    note = service.artifact_content(result["artifact_id"], author).decode()
+    assert note == research_worker.COMPLETION_NOTES["scope_proved"]
 
 
 async def scoped_recruit(lab, *, detached=False):
