@@ -264,7 +264,9 @@ the policy in native state under `context_budget`, and `start_from_handoff` copi
 continuation keeps the policy its lineage started with, even when its own runtime was built
 without one. Under a budget:
 - **Literal Unicode (#5e).** Tool outputs are serialized with `ensure_ascii=False`, so non-ASCII
-  text reaches the model as literal characters, not `\uXXXX` escapes.
+  text reaches the model as literal characters, not `\uXXXX` escapes. A lone surrogate is the
+  exception: UTF-8 cannot encode it, and left literal it would make every later request of the
+  lineage fail, so it keeps the `\udXXX` escape that legacy output uses.
 - **Output cap.** An output whose serialized text is longer than `max_output_chars` is replaced in
   the model's input by a view. The view is `{"truncated": true, "tool", "total_chars", "head",
   "recall": {"tool": "recall_output", "call_id", "next_offset"}}`, and its `head` holds the first

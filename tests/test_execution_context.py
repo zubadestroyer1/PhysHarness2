@@ -1598,3 +1598,47 @@ async def test_a_truncated_head_and_its_recall_join_exactly_after_a_reload(tmp_p
     assert json.loads(view["head"] + page["text"]) == unsorted
     await first.close()
     await second.close()
+
+
+class ObjectStore:
+    """Keeps checkpoint objects. The SQLite and chunk encoders reject a lone surrogate anywhere in
+    a checkpoint, for every experiment; this isolates what the runtime renders and sends."""
+
+    def __init__(self):
+        self.saved = {}
+
+    async def save(self, checkpoint):
+        checkpoint.verify()
+        self.saved[checkpoint.session.id] = checkpoint
+
+
+async def test_a_lone_surrogate_under_a_budget_keeps_the_lineage_sendable():
+    # UTF-8 cannot encode a lone surrogate, so it keeps the escape legacy output uses.
+    requests = []
+    result = {"path": "notes/\ud800∀.md", "text": "x" * 30_000}
+    client = sdk_client(
+        [
+            response([call_item("a")], "r1"),
+            response([recall_item("p1", "a", 0)], "r2"),
+            response([text_item("done")], "r3"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=ObjectStore(),
+        client=client,
+        dispatcher=observe_dispatcher(result),
+        context_budget=BUDGET,
+    )
+    await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    creates = creates_of(requests)
+    assert len(creates) == 3
+    outputs = outputs_of(creates[-1])
+    original = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    for call_id in ("a", "p1"):
+        assert "notes/\\ud800∀.md" in outputs[call_id]  # escaped surrogate, literal ∀
+    assert json.loads(outputs["a"])["head"] == original[:10_000]
+    assert json.loads(outputs["p1"])["text"] == original[:16_000]
+    await client.close()

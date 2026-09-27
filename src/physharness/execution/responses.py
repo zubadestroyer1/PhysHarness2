@@ -301,23 +301,32 @@ def _tool_output_text(
     """Model-visible output. Under a budget Unicode stays literal (#5e) and a long output becomes a
     head plus a recall handle; the full value stays in tool_results."""
     text = json.dumps(visible, allow_nan=False, ensure_ascii=not budget)
-    limit = budget.get("max_output_chars") if budget else None
-    if limit is None or call["name"] == "recall_output" or len(text) <= limit:
+    if not budget:
         return text
-    # A reloaded checkpoint holds the result with sorted keys, and recall pages that text, so
-    # the head uses the same order. Sorting keeps the length.
-    text = json.dumps(visible, allow_nan=False, ensure_ascii=False, sort_keys=True)
-    head = limit // 2  # escaping at most doubles it: the view is at most the cap plus its envelope
-    return json.dumps(
-        {
-            "truncated": True,
-            "tool": call["name"],
-            "total_chars": len(text),
-            "head": text[:head],
-            "recall": {"tool": "recall_output", "call_id": call["call_id"], "next_offset": head},
-        },
-        ensure_ascii=False,
-    )
+    limit = budget.get("max_output_chars")
+    if limit is not None and call["name"] != "recall_output" and len(text) > limit:
+        # A reloaded checkpoint holds the result with sorted keys, and recall pages that text, so
+        # the head uses the same order. Sorting keeps the length.
+        text = json.dumps(visible, allow_nan=False, ensure_ascii=False, sort_keys=True)
+        # Escaping at most doubles the head: the view is at most the cap plus its envelope.
+        head = limit // 2
+        text = json.dumps(
+            {
+                "truncated": True,
+                "tool": call["name"],
+                "total_chars": len(text),
+                "head": text[:head],
+                "recall": {
+                    "tool": "recall_output",
+                    "call_id": call["call_id"],
+                    "next_offset": head,
+                },
+            },
+            ensure_ascii=False,
+        )
+    # UTF-8 cannot encode a lone surrogate, and one left literal would fail every later request of
+    # the lineage, so it keeps the \udXXX escape legacy output uses. Nothing else changes.
+    return text.encode("utf-8", "backslashreplace").decode()
 
 
 @dataclass(frozen=True, kw_only=True)
