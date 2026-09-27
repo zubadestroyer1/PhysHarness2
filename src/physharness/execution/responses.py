@@ -357,7 +357,10 @@ class _Sent:
 def _scrub_surrogates(value: Any) -> Any:
     """``value`` with each string UTF-8 cannot encode (one holding a lone surrogate, which no
     checkpoint store accepts) replaced by its backslash-escaped form. Dict keys are treated the
-    same. Anything that needs no change is returned as the same object."""
+    same. Anything that needs no change is returned as the same object.
+
+    Two keys that would escape to one raise ValueError rather than lose a value; like a
+    self-referential result's RecursionError, dispatch reports it as TOOL_FAILED."""
     if isinstance(value, str):
         try:
             value.encode("utf-8")
@@ -370,7 +373,12 @@ def _scrub_surrogates(value: Any) -> Any:
             k is not old_k or v is not old_v
             for (k, v), (old_k, old_v) in zip(items, value.items(), strict=True)
         )
-        return dict(items) if changed else value
+        if not changed:
+            return value
+        scrubbed = dict(items)
+        if len(scrubbed) != len(value):
+            raise ValueError("escaping lone surrogates would merge two tool result keys")
+        return scrubbed
     if isinstance(value, (list, tuple)):  # both serialize as a JSON array
         items = [_scrub_surrogates(item) for item in value]
         return items if any(a is not b for a, b in zip(items, value, strict=True)) else value

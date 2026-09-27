@@ -174,6 +174,14 @@ async def test_lone_surrogates_in_a_tool_result_are_escaped_so_the_session_saves
     store.close()
 
 
+async def test_escaping_that_would_merge_two_result_keys_fails_the_tool():
+    kept = await echo_dispatcher({"a\ud800": 1, "a\\udc00": 2}).dispatch("echo", {}, "operation")
+    assert kept == {"a\\ud800": 1, "a\\udc00": 2}  # distinct after escaping, so both stay
+    with pytest.raises(ExecutionError) as error:
+        await echo_dispatcher({"a\ud800": 1, "a\\ud800": 2}).dispatch("echo", {}, "operation")
+    assert error.value.code == "TOOL_FAILED"
+
+
 async def test_a_tool_result_without_lone_surrogates_is_returned_as_is():
     result = {"text": "∀ ε > 0", "items": [{"k": "v", "n": 1}, None, True, 2.5]}
     assert await echo_dispatcher(result).dispatch("echo", {}, "operation") is result
