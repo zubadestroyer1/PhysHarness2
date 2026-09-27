@@ -731,12 +731,18 @@ class CommonsMixin:
     def _long_pole(nodes, dependencies, claims, limit=3):
         """Where help counts most (S1 audit #14): ``(items, hint)``.
 
-        The open non-goal nodes the goal reaches through open depends_on paths that wait on
-        no other open node, oldest first. Without such nodes, the open nodes most open nodes
-        depend on (at least one; ties kept). Without those either, no items and a hint to link
-        the goal's parts. ``claims`` are live claim payloads.
+        Here a node is open while no status closed it and no complete or verified source of
+        its current statement proves it (only the goal is ever accepted). The open non-goal
+        nodes the goal reaches through open depends_on paths that wait on no other open node,
+        oldest first. Without such nodes, the open nodes most open nodes depend on (at least
+        one; ties kept). Without those either, no items and a hint to link the goal's parts.
+        ``claims`` are live claim payloads.
         """
-        open_ids = {node["id"] for node in nodes if is_open(node["status"])}
+        open_ids = {
+            node["id"]
+            for node in nodes
+            if is_open(node["status"]) and source_state(node) not in COMPLETE_RANKS
+        }
         goal = next((node["id"] for node in nodes if node["node_type"] == "goal"), None)
         waiting_on_open = {s for s, t in dependencies if s in open_ids and t in open_ids}
         parts = set()

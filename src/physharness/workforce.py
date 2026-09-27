@@ -368,23 +368,34 @@ class WorkforceMixin:
         cover the first output reservation of each new task (one per entry of ``models``):
         max_cost - spent - reserved - floor >= the reservations' sum. There is no floor by
         default (admission_floor_usd is None, read as 0). The refusal is an early, budget-not-
-        input one; the ledger still hard-stops each reservation at max_cost (S1 #16)."""
+        input one; the ledger still hard-stops each reservation at max_cost (S1 #16). It can
+        clear when running work settles below its reservations, so it is retryable while
+        releasing them all would admit the work."""
         budget = session.get(BudgetRow, experiment.id)
         floor = _micro((policy.payload.get("admission_floor_usd") if policy else None) or "0")
         minimum = sum(self._output_reservation(experiment, model) for model in models)
         remaining = max(0, budget.max_cost - budget.spent - budget.reserved)
         if remaining - floor < minimum:
+            settling = budget.reserved > 0 and budget.max_cost - budget.spent - floor >= minimum
             raise HarnessError(
                 "ADMISSION_BUDGET",
                 f"Budget, not input: ${_usd(remaining)} remains and new work needs "
                 f"${_usd(floor + minimum)}.",
                 details={
                     "remaining_usd": _usd(remaining),
+                    "reserved_usd": _usd(budget.reserved),
                     "floor_usd": _usd(floor),
                     "minimum_reservation_usd": _usd(minimum),
                     "count": len(models),
                 },
-                remediation="Do not retry; continue with work already running, or finish.",
+                remediation=(
+                    f"${_usd(budget.reserved)} is reserved for running work, which usually "
+                    "settles for less: retry once running work settles, and until then "
+                    "continue with work already running."
+                    if settling
+                    else "Do not retry; continue with work already running, or finish."
+                ),
+                retryable=settling,
             )
 
     def _admit_research_tasks(
@@ -437,7 +448,16 @@ class WorkforceMixin:
         )
 
         def action(session, op):
-            self._workforce_lock(session, experiment_id, actor)
+            experiment = self._workforce_lock(session, experiment_id, actor)
+            if floor is not None and not experiment.payload.get("society"):
+                raise HarnessError(
+                    "ADMISSION_FLOOR_REQUIRES_SOCIETY",
+                    "admission_floor_usd applies to society experiments only; this experiment "
+                    "admits work by its task caps.",
+                    status=422,
+                    remediation="Omit admission_floor_usd, or set max_total_tasks and "
+                    "max_pending_tasks.",
+                )
             budget = session.get(BudgetRow, experiment_id)
             if budget is None:
                 raise HarnessError("NOT_FOUND", "Experiment ledger is missing.", status=404)

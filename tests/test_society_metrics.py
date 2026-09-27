@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from physharness.commons import _lean_digest
 from physharness.domain import digest_json
 from physharness.execution.responses import RECALL_OUTPUT_TOOL
 from physharness.orchestration.society_tools import SOCIETY_TOOL_NAMES
@@ -235,6 +236,8 @@ def test_metrics_over_a_society_export_directory(tmp_path):
     assert metrics["cross_branch_dependencies"] == 1  # lemma-a (A) depends on lemma-b (B)
     # S1-shaped nodes publish no sources, and the accepted candidate inlined no modules.
     assert metrics["nodes_by_source"] == {"none": 5} and metrics["cross_branch_imports"] == 0
+    assert metrics["last_source_progress_at"] is None
+    assert metrics["last_receipt_at"] == stamp(1000)
     assert metrics["accepted_proof_modules"] is None and metrics["provenance_source"] is None
     # Reviews.
     assert metrics["reviews_by_verdict"] == {
@@ -299,6 +302,71 @@ def test_source_provenance_counts_cross_branch_reuse():
     assert legacy["accepted_proof_modules"] is None and legacy["nodes_by_source"] == {"none": 1}
     assert legacy["provenance_source"] is None
     assert legacy["accepted_proof_cross_branch_char_share"] is None
+
+
+CHECKED = ": (1 : Nat) + 1 = 2"
+
+
+def stated_node(identifier, rank, recorded, statement=CHECKED):
+    """A node whose source was checked against ``CHECKED``; another ``statement`` restated it
+    after the check, which makes the source stale."""
+    name = identifier.replace("-", "_")
+    return {
+        "id": identifier,
+        "node_type": "lemma",
+        "status": "open",
+        "branch_id": A,
+        "lean_header": "import Mathlib",
+        "lean_name": name,
+        "lean_statement": statement,
+        "lean_source": {
+            "rank": rank,
+            "branch_id": B,
+            "imports": [],
+            "recorded_at": stamp(recorded),
+            "lean_statement_sha256": _lean_digest("import Mathlib", name, CHECKED),
+        },
+    }
+
+
+def test_statement_digest_reproduces_the_platforms():
+    for header, name, statement in (
+        ("import Mathlib", "t", ": (1 : Nat) + 1 = 2"),
+        (None, "t'", ": ∀ x : ℝ, x ^ 2 ≥ 0"),
+        ("", "Foo.bar", ': "quoted" = "quoted"'),
+    ):
+        node = {"lean_header": header, "lean_name": name, "lean_statement": statement}
+        assert metrics_tool._statement_digest(node) == _lean_digest(header, name, statement)
+    assert metrics_tool._statement_digest({"lean_name": "t"}) is None
+
+
+def test_stale_sources_are_neither_counted_complete_nor_progress():
+    manifest = society_export()
+    nodes = manifest["records"]["commons_node"]
+    nodes += [
+        stated_node("verified", "verified", 100),
+        stated_node("complete", "complete", 300),
+        # Restated after its check: the source proves nothing of the current statement.
+        stated_node("restated", "verified", 900, statement=": (2 : Nat) + 2 = 4"),
+        stated_node("partial", "partial", 1200),
+    ]
+    manifest["records"]["verification"] += [
+        {"id": "queued", "status": "queued", "created_at": stamp(2400)},
+        {"id": "rejected", "status": "rejected", "created_at": stamp(1500)},
+    ]
+    metrics = metrics_tool.compute_metrics(manifest, as_of=T0)
+    assert metrics["nodes_by_source"] == {
+        "complete": 1,
+        "none": 5,
+        "partial": 1,
+        "stale": 1,
+        "verified": 1,
+    }
+    # Stop rule 4's clocks: the latest proving source, and the latest receipt of any status.
+    assert metrics["last_source_progress_at"] == stamp(300)
+    assert metrics["last_receipt_at"] == stamp(2400)
+    legacy = metrics_tool.compute_metrics({**manifest, "records": {}}, as_of=T0)
+    assert legacy["last_source_progress_at"] is None and legacy["last_receipt_at"] is None
 
 
 def test_source_provenance_prefers_the_receipts_commons_modules():

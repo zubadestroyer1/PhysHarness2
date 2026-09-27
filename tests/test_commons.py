@@ -7,6 +7,7 @@ from commons_helpers import publish, set_status, society_lab
 from pydantic import ValidationError
 from sqlalchemy import event, select
 from test_core import setup_experiment
+from test_event_waits import park
 from test_sharing import approaches, artifact
 
 from physharness import commons
@@ -608,9 +609,48 @@ def test_the_long_pole_skips_the_parts_of_closed_routes(lab):
     ):
         service.link_nodes(exp["id"], source, "depends_on", target, beta, f"{source}-{target}")
     service.abandon_node(ids["Dead"], "A dead route.", alpha, "abandon")
-    set_status(service, ids["Proved"], "accepted")
+    # A lemma is proved by a complete source; only the goal is ever accepted.
+    publish(service, ids["Proved"], beta, "complete", "prove")
     pole = service.query_nodes(exp["id"], beta, frontier=True)["long_pole"]
     assert [item["id"] for item in pole] == [ids["Live"]]
+
+
+def test_proving_a_pole_lemma_moves_the_pole_and_wakes_waiters(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    stated = {
+        "lean_header": "import Mathlib",
+        "lean_name": "under",
+        "lean_statement": ": (1 : Nat) + 1 = 2",
+    }
+    part = service.create_node(exp["id"], lemma("A"), beta, "A")
+    under = service.create_node(exp["id"], lemma("B", **stated), beta, "B")
+    for source, target in ((goal, part), (part, under)):
+        service.link_nodes(exp["id"], source["id"], "depends_on", target["id"], beta, target["id"])
+
+    def pole():
+        page = service.query_nodes(exp["id"], alpha, frontier=True)
+        return [item["id"] for item in page["long_pole"]]
+
+    def woken(ticket):
+        return service.peer_wait_status(ticket, agent)["reason"]
+
+    assert pole() == [under["id"]]
+    agent, ticket = park(service, author, exp, alpha.branch_id)
+    digest = commons._lean_digest(*stated.values())
+    publish(service, under["id"], beta, "partial", "partial", lean_statement_sha256=digest)
+    assert pole() == [under["id"]] and woken(ticket) == "waiting"
+    publish(service, under["id"], beta, "complete", "complete", lean_statement_sha256=digest)
+    assert pole() == [part["id"]] and woken(ticket) == "long_pole_changed"
+    # A source of an older statement proves nothing: the restated lemma is back on the pole,
+    # and waiters see that move too, though not the branch that restated it.
+    _, ticket = park(service, author, exp, alpha.branch_id)
+    restater, own = park(service, author, exp, beta.branch_id)
+    elaborated = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
+    changed = {**stated, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    service.set_lean_statement(under["id"], *changed.values(), elaborated, beta, "restate")
+    assert pole() == [under["id"]] and woken(ticket) == "long_pole_changed"
+    assert service.peer_wait_status(own, restater)["reason"] == "waiting"
 
 
 def test_query_filters_and_keyset_pages(lab):

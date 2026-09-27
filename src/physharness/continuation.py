@@ -29,7 +29,13 @@ BRANCH_WATCH_KINDS = (
     "commons.source_published",
     "discussion.post_created",
 )
-LONG_POLE_KINDS = ("commons.node_status", "commons.edge_added", "commons.source_published")
+# A restatement can make a node's source stale, which puts the node back on the long pole.
+LONG_POLE_KINDS = (
+    "commons.node_status",
+    "commons.edge_added",
+    "commons.source_published",
+    "commons.lean_statement_set",
+)
 LONG_POLE_CACHE_SIZE = 256
 # Long-pole ids per (experiment id, its latest LONG_POLE_KINDS event sequence): the graph is
 # unchanged until the next such event, so one recompute serves every poll and waiter.

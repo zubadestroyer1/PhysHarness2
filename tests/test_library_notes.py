@@ -47,3 +47,12 @@ def test_notes_are_project_and_pin_scoped_idempotent_and_seeded(lab, monkeypatch
 def test_the_checked_in_seed_covers_the_s1_audit_findings():
     seeded = " ".join(notes_module.seed_notes(S1_DIGEST))
     assert "Matrix.dotProduct" in seeded and "Perron" in seeded and len(seeded) < 3 * 2000
+
+
+def test_the_seed_holds_library_facts_never_proof_routes():
+    """Every project at the pin reads the seed, benchmark arms included, so it must not
+    carry an S1 target's proof method (the S1 aperiodic and Doeblin routes)."""
+    routes = ("what worked", "coin theorem", "contractingwith")
+    for notes in notes_module._seed().values():
+        for note in notes:
+            assert not [route for route in routes if route in note.casefold()], note

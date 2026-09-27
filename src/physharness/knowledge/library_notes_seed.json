@@ -1,7 +1,7 @@
 {
   "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f": [
     "`Matrix.dotProduct` is not a declaration at this pin (17 failed uses in S1): the dot product is the root-namespace `dotProduct`, notation `⬝ᵥ`. `Matrix.vecMul_mul` and `Matrix.vecMul_pow` also failed; look names up with find_declaration first.",
-    "Perron–Frobenius and Brouwer/Schauder fixed-point theorems are absent at this pin: all 13 S1 arms searched and found none. What worked: the coin theorem `Nat.exists_add_mul_eq_of_gcd_dvd_of_mul_pred_le` (Mathlib/Algebra/Order/Ring/Int.lean) and Banach's fixed point `ContractingWith` on the ℓ¹ simplex as a `PiLp 1` subtype.",
+    "Perron–Frobenius and Brouwer/Schauder fixed-point theorems are absent at this pin: all 13 S1 arms searched and found none.",
     "`PiLp.toLp` and `PiLp.ofLp` failed 9 times in S1; the renamed API lives under `WithLp` (`WithLp.ofLp`). Check with find_declaration."
   ]
 }

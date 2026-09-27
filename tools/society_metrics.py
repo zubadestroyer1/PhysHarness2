@@ -37,6 +37,7 @@ from pathlib import Path
 
 FORMAT = "physharness.society-metrics.v1"
 ACCEPTED = "accepted"
+COMPLETE_RANKS = frozenset({"complete", "verified"})
 MAX_MANIFEST_BYTES = 200_000_000  # The bound reproduction.validate_export applies.
 MAX_ARTIFACT_BYTES = 20_000_000
 DEFAULT_CLAIM_TTL_SECONDS = 900
@@ -429,14 +430,51 @@ def _tool_calls(records, read_artifact):
     return mix, sum(count for name, count in tools.items() if name in LEAN_CHECKS)
 
 
+def _statement_digest(node):
+    """``physharness.commons._lean_digest`` of the node's current Lean statement: SHA-256 of
+    the compact JSON array [header, name, statement], or None without a statement."""
+    if node.get("lean_statement") is None:
+        return None
+    encoded = json.dumps(
+        [node.get("lean_header") or "", node.get("lean_name"), node["lean_statement"]],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
 def _source_state(node):
-    """``physharness.commons_sources.source_state`` on the stored rank: the published
-    source's rank, else ``stub`` for an elaborated Lean statement, else ``none``."""
-    if node.get("lean_source"):
-        return node["lean_source"]["rank"]
+    """``physharness.commons_sources.source_state``: the published source's rank, or
+    ``stale`` when it was checked against another statement than the node's current one
+    (so it is never complete); else ``stub`` for an elaborated Lean statement, else
+    ``none``."""
+    source = node.get("lean_source")
+    if source:
+        stale = source.get("lean_statement_sha256") != _statement_digest(node)
+        return "stale" if stale else source["rank"]
     if node.get("lean_statement") is not None and node.get("lean_elaborated"):
         return "stub"
     return "none"
+
+
+def _latest(stamps):
+    """The latest of these ISO timestamps as recorded, or None."""
+    stamps = [stamp for stamp in stamps if stamp]
+    return max(stamps, key=_epoch) if stamps else None
+
+
+def _progress(nodes, receipts):
+    """RUN_PLAN stop rule 4's clocks: when a node last gained a complete or verified source
+    of its current statement (a stale source is no progress), and when the last
+    verification receipt of any status was submitted."""
+    return {
+        "last_source_progress_at": _latest(
+            node["lean_source"].get("recorded_at")
+            for node in nodes
+            if _source_state(node) in COMPLETE_RANKS
+        ),
+        "last_receipt_at": _latest(receipt.get("created_at") for receipt in receipts),
+    }
 
 
 def _source_provenance(nodes, artifacts, receipt):
@@ -547,6 +585,7 @@ def compute_metrics(manifest, read_artifact=None, *, as_of=None):
         "cross_branch_citations": cross_citations,
         "cross_branch_dependencies": _cross_branch_dependencies(edges, nodes),
         **_source_provenance(nodes, records.get("artifact", []), receipt),
+        **_progress(nodes, records.get("verification", [])),
         # Society health.
         **_reviews(records.get("commons_review", [])),
         "branches": {

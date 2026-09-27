@@ -907,6 +907,7 @@ class CommonsReviewMixin:
                     "lean_elaborated": elaborated,
                     "backend": request.elaboration.backend,
                     "diagnostics_sha256": request.elaboration.diagnostics_sha256,
+                    "branch_id": actor.branch_id,
                 },
             )
             self._touch_node(session, row, actor, op)

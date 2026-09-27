@@ -63,6 +63,7 @@ def test_society_admission_is_by_dollars_and_caps_ignore_referees(lab):
     error = refused.value
     assert error.code == "ADMISSION_BUDGET" and error.message.startswith("Budget, not input:")
     assert Decimal(error.details["floor_usd"]) == Decimal("1000000") and not error.retryable
+    assert error.details["reserved_usd"] == "0" and error.remediation.startswith("Do not retry")
     caps = ConfigureWorkforceRequest(
         max_total_tasks=1, max_pending_tasks=1, admission_floor_usd="0.01", expected_revision=1
     )
@@ -109,10 +110,22 @@ def test_society_admits_only_while_one_output_reservation_fits(lab):
     assert error.code == "ADMISSION_BUDGET" and error.message.startswith("Budget, not input:")
     assert error.details == {
         "remaining_usd": "0.999999",
+        "reserved_usd": "0.000001",
         "floor_usd": "0",
         "minimum_reservation_usd": "1",
         "count": 1,
     }
+    # Running work usually settles below its reservation, so this refusal can clear.
+    assert error.retryable and "retry once running work settles" in error.remediation
+    # Unless the floor leaves too little even with every reservation released.
+    service.configure_workforce(
+        exp["id"], ConfigureWorkforceRequest(admission_floor_usd="0.5"), OPERATOR, "floor"
+    )
+    with pytest.raises(HarnessError) as floored:
+        service.recruit_researcher(exp["id"], helper_request(alpha, "Three"), alpha, "floored")
+    error = floored.value
+    assert error.details["reserved_usd"] == "0.000001" and not error.retryable
+    assert error.remediation.startswith("Do not retry")
 
 
 def test_admission_prices_the_model_the_task_runs_with(lab):
@@ -169,17 +182,22 @@ def test_configure_workforce_accepts_only_a_floor(lab, monkeypatch):
     assert calls[1][2]["admission_floor_usd"] == "0.25"
 
 
-def test_legacy_admission_keeps_count_caps_and_ignores_the_floor(lab):
+def test_legacy_admission_keeps_count_caps_and_refuses_a_floor(lab):
     service, researcher, operator, experiment = started(lab)
     only_floor = ConfigureWorkforceRequest(admission_floor_usd="1000000")
-    service.configure_workforce(experiment["id"], only_floor, operator, "floor")
+    with pytest.raises(HarnessError) as refused:
+        service.configure_workforce(experiment["id"], only_floor, operator, "floor")
+    error = refused.value
+    assert (error.code, error.status) == ("ADMISSION_FLOOR_REQUIRES_SOCIETY", 422)
+    assert "admission_floor_usd" in error.message
+    assert service.list_records("workforce_policy", operator, experiment["id"]) == []
     capacity = service.research_capacity(experiment["id"], operator)
     assert (capacity["max_total_tasks"], capacity["max_pending_tasks"]) == (10_000, 10_000)
     branch = service.create_branch(
         experiment["id"], BranchCreate(title="Root", objective="Root"), researcher, "branch"
     )
     service.create_task(TaskCreate(branch_id=branch["id"], objective="Root"), researcher, "task")
-    caps = ConfigureWorkforceRequest(max_total_tasks=1, max_pending_tasks=1, expected_revision=1)
+    caps = ConfigureWorkforceRequest(max_total_tasks=1, max_pending_tasks=1)
     service.configure_workforce(experiment["id"], caps, operator, "caps")
     with pytest.raises(HarnessError) as capped:
         service.create_task(TaskCreate(branch_id=branch["id"], objective="Two"), researcher, "two")

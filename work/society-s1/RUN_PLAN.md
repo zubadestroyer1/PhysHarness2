@@ -112,6 +112,11 @@ paid from the arm's ceiling B.
   --timeout-seconds <W>`. `run-team` runs the preflight first. The preflight now also
   blocks benchmark mode without a readable `masked_reference` artifact
   (`MASKED_REFERENCE_REQUIRED`).
+- After the S1 remediation, `referee_slots` is a strict reservation inside
+  `--concurrency`: builders never take a referee slot, even when no referee work is
+  queued. The runner reserves min(`referee_slots`, concurrency − 1) slots, so the
+  default 2 leaves 1 builder at concurrency 3 and 2 at concurrency 4. Arm S at 12 runs up
+  to 10 builders and 2 referees.
 - `ResearchTeamRunner` runs:
   - the referee tasks requested by its own lineages (ruling R20);
   - the synthesis tasks it schedules (R21);
@@ -145,6 +150,12 @@ Criteria:
    chosen, so none is derived from a reference. If a skill spells out the reference
    route, record it: `energy-lyapunov` already describes the xᵀPx Lyapunov-equation
    method, and `sos-certificates` describes sum-of-squares decompositions.
+8. **Library-note seed overlap checked** (after the S1 remediation). Every project at the
+   pin reads the checked-in seed (`src/physharness/knowledge/library_notes_seed.json`),
+   benchmark arms included. It holds library facts only, and the S1 targets' proof
+   routes were removed from it. Before freezing a target, read the seed for any note that
+   names the chosen target's route or a step of its reference proof, and record or remove
+   it.
 
 **Candidate targets (proposals only).** None has been elaborated, checked against the
 pinned libraries or given a reference proof.
@@ -398,9 +409,12 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 4. **Stagnation (operator rule).** S1 has no automated stagnation stop; CampaignRuntime
    in S2 adds one. So the operator exports every 15 minutes and runs
    `tools/society_metrics.py`. The operator stops the arm when no node has gained a new
-   complete or verified source, and no new receipt has arrived, in the last 45 minutes.
-   The export shows source progress in each node's `lean_source` (`rank` and
-   `recorded_at`); node statuses no longer move before acceptance (S1 audit #17).
+   complete or verified source, and no new receipt has arrived, in the last 45 minutes:
+   both `last_source_progress_at` and `last_receipt_at` (null when none) are more than 45
+   minutes old. `last_source_progress_at` is the latest `recorded_at` of a complete or
+   verified source of its node's current statement (a stale source is no progress), and
+   `last_receipt_at` is the latest submission of a verification receipt of any status.
+   Node statuses no longer move before acceptance (S1 audit #17).
 5. **Fault.** On `BUDGET_RECONCILIATION_REQUIRED`, an uncertain external operation or a
    quarantined workspace, pause the experiment, audit, and ask the user before resuming.
    Earlier pilots did the same.
@@ -433,10 +447,11 @@ proof and transcript bytes, so keep them private.
 | Duplicated-work fraction | `duplicate_claim_fraction`, `claimed_nodes`, `duplicate_claimed_nodes` | An upper bound: a claim record keeps only its first claim and last expiry. There is no claim-based baseline for the last run, so compare against the audited overlap in the arm reports. |
 | Idle and waiting fraction; post-acceptance spend | Not computed | Needs event timelines, which the export does not contain. Use the database event log, as the earlier pilot evaluators did. |
 | Coordination versus mathematics | `tool_call_mix` (`commons_society`, `math_lean_computation`, `other`, `unclassified`, `by_tool`; Lean effort: `lean_formalization`, `lean_formalization_share`, `lean_formalization_share_of_math`) | Counts calls, not tokens. It needs the runtime-event artifact bytes in the export directory; otherwise `available` is false. The buckets are listed below the table. |
-| Citation and reuse rate | `citations`, `cross_branch_citations`, `cross_branch_dependencies`; by provenance: `nodes_by_source`, `cross_branch_imports`, `accepted_proof_modules`, `accepted_proof_cross_branch_modules`, `accepted_proof_cross_branch_char_share`, `provenance_source` | An import is cross-branch when different branches published the importing and the imported source. The accepted-proof figures read the receipt's platform-written `commons_modules` (stale modules left out), each module weighed by its source's `size_bytes`; a receipt without that key falls back to the candidate's `provenance.commons` and its `chars`, and `provenance_source` (`receipt`, `artifact` or null) says which. They are null when the accepted proof inlined no modules, as in S1; there, confirm lemma reuse by manual audit, as in the Duffing report. |
+| Citation and reuse rate | `citations`, `cross_branch_citations`, `cross_branch_dependencies`; by provenance: `nodes_by_source`, `cross_branch_imports`, `accepted_proof_modules`, `accepted_proof_cross_branch_modules`, `accepted_proof_cross_branch_char_share`, `provenance_source` | `nodes_by_source` counts a source checked against an older statement than its node's current one as `stale`, never as complete or verified. An import is cross-branch when different branches published the importing and the imported source. The accepted-proof figures read the receipt's platform-written `commons_modules` (stale modules left out), each module weighed by its source's `size_bytes`; a receipt without that key falls back to the candidate's `provenance.commons` and its `chars`, and `provenance_source` (`receipt`, `artifact` or null) says which. They are null when the accepted proof inlined no modules, as in S1; there, confirm lemma reuse by manual audit, as in the Duffing report. |
 | Retrieval hit rate | Not computed | S1 has no accepted non-root nodes to retrieve. |
 | Live approach families | `branches.labs` (S1 only; there are no labs after the remediation), `nodes_by_type` | Proxies. The count over time needs periodic exports. |
 | Referee catch rate; fidelity failure rate | `referee_negative_share`, `fidelity_failure_share` (S1 only; the remediation removed fidelity reviews), `reviews_by_verdict`, `cross_model_share`, `stale_reviews` | These are negative-verdict shares. A true catch rate needs ground truth. |
+| Source and receipt progress (stop rule 4) | `last_source_progress_at`, `last_receipt_at` | Timestamps as recorded, or null when there are none. A stale source is not progress; a receipt counts whatever its status. |
 | Stale-claim rate | `stale_claim_count`, `live_claim_count`, `claims_as_of`, `claims_as_of_source` | Unreleased claims past expiry at `--as-of`. Without `--as-of`, claims are judged at the run's end (the latest activity in the export), so claims that merely outlived the run are not counted. Stale counts are meaningful only for in-run exports (the 15-minute checks) or with an explicit `--as-of`. A post-run count misses a lapse that the same branch later re-claimed, because the claim record is overwritten. |
 | Lean iterations per accepted node | `lean_checks_per_accepted_result` | Needs runtime events. |
 | Automation hit rate | Not computed | `lean_check` results are not persisted as records. |

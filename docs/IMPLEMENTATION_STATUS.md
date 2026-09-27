@@ -10,10 +10,10 @@
 - **Task 6:** labs are removed. `message` reaches one branch or a node's workers, rate-limited per sender; referees stay unreachable.
 - **Task 7:** one lean society view (target, objective, constitution, frontier and claims) builds both the prompt and the compaction anchor.
 - **Task 8:** updates are relevance-routed compact lines with 8-hex ids. A reader's own posts are never pushed, and the goal thread is pull-only.
-- **Task 9:** the lemma store. Every node is a Lean module, and `lean_check(node_id=…)` publishes a ranked source (`verified`, `complete` or `partial`).
+- **Task 9:** the lemma store. Every node is a Lean module, and `lean_check(node_id=…)` publishes a ranked source (`verified`, `complete` or `partial`). Ranks are VM-attested and advisory; only independent acceptance is trusted.
 - **Task 10:** `import Commons.N…` is inlined for `lean_check`, and the verifier checks one flattened file whose receipt lists the inlined modules.
 - **Task 11:** `commons_fetch` brings commons Lean into the workspace; workspaces are stated to be private; reuse is measured by provenance.
-- **Task 12:** the status ladder and fidelity reviews are gone. A node is open until it is accepted, refuted or abandoned, referees review plans only, and a verified proof records the nodes it imported.
+- **Task 12:** the status ladder and fidelity reviews are gone. A node is open until it is accepted, refuted or abandoned, referees review plans only (a compiled node gets `REVIEW_UNNEEDED`), and a verified proof records the nodes it imported (`in_verified_proof`), which stay open.
 - **Task 13:** `find_declaration` replaces library search and reads, and `inbox`, `lean_sketch` and `load_skill` are removed.
 - **Task 14:** `lean_check(stubs=true)` turns a skeleton's sorry lemmas into importable stub nodes.
 - **Task 15:** every recruit brief carries a scope paragraph, and a recruit ends when its work is delivered (`result_returned`, `scope_proved` or `scope_closed`).
@@ -111,8 +111,7 @@ What exists (Tasks 1–10):
     nodes, each in its author's lab.
   - Typed edges with cycle checks, bounded query and read, and a transparent frontier
     score.
-  - Open nodes, closed only by platform acceptance or refutation or by author abandonment
-    (the S1 remediation replaced the status ladder, audit #17).
+  - A status ladder that only platform code moves, apart from abandonment by the author.
 - **Discourse.**
   - Expiring work claims; several branches may hold one node.
   - A thread per node, with best-effort auto-subscriptions and bounded digests that put
@@ -120,23 +119,24 @@ What exists (Tasks 1–10):
     refuted).
 - **Checks.**
   - Referees are platform-created, parentless, lab-less branches, isolated from other
-    branches. The first referee runs a model family other than the author's when one
-    exists, and a panel spreads over the configured families. Referees check plans and
-    arguments, never compiled nodes (`REVIEW_UNNEEDED`); a verdict is recorded, a
-    negative one is posted as an objection, and none moves a status. Each text version
-    gets a bounded referee panel (`REVIEW_LIMIT`) that gap reports do not use up, and
-    reviews follow the normalized statement text, so a restated node draws no fresh
-    panel. Only the author replaces another writer's elaborated Lean statement or one a
-    verified source proves.
-  - Verdicts are sound, gaps or wrong. Published sources are ranked on Lean evidence,
-    and a `verified` source rank needs the harness statement check. That check replays
-    the compiled file through the kernel, requires the theorem's elaborated type to equal
-    the node statement's, and collects its axioms itself; only standard axioms count.
-    Elaboration and the check run in the agent-controlled workspace VM, so ranks are
-    VM-attested and advisory, not trusted platform checks; only independent acceptance
-    is trusted.
-  - Goal acceptance is persisted from the independent target receipt; nodes the proof
-    imported record the receipt (`in_verified_proof`) and stay open.
+    branches. The first referee runs a model family other than the author's (for
+    fidelity, also other than every claimant's) when one exists, and a quorum spreads
+    over the configured families.
+    A standing `wrong` vetoes every promotion above informal and a standing
+    `unfaithful` vetoes formally stated; either ends its panel. Each text version gets a
+    bounded referee panel (`REVIEW_LIMIT`) that gap reports do not use up, each Lean
+    statement writer a bounded fidelity budget, and reviews follow the normalized
+    statement text, so a restated node draws no fresh panel. Only the author replaces
+    another writer's elaborated Lean statement or a formal node's.
+  - Informal verdicts are sound, gaps or wrong; fidelity verdicts are faithful or
+    unfaithful. Ladder moves are bound to evidence: the review quorum, Lean elaboration,
+    and a local compile that passes the harness statement check. That check replays the
+    compiled file through the kernel, requires the theorem's elaborated type to equal the
+    node statement's, and collects its axioms itself; only standard axioms count.
+    Elaboration and local compiles run in the agent-controlled workspace VM, so they are
+    VM-attested evidence, not trusted platform checks; only independent acceptance is
+    trusted.
+  - Goal acceptance is persisted from the independent target receipt.
 - **Labs.** Membership is capped, lab broadcast exists, and direct messages across labs
   are blocked by default.
 - **Toolkit.**
@@ -167,17 +167,17 @@ What exists (Tasks 1–10):
     manifest.
   - The simulation found one integration gap: nodes did not record their author's lab.
     It is fixed, with a regression test.
-- **Final review fixes.** A statement check counts only the node's real top-level
+- **Final review fixes.** Local compiles count only for the node's real top-level
   theorem (comments, strings, namespaces and forged one-shot axiom lines no longer
   count); referees get a read-and-check profile, and reviews requested from
   platform-rooted lineages run; own and claimed node threads survive the subscription
-  cap. Minor fixes: infrastructure failures are never recorded as elaboration results,
-  one withheld-source reason code, batched hole elaboration, benchmark refusal of search
-  pages, and an opt-in PostgreSQL commons smoke in CI.
+  cap. Minor fixes: infrastructure failures never demote a node, one withheld-source
+  reason code, batched hole elaboration, benchmark refusal of search pages, and an
+  opt-in PostgreSQL commons smoke in CI.
 - **Residual fixes after the final review.**
   - The one-shot Lean fallback reads `#print axioms` from `lean --json`, because plain
     `lean` prints those reports without a position. A complete proof is now reported
-    complete, so a `verified` source rank is reachable on images without the REPL. This was
+    complete, so `compiles_locally` is reachable on images without the REPL. This was
     checked against real Lean 4.32 and 4.33. On both backends, axiom reports now parse
     Lean names that contain `'`.
   - Referees get referee-specific norms, check-ins, nudges and skill lists, which name

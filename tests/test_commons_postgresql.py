@@ -191,18 +191,18 @@ def test_event_wait_filters_run_on_the_backend(backend_lab):
         return service.peer_wait_status(ticket, agent)["reason"]
 
     agent, renewed = park(service, author, exp, alpha.branch_id, ids=[node["id"]])
+    _, pole = park(service, author, exp, alpha.branch_id)
     service.claim_node(node["id"], "renew", beta, "renew")
     publish(service, node["id"], beta, "partial", "retry")
-    assert reason(renewed) == "waiting"
+    assert reason(renewed) == reason(pole) == "waiting"
     publish(service, node["id"], beta, "complete", "complete")
     assert reason(renewed) == "watched_event"
+    # The complete source proves the node, so it leaves the long pole.
+    assert reason(pole) == "long_pole_changed"
     _, claimed = park(service, author, exp, alpha.branch_id, ids=[node["id"]])
     service.claim_node(node["id"], "release", beta, "release")
     service.claim_node(node["id"], "claim", beta, "claim-again")
     assert reason(claimed) == "watched_event"
-    _, pole = park(service, author, exp, alpha.branch_id)
-    service.abandon_node(node["id"], "Dead end.", beta, "abandon")
-    assert reason(pole) == "long_pole_changed"
     _, routed = park(service, author, exp, alpha.branch_id)
     service.post_on_node(mine["id"], NodePostCreate(kind="objection", abstract="Gap."), beta, "p")
     assert reason(routed) == "relevant_update"
