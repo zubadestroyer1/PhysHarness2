@@ -145,8 +145,8 @@ def test_publication_refused_when_the_statement_changed(lab):
         "reason": "statement_changed",
     }
     # The verified source of the older statement proves nothing of the current one: it reads
-    # stale. For replacement it counts as complete, so another branch's complete source of
-    # the current statement replaces it.
+    # stale and counts as no source, so another branch's source of the current statement
+    # replaces it.
     assert source_state(service.read_node(node["id"], alpha)["node"]) == "stale"
     listed = service.query_nodes(exp["id"], alpha, source="stale")["items"]
     assert [item["id"] for item in listed] == [node["id"]]
@@ -154,6 +154,41 @@ def test_publication_refused_when_the_statement_changed(lab):
     current = _lean_digest(*changed.values())
     fresh = publish(service, node["id"], gamma, "complete", "c", lean_statement_sha256=current)
     assert fresh["recorded"] is True and fresh["replaced"] is True
+
+
+def test_any_source_of_the_current_statement_replaces_a_stale_one(lab):
+    """After a statement change the old source proves nothing: a partial of the new
+    statement replaces it, and a stale verified source keeps no publisher lock."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    node = lemma(service, exp, alpha, "Trace", "n", **LEAN)
+    old = _lean_digest(*LEAN.values())
+    assert publish(service, node["id"], beta, "complete", "c", lean_statement_sha256=old)[
+        "recorded"
+    ]
+    changed = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    service.set_lean_statement(node["id"], *changed.values(), ELABORATED, alpha, "restate")
+    current = _lean_digest(*changed.values())
+    partial = publish(service, node["id"], beta, "partial", "p", lean_statement_sha256=current)
+    assert partial["recorded"] is True and partial["replaced"] is True
+    assert source_state(service.read_node(node["id"], alpha)["node"]) == "partial"
+    # A verified source answers only to its publisher and the author while it is current.
+    gamma = third_branch(service, author, exp)
+    publish(service, node["id"], beta, "verified", "v", lean_statement_sha256=current)
+    locked = publish(service, node["id"], gamma, "partial", "g1", lean_statement_sha256=current)
+    assert (locked["recorded"], locked["reason"], locked["rank"]) == (
+        False,
+        "lower_rank",
+        "verified",
+    )
+    service.set_lean_statement(node["id"], *LEAN.values(), ELABORATED, alpha, "restate-back")
+    fresh = publish(service, node["id"], gamma, "partial", "g2", lean_statement_sha256=old)
+    assert fresh["recorded"] is True and fresh["replaced"] is True
+    # Imports of a stale source keep inlining it, flagged stale (Task 10).
+    service.set_lean_statement(node["id"], *changed.values(), ELABORATED, alpha, "restate-2")
+    (module,) = service.expand_commons(
+        exp["id"], f"import {node['lean_module']}\n", alpha, max_bytes=100_000
+    ).modules
+    assert (module.rank, module.stale) == ("partial", True)
 
 
 def test_a_verified_rank_needs_a_passing_statement_check_on_standard_axioms(lab):

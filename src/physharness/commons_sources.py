@@ -92,8 +92,8 @@ def _stale(source, digest):
 
 
 def _effective_rank(source, digest):
-    """The rank a source holds for replacement and import: a verified source of an older
-    statement counts as complete."""
+    """The rank a source holds for import: a verified source of an older statement counts
+    as complete (the importer inlines it, flagged stale)."""
     if source["rank"] == "verified" and _stale(source, digest):
         return "complete"
     return source["rank"]
@@ -126,14 +126,14 @@ def node_refusal(node: dict) -> str | None:
 
 
 def blocking_rank(node: dict, rank: str, branch_id: str | None) -> str | None:
-    """The effective rank of the node's source when it keeps its place against a new source
-    of ``rank`` from ``branch_id``, else None. At equal rank the newer source wins, except
-    that a verified source of the current statement answers only to its publisher and the
-    node's author."""
+    """The rank of the node's source when it keeps its place against a new source of
+    ``rank`` from ``branch_id``, else None. A stale source counts as no source: any source
+    of the current statement replaces it. At equal rank the newer source wins, except that
+    a verified source answers only to its publisher and the node's author."""
     current = node.get("lean_source")
-    if current is None:
+    if current is None or _stale(current, _statement_digest(node)):
         return None
-    held = _effective_rank(current, _statement_digest(node))
+    held = current["rank"]
     if RANKS[rank] < RANKS[held] or (
         rank == held == "verified"
         and branch_id not in (current.get("branch_id"), node.get("branch_id"))

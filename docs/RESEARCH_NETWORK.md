@@ -213,8 +213,9 @@ tools, the prompts and the delivery shapes.
   - A source proves a node only for the statement it was checked against. Once the
     node's Lean statement changes (or a node published without one gets one), its source
     reports `stale`: it is never complete, so the node can draw a referee again and a node
-    resting on it is conditional. For replacement a stale verified source counts as
-    complete, and an importer still inlines it, flagged stale.
+    resting on it is conditional. For replacement it counts as no source: any source of
+    the current statement, of any rank, replaces it, and a stale verified source keeps no
+    publisher lock. An importer still inlines it, flagged stale.
   - Higher ranks replace lower ones, and an equal rank replaces its peer, except that a
     verified source of the current statement is replaced only by its publisher or the
     node's author.
