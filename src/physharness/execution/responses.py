@@ -154,6 +154,7 @@ async def _resend_rate_limited(
     operation_id: str | None = None,
     abandon: Callable[[], Awaitable[None]] | None = None,
     on_wait: Callable[[int, float, str, Exception], Awaitable[None]] | None = None,
+    on_give_up: Callable[[float], None] | None = None,
 ) -> Any:
     """Await `send`, resending it while the provider refuses it for rate limiting.
 
@@ -161,7 +162,8 @@ async def _resend_rate_limited(
     pass the deadline, or the wait is interrupted, `abandon` runs before the error
     propagates; giving up raises a definite, retryable PROVIDER_RATE_LIMITED. When given,
     `on_wait(attempt, seconds, source, error)` performs each wait instead of `asyncio.sleep`,
-    under the same interrupt guard, so an error it raises also abandons the request.
+    under the same interrupt guard, so an error it raises also abandons the request. A
+    refusal given up on without waiting is reported to `on_give_up(seconds)` before `abandon`.
     """
     backoff, attempt = 1.0, 0
     while True:
@@ -173,6 +175,8 @@ async def _resend_rate_limited(
                 raise
             wait, source = hint
             if asyncio.get_running_loop().time() + wait >= deadline:
+                if on_give_up is not None:
+                    on_give_up(wait)
                 if abandon is not None:
                     await abandon()
                 raise ExecutionError(
@@ -491,6 +495,12 @@ class ResponsesRuntime:
     def _release(self, admission: Admission | None) -> None:
         if admission is not None:
             self.token_governor.release(admission)
+
+    @property
+    def _governor_throttled(self) -> Callable[[float], None] | None:
+        """The give-up hook: the governor's ``throttled``, or None without a governor. A 429
+        given up on without waiting pauses admission too; waited 429s pause it in the hook."""
+        return self.token_governor.throttled if self.token_governor is not None else None
 
     def _throttle_hook(
         self,
@@ -1261,6 +1271,7 @@ class ResponsesRuntime:
                     ),
                     deadline,
                     on_wait=self._throttle_hook(session, None, []),
+                    on_give_up=self._governor_throttled,
                 )
             except Exception as exc:
                 if getattr(exc, "status_code", None) != 400:
@@ -1477,6 +1488,7 @@ class ResponsesRuntime:
                     waits,
                     requeue if self.token_governor is not None else None,
                 ),
+                on_give_up=self._governor_throttled,
             )
         except Exception as error:
             if isinstance(error, ExecutionError) and error.code == "PROVIDER_RATE_LIMITED":

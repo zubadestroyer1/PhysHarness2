@@ -223,14 +223,25 @@ keeps the estimate charged.
 Roots and joined children, which a parent waits on, are admitted first, then referees, then
 everything else. A waiting request ages one class per 30 s, so nothing starves.
 
-Every 429 the runtime waits out pauses all admission for that wait and cuts the rate by 20%. The
-rate recovers by 5% of the limit per clean minute. A 429 on `responses.create` also releases its
-admission and re-queues it behind the pause instead of sleeping, so waiting requests resume in
-priority order rather than all at once. A 429 on `input_tokens.count` holds no admission and only
-pauses (F10). A re-queued request must be admitted one second before the deadline. Otherwise the
-give-up is definite, as without a governor: `generation_aborted(reason="rate_limited")`, then the
-marker clears, and the session fails with retryable `PROVIDER_RATE_LIMITED`. Every exit that
-certainly sent nothing returns the admission.
+Every 429 pauses all admission for its wait. That includes a 429 the runtime gives up on at once
+because the wait would pass the deadline. The first 429 of a pause also cuts the rate by 20%. A 429
+that arrives while admission is already paused belongs to the same congestion event, so it extends
+the pause if its wait is longer and does not cut again. A burst of refusals therefore cuts the rate
+once. The rate recovers by 5% of the limit per minute. A 429 on `responses.create` also releases
+its admission and re-queues the request behind the pause instead of sleeping, so it waits in the
+priority queue with every other request. A 429 on `input_tokens.count` holds no admission, so it
+pauses and cuts but does not re-queue (F10). A re-queued request must be admitted one second before
+the deadline. Otherwise the give-up is definite, as without a governor:
+`generation_aborted(reason="rate_limited")`, then the marker clears, and the session fails with
+retryable `PROVIDER_RATE_LIMITED`. These exits return the admission, because they certainly sent
+nothing:
+- a target verified while queued;
+- a timeout before the send;
+- a failed `generation_started`;
+- a 400;
+- a rate-limit give-up.
+
+Any other exit keeps the estimate charged until the bucket refills.
 
 The governor adds no throughput. It spreads requests under the limit, in priority order, instead
 of letting them all meet 429s. It cannot see other processes, so set it to about 90% of the org

@@ -76,3 +76,22 @@ def test_settings_read_the_process_token_rate(tmp_path, monkeypatch):
     monkeypatch.setenv("PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE", "0")
     with pytest.raises(ConfigurationError):
         Settings(auth_file=tmp_path / "none.json")
+
+
+async def test_a_burst_of_429s_cuts_the_rate_once_per_pause(monkeypatch):
+    clock = [100.0]
+    governor = TokenRateGovernor(tokens_per_minute=1_800_000)
+    monkeypatch.setattr(governor, "_now", lambda: clock[0])
+    for wait in [2.0] * 8 + [5.0] + [2.0] * 7:  # 16 creates refused together
+        governor.throttled(wait)
+    snapshot = governor.snapshot()
+    # One congestion event: one 20% cut, not 0.8**16; the longest wait sets the pause.
+    assert (snapshot["effective_tokens_per_minute"], snapshot["paused_seconds"]) == (1_440_000, 5.0)
+    clock[0] = 103.0  # inside the pause: a longer wait extends it, with no second cut
+    governor.throttled(4.0)
+    snapshot = governor.snapshot()
+    # 3 s of recovery at 5% of the limit per minute: 1,440,000 + 4,500.
+    assert (snapshot["effective_tokens_per_minute"], snapshot["paused_seconds"]) == (1_444_500, 4.0)
+    clock[0] = 107.0  # the pause has ended: a new 429 is a new event and cuts again
+    governor.throttled(1.0)
+    assert governor.snapshot()["effective_tokens_per_minute"] == round((1_440_000 + 10_500) * 0.8)

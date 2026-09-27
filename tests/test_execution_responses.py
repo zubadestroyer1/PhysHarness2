@@ -736,16 +736,17 @@ async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
         events.append(event.kind)
 
     client = rate_limited_client(
-        [(429, refusal("rate_limit_exceeded"), {"retry-after": "1.5"})], []
+        [(429, refusal("rate_limit_exceeded"), {"retry-after": "1.1"})], []
     )
-    governor = TokenRateGovernor(tokens_per_minute=1_000_000)
+    # A slow bucket that holds the whole estimate: within the test only a release refills it.
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=2_000)
     store = SQLiteRuntimeStore(tmp_path / "s.db")
     runtime = ResponsesRuntime(store=store, client=client, event_sink=emit, token_governor=governor)
     with pytest.raises(ExecutionError) as error:
         await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=2))
     (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
     checkpoint = await runtime.checkpoint(session_id)
-    # The 1.5 s pause outlasts the re-admission budget (deadline - 1 s): the give-up runs
+    # The 1.1 s pause outlasts the re-admission budget (deadline - 1 s): the give-up runs
     # main's _abandon_refused (emit, then clear) and every admitted token comes back.
     assert error.value.code == "PROVIDER_RATE_LIMITED" and error.value.retryable
     assert (checkpoint.session.status, checkpoint.native_state["pending_operation"]) == (
@@ -753,7 +754,53 @@ async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
         None,
     )
     assert events == ["generation_started", "provider_throttled", "generation_aborted"]
-    assert governor.snapshot()["level"] == 1_000_000
+    assert governor.snapshot()["level"] == 2_000
+    await client.close()
+
+
+@pytest.mark.parametrize("refused", ["create", "count"])
+async def test_immediate_rate_limit_give_up_still_pauses_the_governor(tmp_path, refused):
+    order = []
+
+    class Recording(TokenRateGovernor):
+        def throttled(self, wait_seconds):
+            order.append("throttled")
+            super().throttled(wait_seconds)
+
+        def release(self, admission):
+            order.append("release")
+            super().release(admission)
+
+    async def emit(event):
+        order.append(event.kind)
+
+    hopeless = (429, refusal("rate_limit_exceeded"), {"retry-after": "20"})
+    client = rate_limited_client(
+        [hopeless] if refused == "create" else [],
+        [],
+        counts=[hopeless] if refused == "count" else [],
+    )
+    # A slow bucket that holds the whole estimate: within the test only a release refills it.
+    governor = Recording(tokens_per_minute=60, burst_tokens=2_000)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        client=client,
+        event_sink=emit,
+        token_governor=governor,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=2))
+    snapshot = governor.snapshot()
+    # The 20 s wait would pass the 2 s deadline, so the runtime gives up without waiting; the
+    # refusal still pauses and cuts the governor, before main's abandon (emit, then clear).
+    assert error.value.code == "PROVIDER_RATE_LIMITED"
+    assert 19 < snapshot["paused_seconds"] <= 20 and snapshot["effective_tokens_per_minute"] == 48
+    assert snapshot["level"] == 2_000
+    assert order == (
+        ["generation_started", "throttled", "generation_aborted", "release"]
+        if refused == "create"
+        else ["throttled"]
+    )
     await client.close()
 
 
@@ -777,7 +824,9 @@ async def test_verified_target_during_admission_wait_sends_nothing(tmp_path):
     result = await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
     assert result.completion_reason == "target_verified"
     assert not [u for u, _ in requests if u.endswith("/responses")]
-    assert governor.snapshot()["waiting"] == 0
+    # Released: the bucket is back to full although this runtime's ~1,000-token admission
+    # overdrew it.
+    assert (governor.snapshot()["waiting"], governor.snapshot()["level"]) == (0, 100)
     await client.close()
 
 

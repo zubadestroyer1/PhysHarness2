@@ -61,8 +61,9 @@ an exact separately qualified template ID. `PHYSHARNESS_PROVIDER_TOKENS_PER_MINU
 governs the organisation's tokens-per-minute limit in each process that calls the provider (a
 worker or `run-team`). Set it to about 90% of the org limit divided by the number of those
 processes. Unset, requests are not governed (`docs/EXECUTION.md`, "Provider rate governance").
-Compose does not forward it to the worker container yet. Then start both application and worker
-profiles:
+Neither the Compose worker (`compose.yaml`) nor the Terraform ECS worker
+(`infra/terraform/aws/services.tf`) forwards it yet, since both list the worker's environment
+explicitly. Then start both application and worker profiles:
 
 ```sh
 docker-compose --env-file .env --profile app --profile worker up --build -d

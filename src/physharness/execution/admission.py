@@ -113,10 +113,13 @@ class TokenRateGovernor:
             self._credit(admission.tokens)
 
     def throttled(self, wait_seconds: float) -> None:
-        """A provider 429: pause every admission and cut the rate (AIMD)."""
+        """A provider 429: pause every admission and cut the rate (AIMD). A 429 during the pause
+        belongs to the same congestion event, so it only extends the pause: a burst of refusals
+        cuts the rate once, not once per refusal."""
         now = self._now()
         self._refill(now)
-        self._cut_rate, self._cut_at = max(1.0, self._rate(now) * THROTTLE_RATE_FACTOR), now
+        if now >= self.paused_until:
+            self._cut_rate, self._cut_at = max(1.0, self._rate(now) * THROTTLE_RATE_FACTOR), now
         self.paused_until = max(self.paused_until, now + max(0.0, wait_seconds))
         self._pump()
 
