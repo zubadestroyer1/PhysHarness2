@@ -74,7 +74,7 @@ The five stated coverage gaps remain material: the security-filtered optional pr
 | `library-independent.json` | `cd9124b6f7de592fd2fcfdc5ef21d21f4733636f956677f1914781bf5c3fd58d` |
 | `fixed-boundary.json` | `db3915dd583c527f10c67a40fd8c30ee474094fcd1c484b121df5f5ef72afbe6` |
 | `regressions.json` | `89e2dc04e98a4fa8ae95788009c174c5c17672444cdb36ec90823f039d77cacc` |
-| `regressions.xml` | `5e4736bb90ae9862565fb50da8133914044914d7ea7f827ff5b42f61607588aa` |
+| `regressions.xml` | `14d1f22f952ab1770592fb8e0a48b15390aeee9c7dad6d2348aee3fdc77592da` |
 | `declarations-kernel.txt` | `a1b350d2820424bdc368dfaa2c4bdceef122394b9a67767c8e36b097c3a91ae8` |
 | `image-metadata.json` | `75be3be77a1ca65a153fb594d7e71ec72a5ec27b3aabe1e5e75323c580b9f573` |
 | `runtime-identity.json` | `6d45b4cc785e74c75883e6c2bdb42ef3ba50639b7c89bb0614c990d0142474e5` |
