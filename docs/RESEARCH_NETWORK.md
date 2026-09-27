@@ -466,11 +466,14 @@ tools, the prompts and the delivery shapes.
   `for="tasks"` still waits for recruits.
 
   Either wait resumes natively: the agent keeps its transcript and gets a short wake note
-  (the reason, the awaited recruits' statuses and the long pole). The supervisor checks a
-  parked wait only when new events exist, when its minimum sleep or timeout ends, or at
-  least every 30 s (a PostgreSQL event can commit behind one already seen). A run
-  whose agents all wait with nothing admissible stops with `SOCIETY_IDLE`; the waits keep
-  their tickets, so a later run resumes them.
+  (the reason; its detail, which is a watched event's kind and `aggregate_id` or a
+  `wait_error`'s code; the awaited recruits' statuses; and the long pole). The supervisor
+  checks a parked wait only when new events exist, when its minimum sleep or timeout ends,
+  or at least every 30 s (a PostgreSQL event can commit behind one already seen). A run
+  stops with `SOCIETY_IDLE` when all its agents wait with nothing admissible: no other task
+  of the experiment is queued or running (another runner's or worker's work could still
+  wake them), and a synthesis that is due has been scheduled first. The waits keep their
+  tickets, so a later run resumes them.
 - **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
   least 8 hex characters of a record the agent can see; an ambiguous prefix returns
   `AMBIGUOUS_ID` with the candidates. Routing arguments (`message.to`, `wait.ids`) name

@@ -1697,12 +1697,16 @@ class ResearchTaskExecutor:
 
             def wake_note():
                 """What a society wait resumes with instead of a fresh prompt (S1 audit #14): the
-                transcript is kept, so only the wake reason, the awaited recruits' statuses and
-                the long pole. Agent-authored text stays JSON values, never platform lines."""
+                transcript is kept, so only the wake reason and its detail, the awaited recruits'
+                statuses and the long pole. Agent-authored text stays JSON values, never
+                platform lines."""
                 wake = {
                     "type": "wake",
                     "reason": (wake_status or {}).get("reason") or ready["reason"],
                 }
+                if (wake_status or {}).get("detail"):
+                    # A watched event's kind and aggregate, or a wait_error's code.
+                    wake["detail"] = wake_status["detail"]
                 if ready["wait_task_ids"]:
                     wake["children"] = self.service.delegated_task_statuses(
                         task_id, ready["wait_task_ids"], agent
@@ -2491,9 +2495,10 @@ class ResearchTeamRunner:
             return [task for task in tasks if task["id"] in selected_ids]
 
         def all_waiting(pending, head):
-            """Whether every pending task waits, at least one on events, and every event wait
-            found nothing at this head, which is still current: nothing in this run can act,
-            so no event can come to wake it (S1 #14)."""
+            """Whether the society is idle (S1 #14): every pending task waits, at least one on
+            events; every event wait found nothing at this head, which is still current; and
+            the store shows no other queued or running task of the experiment. Neither this
+            run nor another runner or worker can then act, so no event can come to wake it."""
             tickets = {task["id"]: task.get("ready_continuation") or {} for task in pending}
             events = [
                 task_id
@@ -2506,6 +2511,15 @@ class ResearchTeamRunner:
                 and all(t.get("peer_wait") or t.get("wait_task_ids") for t in tickets.values())
                 and all(c is not None and (c[0], c[2]) == (head, "waiting") for c in checked)
                 and self.service.event_head(actor) == head
+                and all(
+                    task["status"] in {"completed", "failed", "blocked"}
+                    or (
+                        task["id"] in tickets
+                        and task["status"] == "queued"
+                        and task.get("ready_continuation") == tickets[task["id"]]
+                    )
+                    for task in self._records("task", actor, experiment["id"])
+                )
             )
 
         def yield_synthesis(task_id):
@@ -2563,7 +2577,8 @@ class ResearchTeamRunner:
                 if asyncio.get_running_loop().time() >= deadline:
                     stop_reason = "TEAM_TIMEOUT"
                     break
-                head = self.service.event_head(actor)
+                # Event waits exist only in a society; legacy runs never read the head.
+                head = self.service.event_head(actor) if experiment.get("society") else None
                 accepted = (
                     self.service.verified_target_receipt(experiment["id"], actor)
                     if manifest.stop_on_verified_target
@@ -2585,7 +2600,8 @@ class ResearchTeamRunner:
                     for task in all_tasks
                     if task["id"] not in platform_ids
                 }
-                if not accepted and now >= next_synthesis_tick:
+                synthesis_ticked = not accepted and now >= next_synthesis_tick
+                if synthesis_ticked:
                     next_synthesis_tick = now + 5.0
                     if (
                         all_root_lineages <= own_root_lineages
@@ -2753,10 +2769,12 @@ class ResearchTeamRunner:
                         break
                     pending = [task for task in selected if task["id"] not in outcomes]
                     if experiment.get("society") and all_waiting(pending, head):
-                        # Every agent waits with nothing admissible: stop rather than sleep
-                        # out the timeouts. The tasks keep their tickets for a later run.
-                        stop_reason = "SOCIETY_IDLE"
-                        break
+                        if synthesis_ticked:
+                            # Every agent waits with nothing admissible: stop rather than sleep
+                            # out the timeouts. The tasks keep their tickets for a later run.
+                            stop_reason = "SOCIETY_IDLE"
+                            break
+                        next_synthesis_tick = 0.0  # a synthesis due now is work: tick first
                     if any(
                         (task.get("ready_continuation") or {}).get("peer_wait") for task in pending
                     ):

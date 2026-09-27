@@ -36,6 +36,9 @@ from physharness.orchestration.research_worker import (
 )
 from physharness.storage import RecordRow
 from physharness.worker_authority import worker_effects
+from physharness.workforce_models import ConfigureWorkforceRequest
+
+OPERATOR = Principal(id="operator", project_id="lab", role="operator")
 
 
 def park(service, author, exp, agent_branch, ids=(), timeout=600):
@@ -322,15 +325,18 @@ def test_a_graph_limit_wakes_the_waiter_instead_of_failing_the_run(lab, monkeypa
 # Runner side: native wake, event-head gating and the idle stop --------------------------------
 
 
-def waiting_route(payloads, timeout_seconds, *, waits=1):
-    """A provider whose first ``waits`` requests wait for events; later requests finish."""
+def waiting_route(payloads, timeout_seconds, *, waits=1, ids=(), before_wait=None):
+    """A provider whose first ``waits`` requests wait for events on ``ids`` (calling
+    ``before_wait()`` first, when given); later requests finish."""
 
     async def route(request):
         if request.url.path.endswith("/input_tokens"):
             return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
         payloads.append(json.loads(request.content))
         count = len(payloads)
-        wait = {"for": "events", "ids": [], "timeout_seconds": timeout_seconds}
+        if count <= waits and before_wait is not None:
+            before_wait()
+        wait = {"for": "events", "ids": list(ids), "timeout_seconds": timeout_seconds}
         items = [tool_call("wait", wait, f"w-{count}")] if count <= waits else [message("done")]
         return httpx.Response(200, json=response(items, response_id=f"r-{count}"))
 
@@ -695,6 +701,105 @@ async def test_a_stale_wait_check_is_repeated_without_new_events(lab, monkeypatc
     assert report["stop_reason"] == "SOCIETY_IDLE"  # once Busy is done, all wait
 
 
+def manifest_for(exp, author, roots, **limits):
+    return TeamRunManifest(
+        experiment_id=exp["id"],
+        project_id=author.project_id,
+        mode="replay",
+        task_ids=[root["id"] for root in roots],
+        **{"max_concurrency": 2, "timeout_seconds": 20, **limits},
+    )
+
+
+@pytest.mark.parametrize("state", ["queued", "running"])
+async def test_another_live_task_of_the_experiment_keeps_the_run_going(lab, monkeypatch, state):
+    """The idle stop does not assume one runner: a task this run does not own, queued or
+    running (another runner's or worker's), may still wake a waiter."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    other = service.create_task(
+        TaskCreate(branch_id=branches[1]["id"], objective="Elsewhere"), author, "other"
+    )
+    if state == "running":
+        service.acquire_task(other["id"], "another-runner", 60, OPERATOR, "lease-other")
+    assert service.get_record("task", other["id"], author)["status"] == state
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 3600))
+    try:
+        report = await runner.run(manifest_for(exp, author, [root], timeout_seconds=2))
+    finally:
+        await client.close()
+    assert report["stop_reason"] == "TEAM_TIMEOUT" and len(payloads) == 1
+    assert service.get_record("task", root["id"], author)["ready_continuation"]
+
+
+async def test_a_due_synthesis_is_scheduled_before_an_idle_stop(lab, monkeypatch):
+    """Posts made just before the last agent parks make a synthesis due; the runner ticks
+    the synthesis schedule before it may stop idle, and runs the synthesis."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+
+    def discuss():
+        # Platform status posts on four node threads, then synthesis every four posts.
+        for title in ("Trace lemma", "Gap lemma", "Cut lemma", "Sum lemma"):
+            set_status(service, lemma(service, exp, beta, title)["id"], "abandoned")
+        request = ConfigureWorkforceRequest(synthesis_interval_posts=4)
+        service.configure_workforce(exp["id"], request, OPERATOR, "synthesis-on")
+
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 3600, before_wait=discuss))
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    synthesis = [
+        task for task in service.list_records("task", author, exp["id"]) if task.get("synthesis")
+    ]
+    assert [task["status"] for task in synthesis] == ["completed"]
+    objectives = [json.loads(p["input"][0]["content"])["objective"] for p in payloads]
+    assert objectives[0] == "Root"
+    assert any(objective.startswith("Compare only the sampled") for objective in objectives)
+    assert report["stop_reason"] == "SOCIETY_IDLE"
+    assert service.get_record("task", root["id"], author)["ready_continuation"]
+
+
+async def test_the_wake_note_carries_the_watched_events_detail(lab, monkeypatch):
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    node = lemma(service, exp, beta, "Watched")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    payloads = []
+    client = mock_client(waiting_route(payloads, 3600, ids=[node["id"]]))
+    executor = ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
+        limits=RuntimeLimits(max_turns=30),
+    )
+    try:
+        parked = await executor.execute(root["id"], author.project_id)
+        service.claim_node(node["id"], "claim", beta, "beta-claims")
+        woke = await executor.execute(root["id"], author.project_id)
+    finally:
+        await client.close()
+    assert parked["status"] == "continuation" and woke["status"] == "completed"
+    assert wake_notes(payloads[1]) == [
+        {
+            "type": "wake",
+            "reason": "watched_event",
+            "detail": {"kind": "commons.node_claim", "aggregate_id": node["id"]},
+        }
+    ]
+
+
 def test_the_event_head_is_the_projects_latest_event(lab):
     service, author, exp, _, (_, beta) = society_lab(lab)
     head = service.event_head(author)
@@ -705,8 +810,10 @@ def test_the_event_head_is_the_projects_latest_event(lab):
     assert service.event_head(stranger) == 0
 
 
-async def test_legacy_waits_still_resume_portably(lab):
+async def test_legacy_waits_still_resume_portably(lab, monkeypatch):
     service, author, exp, branches, _ = approaches(lab, "ideas")
+    heads = []
+    monkeypatch.setattr(service, "event_head", lambda actor: heads.append(actor) or 0)
     task = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Legacy"), author, "legacy"
     )
@@ -729,3 +836,4 @@ async def test_legacy_waits_still_resume_portably(lab):
     assert continuation_mode(service, author, task) == "portable"
     resumed = payloads[1]["input"]
     assert not any(item.get("type") == "function_call" for item in resumed)  # a fresh prompt
+    assert heads == []  # a legacy run never reads the event head

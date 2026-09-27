@@ -27,9 +27,6 @@ The limits have different scopes when a research task hands off to a successor s
 
 - `max_turns` bounds one native session. Every continuation, native or portable, starts a
   fresh session with its own turn count, so a long task can take many more turns in total.
-- In a society, a wait (`wait_for_events`, `wait_for_tasks`) resumes natively: the transcript
-  is kept and a short wake note (reason, children, long pole) is appended. Other continuations
-  are unchanged.
 - A numeric `max_total_tokens` caps the task's whole continuation lineage. Successors start
   from the cumulative input+output usage of every predecessor, so a handoff never replenishes
   the guard. When the lineage reaches it, the runtime stops with `BUDGET_EXHAUSTED` and the task
@@ -568,6 +565,13 @@ canonical child tasks, artifacts, checkpoints, reservations, and receipts availa
 controller. An abruptly lost process can leave worker slots and model requests reserved until
 operator reconciliation; absence of a process does not prove a remote request or VM stopped.
 The report lists queued tasks left by a task-count limit or unmet dependencies.
+
+In a society, a wait (`wait_for_events`, `wait_for_tasks`) resumes natively: the transcript is
+kept and a short wake note (reason, detail, children, long pole) is appended. Other continuations
+are unchanged. The supervisor checks a parked event wait again only when the project's event head
+moves, its minimum sleep or deadline passes, or its last check is 30 s old. It stops with
+`SOCIETY_IDLE` once every pending task waits, every event wait found nothing at the current head,
+no other task of the experiment is queued or running, and a due synthesis has been scheduled.
 
 When enabled, one independent verification worker at a time calls the existing canonical
 `process_verification` route under a verifier identity. It handles receipts on the selected
