@@ -12,7 +12,8 @@ from .types import ExecutionError, ModelConfig, RuntimeLimits
 
 CONTEXT_MARGIN = 8192
 STRESS_THRESHOLD = 8192
-ContextProfile = Literal["research", "stress8192"]
+LEAN_THRESHOLD = 96_000
+ContextProfile = Literal["research", "research_lean", "stress8192"]
 
 
 def maximum_safe_threshold(limits: RuntimeLimits) -> int:
@@ -29,7 +30,7 @@ def apply_context_profile(
     model: ModelConfig, limits: RuntimeLimits, profile: ContextProfile = "research"
 ) -> ModelConfig:
     """Return a model with a validated profile threshold; respect caller override."""
-    if profile not in {"research", "stress8192"}:
+    if profile not in {"research", "research_lean", "stress8192"}:
         raise ExecutionError("INVALID_CONFIG", "Unknown context profile")
     maximum = maximum_safe_threshold(limits)
     params = dict(model.parameters)
@@ -37,7 +38,12 @@ def apply_context_profile(
     if override is None:
         window = limits.max_context_tokens
         assert window is not None
-        threshold = min((3 * window) // 4, maximum) if profile == "research" else STRESS_THRESHOLD
+        if profile == "research":
+            threshold = min((3 * window) // 4, maximum)
+        elif profile == "research_lean":
+            threshold = min(LEAN_THRESHOLD, maximum)
+        else:
+            threshold = STRESS_THRESHOLD
         params["context_management"] = [{"type": "compaction", "compact_threshold": threshold}]
     else:
         if (

@@ -16,7 +16,7 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from ..domain import canonical_json
+from ..domain import ContextBudget, canonical_json
 from .admission import Admission, TokenRateGovernor
 from .context_policy import CONTEXT_MARGIN
 from .parameters import validate_responses_parameters
@@ -268,6 +268,58 @@ def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
     )
 
 
+RECALL_PAGE_CHARS = 16_000
+
+RECALL_OUTPUT_TOOL = {
+    "type": "function",
+    "name": "recall_output",
+    "strict": True,
+    "description": "Re-read the full output of an earlier tool call that was shortened in context. "
+    "Returns up to 16,000 characters from offset; pass next_offset to continue.",
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["call_id", "offset"],
+        "properties": {
+            "call_id": {"type": "string", "description": "The shortened output's call_id."},
+            "offset": {"type": "integer", "minimum": 0, "description": "Start at 0."},
+        },
+    },
+}
+
+
+def request_tools(
+    definitions: list[dict[str, Any]], budget: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Tool definitions actually sent: the registered tools, plus recall under a budget."""
+    return [*definitions, RECALL_OUTPUT_TOOL] if budget else list(definitions)
+
+
+def _tool_output_text(
+    budget: dict[str, Any] | None, call: dict[str, Any], visible: dict[str, Any]
+) -> str:
+    """Model-visible output. Under a budget Unicode stays literal (#5e) and a long output becomes a
+    head plus a recall handle; the full value stays in tool_results."""
+    text = json.dumps(visible, allow_nan=False, ensure_ascii=not budget)
+    limit = budget.get("max_output_chars") if budget else None
+    if limit is None or call["name"] == "recall_output" or len(text) <= limit:
+        return text
+    # A reloaded checkpoint holds the result with sorted keys, and recall pages that text, so
+    # the head uses the same order. Sorting keeps the length.
+    text = json.dumps(visible, allow_nan=False, ensure_ascii=False, sort_keys=True)
+    head = limit // 2  # escaping at most doubles it: the view is at most the cap plus its envelope
+    return json.dumps(
+        {
+            "truncated": True,
+            "tool": call["name"],
+            "total_chars": len(text),
+            "head": text[:head],
+            "recall": {"tool": "recall_output", "call_id": call["call_id"], "next_offset": head},
+        },
+        ensure_ascii=False,
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class _Prepared:
     """A counted or bounded request with its reservation, not yet sent."""
@@ -396,6 +448,7 @@ class ResponsesRuntime:
         stagnation_suggestions: list[str] | None = None,
         token_governor: TokenRateGovernor | None = None,
         admission_priority: int = 1,
+        context_budget: ContextBudget | None = None,
     ):
         self.store = store
         self.dispatcher = dispatcher or ToolDispatcher()
@@ -433,13 +486,17 @@ class ResponsesRuntime:
         self.admission_priority = admission_priority
         # Each session's moving-average output, for the TPM admission estimate.
         self._output_ema: dict[str, float] = {}
+        self.context_budget = context_budget
         self._active: dict[str, asyncio.Task[Any]] = {}
         self._saved: dict[str, RuntimeCheckpoint] = {}
         # Each running session's previous request, for the P1 input bound; never persisted.
         self._last_request: dict[str, dict[str, Any]] = {}
         # Each running session's tool results awaiting announcement, in call order: (operation,
-        # name, signal, stagnation snapshot). Announced only after a save that holds them.
-        self._unannounced: dict[str, list[tuple[str, str, str | None, dict[str, Any] | None]]] = {}
+        # name, signal, stagnation snapshot). Announced only after a save that holds them. A
+        # recall has no stored result, so its name is None and only its signal is announced.
+        self._unannounced: dict[
+            str, list[tuple[str, str | None, str | None, dict[str, Any] | None]]
+        ] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -673,6 +730,8 @@ class ResponsesRuntime:
             "compaction_recovery_protocol": 1,
             "stagnation": dict(self.stagnation_state),
         }
+        if self.context_budget is not None:
+            state["context_budget"] = self.context_budget.model_dump(mode="json")
         if predecessor is not None:
             predecessor.verify()
             if predecessor.session.status != "handed_off":
@@ -924,6 +983,8 @@ class ResponsesRuntime:
             "cumulative_input_offset": cumulative_input,
             "cumulative_output_offset": cumulative_output,
         }
+        if "context_budget" in prior:
+            state["context_budget"] = deepcopy(prior["context_budget"])
         await self._save(session, state)
         return await self._run(session, state, prompt)
 
@@ -938,6 +999,12 @@ class ResponsesRuntime:
         # Old or externally restored checkpoints must obey the same request
         # contract before they can write new state or issue provider work.
         validate_responses_parameters(session.model.parameters)
+        if state.get("context_budget") and any(
+            definition["name"] == "recall_output" for definition in self.dispatcher.definitions
+        ):
+            raise ExecutionError(
+                "INVALID_CONFIG", "recall_output is reserved for the context budget"
+            )
         if (
             state.get("settled_boundary") is not True
             or state.get("pending_operation")
@@ -1006,7 +1073,8 @@ class ResponsesRuntime:
         durable. A sink error is only logged, so the original failure still propagates."""
         await self._save(session, state)
         for tool_operation, name, signal, snapshot in self._unannounced.pop(session.id, []):
-            await self._emit_telemetry("tool_completed", session, tool_operation, name=name)
+            if name is not None:
+                await self._emit_telemetry("tool_completed", session, tool_operation, name=name)
             if signal is not None:
                 await self._emit_telemetry(
                     signal, session, tool_operation, stagnation_state=snapshot
@@ -1250,7 +1318,7 @@ class ResponsesRuntime:
         # Popped here, not left in params, so it cannot clash with the explicit
         # keyword passed to the count and create calls below.
         parallel = bool(params.pop("parallel_tool_calls", False))
-        tools = self.dispatcher.definitions
+        tools = request_tools(self.dispatcher.definitions, state.get("context_budget"))
         elements = _request_elements(params, tools, state["input"])
         bound = _input_bound(
             self._last_request.get(session.id), elements, state.get("active_input_epoch", 0)
@@ -1471,7 +1539,7 @@ class ResponsesRuntime:
                     client.responses.create,
                     model=session.model.model,
                     input=state["input"],
-                    tools=self.dispatcher.definitions,
+                    tools=request_tools(self.dispatcher.definitions, state.get("context_budget")),
                     parallel_tool_calls=prepared.parallel_tool_calls,
                     max_output_tokens=prepared.output_reservation,
                     store=False,
@@ -1543,8 +1611,12 @@ class ResponsesRuntime:
                     "INVALID_TOOL_ARGUMENTS", "Provider tool arguments are not a JSON object"
                 ) from exc
             identity = digest({"name": call["name"], "arguments": arguments})
+            # A recall is a pure read of stored outputs: never stored, replayed or marked.
+            recall = call["name"] == "recall_output" and bool(state.get("context_budget"))
             results = state.setdefault("tool_results", {})
-            previous = await self._find_tool_result(session, state, tool_operation)
+            previous = (
+                None if recall else await self._find_tool_result(session, state, tool_operation)
+            )
             if previous is not None:
                 if previous["identity"] != identity:
                     raise ExecutionError(
@@ -1556,10 +1628,13 @@ class ResponsesRuntime:
                 visible_output = previous.get("visible_output", result)
                 signal = None
             else:
-                state["pending_operation"] = tool_operation
-                await self._save(session, state)
-                await self._emit_completed(session)
-                result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
+                if recall:
+                    result = await self._recall(session, state, arguments)
+                else:
+                    state["pending_operation"] = tool_operation
+                    await self._save(session, state)
+                    await self._emit_completed(session)
+                    result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
                 signal = observe_stagnation(
                     state.setdefault("stagnation", {}), call["name"], arguments, result
                 )
@@ -1577,50 +1652,111 @@ class ResponsesRuntime:
                             ),
                         },
                     }
-                entry = {"identity": identity, "result": result}
-                if visible_output is not result:
-                    entry["visible_output"] = visible_output
-                results[tool_operation] = entry
+                if not recall:
+                    entry = {"identity": identity, "result": result}
+                    if visible_output is not result:
+                        entry["visible_output"] = visible_output
+                    results[tool_operation] = entry
             state["input"].append(
                 {
                     "type": "function_call_output",
                     "call_id": call["call_id"],
-                    "output": json.dumps(visible_output, allow_nan=False),
+                    "output": _tool_output_text(state.get("context_budget"), call, visible_output),
                 }
             )
             state["pending_operation"] = None
-            unannounced.append(
-                (
-                    tool_operation,
-                    call["name"],
-                    signal,
-                    dict(state["stagnation"]) if signal is not None else None,
+            if not recall or signal is not None:
+                unannounced.append(
+                    (
+                        tool_operation,
+                        None if recall else call["name"],
+                        signal,
+                        dict(state["stagnation"]) if signal is not None else None,
+                    )
                 )
-            )
 
     async def _emit_completed(self, session: RuntimeSession) -> None:
         """Announce tool results only after the save that made them durable."""
         unannounced = self._unannounced.get(session.id, [])
         while unannounced:
             tool_operation, name, signal, snapshot = unannounced.pop(0)
-            await self._emit("tool_completed", session, tool_operation, name=name)
+            if name is not None:
+                await self._emit("tool_completed", session, tool_operation, name=name)
             if signal is not None:
                 await self._emit(signal, session, tool_operation, stagnation_state=snapshot)
 
     async def _find_tool_result(
-        self, session: RuntimeSession, state: dict[str, Any], key: str
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        key: str,
+        *,
+        match_suffix: bool = False,
     ) -> dict[str, Any] | None:
-        """A committed tool result: active state, then own archives, then inherited ones."""
-        found = state.get("tool_results", {}).get(key)
+        """A committed tool result: active state, then own archives, then inherited ones.
+
+        With ``match_suffix`` the key is a bare call ID, matched against any session's
+        ``{session_id}:{call_id}`` key; the latest match wins."""
+
+        def pick(results: dict[str, Any]) -> dict[str, Any] | None:
+            if match_suffix:
+                return next(
+                    (v for k, v in reversed(list(results.items())) if k.endswith(f":{key}")), None
+                )
+            return results.get(key)
+
+        found = pick(state.get("tool_results", {}))
         for archive_id in reversed(state.get("archives", [])) if found is None else ():
-            found = (await self.store.load_archive(session.id, archive_id))["tool_results"].get(key)
+            found = pick((await self.store.load_archive(session.id, archive_id))["tool_results"])
             if found is not None:
                 break
         for ref in reversed(state.get("archive_refs", [])) if found is None else ():
             archive = await self.store.load_archive(ref["session_id"], ref["archive_id"])
-            if (found := archive["tool_results"].get(key)) is not None:
+            if (found := pick(archive["tool_results"])) is not None:
                 break
         return found
+
+    async def _recall(
+        self, session: RuntimeSession, state: dict[str, Any], arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """A page of a stored tool output. A pure read: no marker and no dispatcher."""
+        call_id, offset = arguments.get("call_id"), arguments.get("offset")
+        if (
+            not isinstance(call_id, str)
+            or not 0 < len(call_id) <= 200
+            or type(offset) is not int
+            or offset < 0
+        ):
+            return {
+                "error": {
+                    "code": "INVALID_TOOL_ARGUMENTS",
+                    "message": "Give call_id and offset >= 0.",
+                }
+            }
+        if (
+            entry := await self._find_tool_result(session, state, call_id, match_suffix=True)
+        ) is None:
+            return {
+                "error": {
+                    "code": "RECALL_NOT_FOUND",
+                    "message": "No stored output has this call_id.",
+                }
+            }
+        text = json.dumps(
+            entry.get("visible_output", entry["result"]),
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        page = text[offset : offset + RECALL_PAGE_CHARS]
+        end = offset + len(page)
+        return {
+            "call_id": call_id,
+            "offset": offset,
+            "next_offset": end if end < len(text) else None,
+            "total_chars": len(text),
+            "text": page,
+        }
 
     async def _complete_verified(self, session, state):
         session.status = "completed"

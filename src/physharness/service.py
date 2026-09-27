@@ -907,6 +907,8 @@ class HarnessService(
         if data.get("society") is None:
             # Legacy experiments keep byte-identical payloads and command fingerprints.
             data.pop("society", None)
+        if data.get("context_budget") is None:
+            data.pop("context_budget", None)
 
         def action(session, op):
             problem = self._get(session, "problem", request.problem_id, actor)

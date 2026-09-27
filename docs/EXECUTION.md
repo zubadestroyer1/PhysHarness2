@@ -248,6 +248,50 @@ of letting them all meet 429s. It cannot see other processes, so set it to about
 limit divided by the number of processes that share it. Cross-process governance belongs to the
 model router (`PLAN.md` §6.1).
 
+### Context budget (opt-in)
+
+An experiment or run plan may set `context_budget`. When it is absent, requests, tool outputs and
+native state are exactly as described above. The fields and their defaults are:
+- `elide_min_chars`: 4,000 (at least 500);
+- `elide_after_turns`: 5 (at least 1);
+- `elide_every_turns`: 10 (at least 1);
+- `max_output_chars`: 24,000 (at least 20,000), or `null` for no cap.
+
+The `elide_*` fields are validated and stored, but block elision does not apply them yet. The
+executor passes `ResponsesRuntime(context_budget=...)` only when the field is set. `start` stores
+the policy in native state under `context_budget`, and `start_from_handoff` copies it, so a
+continuation keeps the policy its lineage started with, even when its own runtime was built
+without one. Under a budget:
+- **Literal Unicode (#5e).** Tool outputs are serialized with `ensure_ascii=False`, so non-ASCII
+  text reaches the model as literal characters, not `\uXXXX` escapes.
+- **Output cap.** An output whose serialized text is longer than `max_output_chars` is replaced in
+  the model's input by a view. The view is `{"truncated": true, "tool", "total_chars", "head",
+  "recall": {"tool": "recall_output", "call_id", "next_offset"}}`, and its `head` holds the first
+  `max_output_chars // 2` characters. The head and every recall page serialize the output with
+  sorted keys, the order a reloaded checkpoint keeps, so they join exactly. The full result stays
+  in `tool_results`, and replay is unchanged. This one per-output cap also covers whole-file
+  reads (R7).
+- **`recall_output(call_id, offset)`.** This built-in tool is appended to the tools array that is
+  sent. It returns up to 16,000 characters of a stored output's text from `offset`, with
+  `next_offset` (null at the end) and `total_chars`. It searches the active `tool_results`, then
+  the session's own archives, then the inherited ones, and matches the call ID from any session
+  in the lineage; the latest match wins. An unknown ID returns a `RECALL_NOT_FOUND` error
+  envelope. A recall is a pure read. It sets no pending marker, never reaches the dispatcher, is
+  never stored in `tool_results` and is never capped. It emits no `tool_completed`. Stagnation
+  counts it as a read, and a signal it raises is announced after the save that holds it. It is not
+  part of the society tool catalog, and a dispatcher that registers its own `recall_output` under
+  a budget fails with `INVALID_CONFIG`.
+- **Tool digest.** The session record's `tool_definition_digest` covers the tools actually sent,
+  including `recall_output`. If the digest changes between a joined-children wait and its wake,
+  for example because the runtime stops accepting the budget, that in-flight native handoff falls
+  back to a portable continuation. A budgeted wait whose digest is unchanged still resumes
+  natively. The bound above treats the tools array as one element, so adding the recall tool is
+  counted once, at its full size.
+
+The `research_lean` context profile sets the compaction threshold to
+`min(96,000, window − max_output − 8,192)`. It is independent of `context_budget`, but is meant to
+be paired with it.
+
 ### Stored shape changes (G3 infrastructure, all experiments)
 
 G1 covers the bytes the model sees and the pinned freeze tests (F7), so these changes reach legacy

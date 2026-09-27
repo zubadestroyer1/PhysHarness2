@@ -320,6 +320,25 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 - Also report any `bound_reservation_compacted` event before the arms start: compaction
   fired on a request that the runtime assumed could not compact.
 
+### Context budget arm (opt-in, not applied)
+
+- `context_budget` changes what the model sees. It caps each tool output (the rest can be
+  recalled with `recall_output`) and keeps Unicode literal (docs/EXECUTION.md, "Context
+  budget (opt-in)"). It stays opt-in until a quality A/B has run.
+- An example A/B arm makes three changes to an otherwise identical plan:
+
+  ```json
+  "context_budget": {},
+  "context_profile": "research_lean"
+  ```
+
+  It also sets `runtime_limits.max_context_tokens` to 128000 and keeps every other runtime
+  limit the same as the control's. `{}` takes the defaults, including a 24,000-character
+  output cap. `research_lean` compacts at min(96,000, window − output cap − 8,192). On a
+  128,000-token window that is 55,808 tokens with the example's 64,000 output cap, and 96,000
+  with the recommended 16,000.
+- Neither `run-plan.example.json` nor any arm above sets it.
+
 ## 6. Stop rules (predeclared)
 
 1. **Root accepted.** An independent-kernel receipt on the exact target stops the run

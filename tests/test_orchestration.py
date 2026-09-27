@@ -581,3 +581,32 @@ async def test_executor_passes_shared_governor_and_role_priority(lab):
     assert (await executor.execute(task["id"], actor.project_id))["status"] == "completed"
     assert KeywordRuntime.seen["token_governor"] is governor
     assert KeywordRuntime.seen["admission_priority"] == 0  # a root is on the critical path
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_context_budget_and_digests_recall_tool(lab):
+    from physharness.domain import ExperimentCreate, digest_json
+    from physharness.execution.responses import RECALL_OUTPUT_TOOL
+    from physharness.orchestration.research_worker import ResearchTaskExecutor
+
+    service, actor, _ = lab
+    _, problem = setup_experiment(lab)
+    budgeted = service.create_experiment(
+        ExperimentCreate(
+            campaign_id=problem["campaign_id"],
+            problem_id=problem["id"],
+            models=[{"runtime": "responses", "model": "explicit-test-model"}],
+            budget={"max_cost_usd": "1.00", "max_concurrency": 2, "max_runtime_seconds": 600},
+            context_budget={"elide_every_turns": 8},
+        ),
+        actor,
+        "budgeted-experiment",
+    )
+    service, actor, experiment, task = started_task(lab, budgeted)
+    executor = ResearchTaskExecutor(service, prices=PRICES, runtime_factory=KeywordRuntime)
+    assert (await executor.execute(task["id"], actor.project_id))["status"] == "completed"
+    assert KeywordRuntime.seen["context_budget"].elide_every_turns == 8
+    record = service.list_records("session", actor, experiment["id"])[0]
+    assert record["tool_definition_digest"] == digest_json(
+        [*KeywordRuntime.seen["dispatcher"].definitions, RECALL_OUTPUT_TOOL]
+    )

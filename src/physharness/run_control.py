@@ -11,6 +11,7 @@ from pydantic import Field, ValidationError, model_validator
 from .domain import (
     ArtifactCreate,
     CampaignCreate,
+    ContextBudget,
     ExperimentCreate,
     ModelConfiguration,
     ProblemCreate,
@@ -66,9 +67,10 @@ class RunPlan(StrictModel):
     sharing: Literal["none", "verified", "ideas"] = "verified"
     runtime_limits: dict = Field(default_factory=dict)
     execution_profile: Literal["general", "formal-research"] = "general"
-    context_profile: Literal["research", "stress8192"] = "research"
+    context_profile: Literal["research", "research_lean", "stress8192"] = "research"
     # The research-society arm; absent means the legacy experiment exactly as before.
     society: SocietyPolicy | None = None
+    context_budget: ContextBudget | None = None
 
     @model_validator(mode="after")
     def consistent(self):
@@ -96,8 +98,9 @@ class RunPlan(StrictModel):
         return self
 
     def recorded(self) -> dict:
-        """The plan as preparation records it; a legacy plan has no society key."""
-        return self.model_dump(mode="json", exclude={"society"} if self.society is None else None)
+        """The plan as preparation records it; a legacy plan has no society or budget key."""
+        exclude = {n for n in ("society", "context_budget") if getattr(self, n) is None}
+        return self.model_dump(mode="json", exclude=exclude or None)
 
 
 def validate_runtime_inputs(models, limits):
@@ -216,6 +219,7 @@ def prepare_run(service, actor, plan: RunPlan, base_directory: Path) -> dict:
             execution_profile=plan.execution_profile,
             context_profile=plan.context_profile,
             society=plan.society,
+            context_budget=plan.context_budget,
         ),
         actor,
         prefix + ":experiment",

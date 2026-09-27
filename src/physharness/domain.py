@@ -123,6 +123,15 @@ class SocietyPolicy(StrictModel):
     scaffolding: ScaffoldingPolicy = Field(default_factory=ScaffoldingPolicy)
 
 
+class ContextBudget(StrictModel):
+    """Opt-in context shaping for a Responses session (R7); absent means today's behaviour."""
+
+    elide_min_chars: int = Field(default=4000, ge=500, le=1_000_000)
+    elide_after_turns: int = Field(default=5, ge=1, le=1000)
+    elide_every_turns: int = Field(default=10, ge=1, le=1000)
+    max_output_chars: int | None = Field(default=24_000, ge=20_000, le=1_000_000)
+
+
 class ExperimentCreate(StrictModel):
     campaign_id: str
     problem_id: str
@@ -133,8 +142,9 @@ class ExperimentCreate(StrictModel):
     sharing: Literal["none", "verified", "ideas"] = "verified"
     runtime_limits: dict[str, Any] = Field(default_factory=dict)
     execution_profile: Literal["general", "formal-research"] = "general"
-    context_profile: Literal["research", "stress8192"] = "research"
+    context_profile: Literal["research", "research_lean", "stress8192"] = "research"
     society: SocietyPolicy | None = None
+    context_budget: ContextBudget | None = None
 
     @model_validator(mode="after")
     def society_scope(self):

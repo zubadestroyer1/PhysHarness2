@@ -21,6 +21,7 @@ from ..commons_review import (
 from ..domain import (
     ArtifactCreate,
     BranchCreate,
+    ContextBudget,
     Principal,
     TaskCreate,
     canonical_json,
@@ -38,6 +39,7 @@ from ..execution import (
 from ..execution.checkpoint_chunks import encode as encode_native_checkpoint
 from ..execution.context_policy import apply_context_profile
 from ..execution.parameters import validate_responses_parameters
+from ..execution.responses import request_tools
 from ..execution.types import digest as native_digest
 from ..knowledge.literature import LiteratureBroker
 from ..memory import PortableMemory
@@ -1743,7 +1745,15 @@ class ResearchTaskExecutor:
                     task_context=tool_context,
                     workspace_tools=workspace_tools,
                 )
-            store.tool_definition_digest = digest_json(dispatcher.definitions)
+            parameters = inspect.signature(self.runtime_factory).parameters
+            accepts_any = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+            context_budget = experiment.get("context_budget")
+            pass_budget = bool(context_budget) and ("context_budget" in parameters or accepts_any)
+            # The digest covers the tools actually sent, so it must be set before
+            # native_compatible reads it, or every budgeted wait would resume portably (F8).
+            store.tool_definition_digest = digest_json(
+                request_tools(dispatcher.definitions, context_budget if pass_budget else None)
+            )
             native_compatible = bool(
                 ready
                 and ready["reason"] == "joined_children"
@@ -1757,8 +1767,6 @@ class ResearchTaskExecutor:
                 dispatcher=dispatcher,
                 event_sink=accounting,
             )
-            parameters = inspect.signature(self.runtime_factory).parameters
-            accepts_any = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
             if stop_on_verified_target and (
                 "pre_generation_guard" in parameters
                 or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
@@ -1793,6 +1801,8 @@ class ResearchTaskExecutor:
             if self.token_governor is not None and ("token_governor" in parameters or accepts_any):
                 runtime_kwargs["token_governor"] = self.token_governor
                 runtime_kwargs["admission_priority"] = _admission_priority(task, branch)
+            if pass_budget:
+                runtime_kwargs["context_budget"] = ContextBudget.model_validate(context_budget)
             if society:
                 scaffolding = society["scaffolding"]
                 every = scaffolding["checkin_every_turns"]

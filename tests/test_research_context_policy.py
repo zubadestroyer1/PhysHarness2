@@ -5,6 +5,7 @@ import json
 import pytest
 from test_execution_context import compaction_item, response, sdk_client, text_item
 
+from physharness.domain import ContextBudget, ExperimentCreate
 from physharness.execution import (
     ExecutionError,
     ModelConfig,
@@ -15,7 +16,12 @@ from physharness.execution import (
     ToolDispatcher,
 )
 from physharness.execution.context_policy import apply_context_profile
-from physharness.execution.stagnation import observe, successor_state
+from physharness.execution.stagnation import (
+    NON_PROGRESS_TOOLS,
+    READ_TOOLS,
+    observe,
+    successor_state,
+)
 
 
 def test_research_profile_and_explicit_stress_override():
@@ -42,6 +48,66 @@ def test_research_profile_and_explicit_stress_override():
         }
     )
     assert apply_context_profile(override, limits).parameters == override.parameters
+
+
+def test_research_lean_profile_and_recall_read():
+    model = ModelConfig(model="exact-model")
+
+    def threshold(window, output):
+        limits = RuntimeLimits(
+            max_context_tokens=window, max_output_tokens=output, max_total_tokens=None
+        )
+        return apply_context_profile(model, limits, "research_lean").parameters[
+            "context_management"
+        ][0]["compact_threshold"]
+
+    assert (threshold(256_000, 64_000), threshold(100_000, 4_096)) == (96_000, 87_712)
+    assert "recall_output" in READ_TOOLS and "recall_output" in NON_PROGRESS_TOOLS
+
+
+def test_context_budget_bounds_and_opt_in_experiment_payload(lab):
+    from test_core import setup_experiment
+
+    with pytest.raises(ValueError):
+        ContextBudget(max_output_chars=1_000)
+    service, actor, _ = lab
+    experiment, problem = setup_experiment(lab)
+    assert "context_budget" not in experiment
+    budgeted = service.create_experiment(
+        ExperimentCreate(
+            campaign_id=problem["campaign_id"],
+            problem_id=problem["id"],
+            models=[{"runtime": "responses", "model": "explicit-test-model"}],
+            budget={"max_cost_usd": "1.00", "max_concurrency": 1, "max_runtime_seconds": 600},
+            context_budget={"elide_every_turns": 8},
+        ),
+        actor,
+        "budgeted",
+    )
+    assert budgeted["context_budget"] == {
+        "elide_min_chars": 4000,
+        "elide_after_turns": 5,
+        "elide_every_turns": 8,
+        "max_output_chars": 24000,
+    }
+
+
+def test_run_plan_prepares_and_records_the_context_budget(lab, tmp_path):
+    from test_run_control import plan_input, source_files
+
+    from physharness.run_control import RunPlan, prepare_run
+
+    service, actor, _ = lab
+    source_files(tmp_path)
+    plan = RunPlan.model_validate(
+        {**plan_input(), "context_budget": {}, "context_profile": "research_lean"}
+    )
+    prepared = prepare_run(service, actor, plan, tmp_path)
+    experiment = service.get_record("experiment", prepared["experiment_id"], actor)
+    assert experiment["context_budget"] == ContextBudget().model_dump(mode="json")
+    assert experiment["context_profile"] == "research_lean"
+    content = json.loads(service.artifact_content(prepared["preparation_artifact_id"], actor))
+    assert content["plan"]["context_budget"] == experiment["context_budget"]
 
 
 def test_small_windows_and_unsafe_overrides_fail_closed():

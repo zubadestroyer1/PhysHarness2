@@ -7,7 +7,7 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 
-from physharness.domain import canonical_json
+from physharness.domain import ContextBudget, canonical_json
 from physharness.execution import (
     ExecutionError,
     ModelConfig,
@@ -1382,3 +1382,214 @@ async def test_create_400_is_pre_generation_not_uncertain(tmp_path):
     }
     assert "private" not in saved.model_dump_json()
     await client.close()
+
+
+BUDGET = ContextBudget(max_output_chars=20_000)
+
+
+def big_result(size):
+    return {"text": "∀" + "x" * size}
+
+
+def recall_item(call_id, target, offset):
+    return {
+        "id": "fc-" + call_id,
+        "type": "function_call",
+        "call_id": call_id,
+        "name": "recall_output",
+        "arguments": json.dumps({"call_id": target, "offset": offset}),
+        "status": "completed",
+    }
+
+
+def outputs_of(payload):
+    return {
+        i["call_id"]: i["output"]
+        for i in payload["input"]
+        if i.get("type") == "function_call_output"
+    }
+
+
+def creates_of(requests):
+    return [payload for path, payload in requests if path.endswith("/responses")]
+
+
+async def test_oversized_output_is_truncated_and_recalled_exactly(tmp_path):
+    requests = []
+    client = sdk_client(
+        [
+            response([call_item("a")], "r1"),
+            response([recall_item("p1", "a", 0)], "r2"),
+            response([recall_item("p2", "a", 16_000)], "r3"),
+            response([recall_item("p3", "a", 32_000)], "r4"),
+            response([text_item("done")], "r5"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(40_000)),
+        context_budget=BUDGET,
+    )
+    await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    creates = creates_of(requests)
+    assert creates[0]["tools"][-1]["name"] == "recall_output"
+    outputs, original = outputs_of(creates[-1]), json.dumps(big_result(40_000), ensure_ascii=False)
+    view = json.loads(outputs["a"])
+    assert (view["truncated"], view["total_chars"], view["head"]) == (
+        True,
+        len(original),
+        original[:10_000],
+    )
+    assert view["recall"] == {"tool": "recall_output", "call_id": "a", "next_offset": 10_000}
+    pages = [json.loads(outputs[p]) for p in ("p1", "p2", "p3")]
+    assert "".join(p["text"] for p in pages) == original
+    assert [p["next_offset"] for p in pages] == [16_000, 32_000, None]
+    await client.close()
+
+
+async def test_recall_output_after_native_handoff_uses_the_stored_policy(tmp_path):
+    requests, store = [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"}
+
+    first = sdk_client([response([call_item("a")], "r1")], requests)
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(big_result(100)),
+        boundary_hook=boundary,
+        context_budget=BUDGET,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [response([recall_item("p1", "a", 0)], "r2"), response([text_item("done")], "r3")],
+        requests,
+    )
+    successor = ResponsesRuntime(
+        store=store, client=second, dispatcher=observe_dispatcher(big_result(100))
+    )
+    await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    final = creates_of(requests)[-1]
+    assert final["tools"][-1]["name"] == "recall_output"
+    assert json.loads(outputs_of(final)["p1"])["text"] == json.dumps(
+        big_result(100), ensure_ascii=False
+    )
+    await first.close()
+    await second.close()
+
+
+async def test_no_context_budget_keeps_requests_and_state_unchanged(tmp_path):
+    requests = []
+    client = sdk_client(
+        [response([call_item("a")], "r1"), response([text_item("done")], "r2")], requests
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(30_000)),
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    creates = creates_of(requests)
+    assert all(tool["name"] != "recall_output" for p in creates for tool in p["tools"])
+    assert outputs_of(creates[1])["a"] == json.dumps(
+        big_result(30_000), allow_nan=False
+    )  # escaped, uncapped
+    assert "context_budget" not in (await runtime.checkpoint(result.session.id)).native_state
+    await client.close()
+
+
+async def test_a_registered_recall_output_is_rejected_under_a_budget(tmp_path):
+    requests, dispatcher = [], ToolDispatcher()
+
+    async def recall(arguments, operation_id):
+        return {}
+
+    dispatcher.register("recall_output", {"type": "object", "properties": {}}, recall)
+    client = sdk_client([], requests)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=dispatcher,
+        context_budget=BUDGET,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("work", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert error.value.code == "INVALID_CONFIG" and requests == []
+    await client.close()
+
+
+async def test_a_recall_is_unstored_and_announces_only_its_stagnation_signal(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    recalls = [response([recall_item(f"p{n}", "a", 0)], f"r{n}") for n in range(1, 5)]
+    client = sdk_client(
+        [response([call_item("a")], "r0"), *recalls, response([text_item("done")], "r5")],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(100)),
+        event_sink=emit,
+        context_budget=BUDGET,
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    announced = [
+        (e.kind, e.operation_id.rsplit(":", 1)[-1])
+        for e in events
+        if e.kind in {"tool_completed", "stagnation_warning"}
+    ]
+    assert announced == [("tool_completed", "a"), ("stagnation_warning", "p4")]
+    state = (await runtime.checkpoint(result.session.id)).native_state
+    assert list(state["tool_results"]) == [f"{result.session.id}:a"]
+    assert "_research_runtime_signal" in json.loads(outputs_of(creates_of(requests)[-1])["p4"])
+    await client.close()
+
+
+async def test_a_truncated_head_and_its_recall_join_exactly_after_a_reload(tmp_path):
+    # Checkpoints store results with sorted keys, so the head must use the same key order.
+    requests, store = [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    unsorted = {"z": "x" * 20_000, "a": "∀" * 5_000}
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"}
+
+    first = sdk_client([response([call_item("a")], "r1")], requests)
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(unsorted),
+        boundary_hook=boundary,
+        context_budget=BUDGET,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [response([recall_item("p1", "a", 10_000)], "r2"), response([text_item("done")], "r3")],
+        requests,
+    )
+    successor = ResponsesRuntime(store=store, client=second, dispatcher=observe_dispatcher())
+    await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    outputs = outputs_of(creates_of(requests)[-1])
+    view, page = json.loads(outputs["a"]), json.loads(outputs["p1"])
+    assert page["next_offset"] is None
+    assert json.loads(view["head"] + page["text"]) == unsorted
+    await first.close()
+    await second.close()
