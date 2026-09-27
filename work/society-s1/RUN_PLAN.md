@@ -303,6 +303,31 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 - This is a documented recommendation only. Neither `run-plan.example.json` nor any code
   default changes.
 
+### Provider rate limit (governor)
+
+- Budget about 0.55M tokens per minute (TPM) per concurrently busy agent. S1's
+  unthrottled independent-arm agents averaged 0.53M (0.45–0.61M by class), so a 2M TPM
+  org limit carries about 3–4 of them, and arm S at concurrency 12 needs about 6.6M TPM
+  to run unthrottled. Raising the org limit, or spreading load across orgs or models, is
+  an operator action.
+- Set `PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` in every process that calls the provider
+  (each worker and `run-team`) to about 90% of the org limit divided by the number of
+  those processes. Unset, requests are not governed. The governor adds no throughput: it
+  admits roots and joined children first and turns 429 waits into queueing
+  (docs/EXECUTION.md, "Provider rate governance"). The Compose and Terraform workers do
+  not forward the variable yet (docs/DEPLOYMENT.md).
+
+### Prices
+
+- Do not change `PHYSHARNESS_MODEL_PRICES` while an experiment runs. A replayed
+  settlement with a new amount fails with `IDEMPOTENCY_CONFLICT`, and arms priced
+  differently cannot be compared.
+- S1 settled every input token at the full input rate. Once a run records
+  `cached_input_usd_per_million`, re-price S1 at the same rates before any S1-vs-S2 cost
+  comparison. `tools/society_metrics.py` reads cost from the ledger (`spent_cost_usd`),
+  which keeps the prices in force when each run settled. S1's `usage` events carry the
+  provider's native usage, including cached tokens, so S1 can be re-priced from them.
+
 ### Reservation smoke check (first paid run)
 
 - Under `context_management` a request is counted without it, since the count endpoint

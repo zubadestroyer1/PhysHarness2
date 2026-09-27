@@ -1,5 +1,12 @@
 # S1 Remediation: Runtime and Provider Throughput Implementation Plan
 
+> **As shipped (2026-09-27).** The lane was rebased onto origin/main 9333b25 before review. It differs from the text below in three ways:
+> - **Task 11b was added by the controller.** `ToolDispatcher.dispatch` escapes a lone surrogate in any tool result, keys included, before the result is stored, so every store can save it; escaping that would merge two keys fails the call with `TOOL_FAILED`.
+> - **Tasks 11 and 12 carry review fixes.** Budget-mode tool output escapes lone surrogates, so later requests stay encodable. An output is elided only when its stub is shorter. `context_elided` is announced only after the save that holds its stubs.
+> - **Task 13 also fixed the integration audits' minor findings.** Admission uses the reservation's margin-inclusive input, the create sends the tools the P1 digests describe, the deadline abort emits before it clears the marker, and per-session caches end with their run.
+>
+> `docs/EXECUTION.md` describes the shipped behaviour.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove the per-turn runtime costs that the S1 audit measured. Crash consistency and the sticky overrun rule must not weaken. The costs are:
@@ -21,7 +28,7 @@
 
 **Tech Stack:** Python 3.12, Pydantic v2, SQLAlchemy 2 (SQLite/PostgreSQL), OpenAI SDK `AsyncOpenAI` mocked with `httpx.MockTransport`, pytest (`asyncio_mode = "auto"`), ruff.
 
-**Spec:** `work/society-s1/audit-2026-09-26/AUDIT.md`, which lands with PR #33. The relevant sections are §3A, §3B, §3G, §5 Tier 0 #4, #6 and the `responses.py` half of #5, and Tier 1 #7–#11. The measurements are in `timecost.md` in the same directory. The binding rulings are `RULINGS.md` (Global and Runtime lane), restated below. The design inputs are the remediation maps `maps/runtime.md` and `maps/workbench-tools.md` §5e. Where a ruling and a map disagree, the ruling wins.
+**Spec:** `work/society-s1/audit-2026-09-26/AUDIT.md` (merged in PR #33). The relevant sections are §3A, §3B, §3G, §5 Tier 0 #4, #6 and the `responses.py` half of #5, and Tier 1 #7–#11. The measurements are in `timecost.md` in the same directory. The binding rulings (Global and Runtime lane) are restated below. The design inputs were private remediation maps of the runtime and of the workbench tools (§5e). Where a ruling and a map disagree, the ruling wins.
 
 ## Global Constraints
 
@@ -35,7 +42,7 @@
   - The bound (P1, F2) is `B + max(2048, ceil(0.02·B))`, where `B` is the last billed input plus the canonical UTF-8 bytes of every request element that is not byte-identical to the element at the same position in the previous request. The elements are the instructions, the tools array (one element) and each input item. Removed content is never credited. The previous request's element digests are kept in memory per session, not in native state; after a restart the first request counts exactly (R3), which re-establishes the baseline.
   - The same margin-inclusive bound is used everywhere a bound is used: the reservation, the count-skip decision and governor admission.
   - It is reserved only while server compaction cannot fire, meaning `bound + 8192 <= compact_threshold`; otherwise reserve today's full window. A compaction item in a response to a request reserved below the window raises the alarm event `bound_reservation_compacted` (F4).
-  - Validate the bound offline on `../s1-live/.superpowers/live-run/audit/data/<arm>/` (`turns.jsonl` and `messages.jsonl`). The path is relative to the worktree root, and the data is private and not in the repo. The gate (F3) stops only if the raw ratio of actual to bound (no margin) exceeds 1. The ratio with the margin, expected at about 0.98, is recorded and reported but never stops the task. Put both in the task report and the PR.
+  - Validate the bound offline on the S1 audit's per-arm extract (`<data>/<arm>/turns.jsonl` and `messages.jsonl`). The extract is private and not in the repo. The gate (F3) stops only if the raw ratio of actual to bound (no margin) exceeds 1. The ratio with the margin, expected at about 0.98, is recorded and reported but never stops the task. Put both in the task report and the PR.
   - Lowering `max_output_tokens` is a documentation recommendation, not code.
 - **G5.** No DB migrations; state goes in JSON payloads. Stored S1 records must stay readable, so read with `.get` and treat a missing key as the legacy value.
 - **G6.** Out of scope; list these as PR next steps:
@@ -48,9 +55,9 @@
   - carrying the P1 bound across a byte-identical native handoff, so a native wake need not count (F9).
 - **G7.** Working rules:
   - No `uv sync`. Run everything from the worktree root.
-  - Tests: `PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest <files> -q` (written `... -m pytest` below).
-  - Before each commit, run `../pr27-qualification/.venv/bin/ruff format <changed files>`. Then `ruff check` and `ruff format --check` on `src tests tools infra migrations` must be clean. The code blocks below are written compactly; ruff reflows them.
-  - No absolute `/Users/...` path or local username in anything committed.
+  - Tests: `PYTHONPATH=src .venv/bin/python -m pytest <files> -q` (written `... -m pytest` below).
+  - Before each commit, run `.venv/bin/ruff format <changed files>`. Then `ruff check` and `ruff format --check` on `src tests tools infra migrations` must be clean. The code blocks below are written compactly; ruff reflows them.
+  - No absolute home-directory path or local username in anything committed.
   - Commit with `git -c user.name=Kieran -c user.email=88352982+zubadestroyer1@users.noreply.github.com commit -m "<subject>" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"`.
   - Never push, never touch other worktrees or branches, never call a paid API, and no Docker or Colima.
 - **G8.** The suite stays green after every task. Docs that describe changed behaviour are updated in the same task: `docs/EXECUTION.md`, `work/society-s1/RUN_PLAN.md` and `PLAN.md`.
@@ -970,7 +977,7 @@ if __name__ == "__main__":
 ```
 Run `... -m pytest tests/test_reservation_bound_tool.py -q`; it should PASS.
 
-- [ ] **Step 2: Pass the G4 gate** (read-only; private data). Run `../pr27-qualification/.venv/bin/python tools/reservation_bound.py ../s1-live/.superpowers/live-run/audit/data`.
+- [ ] **Step 2: Pass the G4 gate** (read-only; private data). Run `.venv/bin/python tools/reservation_bound.py <data>`, where `<data>` is the private per-arm extract named in G4.
   - **Pass criterion (F3):** the exit code is 0, meaning `violations == 0` and `max_ratio_raw <= 1`. The raw ratio is the only thing that can stop this task.
   - The ratio with the margin, `max_ratio`, is expected at about 0.98 (`margin_expected_met`). Record it and report it, but do not stop on it, even if it is slightly above 0.98.
   - Record `pairs`, `max_ratio_raw`, `max_ratio`, `margin_expected_met`, `violations` and `reserved_by_bound` for the report and the PR. Do not commit the output.
@@ -1685,8 +1692,8 @@ def test_build_copies_state_through_json():
 ```
 - [ ] **Step 2: Record the golden with the unchanged encoder, then run.**
 ```bash
-PYTHONPATH=src:tests ../pr27-qualification/.venv/bin/python -c "import json, test_native_checkpoint_chunks as t; print(json.dumps({n: t.chunk_digests(s) for n, s in t.golden_cases().items()}, indent=1, sort_keys=True))" > tests/fixtures/native_checkpoint_golden.json
-PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest tests/test_native_checkpoint_chunks.py tests/test_execution_responses.py -q
+PYTHONPATH=src:tests .venv/bin/python -c "import json, test_native_checkpoint_chunks as t; print(json.dumps({n: t.chunk_digests(s) for n, s in t.golden_cases().items()}, indent=1, sort_keys=True))" > tests/fixtures/native_checkpoint_golden.json
+PYTHONPATH=src .venv/bin/python -m pytest tests/test_native_checkpoint_chunks.py tests/test_execution_responses.py -q
 ```
   - Expected to PASS: the golden/round-trip test and restart dedupe (which idempotency keys already satisfy).
   - Expected to FAIL: verify-once (today it verifies 3 times), atomic, the SQL bound, and the `build` copy.
@@ -2309,10 +2316,10 @@ def _is_elision_stub(output: Any) -> bool:
 - [ ] **Step 2: Add a status entry.** Add "S1 runtime remediation — 2026-09-26" to `docs/IMPLEMENTATION_STATUS.md`, with one line per task, the Task 6 G4 result (the raw and the with-margin max ratios, F3), the suite count from Step 3, and the G6 next steps (including F9's bound carry across a native handoff).
 - [ ] **Step 3: Run the full suite and lint.**
 ```bash
-PYTHONPATH=src ../pr27-qualification/.venv/bin/python -m pytest -m "not integration and not lean" -q
-../pr27-qualification/.venv/bin/ruff check src tests tools infra migrations
-../pr27-qualification/.venv/bin/ruff format --check src tests tools infra migrations
-git diff origin/main | grep -n "/Users/\|$(whoami)" || true
+PYTHONPATH=src .venv/bin/python -m pytest -m "not integration and not lean" -q
+.venv/bin/ruff check src tests tools infra migrations
+.venv/bin/ruff format --check src tests tools infra migrations
+git diff origin/main | grep -n "/Use[r]s/\|$(whoami)" || true
 ```
   Expected: all tests pass (report the counts), ruff is clean, and the grep prints nothing.
 - [ ] **Step 4: Commit** (G7): `docs: runtime remediation limits, pricing, governor, checkpoints and context budget`.

@@ -92,15 +92,17 @@ input, plus the canonical UTF-8 bytes of every request element that differs from
 the same position in the previous request, plus a margin of the larger of 2,048 tokens and 2% of
 that sum. The elements are the instructions, the tools array and each input item, and removed
 content earns no credit. The previous request's element digests stay in runtime memory for the
-current run only, so a restart counts again. A compaction voids the bound. The count or the bound
-feeds the budget checks and is the input reservation, except under `context_management`. There a
-count is reserved with the bound's margin added, and the count or bound is reserved only while it
-plus 8,192 is at most `compact_threshold`; otherwise the whole window (`max_context_tokens`) is.
-The budget and context checks still use the exact count. The output reservation is
-`max_output_tokens`. A 400 from `create` means the request was not sent: it is recorded as
+current run only, so a restart counts again. A compaction voids the bound. The budget and context
+checks use the count when one was taken and the bound otherwise. The same value is the input
+reservation, except under `context_management`. There a count is reserved with the bound's margin
+added, and the count plus margin, or the bound, is reserved only while it plus 8,192 is at most
+`compact_threshold`; otherwise the whole window (`max_context_tokens`) is. The output reservation,
+which is also the output cap sent, is `max_output_tokens`, or the remaining cumulative tokens when
+fewer remain. A 400 from `create` means the request was not sent: it is recorded as
 `preflight_error` (stage `create`), then `generation_aborted(reason="request_invalid")` releases
-the reservation at zero, and the session fails without being left uncertain. The next output cap
-is bounded by remaining cumulative tokens. A provider consumption discrepancy raises a limit violation and stops further turns.
+the reservation at zero, and the session fails rather than being left uncertain, unless that
+release itself fails. A provider consumption discrepancy raises a limit violation and stops
+further turns.
 No aliases or substitute models are selected by the adapter. Parameters supported here are
 `instructions`, `reasoning`, `text`, `temperature`, `top_p`, `service_tier`,
 `context_management`, and `parallel_tool_calls`. Unsupported provider parameter/model combinations
@@ -126,10 +128,10 @@ Reserving less than the window under `context_management` rests on two provider 
 
 `tools/reservation_bound.py` re-checks the bound offline on audit-extracted turns. Its bound sums
 the characters of the appended items. That never exceeds the runtime's bound, which sums their
-canonical UTF-8 bytes, so a turn that passes offline would also pass at runtime. On S1's 3,651 consecutive
-completed turn pairs, the billed input was at most 0.9996 of the offline bound without its margin
-and 0.980 with it. That leaves little raw headroom: the runtime's safety comes mainly from the
-JSON syntax its byte count adds over those characters and from the margin.
+canonical UTF-8 bytes, so a turn that passes offline would also pass at runtime. On S1's 3,651
+consecutive completed turn pairs, the billed input was at most 0.9996 of the offline bound without
+its margin and 0.980 with it. That leaves little raw headroom: the runtime's safety comes mainly
+from the JSON syntax its byte count adds over those characters and from the margin.
 
 `parallel_tool_calls` defaults to `false`, as today. With `true`, a response's function calls
 still run one at a time, in the order the provider emitted them: the calls in a batch are never
@@ -159,7 +161,8 @@ Optional async `event_sink(RuntimeEvent)` receives `generation_started`, `genera
 `usage`, `tool_completed`, and `completed`. The generation-start event contains the input/output
 token reservation and fires before billable generation. A core ledger can veto generation by
 raising. If the runtime deadline expires before the provider request, `generation_aborted` releases
-that reservation with zero usage.
+that reservation with zero usage, and only then is the marker cleared, so a failed release leaves
+the session uncertain.
 
 A 429 with code `rate_limit_exceeded` did no work, whether it refused the count or the create, so
 the same request is resent. The wait follows the provider's hint (`retry-after-ms`, then
@@ -168,15 +171,22 @@ per wait. It carries the attempt, the wait, its source and bounded header number
 text. A sink failure is logged and ignored. A create's event carries the generation's operation id.
 A count's event has none. `usage` reports the create's wait totals. A count has no operation or
 reservation, so its waits appear only as events. The runtime gives up when the next wait would
-outlast the deadline or when the wait is interrupted. The give-up is definite:
-`generation_aborted(reason="rate_limited")` releases the reservation at zero, and only then is the
-marker cleared. The session fails with retryable `PROVIDER_RATE_LIMITED`, and the executor blocks
-the task for an operator to resume.
+outlast the deadline or when the wait is interrupted. A count holds no reservation, so its give-up
+aborts nothing. A create's give-up is definite: `generation_aborted(reason="rate_limited")`
+releases the reservation at zero, and only then is the marker cleared. Giving up at the deadline
+fails the session with retryable `PROVIDER_RATE_LIMITED`, and the executor blocks the task for an
+operator to resume. An interrupted wait leaves the session `interrupted`, or `failed` with
+`TIMEOUT` when the runtime's own deadline cancelled it.
 
 The usage event includes the stable operation ID and actual native usage; reconciliation should
 be idempotent by operation ID. If the provider response was persisted but delivery of a usage
 callback failed, reconcile from the saved native response. The adapter does not implement a
-transactional outbox or monetary pricing; those belong to the controller/ledger.
+transactional outbox or monetary pricing; those belong to the controller/ledger. `usage` also
+carries `cached_input_tokens`, the provider's reported cache hits (0 when absent or inconsistent).
+The ledger settles them at the price's optional `cached_input_usd_per_million`, which may not
+exceed the input rate, and at the full input rate without one. Every reservation stays at the full
+input rate, since a cache hit is never guaranteed in advance, so a reservation still bounds its
+settlement (`docs/FIRST_LIVE_RUN.md`).
 
 The session is checkpointed before each external request and host tool. A turn saves at:
 - **A**, the generation marker, which also carries any turn note;
@@ -211,14 +221,17 @@ lineage's cumulative usage, so the budget also persists across a task's continua
 `PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` (`Settings.provider_tokens_per_minute`) enables one
 `TokenRateGovernor` (`execution/admission.py`) per process. The worker and `run-team` share it
 across every runtime on the process's event loop. Unset, there is no governor and nothing changes.
-The governor is a token bucket that holds one minute's tokens. A request's estimate is its input,
-which is the exact count or the margin-inclusive bound, plus the session's moving-average output,
-seeded at 1,000 and never the output cap. Cached tokens count, since the provider's limit counts
-them. Admission comes before `generation_started`, so a queued request holds no dollar
-reservation, and a target verified while it is queued sends nothing. `generation_started` then
-carries `admission_wait_seconds`. Once `usage` is emitted, the governor settles at the billed input
-plus output, refunding an overestimate or charging an underestimate. Any other exit after the send
-keeps the estimate charged.
+The governor is a token bucket that holds one minute's tokens. A request's estimate is its input
+bound plus the session's moving-average output in the current run, seeded at 1,000 and never the
+output cap. The input bound is the value the reservation uses below the window: the exact count,
+the margin-inclusive bound, or under `context_management` the count plus the bound's margin (G4).
+Cached tokens count, since the provider's limit counts them. Admission comes before
+`generation_started`, so a request waiting for its first admission holds no dollar reservation,
+and a target verified while it is queued sends nothing. A re-queued create keeps its reservation,
+as a rate-limit wait always did. `generation_started` then carries `admission_wait_seconds`. Once
+`usage` is emitted, the governor settles at the billed input plus output, refunding an
+overestimate or charging an underestimate. Any other exit after the send keeps the estimate
+charged.
 
 Roots and joined children, which a parent waits on, are admitted first, then referees, then
 everything else. A waiting request ages one class per 30 s, so nothing starves.
@@ -268,7 +281,8 @@ without one. Under a budget:
   lineage fail, so it keeps the `\udXXX` escape that legacy output uses. In every experiment,
   `ToolDispatcher.dispatch` also rewrites a lone surrogate in a tool result (keys included) as
   that escape before the result is stored, so checkpoints always save, and returns a result that
-  has none unchanged.
+  has none unchanged. Two keys that would escape to the same key fail the call with
+  `TOOL_FAILED` rather than lose a value.
 - **Output cap.** An output whose serialized text is longer than `max_output_chars` is replaced in
   the model's input by a view. The view is `{"truncated": true, "tool", "total_chars", "head",
   "recall": {"tool": "recall_output", "call_id", "next_offset"}}`, and its `head` holds the first
@@ -349,7 +363,20 @@ experiments too.
   the whole window, while that value plus 8,192 is at most `compact_threshold`.
 - The `bound_reservation_compacted` alarm event.
 - Fewer saves per turn: 4 for a single call, 3 + k for k calls. `tool_completed` is emitted after
-  the save that made its output durable.
+  the save that made its output durable. Settlement rides on the next save, so a crash between
+  `usage` and that save leaves the session `uncertain` (save B holds the generation marker).
+- A deadline abort before the send emits `generation_aborted` before it clears the marker, so a
+  failed release leaves the session `uncertain`, not `failed`.
+- `ToolDispatcher.dispatch` escapes a lone surrogate in a tool result, keys included, as
+  `\udXXX`. This changes no stored shape for any input that saved before: no store could save a
+  result holding one.
+
+Under `context_budget` only (opt-in):
+- Native state holds `context_budget` and `elision = {"seq", "last_block_seq"}`.
+- Each `tool_results` entry records its response's `seq` and the tool `name`.
+- Model-visible tool output text keeps a lone surrogate as its `\udXXX` escape, while other
+  Unicode stays literal.
+- The `context_elided` event.
 
 ## Official Codex SDK
 
