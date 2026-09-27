@@ -13,12 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from sqlalchemy import select
 
 from ..commons_discourse import compact_update_lines
-from ..commons_review import (
-    REFEREE_FRONTIER_NOTE,
-    REFEREE_HAT,
-    fence_author_data,
-    is_referee_task,
-)
+from ..commons_review import REFEREE_HAT, is_referee_task
 from ..domain import (
     ArtifactCreate,
     BranchCreate,
@@ -54,6 +49,7 @@ from .research_network import (
     register_network_tools,
     root_lineage,
 )
+from .society_brief import society_prompt_view
 from .society_prompt import constitution, referee_constitution
 from .workspace_tools import WorkspaceTools
 
@@ -498,23 +494,9 @@ def _peer_routing(directory, sharing, own_branch_id):
     }
 
 
-SOCIETY_CAPACITY_NOTE = (
-    "This is a snapshot. Recruited work consumes the same budget and needs a free worker "
-    "slot. If all slots are occupied, a recruit queues until a slot opens; you may "
-    "optionally call wait with for='tasks' and the recruit's task ID to yield your slot and "
-    "resume after it reaches a terminal state."
-)
-REFEREE_CAPACITY_NOTE = (
-    "This is a snapshot of the society's worker capacity; as a referee you review your one "
-    "assigned node and start no other work."
-)
 LEGACY_SOURCE_RETRIEVAL = (
     "Use read_discussion_post or read_research_message with a delivery retrieval ID; "
     "excerpts remain unverified."
-)
-SOCIETY_SOURCE_RETRIEVAL = (
-    "Use commons_read with a delivery retrieval ID (post_id for a post, message_id for a "
-    "message), and read_artifact for an artifact they cite; excerpts remain unverified."
 )
 
 
@@ -1626,37 +1608,22 @@ class ResearchTaskExecutor:
             elif society:
                 research_instructions = constitution(society, literature_enabled=literature_enabled)
 
-            def society_context():
-                frontier = self.service.query_nodes(
-                    experiment["id"], agent, frontier=True, limit=10
+            def society_view():
+                return society_prompt_view(
+                    self.service,
+                    experiment=experiment,
+                    task=task,
+                    agent=agent,
+                    referee=referee,
+                    ready=ready,
+                    handoff_notes=PortableMemory(self.service).handoff_notes(
+                        branch["id"], agent, task_id=task_id
+                    ),
+                    instructions=research_instructions,
                 )
-                if referee:
-                    # Node titles and statements are author text (possibly the reviewed
-                    # node's author): a referee reads them fenced, like its review packet.
-                    frontier = {
-                        "note": REFEREE_FRONTIER_NOTE,
-                        "data": fence_author_data(frontier["items"]),
-                    }
-                return {
-                    "commons_frontier": frontier,
-                    "focus_nodes": self.service.branch_claims(experiment["id"], agent, limit=10),
-                    "review_assignment": task.get("review_assignment"),
-                }
 
             def collaboration_context():
                 capacity = self.service.research_capacity(experiment["id"], agent)
-                if society:
-                    return {
-                        "task_contract": _task_contract(task, branch),
-                        "research_capacity": capacity,
-                        "capacity_guidance": {
-                            **_capacity_guidance(capacity),
-                            # A referee delegates nothing, so it has no task to wait for.
-                            "optional_wait_for_delegated_task": not referee,
-                            "note": REFEREE_CAPACITY_NOTE if referee else SOCIETY_CAPACITY_NOTE,
-                        },
-                        **society_context(),
-                    }
                 directory = self.service.research_directory(experiment["id"], agent, limit=10)
                 return {
                     "task_contract": _task_contract(task, branch),
@@ -1680,6 +1647,8 @@ class ResearchTaskExecutor:
                         raise HarnessError(
                             "TARGET_CHANGED", "Compaction anchor target/review changed."
                         )
+                if society:
+                    return canonical_json(society_view())
                 memory = PortableMemory(self.service)
                 return canonical_json(
                     {
@@ -1695,20 +1664,12 @@ class ResearchTaskExecutor:
                         "working_context": memory.working_context(
                             branch["id"], agent, task_id=task_id
                         ),
-                        **(
-                            {}
-                            if society
-                            else {
-                                "discussion_topics": self.service.discussion_page(
-                                    experiment["id"], agent, limit=10
-                                )
-                            }
+                        "discussion_topics": self.service.discussion_page(
+                            experiment["id"], agent, limit=10
                         ),
                         "mailbox": self.service.mailbox_page(branch["id"], agent),
                         "peer_update_delivery": "automatic_at_settled_responses_boundaries",
-                        "peer_source_retrieval": (
-                            SOCIETY_SOURCE_RETRIEVAL if society else LEGACY_SOURCE_RETRIEVAL
-                        ),
+                        "peer_source_retrieval": LEGACY_SOURCE_RETRIEVAL,
                         "handoff_notes": memory.handoff_notes(branch["id"], agent, task_id=task_id),
                         "joined_results": self.service.delegated_task_statuses(
                             task_id,
@@ -1871,8 +1832,9 @@ class ResearchTaskExecutor:
                     continuation_mode="native" if native_compatible else "portable",
                 )
             memory = PortableMemory(self.service)
-            brief = memory.working_context(branch["id"], agent, task_id=task_id)
-            brief["assumptions"] = brief["target"]["assumptions"]
+            if not society:
+                brief = memory.working_context(branch["id"], agent, task_id=task_id)
+                brief["assumptions"] = brief["target"]["assumptions"]
             handoff_notes = memory.handoff_notes(branch["id"], agent, task_id=task_id)
             if ready and ready.get("portable_checkpoint"):
                 expected = ready["portable_checkpoint"]
@@ -1883,7 +1845,9 @@ class ResearchTaskExecutor:
                 ):
                     raise HarnessError("CONTINUATION_STALE", "Bound portable checkpoint changed.")
             prompt = canonical_json(
-                {
+                society_view()
+                if society
+                else {
                     "objective": task["objective"],
                     **collaboration_context(),
                     "assigned_source_post_ids": task.get("discussion_refs", []),
@@ -1892,19 +1856,11 @@ class ResearchTaskExecutor:
                     "research_brief": brief,
                     "continuation": ready,
                     "handoff_notes": handoff_notes,
-                    **(
-                        {}
-                        if society
-                        else {
-                            "discussion_topics": self.service.discussion_page(
-                                experiment["id"], agent, limit=10
-                            )
-                        }
+                    "discussion_topics": self.service.discussion_page(
+                        experiment["id"], agent, limit=10
                     ),
                     "mailbox": self.service.mailbox_page(branch["id"], agent),
-                    "peer_source_retrieval": (
-                        SOCIETY_SOURCE_RETRIEVAL if society else LEGACY_SOURCE_RETRIEVAL
-                    ),
+                    "peer_source_retrieval": LEGACY_SOURCE_RETRIEVAL,
                     "peer_update_delivery": (
                         "automatic_at_settled_responses_boundaries"
                         if "update_source" in runtime_kwargs

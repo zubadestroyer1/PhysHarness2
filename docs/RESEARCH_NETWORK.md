@@ -330,13 +330,17 @@ it reads ±40 lines (at most 4,000 bytes) around a declaration, never a whole fi
 `load_skill` were removed after S1: peer updates arrive automatically at settled
 boundaries, and the technique skills were never loaded.
 
-The prompt carries the constitution (community norms and an optional playbook), the
-frontier and the agent's claimed nodes. A referee gets a referee
-constitution instead, with no playbook, and its notes name only referee-profile tools.
-Its frontier's node titles and statements arrive fenced as untrusted author data, like
-its review packet, since they may come from the author of the node it reviews. So does
-everything its `commons_read`, `commons_query` and `read_artifact` return,
-except platform-written cursors and offsets. `read_artifact` opens the
+A society prompt holds the task objective, the target's six fields (title, informal and
+formal statement, target theorem, assumptions, definitions), the constitution (community
+norms and an optional playbook), and when non-empty the top five frontier lines, the
+agent's claimed nodes, its strategy, the models (when they differ), the synthesis scope,
+the continuation reason and ordinal, its handoff notes and joined results. The compaction
+anchor is the same view, re-read live. A referee's prompt is its fenced review packet, the
+target and the referee constitution, which has no playbook and whose notes name only
+referee-profile tools. Everything the referee's `commons_read`, `commons_query` and
+`read_artifact` return arrives fenced as untrusted author data, like its review packet,
+since it may come from the author of the node it reviews, except platform-written cursors
+and offsets. `read_artifact` opens the
 referee's own artifacts, the node's published source, and those that the node, or
 another branch's post on its thread, cites: the referee's own posts never widen that
 scope, and the thread search reads the earliest posts first and fails closed past its
