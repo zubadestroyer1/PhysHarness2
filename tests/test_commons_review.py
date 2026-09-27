@@ -1418,9 +1418,11 @@ def test_a_verified_proof_records_provenance_on_the_nodes_it_imports(lab, monkey
     flattened_receipt(service, exp, alpha, commons_modules=commons[:1], key="third")
     node = service.read_node(used["id"], alpha)["node"]
     assert node["in_verified_proof"] == proofs
-    # The count describes the node's current source: a replaced source was in no proof.
-    replacement = "theorem y : True := trivial"
-    publish(service, used["id"], alpha, "complete", "used-again", content=replacement)
+    # The count describes the node's current source: a replacement was in no proof. (A
+    # partial source of a restated node keeps it open work, on the frontier.)
+    digest = formalize(service, used, alpha, key="used-lean")["lean_statement_sha256"]
+    record = {"content": "theorem y : True := sorry", "lean_statement_sha256": digest}
+    publish(service, used["id"], alpha, "partial", "used-again", **record)
     frontier = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
     assert "in_verified_proof" not in next(item for item in frontier if item["id"] == used["id"])
     assert service.read_node(used["id"], alpha)["node"]["in_verified_proof"] == proofs
