@@ -171,9 +171,9 @@ tools, the prompts and the delivery shapes.
     Only `propext`, `Classical.choice` and `Quot.sound` count. A publication must name
     the node's current statement, whoever calls it. Every backend (REPL daemon, inline
     REPL, one-shot) runs the same check, and a check that cannot run leaves the source at
-    most `complete`. A society task self-tests it once
-    per process and image when it first provisions a workspace, and a failed self-test
-    stops the task with `STATEMENT_CHECK_UNAVAILABLE`.
+    most `complete`. A society task self-tests it once per process and image when it
+    first provisions a workspace, and a failed self-test stops the task with
+    `STATEMENT_CHECK_UNAVAILABLE`.
   - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
     compiling the file there runs the file's compile-time code (`#eval`, `run_cmd`, and
     any elaborator, macro or tactic it defines). That code can read and write VM files
@@ -344,7 +344,7 @@ tools, the prompts and the delivery shapes.
     family allows it, and a panel spreads over distinct families when several are
     configured, the author's included once the others are used; `cross_model` reports
     whether each referee avoided it;
-  - unreachable by direct message or delegation from other branches;
+  - unreachable by direct message, delegation or an event wait from other branches;
   - run in their own pool of `referee_slots` (default 2) inside the run's
     `max_concurrency`, capped at `max_concurrency - 1` so research always keeps a slot.
     The finite supervisor starts at most that many referees at once and at most the rest
@@ -369,9 +369,13 @@ tools, the prompts and the delivery shapes.
 
   The referee submits one verdict. A fidelity task stored before the S1 remediation can
   still submit `faithful` or `unfaithful`; it moves nothing either. Its tool profile only
-  reads and checks: no `commons_node`, `commons_claim`, `recruit`, `message`, `wait` or
-  `submit_for_verification`. Its `lean_check` publishes no sources, and it posts
-  questions, findings and objections only on the assigned node's thread.
+  reads and checks: no `commons_node`, `commons_claim`, `commons_fetch`, `recruit`,
+  `message`, `wait`, `library_notes` or `submit_for_verification`. Its `lean_check`
+  publishes no sources, and it posts questions, findings and objections only on the
+  assigned node's thread. A referee's `lean_check` may inline published modules; text
+  from them in Lean output (messages on the referee's own lines, `#print` output, axiom
+  names) is untrusted author data. Messages, goals and axiom keys located inside inlined
+  modules are withheld.
 - **Recruits.** `recruit` takes one narrow deliverable (a named lemma with its Lean
   signature, or a specific lookup), since in S1 broad recruits drifted into attempting the
   whole target (S1 audit #23). The librarian hat looks up library names, signatures and
@@ -480,7 +484,8 @@ tools, the prompts and the delivery shapes.
   records the agent may be unable to read, so their prefixes resolve only among the
   tool's own targets: the branches and nodes it may message (any branch of the
   experiment but a referee's, since addressing a branch reads nothing of it), its
-  delegated child tasks, or the experiment's nodes and branches it may watch. A prefix
+  delegated child tasks, or the experiment's nodes and branches it may watch (again any
+  branch but a referee's: a full referee id is `REFEREE_ISOLATED`). A prefix
   that names none or several of them is refused exactly as an unknown full id, so it
   reveals no other record.
 - **Library notes.** A project-scoped table of shared facts about one pinned Mathlib and
@@ -494,15 +499,18 @@ tools, the prompts and the delivery shapes.
   instructions". A referee's `find_declaration` surfaces none.
 
 Society workers get the consolidated profile in
-`src/physharness/orchestration/society_tools.py`. It has 26 tools in all; a worker's
-widest catalog has 25 (all but `submit_review`), and a referee's has 18:
+`src/physharness/orchestration/society_tools.py`. It has 24 tools in all; a worker's
+widest catalog has 23 (all but `submit_review`), and a referee's has 15 (no
+`commons_node`, `commons_claim`, `commons_fetch`, `recruit`, `message`, `wait`,
+`submit_for_verification`, `library_notes` or `return_result`):
 
 | Group | Tools |
 |---|---|
 | Workspace and computation | `shell`, `read_file`, `write_file`, `run_computation` |
 | Lean | `lean_check` |
-| Library and literature | `find_declaration`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
-| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `commons_fetch` (with a workspace; not a referee's) |
+| Library | `find_declaration`, `library_notes` |
+| Literature | `search_literature`, `fetch_source` (only when the policy enables literature) |
+| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `commons_fetch` (with a workspace) |
 | Society | `recruit`, `message` (a branch or a node's workers), `wait` |
 | Evidence | `read_artifact`, `submit_for_verification`, `verification_status` |
 | Memory | `notebook` |
@@ -560,9 +568,10 @@ Operators prepare a society arm from a run plan with a `society` block. See
   `literature_fetch` records and an `edges` list.
 - `python tools/society_metrics.py <export>` reports the PLAN §9 metrics from an export.
 
-No live run has used the society profile yet. Its evidence is deterministic and
-mocked-provider tests, including a no-model end-to-end simulation
-(`tests/test_society_simulation.py`).
+The S1 live comparison (2026-09-26) ran the S1 society profile
+([results](../work/society-s1/results-2026-09-26/REPORT.md)); no live run has used the
+remediated profile yet. Its evidence is deterministic and mocked-provider tests,
+including a no-model end-to-end simulation (`tests/test_society_simulation.py`).
 
 ## Qualification boundary
 

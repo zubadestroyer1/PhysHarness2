@@ -1,6 +1,6 @@
 """The research-society tool profile: one consolidated catalog over the commons and toolkit.
 
-Twenty-six tools replace the 63 legacy ones for experiments with a society policy. Each handler
+Twenty-four tools replace the 63 legacy ones for experiments with a society policy. Each handler
 calls the same service or workspace method its legacy counterpart calls, so the legacy tools
 remain the adapters. Commons evidence (Lean elaboration results and published source ranks)
 is assembled here from Lean session results and records this module reads itself; it never

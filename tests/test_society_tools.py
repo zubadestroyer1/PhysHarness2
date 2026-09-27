@@ -458,12 +458,37 @@ def lemma_args(**extra):
 
 def test_society_catalog_widest():
     dispatcher, referee = widest(), referee_catalog()
+    assert (len(SOCIETY_TOOL_NAMES), len(names(dispatcher)), len(REFEREE_TOOLS)) == (24, 23, 15)
+    assert SOCIETY_TOOL_NAMES == (
+        "shell",
+        "read_file",
+        "write_file",
+        "run_computation",
+        "lean_check",
+        "find_declaration",
+        "search_literature",
+        "fetch_source",
+        "commons_query",
+        "commons_read",
+        "read_artifact",
+        "commons_node",
+        "commons_post",
+        "commons_claim",
+        "commons_fetch",
+        "recruit",
+        "message",
+        "wait",
+        "submit_for_verification",
+        "verification_status",
+        "notebook",
+        "library_notes",
+        "return_result",
+        "submit_review",
+    )
+    assert REFEREE_TOOL_NAMES == REFEREE_TOOLS
     assert tuple(names(dispatcher)) == tuple(n for n in SOCIETY_TOOL_NAMES if n != "submit_review")
     assert tuple(names(referee)) == REFEREE_TOOLS
     assert set(names(dispatcher)) | set(names(referee)) == set(SOCIETY_TOOL_NAMES)
-    assert len(names(dispatcher)) == len(SOCIETY_TOOL_NAMES) - 1 and len(REFEREE_TOOLS) == len(
-        REFEREE_TOOL_NAMES
-    )
     for item in dispatcher.definitions + referee.definitions:
         schema = item["parameters"]
         assert item["strict"] is True and schema["additionalProperties"] is False

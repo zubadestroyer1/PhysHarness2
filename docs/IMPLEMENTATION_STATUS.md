@@ -1,3 +1,38 @@
+## S1 society remediation — 2026-09-27
+
+**Status:** implemented, with deterministic and mocked-provider tests. No paid request or live run was used. Real-image checks ran on the local `physharness-pilot` workbench for Tier 0 (Tasks 1b and 2), and opt-in real-Lean tests (`-m lean`) cover the statement check and stub skeletons. The remediated society replaces the S1 society rather than adding a mode: a free-forming but directed ecology with minimal scaffolding (a lemma store, relevance routing, event waits, routes and time boxes, scoped recruits, library notes and plan-only referees), where the independent verifier is the only arbiter. Legacy experiments are unchanged, and their freeze tests pass unmodified. See the [society remediation plan](superpowers/plans/2026-09-26-s1-remediation-society.md), the [S1 audit](../work/society-s1/audit-2026-09-26/AUDIT.md) it answers, and [RESEARCH_NETWORK.md](RESEARCH_NETWORK.md) for the behaviour.
+- **Task 1:** the statement checker runs from the uploaded workspace files, with no `/tmp` staging. It self-tests once per process and image at provision; a failure is `STATEMENT_CHECK_UNAVAILABLE`, logged at ERROR.
+- **Task 1b:** the checker imports only the six modules it uses, so it fits the 2 GiB workbench (0.65–0.75 GiB where it was OOM-killed). It assumes a pre-warmed VM.
+- **Task 2:** `lake` and `lean` are on the PATH in login shells, from one script on a small tmpfs at `/etc/profile.d`. This was checked on the real image.
+- **Task 3:** `lean_check` automation is off by default (`automate=true` opts in). Cap, transfer and evidence-kind errors say what happened.
+- **Task 4:** every society tool id takes a unique 8-hex prefix through one resolver. A routing argument resolves only among its tool's own targets.
+- **Task 5:** check-ins and stagnation nudges are removed, and a removed policy field fails validation by name. The stagnation loop detector stays.
+- **Task 6:** labs are removed. `message` reaches one branch or a node's workers, rate-limited per sender; referees stay unreachable.
+- **Task 7:** one lean society view (target, objective, constitution, frontier and claims) builds both the prompt and the compaction anchor.
+- **Task 8:** updates are relevance-routed compact lines with 8-hex ids. A reader's own posts are never pushed, and the goal thread is pull-only.
+- **Task 9:** the lemma store. Every node is a Lean module, and `lean_check(node_id=…)` publishes a ranked source (`verified`, `complete` or `partial`).
+- **Task 10:** `import Commons.N…` is inlined for `lean_check`, and the verifier checks one flattened file whose receipt lists the inlined modules.
+- **Task 11:** `commons_fetch` brings commons Lean into the workspace; workspaces are stated to be private; reuse is measured by provenance.
+- **Task 12:** the status ladder and fidelity reviews are gone. A node is open until it is accepted, refuted or abandoned, referees review plans only, and a verified proof records the nodes it imported.
+- **Task 13:** `find_declaration` replaces library search and reads, and `inbox`, `lean_sketch` and `load_skill` are removed.
+- **Task 14:** `lean_check(stubs=true)` turns a skeleton's sorry lemmas into importable stub nodes.
+- **Task 15:** every recruit brief carries a scope paragraph, and a recruit ends when its work is delivered (`result_returned`, `scope_proved` or `scope_closed`).
+- **Task 16:** `wait(for="events")` wakes on a routed update, news on a watched node or branch, or a change in the goal's long pole, which idle agents are shown.
+- **Task 17:** society waits resume natively with a short wake note, the runner re-checks a wait only on new events, and a run whose agents all wait with nothing admissible stops with `SOCIETY_IDLE`.
+- **Task 18:** society work is admitted by remaining dollars above an optional floor. Count caps are an optional guard that ignores referees, which get their own slot pool.
+- **Task 19:** a claim may declare a route and a time box. The frontier rewards distinct routes, and when one route compiles, the other claimants get an urgent note.
+- **Task 20:** project-scoped library notes per Mathlib pin (migration `0004`), a `library_notes` tool, and a seed from the S1 audit's findings.
+- **Task 21:** the final tool counts (24 in all, 23 for the widest worker, 15 for a referee), this documentation pass, and the last audit fixes: referee branches cannot be watched, and `recall_output` has a metrics bucket.
+- **Integration audits:** three audits over the lane. Their fixes quote peer text in recruit briefs, keep author-written library notes and inlined-module output away from referees, and let a check claim a node afresh only when it publishes.
+- **Tests:** the full suite passes 2,331 tests with 6 opt-in skips. With `-m "integration or lean"`, 9 more pass and 23 skip without their infrastructure. Ruff check and format are clean.
+
+Next steps:
+- a harder target (audit #25);
+- the paid A/B of the remediated society against the S1 society run (S-r2), which needs an explicit budget;
+- olean-based imports (#12d);
+- warm-REPL reuse;
+- raising or splitting the org TPM limit, an operator action.
+
 ## History rewrite — 2026-09-26
 
 **Status:** the public history was rewritten to remove a local username, machine hostnames and a personal author identity from every commit.
@@ -55,6 +90,10 @@ Next steps:
   - a harder target is needed before a society can show any benefit.
 
 ## S1 research society — 2026-09-25
+
+*Historical.* The [S1 society remediation](#s1-society-remediation--2026-09-27) above
+removed labs, the status ladder, fidelity reviews, technique skills, check-ins and nudges,
+and changed the tool counts. This entry describes the society as S1 shipped it.
 
 **Status:** implemented; the final whole-branch review's findings are fixed. The society
 is opt-in: only experiments created with a `society` policy (which requires

@@ -1,6 +1,6 @@
 # PhysHarnessV2 — Research Society plan
 
-Status: **design draft for review** (2026-09-24). This plan reorganizes the existing roadmap around an open-ended "research society": many agents working toward one hard physics problem the way a scientific community does. It adds a design and an execution order. It does not replace the twelve waves in `docs/IMPLEMENTATION_PLAN.md` or their exit criteria (see §8 for the mapping). Apart from the S1 progress recorded in §7, nothing described below as proposed is implemented yet.
+Status: **design draft for review** (2026-09-24). This plan reorganizes the existing roadmap around an open-ended "research society": many agents working toward one hard physics problem the way a scientific community does. It adds a design and an execution order. It does not replace the twelve waves in `docs/IMPLEMENTATION_PLAN.md` or their exit criteria (see §8 for the mapping). Apart from the S1 progress and the S1 remediation recorded in §7, nothing described below as proposed is implemented yet.
 
 ---
 
@@ -22,8 +22,8 @@ A single hard root problem is given to a society of agents that behaves like a r
 | How to pay for scale | **Mixed models.** Frontier hosted models for ideas and lead work; self-hosted open-weight models on our own GPUs (Kubernetes) for the bulk of formalization and routine work. |
 | Unit of the society | **One root problem per society.** Agents may explore tangents and subproblems that plausibly help the root. |
 | Human role | **Maximize autonomy.** Automated checks and built-in formalization replace human gates. A human is needed only before a result is *published*. |
-| Organizing approach | **Hybrid on a shared blueprint.** A blueprint graph is the coordination medium, labs are lightweight groups on it, and priority signals replace any currency. |
-| Scaffolding and tools | **Light guidance plus a rich research toolkit** (§3.6–3.7): a default research playbook, technique skills, progress check-ins and stagnation nudges, a sketch-then-fill Lean pipeline, numerical methods and computation jobs, brokered online literature access, and fast Lean checking. Every guidance piece is optional for the agent, switchable per campaign, and measured against runs without it. |
+| Organizing approach | **Hybrid on a shared blueprint.** A blueprint graph is the coordination medium, labs are lightweight groups on it, and priority signals replace any currency. (S1 remediation: labs removed; relevance routing, a message rate limit and declared routes keep the society sparse, §2.4.) |
+| Scaffolding and tools | **Light guidance plus a rich research toolkit** (§3.6–3.7): a default research playbook, technique skills, progress check-ins and stagnation nudges, a sketch-then-fill Lean pipeline, numerical methods and computation jobs, brokered online literature access, and fast Lean checking. Every guidance piece is optional for the agent, switchable per campaign, and measured against runs without it. (S1 remediation: check-ins, nudges and skills removed; `lean_sketch` replaced by `lean_check(stubs=true)`.) |
 
 ### Where this plan deliberately disagrees with "no restrictions"
 
@@ -46,8 +46,8 @@ A single hard root problem is given to a society of agents that behaves like a r
    - An agent mostly waits on model calls, so it is a cheap async process.
    - VMs are leased only while an agent compiles or computes, and proof checking is a separate autoscaled pool.
    - 1,000 agents need far fewer than 1,000 VMs.
-5. **Fewer, more general tools.** Agents currently get **63 tools**, including about 20 overlapping communication tools. Models use a small set of clear, general tools better. Target: about 22, including the new research toolkit (§3.3).
-6. **Guide, don't dictate.** Light scaffolding helps: a default playbook, technique hints, nudges when stuck, and automation around Lean. A forced proof method would narrow exploration and can hurt strong models. So guidance is offered, never mandatory, and each piece is A/B-measured. Scaffolding never uses a benchmark's hidden reference solution.
+5. **Fewer, more general tools.** Legacy agents get **63 tools**, including about 20 overlapping communication tools. Models use a small set of clear, general tools better. The society profile has 24, including the research toolkit (§3.3).
+6. **Guide, don't dictate.** Light scaffolding helps: a default playbook, shared library notes, and opt-in automation around Lean. S1's technique skills, check-ins and stagnation nudges were removed after S1, which used them little or not at all (§3.7). A forced proof method would narrow exploration and can hurt strong models. So guidance is offered, never mandatory, and each piece is A/B-measured. Scaffolding never uses a benchmark's hidden reference solution.
 
 ---
 
@@ -96,7 +96,7 @@ A node is `open` until its author abandons it (`abandoned`, with a reason) or th
 
 ### 2.5 What it replaces
 
-Addressed messages, discussions, the component registry, research profiles, teams and capacity requests collapse into **one commons service with about 5 tools** (§3.3). Existing records migrate or are wrapped, and old tools remain thin adapters until removed.
+Addressed messages, discussions, the component registry, research profiles, teams and capacity requests collapse into **one commons service with six tools** (§3.3). Existing records migrate or are wrapped, and old tools remain thin adapters until removed.
 
 ---
 
@@ -108,11 +108,14 @@ Addressed messages, discussions, the component registry, research profiles, team
 - **The society runs on a short "constitution" in the prompt:** the norms of the community, not instructions for doing mathematics. The norms are:
   - Informal work is welcome.
   - State evidence status honestly.
-  - Claim before sinking effort.
+  - Claim the node you work on before sinking effort (the goal takes none; read its thread on demand). Several branches may claim one node on different routes: name yours, and optionally a time box.
+  - At a genuine choice between methods, a second route is cheap insurance; stop yours when another compiles.
   - Post failures.
   - Cite what you use.
   - Recruit for one narrow deliverable (a named lemma with its signature, or a lookup); recruits end when they return.
   - Ask a referee to check a plan before a long formalization; compiled Lean needs no referee.
+  - Publish Lean on its node (lean_check with node_id) and import peers' modules instead of copying their code.
+  - When you have nothing useful to do, wait for events (free while waiting) or finish; the goal's long pole is where help counts most.
 - **Episodes.** An agent works in episodes around one or a few focus nodes. At each safe pause it gets its digest and chooses what to do next:
   - continue working;
   - post a finding;
@@ -129,17 +132,21 @@ Addressed messages, discussions, the component registry, research profiles, team
 3. **The commons.** Canonical and shared. On restart, an agent rebuilds its context from its notebook plus the current state of its focus nodes and their threads, so it never relies on stale context.
 4. **Library notes.** Shared, per Mathlib pin, across a project's experiments.
 
-### 3.3 Tools (target: about 22, down from 63)
+### 3.3 Tools (24 in the society profile, down from 63)
 
 | Group | Tools |
 |---|---|
-| Workspace and computation | `shell`, `file` (read/write), `run_computation` (bounded background numerical job with recorded inputs, seed, precision and environment) |
-| Lean | `lean_check` (persistent Lean session; goal states, errors, `#print axioms`) |
-| Library and literature | `find_declaration` (pinned Mathlib/Physlib declarations as ranked `Name signature — path:line` rows, by name or by type, with did-you-mean names; reads at most ±40 lines around one), `search_literature`, `fetch_source` (brokered online access, §3.6) |
-| Commons | `commons_query`, `commons_read`, `commons_post`, `commons_claim` |
-| Society | `recruit` (brief, focus node, hat, model tier), `message` (a branch or a node's workers), `wait` |
-| Evidence | `submit_for_verification` (workspace file → candidate → independent check), `verification_status` |
+| Workspace and computation | `shell`, `read_file`, `write_file`, `run_computation` (bounded background numerical job with recorded inputs, seed, precision and environment) |
+| Lean | `lean_check` (persistent Lean session; goal states, errors, `#print axioms`; with `node_id` it publishes the node's module, and with `stubs=true` it turns a skeleton's sorry lemmas into stub nodes) |
+| Library | `find_declaration` (pinned Mathlib/Physlib declarations as ranked `Name signature — path:line` rows, by name or by type, with did-you-mean names; reads at most ±40 lines around one), `library_notes` (shared facts about the Mathlib pin, §3.2) |
+| Literature | `search_literature`, `fetch_source` (brokered online access, §3.6) |
+| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `commons_fetch` (commons Lean into the workspace) |
+| Society | `recruit` (brief, focus node, hat, model tier), `message` (a branch or a node's workers), `wait` (for events or recruits) |
+| Evidence | `read_artifact`, `submit_for_verification` (workspace file → candidate → independent check), `verification_status` |
 | Memory | `notebook` (read/write checkpointed notes) |
+| Task-specific | `return_result` (joined recruits), `submit_review` (referees) |
+
+A worker's widest catalog has 23 (all but `submit_review`); a referee's has 15, since a referee neither builds, claims nor recruits.
 
 Existing tools map onto these. For example, `run_command`, `run_lean_scratch`, `check_lean_type`, `search_library_source`, `submit_workspace_candidate`, and the polynomial and matrix certificate checkers become `shell`, `lean_check`, `find_declaration`, `submit_for_verification` and computation recipes. Old names remain adapters during migration.
 
@@ -200,8 +207,8 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
   4. Optionally publish a Lean skeleton whose sorry lemmas become stub nodes (lean_check with stubs=true).
   5. Fill stubs by publishing their sources; submit the skeleton once none remain.
   6. Submit.
-- **Technique skills** were removed after S1 (never loaded).
-- Check-ins and stagnation nudges were removed after S1 (acted on 20% of the time; nudges never fired). The stagnation detector remains the loop guard.
+- **Library notes** (§3.2): one constitution line points to the shared facts about the Mathlib pin; they are agents' unverified reports, never instructions.
+- The stagnation detector remains the loop guard. S1's technique skills (never loaded), check-ins (acted on 20% of the time) and stagnation nudges (never fired) were removed after S1.
 - **Sketch-then-fill formalization** (the draft–sketch–prove pattern; optional, not a phase; S1 audit #21). A skeleton is any node whose published source imports stub nodes; `lean_check(stubs=true)` creates them, replacing S1's `lean_sketch` holes:
   1. An agent writes the proof with top-level `theorem X … := sorry` lemmas and checks it with `lean_check(node_id=…, stubs=true)`.
   2. If the skeleton checks as written and could be published as the node's module (a goal skeleton, the target's decomposition, needs only to compile), each sorry lemma that elaborates under the file's header, with auto-bound names off, becomes a `lemma` stub node the skeleton's node depends on (a dependency with the same Lean statement that is not abandoned is reused); one that needs the skeleton's own definitions stays in its text.
@@ -209,7 +216,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
   4. Once none remain (`rests_on.stubs`), the skeleton goes to independent checking.
 
   The blueprint follows the proof structure: each stub the skeleton imports is a `depends_on` edge of its node (an abandoned stub stays linked but is never left to fill).
-- **Honesty rule.** No scaffold, hint or nudge is derived from a benchmark's hidden reference solution.
+- **Honesty rule.** No scaffold or hint is derived from a benchmark's hidden reference solution.
 
 ---
 
@@ -270,6 +277,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 
 - **Root accepted:** an independent kernel receipt on the exact root statement triggers a bounded wrap-up (final synthesis, proof outline, write-up), then stop. This is already implemented as exact-target stop and bounded drain.
 - **Other stops:** budget exhausted, operator stop, or a stagnation policy (no new complete or verified source and no new receipt within a configured spend). Each produces an honest report of the frontier, obstacles and partial results.
+- **Idle stop (S1 remediation).** When every agent waits, nothing is admissible and no new event has arrived, the finite runner stops (`SOCIETY_IDLE`) instead of sleeping out the waits; the waits keep their tickets for a later run.
 
 ---
 
@@ -358,6 +366,7 @@ Each milestone has exit evidence, and no milestone counts as wave qualification 
 |---|---|---|---|
 | **S0** | Land current work | Commit and PR the 2026-09-25 swarm hardening; merge `main` (the branch is 11 commits behind); refresh `IMPLEMENTATION_STATUS.md` | CI green; status docs current |
 | **S1** | Commons v1, toolkit v1, tool consolidation | Nodes and edges on claims, status ladder, expiring claims, node threads, digests with urgent events, labs; referee and fidelity services. **Toolkit:** persistent Lean session with automation-on-failure, `lean_sketch` holes → nodes, `run_computation`, expanded numerics image, brokered literature access with per-campaign contamination policy, technique skills, check-ins and stagnation nudges. 63 → about 22 tools with adapters | Deterministic tests; then a live **8–16 agent** run on a hard known target versus a single agent and independent attempts at matched cost. Metrics: accepted root, less duplicated work than the last run, observed lemma reuse |
+| **S1 remediation (2026-09-26)** | Audit remediation | Tier 0 fixes plus the society substrate (lemma store, relevance routing, event waits, library notes) replaced labs, the ladder, fidelity reviews, check-ins and count caps; 24 society tools | Evidence is deterministic tests; the paid A/B against the S1 society run (S-r2) needs a budget |
 | **S2** | CampaignRuntime | Persistent society workflow, attention allocator with reserves, fresh-eyes reseeding, synthesizer and maintainer agents, hierarchical budgets, stagnation stop | A multi-session society (days, with pause/resume) that survives deliberate crashes and handoffs and continues without operator reassignment; **32 agents** |
 | **S3** | Mixed-model routing | Model router; one self-hosted open-weight model on a Kubernetes GPU pool; tier budgets; escalation | Measured cost per accepted node by tier; at least 50% of agent-hours on self-hosted models with no drop in accepted-node rate at matched budget |
 | **S4** | Kubernetes substrate at 128 | Agent, inference and verification planes on managed Kubernetes; workspace pool (E2B, with an Agent Sandbox + Kata trial); instrumentation | **Wave 8:** 72 hours at 128 active agents with injected failures, reconciled accounting, no lost accepted results |
@@ -365,6 +374,8 @@ Each milestone has exit evidence, and no milestone counts as wave qualification 
 | **S6** | Open-problem societies | Expert- or auto-reviewed open roots; publication review | **Wave 11:** can begin after S2 with small societies; sustained campaigns follow S4 |
 
 **S1 progress (2026-09-25):** implemented; the final whole-branch review's findings are fixed. The commons, the toolkit and the 26-tool society profile ([S1 plan](docs/superpowers/plans/2026-09-25-s1-research-society.md), Tasks 1–10) sit behind an opt-in society policy. Evidence so far is deterministic tests only, including a no-model end-to-end simulation. The live 8–16 agent comparison has **not** run: it needs the approvals in [the S1 run plan](work/society-s1/RUN_PLAN.md). Those are the budget, the target, the models, the workbench v2 rebuild, the verifier bundle and the workspace provider. Deferred by design: node-level acceptance, the root fidelity ensemble, background jobs, general web search, the allocator and maintenance agents, and hierarchical budgets.
+
+**S1 live comparison (2026-09-26):** every completed arm proved its target, but both targets were within one agent's reach. On the aperiodic target the society arm (S-r2, 6 roots, concurrency 8) took 29.7 min and $155.41, against 13.9 min and $31.97 for a single agent ([results](work/society-s1/results-2026-09-26/REPORT.md)). Its [audit](work/society-s1/audit-2026-09-26/AUDIT.md) set the S1 remediation's agenda (the row above).
 
 The **first society target** should be a known result that is hard enough that a single agent does not finish it quickly (harder than the Duffing-network target), with its reference solution masked. That gives collaboration real work and gives us a correct answer to check against.
 
@@ -391,9 +402,9 @@ Wave 0 (expert review of the 40 benchmark targets) remains open. The auto-review
 - **Outcomes:** accepted root, accepted nodes, time to root, cost per accepted node.
 - **Efficiency:** duplicated-work fraction, idle and waiting fraction, post-acceptance spend, tokens spent on coordination versus mathematics.
 - **Knowledge:** citation and reuse rate, retrieval hit rate for applicable accepted nodes.
-- **Society health:** number of live approach families over time (herding), referee catch rate, fidelity-check failure rate, stale-claim rate.
+- **Society health:** number of live approach families over time (herding), referee catch rate, stale-claim rate, and reuse by provenance (cross-branch imports of published modules, and their share of the accepted proof). The fidelity-check failure rate applies to S1 arms only.
 - **Matched-budget comparisons:** single agent vs independent attempts vs society. Policies are promoted only on reproducible gains.
-- **Scaffolding and tools:** scaffolding on vs off at matched budget; Lean iterations per accepted node; automation hit rate; skill and literature usage and whether cited sources contributed; contamination flags in benchmark runs.
+- **Scaffolding and tools:** scaffolding on vs off at matched budget; Lean iterations per accepted node; automation hit rate; library-note and literature usage (skill usage in S1 arms) and whether cited sources contributed; contamination flags in benchmark runs.
 - **Honest separation of evidence:** simulated vs mocked-provider vs live runs.
 
 ## 10. Risks and mitigations

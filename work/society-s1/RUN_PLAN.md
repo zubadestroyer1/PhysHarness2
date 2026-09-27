@@ -8,6 +8,11 @@ society tools with no model. Every item marked **USER DECISION REQUIRED** or lis
 [Prerequisites and approvals](#8-prerequisites-and-approvals) needs the user before
 anything is spent.
 
+**Update, 2026-09-27.** S1 ran on 2026-09-26; its society arm is S-r2
+([results](results-2026-09-26/REPORT.md)). The S1 remediation then changed the society
+([audit](audit-2026-09-26/AUDIT.md)): statements below that hold only for S1 say so. The
+paid A/B of the remediated society against S-r2 needs its own budget.
+
 Files:
 - `work/society-s1/run-plan.example.json`: the society-arm manifest skeleton for
   `phys prepare-run`. Its placeholders are labelled `USER DECISION REQUIRED`. A plan
@@ -23,9 +28,9 @@ at matched cost. The metrics are an accepted root, less duplicated work than the
 run, and observed lemma reuse.
 
 The question: at the same dollar ceiling, does a society sharing a commons (claims,
-node threads, referees, labs) reach an independently accepted root more often, sooner or
-more cheaply than one agent or than agents working alone? A single repetition per arm
-gives descriptive evidence only. It does not support a causal claim.
+node threads, referees, and in S1 labs) reach an independently accepted root more often,
+sooner or more cheaply than one agent or than agents working alone? A single repetition
+per arm gives descriptive evidence only. It does not support a causal claim.
 
 ## 2. Arms at matched budget
 
@@ -58,16 +63,17 @@ run.
 ### Design choice: tool matching (USER DECISION REQUIRED)
 
 The S1 toolkit exists only in the society profile. That includes the persistent Lean
-session with automation, `lean_sketch`, `run_computation`, brokered literature and
-skills. A society policy requires `sharing="ideas"`, so there are two ways to build the
-single and independent arms:
+session with automation (opt-in since the remediation), Lean skeletons (S1's
+`lean_sketch` holes, now `lean_check(stubs=true)` stubs), `run_computation` and brokered
+literature; S1's technique skills were removed. A society policy requires
+`sharing="ideas"`, so there are two ways to build the single and independent arms:
 
 - **Design A: legacy baseline.** Arm 1 is a legacy experiment (policy `direct`,
   `sharing="none"`, one model). Arm I is one legacy experiment with policy
   `independent`, `sharing="none"` and 8 model entries. This matches the earlier pilots
   and the arm names literally, but it confounds collaboration with tools: the legacy
-  63-tool profile has no Lean session, sketching, computation runner, literature or
-  skills. Legacy agents can still delegate, so set `max_total_tasks` to the number of
+  63-tool profile has no Lean session, skeletons, computation runner or literature.
+  Legacy agents can still delegate, so set `max_total_tasks` to the number of
   roots to keep each arm free of helpers.
 - **Design B: tool matched (recommended).** Every arm uses the society profile. Arm 1
   is one society experiment with one root (policy `direct`, models `[A, B]`, so that
@@ -401,6 +407,13 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 6. **Contamination.** On a confirmed leak (section 4), the arm keeps running only if the
    user agrees, and it is labelled contaminated.
 7. **Operator stop** at the user's request.
+8. **Idle society (`SOCIETY_IDLE`, automatic after the S1 remediation).** The runner
+   stops when every agent waits, nothing is admissible and no new event has arrived: no
+   task is running, every pending society task waits (on events or on its recruits, at
+   least one on events), and each event wait found nothing at the current event head,
+   which has not moved since. Nothing in the run could wake them, so it stops rather than
+   burn wall clock until W. The waits keep their tickets, so a later `run-team` resumes
+   them. Export and report as for any stop, and ask the user before resuming.
 
 Every stop produces an honest report of the frontier, obstacles and partial results
 (PLAN §4.7).
@@ -422,12 +435,12 @@ proof and transcript bytes, so keep them private.
 | Coordination versus mathematics | `tool_call_mix` (`commons_society`, `math_lean_computation`, `other`, `unclassified`, `by_tool`; Lean effort: `lean_formalization`, `lean_formalization_share`, `lean_formalization_share_of_math`) | Counts calls, not tokens. It needs the runtime-event artifact bytes in the export directory; otherwise `available` is false. The buckets are listed below the table. |
 | Citation and reuse rate | `citations`, `cross_branch_citations`, `cross_branch_dependencies`; by provenance: `nodes_by_source`, `cross_branch_imports`, `accepted_proof_modules`, `accepted_proof_cross_branch_modules`, `accepted_proof_cross_branch_char_share`, `provenance_source` | An import is cross-branch when different branches published the importing and the imported source. The accepted-proof figures read the receipt's platform-written `commons_modules` (stale modules left out), each module weighed by its source's `size_bytes`; a receipt without that key falls back to the candidate's `provenance.commons` and its `chars`, and `provenance_source` (`receipt`, `artifact` or null) says which. They are null when the accepted proof inlined no modules, as in S1; there, confirm lemma reuse by manual audit, as in the Duffing report. |
 | Retrieval hit rate | Not computed | S1 has no accepted non-root nodes to retrieve. |
-| Live approach families | `branches.labs`, `nodes_by_type` | Proxies. The count over time needs periodic exports. |
-| Referee catch rate; fidelity failure rate | `referee_negative_share`, `fidelity_failure_share`, `reviews_by_verdict`, `cross_model_share`, `stale_reviews` | These are negative-verdict shares. A true catch rate needs ground truth. |
+| Live approach families | `branches.labs` (S1 only; there are no labs after the remediation), `nodes_by_type` | Proxies. The count over time needs periodic exports. |
+| Referee catch rate; fidelity failure rate | `referee_negative_share`, `fidelity_failure_share` (S1 only; the remediation removed fidelity reviews), `reviews_by_verdict`, `cross_model_share`, `stale_reviews` | These are negative-verdict shares. A true catch rate needs ground truth. |
 | Stale-claim rate | `stale_claim_count`, `live_claim_count`, `claims_as_of`, `claims_as_of_source` | Unreleased claims past expiry at `--as-of`. Without `--as-of`, claims are judged at the run's end (the latest activity in the export), so claims that merely outlived the run are not counted. Stale counts are meaningful only for in-run exports (the 15-minute checks) or with an explicit `--as-of`. A post-run count misses a lapse that the same branch later re-claimed, because the claim record is overwritten. |
 | Lean iterations per accepted node | `lean_checks_per_accepted_result` | Needs runtime events. |
 | Automation hit rate | Not computed | `lean_check` results are not persisted as records. |
-| Skill and literature usage; contamination flags | `tool_call_mix.by_tool` (`load_skill`, `search_literature`, `fetch_source`), `literature_fetches`, `literature_by_status`, `contamination_flags` | Whether cited sources contributed is a manual audit. |
+| Skill and literature usage; contamination flags | `tool_call_mix.by_tool` (`load_skill` in S1, `library_notes` after the remediation, `search_literature`, `fetch_source`), `literature_fetches`, `literature_by_status`, `contamination_flags` | Whether cited sources contributed is a manual audit. |
 | Honest separation of evidence | `evidence.model_sessions`, `evidence.runtime_event_artifacts` | The operator labels each export as simulated, mocked-provider or live. |
 
 **Tool buckets.** Every tool of the society profile, of the 63-tool legacy profile and
@@ -515,7 +528,7 @@ Each item needs the user. None has been started.
    - Start the VM or E2B, pre-warm the VM (item 9), and start the monitor.
    - Each of these needs the approvals above. No VM or paid call is started without them.
 9. **Pre-warm the workbench VM (`local_docker`), before any arm and after every VM start.**
-   The statement check behind every recorded local compile requires it
+   The statement check behind every `verified` source rank requires it
    (docs/FORMAL_ENVIRONMENT.md). Read every `.olean`, `.ilean`, `.olean.server` and
    `.olean.private` file under `/opt` once, in a throwaway container on the workbench
    digest, through the worker's own Docker endpoint:
@@ -533,22 +546,24 @@ Each item needs the user. None has been started.
      2 GiB: cold, about 80 seconds, so the three-step check times out at 240 seconds;
      `.olean` and `.ilean` only, about 31–38 seconds (101 seconds per check); all four
      parts, about 2.4 seconds.
-   - A timed-out check records no local compile and logs no ERROR. The checker's
-     `import Lean` self-test cannot detect a cold VM: it loads only Lean core, and
-     passes cold in about 4 seconds.
+   - A timed-out check leaves the source at most `complete` and logs no ERROR. The
+     checker's `import Lean` self-test cannot detect a cold VM: it loads only Lean core,
+     and passes cold in about 4 seconds.
 
 ## 9. Known limitations going in
 
-- No live evidence exists for any society path: tools, referees, labs, literature, the
-  Lean session or sketching. Earlier live pilots used the legacy profile only.
+- Going in to S1, no live evidence existed for any society path: tools, referees, labs,
+  literature, the Lean session or sketching. Earlier live pilots used the legacy profile
+  only. The remediated society has no live evidence yet.
 - **Unreachable statuses.** Non-root `accepted` is deferred to S2/S4, and `refuted` has
   no platform path in S1. A `wrong` verdict leaves an objection but does not refute the
   node.
-- **Agents see their own posts.** An agent's own node-thread posts are delivered back to
-  its inbox, as in the legacy discussion delivery. That spends digest budget, and the
-  simulation shows it.
-- **Goal hole names.** Hole nodes sketched from the goal are named `node_hole_<i>`,
-  because the goal node has no Lean name.
+- **Agents see their own posts (S1 only).** An agent's own node-thread posts were
+  delivered back to its inbox, as in the legacy discussion delivery. That spent digest
+  budget. The remediation never pushes them (S1 audit #13).
+- **Goal hole names (S1 only).** Hole nodes sketched from the goal were named
+  `node_hole_<i>`, because the goal node has no Lean name. A stub now takes its sorry
+  lemma's own name (S1 audit #21).
 - **Published ranks rest on the statement check.** `lean_check` with `node_id` publishes
   the file as the node's source, ranked `verified` only when the platform's statement
   check passes (docs/RESEARCH_NETWORK.md); otherwise `complete` or `partial`, or nothing
