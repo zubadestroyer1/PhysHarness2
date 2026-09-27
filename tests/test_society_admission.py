@@ -228,7 +228,8 @@ def slot_route(service, author, experiment, *, hold_seconds):
             return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
         payload = json.loads(request.content)
         prompt = json.loads(payload["input"][0]["content"])
-        name = "referee" if prompt.get("review_assignment") else prompt["objective"]
+        referee = str(prompt.get("instructions", "")).startswith("Research society referee")
+        name = "referee" if referee else prompt["objective"]
         phase = phases[name]
         phases[name] += 1
         if phase == 0:
