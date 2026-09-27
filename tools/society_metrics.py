@@ -136,6 +136,8 @@ OTHER = frozenset(
         "library_notes",
         "load_skill",
         "read_artifact",
+        # Runtime built-in (context budget), in either profile.
+        "recall_output",
         # Legacy profile.
         "checkpoint_context",
         "checkpoint_research_notes",

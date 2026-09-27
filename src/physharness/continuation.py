@@ -1142,6 +1142,8 @@ class ContinuationMixin:
                     raise HarnessError(
                         "EVENT_WAIT_SCOPE", "Watch only nodes and branches of this experiment."
                     )
+                if row.kind == "branch":  # referees stay isolated, as for messages
+                    self._guard_referee_branch(row, actor)
                 watched[row.kind].append(identifier)
             long_pole, _ = self._goal_long_pole(
                 session, experiment, actor, self._live_claims(session, experiment)

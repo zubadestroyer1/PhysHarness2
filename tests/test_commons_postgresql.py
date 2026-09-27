@@ -238,6 +238,8 @@ def test_resolve_id_prefix(backend_lab):
     peer = branches[1]["id"]
     route = ("recipient", alpha.branch_id)
     assert service.resolve_id(peer[:8], alpha, ("branch",), route=route) == peer
+    watch = ("watch", None)  # any node or branch of the experiment but a referee's
+    assert service.resolve_id(peer[:8], alpha, ("commons_node", "branch"), route=watch) == peer
 
 
 def test_commons_queries_compile_for_postgresql():

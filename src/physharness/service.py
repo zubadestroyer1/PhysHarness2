@@ -528,14 +528,18 @@ class HarnessService(
         with self.db.sessions() as session:
             return copy.deepcopy(self._get(session, kind, identifier, actor).payload)
 
-    def _route_target(self, session, row, route):
+    def _route_target(self, session, row, route, actor):
         """Whether the routing tool named by ``route`` accepts ``row`` as its target: the
         target checks of ``send_society_message``, ``request_handoff`` and
         ``request_event_wait``."""
         name, anchor = route
         if name == "child_task":  # anchor: the waiting task
             return row.payload.get("delegated_from_task_id") == anchor
-        if name == "watch":  # anchor: the waiting task; any node or branch of the experiment
+        if name == "watch":  # anchor: the waiting task
+            try:  # any node or branch of the experiment but another branch's referee
+                self._guard_referee_branch(row, actor)
+            except HarnessError:
+                return False
             return True
         if name == "recipient":  # anchor: the sending branch
             sender = session.get(RecordRow, anchor)
@@ -568,7 +572,7 @@ class HarnessService(
             .limit(MAX_PREFIX_CANDIDATES + 1)
         ).all()
         if route is not None:
-            return [row for row in rows if self._route_target(session, row, route)]
+            return [row for row in rows if self._route_target(session, row, route, actor)]
         return [row for row in rows if self._in_scope(session, row, actor)]
 
     def _resolve_prefix(self, session, identifier, actor, kinds, route=None):

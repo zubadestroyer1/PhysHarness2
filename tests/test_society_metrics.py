@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from physharness.domain import digest_json
+from physharness.execution.responses import RECALL_OUTPUT_TOOL
 from physharness.orchestration.society_tools import SOCIETY_TOOL_NAMES
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -445,13 +446,16 @@ def legacy_tool_names():
 
 
 def test_every_catalog_tool_has_a_documented_bucket():
-    """Each society and legacy tool is in exactly one bucket; RUN_PLAN lists the other one."""
+    """Each society, legacy and runtime tool is in exactly one bucket; RUN_PLAN lists the
+    other one."""
     buckets = {
         "commons_society": metrics_tool.COMMONS_SOCIETY,
         "math_lean_computation": metrics_tool.MATH_LEAN_COMPUTATION,
         "other": metrics_tool.OTHER,
     }
-    catalog = set(SOCIETY_TOOL_NAMES) | legacy_tool_names()
+    # The runtime's built-in tools (recall_output under a context budget) are announced as
+    # tool calls like any other.
+    catalog = set(SOCIETY_TOOL_NAMES) | legacy_tool_names() | {RECALL_OUTPUT_TOOL["name"]}
     assert len(legacy_tool_names()) == 63
     for name in catalog | metrics_tool.RETIRED_SOCIETY_TOOLS:
         homes = [bucket for bucket, names in buckets.items() if name in names]

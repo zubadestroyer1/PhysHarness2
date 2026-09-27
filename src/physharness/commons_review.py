@@ -462,7 +462,8 @@ class CommonsReviewMixin:
 
     @staticmethod
     def _guard_referee_branch(branch, actor):
-        """Only the referee branch itself delegates into, or recruits under, a referee."""
+        """Only the referee branch itself delegates into, recruits under or watches a
+        referee."""
         if branch.payload.get("hat") == REFEREE_HAT and actor.branch_id != branch.id:
             raise _referee_isolated()
 

@@ -430,17 +430,18 @@ proof and transcript bytes, so keep them private.
 | Skill and literature usage; contamination flags | `tool_call_mix.by_tool` (`load_skill`, `search_literature`, `fetch_source`), `literature_fetches`, `literature_by_status`, `contamination_flags` | Whether cited sources contributed is a manual audit. |
 | Honest separation of evidence | `evidence.model_sessions`, `evidence.runtime_event_artifacts` | The operator labels each export as simulated, mocked-provider or live. |
 
-**Tool buckets.** Every tool of the society profile and of the 63-tool legacy profile is in
-exactly one bucket; `tests/test_society_metrics.py` enforces this. A tool in no bucket
-(one added later) counts as `unclassified`.
+**Tool buckets.** Every tool of the society profile, of the 63-tool legacy profile and
+built into the runtime is in exactly one bucket; `tests/test_society_metrics.py` enforces
+this. A tool in no bucket (one added later) counts as `unclassified`.
 - `commons_society`: commons, inbox, messaging, recruitment, waiting, delegation,
   discussion, return and review tools.
 - `math_lean_computation`: shell, file, Lean, library, computation, candidate and
   verification tools. The Lean and library tools also count as `lean_formalization`;
   `shell` calls that run `lake` or `lean` do not, because events carry only tool names.
 - `other` (memory, knowledge, literature and skills): society `search_literature`,
-  `fetch_source`, `notebook`, `library_notes`, `load_skill`, `read_artifact`; legacy
-  `checkpoint_context`, `checkpoint_research_notes`, `history_page`, `index_page`, `read_artifact`,
+  `fetch_source`, `notebook`, `library_notes`, `load_skill`, `read_artifact`; the
+  runtime's `recall_output` (context budget only); legacy `checkpoint_context`,
+  `checkpoint_research_notes`, `history_page`, `index_page`, `read_artifact`,
   `read_artifact_chunk`, `read_dependency_bundle`, `read_scientific_record`,
   `research_graph_page`, `restart_brief`, `restore_context`, `search_knowledge`,
   `store_artifact`, `working_context`.

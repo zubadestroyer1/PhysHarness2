@@ -63,6 +63,7 @@ from ..errors import HarnessError
 from ..execution import ToolDispatcher
 from ..execution.e2b import FILE_LIMIT as E2B_FILE_BYTES
 from ..knowledge.literature import run_blocking as run_literature
+from ..library_notes import MAX_NOTE_CHARS
 from ..memory import PortableMemory
 from ..verification.boundary import MAX_CANDIDATE_CHARACTERS
 from ..worker_authority import current_worker_effects
@@ -2085,7 +2086,7 @@ def society_tools(
             "action": choice(("read", "append"), "read the notes, or append one fact."),
             "query": text(200, "read: words to match (optional).", nullable=True),
             "text": text(
-                MAX_NOTE_TEXT,
+                MAX_NOTE_CHARS,
                 "append: one fact you checked in Lean (a rename, an absence, a working API).",
                 nullable=True,
             ),

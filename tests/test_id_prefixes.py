@@ -143,10 +143,17 @@ async def test_routing_prefix_outside_the_targets_fails_like_an_unknown_id(lab):
     assert error(missing)[0] == "HANDOFF_CHILD_SCOPE"
     hidden = await call(tools, "wait", {"for": "tasks", "ids": [unrelated["id"][:8]]})
     assert error(hidden) == error(missing)
-    # A watch takes this experiment's nodes and branches; a task's prefix names neither.
+    # A watch takes this experiment's nodes and branches; a task's prefix names neither, and
+    # another experiment's node is outside it.
     missing = await call(tools, "wait", {"for": "events", "ids": [UNKNOWN]})
     assert error(missing)[0] == "EVENT_WAIT_SCOPE"
     hidden = await call(tools, "wait", {"for": "events", "ids": [unrelated["id"][:8]]})
+    assert error(hidden) == error(missing)
+    _, _, other, _, (gamma, _) = society_lab(lab, prefix="other")
+    foreign = service.create_node(
+        other["id"], NodeCreate(node_type="lemma", title="F", statement="F holds."), gamma, "f"
+    )
+    hidden = await call(tools, "wait", {"for": "events", "ids": [foreign["id"][:8]]})
     assert error(hidden) == error(missing)
     # A referee's branch: its full id is refused as isolated, its prefix as unknown.
     with service.db.transaction() as session:
@@ -158,6 +165,21 @@ async def test_routing_prefix_outside_the_targets_fails_like_an_unknown_id(lab):
     assert error(missing) == ("NOT_FOUND", "Recipient branch was not found.")
     hidden = await call(tools, "message", {"to": referee["id"][:8], "content": "Hi."})
     assert error(hidden) == error(missing)
+
+
+async def test_a_watch_refuses_a_referee_branch_like_a_message(lab):
+    """Referee isolation covers event waits: no builder wakes on a referee's work."""
+    service, author, exp, branches, _ = society_lab(lab)
+    (_, tools), _, _ = await recruited_pair(service, author, exp, branches)
+    with service.db.transaction() as session:
+        payload = {"title": "R", "objective": "R", "experiment_id": exp["id"], "status": "open"}
+        referee = service._insert(session, "branch", author, {**payload, "hat": "referee"})
+    isolated = await call(tools, "wait", {"for": "events", "ids": [referee["id"]]})
+    assert error(isolated)[0] == "REFEREE_ISOLATED"
+    missing = await call(tools, "wait", {"for": "events", "ids": [UNKNOWN]})
+    hidden = await call(tools, "wait", {"for": "events", "ids": [referee["id"][:8]]})
+    assert error(hidden) == error(missing)
+    assert referee["id"] not in str(hidden)
 
 
 async def test_ambiguous_routing_prefix_is_refused_like_an_unknown_id(lab, monkeypatch):
