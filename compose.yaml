@@ -105,6 +105,7 @@ services:
       PHYSHARNESS_TEMPORAL_NAMESPACE: default
       PHYSHARNESS_TEMPORAL_TLS: "false"
       PHYSHARNESS_CORS_ORIGINS: '["http://localhost:5173","http://127.0.0.1:5173"]'
+      PHYSHARNESS_MODEL_PRICES: ${PHYSHARNESS_MODEL_PRICES:?Set reviewed model price table}
     volumes: ["artifacts:/app/.state"]
     ports: ["127.0.0.1:8000:8000"]
     depends_on:
@@ -127,7 +128,6 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       E2B_API_KEY: ${E2B_API_KEY:-}
       PHYSHARNESS_E2B_TEMPLATE_ID: ${PHYSHARNESS_E2B_TEMPLATE_ID:-}
-      PHYSHARNESS_MODEL_PRICES: ${PHYSHARNESS_MODEL_PRICES:?Set reviewed model price table}
       PHYSHARNESS_WORKER_WORKSPACE: ${PHYSHARNESS_WORKER_WORKSPACE:-null}
     volumes: ["artifacts:/app/.state"]
     depends_on:

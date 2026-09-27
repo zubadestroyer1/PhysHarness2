@@ -273,9 +273,14 @@ tools, the prompts and the delivery shapes.
   `floor_usd`, `minimum_reservation_usd` and `count` in `details`).
   - The minimum reservation is the output part of one model turn's reservation at full
     price: the experiment's `max_output_tokens` (from its `runtime_limits`, else the
-    4,096-token default) at the output rate the worker's price table (`model_prices`)
-    records for the model the task runs with. A seeded portfolio needs the sum over its
-    roots. A model with no recorded price counts 0; the worker never runs it.
+    4,096-token default) at the recorded output rate of the model the task runs with. A
+    seeded portfolio needs the sum over its roots.
+  - Admission reads the price table of the process that admits the task:
+    `PHYSHARNESS_MODEL_PRICES`. That is the API for HTTP and MCP requests, and the worker
+    (or `phys run-team`) for work its agents and supervisor start. Compose and the AWS task
+    definitions give the API and the worker the same table. A model missing from the
+    admitting process's table counts 0, so only the floor applies to it; a worker whose
+    table lacks the model refuses to run it (`MODEL_PRICE_REQUIRED`).
   - There is no floor by default: `None` reads as `0`. An operator sets one with
     `configure_workforce`.
   - Admission reserves nothing. The ledger still hard-stops every reservation at
