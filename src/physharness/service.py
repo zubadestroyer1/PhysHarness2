@@ -38,6 +38,7 @@ from .domain import (
     utcnow,
 )
 from .errors import HarnessError
+from .orchestration.pricing import ModelPrice
 from .research import ResearchMixin
 from .storage import (
     BudgetRow,
@@ -435,8 +436,13 @@ class HarnessService(
                 )
         return branch
 
-    def __init__(self, db: Database, artifacts: ArtifactStore, verifier=None):
+    def __init__(self, db: Database, artifacts: ArtifactStore, verifier=None, model_prices=None):
         self.db, self.artifacts, self.verifier = db, artifacts, verifier
+        # The worker's price table (settings.model_prices); society admission prices each new
+        # task's first output reservation with it.
+        self.model_prices = {
+            name: ModelPrice.model_validate(price) for name, price in (model_prices or {}).items()
+        }
         self._cursor_keys: tuple[bytes, bytes] | None = None
 
     def _page_cursor_keys(self) -> tuple[bytes, bytes]:

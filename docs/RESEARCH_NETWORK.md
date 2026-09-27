@@ -267,14 +267,22 @@ tools, the prompts and the delivery shapes.
   `lean_check` records no local compiles, and it posts questions, findings and
   objections only on the assigned node's thread.
 - **Workforce.** Society work is admitted by dollars, not task counts. A new task (a
-  seeded root, a recruit, a delegated task, a synthesis or a referee) is admitted while the
-  remaining dollars (`max_cost − spent − reserved`) cover the operator's
-  `admission_floor_usd` for each new task. There is no floor by default: `None` reads as
-  `0`, so only an operator who sets a floor gets an early "budget, not input"
-  `ADMISSION_BUDGET` refusal, on top of the ledger's own hard stop at `max_cost`.
-  `max_total_tasks` and `max_pending_tasks` are an optional operator guard that ignores
-  referee tasks: unset, they cap nothing. Legacy experiments keep their count caps and
-  ignore the floor.
+  seeded root, a recruit, a delegated task, a synthesis or a referee) is admitted only if
+  `max_cost − spent − reserved − admission_floor_usd ≥ minimum reservation`. Otherwise it
+  is refused with `ADMISSION_BUDGET` ("Budget, not input: …", with `remaining_usd`,
+  `floor_usd`, `minimum_reservation_usd` and `count` in `details`).
+  - The minimum reservation is the output part of one model turn's reservation at full
+    price: the experiment's `max_output_tokens` (from its `runtime_limits`, else the
+    4,096-token default) at the output rate the worker's price table (`model_prices`)
+    records for the model the task runs with. A seeded portfolio needs the sum over its
+    roots. A model with no recorded price counts 0; the worker never runs it.
+  - There is no floor by default: `None` reads as `0`. An operator sets one with
+    `configure_workforce`.
+  - Admission reserves nothing. The ledger still hard-stops every reservation at
+    `max_cost`.
+  - `max_total_tasks` and `max_pending_tasks` are an optional operator guard that ignores
+    referee tasks: unset, they cap nothing. Legacy experiments keep their count caps and
+    ignore the floor.
 - **Messages.** There are no labs (S1 audit #15). `message` reaches one branch, or, given
   a node id, whoever works on that node: its author and live claimants, never the sender,
   at most 8 (`NO_RECIPIENTS` when nobody else does). Each delivered copy counts against

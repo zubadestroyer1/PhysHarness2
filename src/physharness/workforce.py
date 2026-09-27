@@ -3,6 +3,7 @@
 import copy
 from decimal import Decimal
 
+from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 
 from .commons_review import REFEREE_HAT
@@ -42,6 +43,22 @@ def _task_caps(experiment, policy):
         DEFAULT_MAX_TOTAL_TASKS if total is None else total,
         DEFAULT_MAX_PENDING_TASKS if pending is None else pending,
     )
+
+
+def _branch_model(experiment, model_index=None, branch=None):
+    """The model configuration a new task runs with, selected as _new_branch_task and the
+    worker select it: the indexed model, else the branch's (a new branch's parent's), else
+    the experiment's default (first) model."""
+    models = experiment.payload["models"]
+    if model_index is not None and model_index < len(models):
+        return models[model_index]
+    if (
+        branch is not None
+        and branch.kind == "branch"
+        and branch.payload.get("experiment_id") == experiment.id
+    ):
+        return branch.payload.get("model_configuration") or models[0]
+    return models[0]
 
 
 def _cap_reached(code, what, limit, used):
@@ -311,32 +328,57 @@ class WorkforceMixin:
         # use BEGIN IMMEDIATE; PostgreSQL uses this FOR UPDATE lock.
         return self._active(session, experiment_id, actor)
 
-    def _admit_by_budget(self, session, experiment_id, policy, count):
-        """Society work is admitted while the remaining dollars cover the floor. There is no
-        floor by default (admission_floor_usd is None, read as 0); an operator who sets one
-        gets an early, budget-not-input refusal on top of the ledger's own hard stop (S1 #16)."""
-        budget = session.get(BudgetRow, experiment_id)
+    def _output_reservation(self, experiment, model):
+        """Micro-USD of one model turn's output reservation at full price, as the worker
+        reserves it: max_output_tokens at the model's recorded output rate. 0 when the service
+        records no price for the model: the worker runs no unpriced model."""
+        from .execution.types import RuntimeLimits  # The runtime package loads lazily.
+
+        price = self.model_prices.get(model["model"])
+        if price is None:
+            return 0
+        try:
+            limits = RuntimeLimits.model_validate(experiment.payload.get("runtime_limits") or {})
+        except ValidationError:
+            return 0  # The worker refuses these limits (INVALID_CONFIG) before any model call.
+        return _micro(price.cost(0, limits.max_output_tokens))
+
+    def _admit_by_budget(self, session, experiment, policy, models):
+        """Society work is admitted while the remaining dollars, less the operator's floor,
+        cover the first output reservation of each new task (one per entry of ``models``):
+        max_cost - spent - reserved - floor >= the reservations' sum. There is no floor by
+        default (admission_floor_usd is None, read as 0). The refusal is an early, budget-not-
+        input one; the ledger still hard-stops each reservation at max_cost (S1 #16)."""
+        budget = session.get(BudgetRow, experiment.id)
         floor = _micro((policy.payload.get("admission_floor_usd") if policy else None) or "0")
+        minimum = sum(self._output_reservation(experiment, model) for model in models)
         remaining = max(0, budget.max_cost - budget.spent - budget.reserved)
-        if remaining < count * floor:
+        if remaining - floor < minimum:
             raise HarnessError(
                 "ADMISSION_BUDGET",
                 f"Budget, not input: ${_usd(remaining)} remains and new work needs "
-                f"${_usd(count * floor)}.",
+                f"${_usd(floor + minimum)}.",
                 details={
                     "remaining_usd": _usd(remaining),
                     "floor_usd": _usd(floor),
-                    "count": count,
+                    "minimum_reservation_usd": _usd(minimum),
+                    "count": len(models),
                 },
                 remediation="Do not retry; continue with work already running, or finish.",
             )
 
-    def _admit_research_tasks(self, session, experiment_id, actor, count=1, *, referee=False):
+    def _admit_research_tasks(
+        self, session, experiment_id, actor, count=1, *, referee=False, models=None
+    ):
+        """Admit ``count`` new tasks; ``models`` lists the model configuration each runs with
+        (None, or a None entry, is the experiment's default model)."""
         experiment = self._workforce_lock(session, experiment_id, actor)
         policy = self._workforce_policy(session, experiment_id, actor)
         society = bool(experiment.payload.get("society"))
         if society:
-            self._admit_by_budget(session, experiment_id, policy, count)
+            default = experiment.payload["models"][0]
+            models = [model or default for model in models] if models else [default] * count
+            self._admit_by_budget(session, experiment, policy, models)
             if referee:
                 return  # Referees fill no count cap.
         total_limit, pending_limit = _task_caps(experiment, policy)
@@ -587,7 +629,13 @@ class WorkforceMixin:
 
         def action(session, op):
             experiment = self._workforce_lock(session, experiment_id, actor)
-            self._admit_research_tasks(session, experiment_id, actor, len(request.roots))
+            self._admit_research_tasks(
+                session,
+                experiment_id,
+                actor,
+                len(request.roots),
+                models=[_branch_model(experiment, root.model_index) for root in request.roots],
+            )
             roots = [
                 self._new_branch_task(
                     session,
@@ -636,7 +684,9 @@ class WorkforceMixin:
                     raise HarnessError(
                         "DISCUSSION_SCOPE", "Source post targets another experiment."
                     )
-            self._admit_research_tasks(session, experiment_id, actor)
+            parent = session.get(RecordRow, request.parent_branch_id)
+            model = _branch_model(experiment, request.model_index, parent)
+            self._admit_research_tasks(session, experiment_id, actor, models=[model])
             result = self._new_branch_task(
                 session,
                 op,
@@ -1158,7 +1208,9 @@ class WorkforceMixin:
                     "eligible_posts": eligible_count,
                     "through_sequence": through,
                 }
-            self._admit_research_tasks(session, experiment_id, actor)
+            parent = session.get(RecordRow, parent_branch_id or "")
+            model = _branch_model(experiment, branch=parent)
+            self._admit_research_tasks(session, experiment_id, actor, models=[model])
             objective = (
                 "Compare only the sampled, attributed posts in discussion_refs. "
                 "Preserve disagreements and objections present in those sampled posts "

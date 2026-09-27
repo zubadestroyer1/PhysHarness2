@@ -678,7 +678,8 @@ class CommonsReviewMixin:
             # The requester's admission, by dollars and outside the count caps; the platform
             # owns the branch, so the requester gets no delegation or parent/child messaging
             # into it.
-            self._admit_research_tasks(session, experiment.id, actor, referee=True)
+            model = None if model_index is None else models[model_index]  # None: the default
+            self._admit_research_tasks(session, experiment.id, actor, referee=True, models=[model])
             created = self._new_branch_task(
                 session,
                 op,

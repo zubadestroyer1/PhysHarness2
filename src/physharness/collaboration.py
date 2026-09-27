@@ -391,7 +391,9 @@ class CollaborationMixin:
         def action(session, op):
             branch = self._writable_branch(session, request.branch_id, actor, delegation=True)
             experiment_id = branch.payload["experiment_id"]
-            self._admit_research_tasks(session, experiment_id, actor)
+            # The task runs with its branch's model (older branches: the default model).
+            model = branch.payload.get("model_configuration")
+            self._admit_research_tasks(session, experiment_id, actor, models=[model])
             if len(set(request.dependency_ids)) != len(request.dependency_ids):
                 raise HarnessError(
                     "DUPLICATE_DEPENDENCY", "Task dependencies must be unique.", status=422

@@ -22,13 +22,32 @@ from test_society_tools import (
 )
 
 from physharness import mcp_server
+from physharness.bootstrap import build_service
 from physharness.commons_models import NodeCreate
+from physharness.config import Settings
 from physharness.domain import BranchCreate, Principal, TaskCreate
 from physharness.errors import HarnessError
 from physharness.orchestration.research_worker import TeamRunManifest
+from physharness.service import HarnessService
 from physharness.workforce_models import ConfigureWorkforceRequest, RecruitResearcherRequest
 
 OPERATOR = Principal(id="operator", project_id="lab", role="operator")
+
+
+def helper_request(parent, title="Helper"):
+    return RecruitResearcherRequest(
+        parent_branch_id=parent.branch_id, title=title, objective="Help.", detached=True
+    )
+
+
+def priced(lab, output_rates):
+    """``lab`` on a service that records these output prices (USD per million tokens)."""
+    service, researcher, reviewer = lab
+    prices = {
+        model: {"input_usd_per_million": "1", "output_usd_per_million": rate}
+        for model, rate in output_rates.items()
+    }
+    return HarnessService(service.db, service.artifacts, model_prices=prices), researcher, reviewer
 
 
 def test_society_admission_is_by_dollars_and_caps_ignore_referees(lab):
@@ -59,6 +78,65 @@ def test_society_admission_is_by_dollars_and_caps_ignore_referees(lab):
             exp["id"], helper.model_copy(update={"title": "Two"}), alpha, "recruit-2"
         )
     assert capped.value.code == "TASK_TOTAL_CAP"
+
+
+@pytest.mark.parametrize(
+    ("cap", "code"),
+    [("max_total_tasks", "TASK_TOTAL_CAP"), ("max_pending_tasks", "TASK_PENDING_CAP")],
+)
+def test_research_caps_do_not_count_existing_referees(lab, cap, code):
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="L", statement="L."), alpha, "l"
+    )
+    service.request_review(node["id"], "informal", beta, "review")  # a queued referee task
+    service.configure_workforce(exp["id"], ConfigureWorkforceRequest(**{cap: 1}), OPERATOR, "cap")
+    service.recruit_researcher(exp["id"], helper_request(alpha), alpha, "recruit")
+    with pytest.raises(HarnessError) as capped:
+        service.recruit_researcher(exp["id"], helper_request(alpha, "Two"), alpha, "recruit-2")
+    assert capped.value.code == code
+
+
+def test_society_admits_only_while_one_output_reservation_fits(lab):
+    # One turn's output reservation (4,096 tokens) costs exactly the $1.00 envelope.
+    lab = priced(lab, {"explicit-test-model": "244.140625"})
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    service.recruit_researcher(exp["id"], helper_request(alpha), alpha, "exactly-enough")
+    service.reserve_resources(exp["id"], "0.000001", 0, OPERATOR, "hold")
+    with pytest.raises(HarnessError) as refused:
+        service.recruit_researcher(exp["id"], helper_request(alpha, "Two"), alpha, "short")
+    error = refused.value
+    assert error.code == "ADMISSION_BUDGET" and error.message.startswith("Budget, not input:")
+    assert error.details == {
+        "remaining_usd": "0.999999",
+        "floor_usd": "0",
+        "minimum_reservation_usd": "1",
+        "count": 1,
+    }
+
+
+def test_admission_prices_the_model_the_task_runs_with(lab):
+    # Alpha runs on the cheap model, beta on one whose output reservation exceeds $1.00.
+    lab = priced(lab, {"explicit-test-model": "1", "explicit-test-model-1": "1000"})
+    service, _, exp, _, (alpha, beta) = society_lab(lab, models=2)
+    service.recruit_researcher(exp["id"], helper_request(alpha), alpha, "inherits-cheap")
+    dear = helper_request(alpha, "Dear").model_copy(update={"model_index": 1})
+    for request, agent in ((dear, alpha), (helper_request(beta), beta)):
+        with pytest.raises(HarnessError) as refused:
+            service.recruit_researcher(exp["id"], request, agent, f"dear-{agent.id}")
+        assert refused.value.details["minimum_reservation_usd"] == "4.096"
+
+
+def test_the_service_prices_admission_with_the_worker_price_table(tmp_path):
+    price = {"input_usd_per_million": "1", "output_usd_per_million": "2"}
+    settings = Settings(
+        auth_file=tmp_path / "absent-auth",
+        database_url=f"sqlite:///{tmp_path / 'db.sqlite'}",
+        artifact_root=tmp_path / "artifacts",
+        model_prices={"priced-model": price},
+    )
+    rate = build_service(settings).model_prices["priced-model"].output_usd_per_million
+    assert rate == Decimal("2")
 
 
 def test_configure_workforce_accepts_only_a_floor(lab, monkeypatch):
@@ -203,9 +281,8 @@ async def test_runner_reserves_referee_slots(lab):
     assert report["status"] == "completed"
     # Two research slots and one referee slot: the third root waits for a research slot,
     # while the referee starts beside the two running roots.
-    names = [name for name, _ in starts]
-    assert sorted(names) == ["Root 0", "Root 1", "Root 2", "referee"]
-    assert names[2] == "referee" and dict(starts)["referee"] == 2
+    assert sorted(name for name, _ in starts) == ["Root 0", "Root 1", "Root 2", "referee"]
+    assert dict(starts)["referee"] == 2
     assert max(running for _, running in starts) <= 2
 
 

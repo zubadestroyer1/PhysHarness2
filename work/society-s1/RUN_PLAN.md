@@ -96,11 +96,12 @@ paid from the arm's ceiling B.
   up to 24 referee tasks. S1 cannot cap research agents separately from referee tasks.
   Both count toward `max_total_tasks`, so report the split from the export
   (`branches.agents`, `branches.referees`).
-- After the S1 remediation, society work is admitted by dollars: count caps are optional,
-  ignore referee tasks and bound research agents alone (`max_total_tasks=16` for the
-  arm above), and an optional `admission_floor_usd` refuses new work early. Referees run
-  in the policy's `referee_slots` (2 in the example) of the run's concurrency, and
-  `--max-tasks` counts research tasks only.
+- After the S1 remediation, society work is admitted by dollars: a new task needs one
+  model turn's output reservation left above an optional `admission_floor_usd`. Count
+  caps are optional, ignore referee tasks and bound research agents alone
+  (`max_total_tasks=16` for the arm above). Referees run in the policy's `referee_slots`
+  (2 in the example) of the run's concurrency, and `--max-tasks` counts research tasks
+  only.
 - Launch with `phys run-team <experiment> --max-tasks 40 --concurrency 12
   --timeout-seconds <W>`. `run-team` runs the preflight first. The preflight now also
   blocks benchmark mode without a readable `masked_reference` artifact

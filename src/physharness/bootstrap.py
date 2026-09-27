@@ -84,4 +84,4 @@ def build_service(settings: Settings) -> HarnessService:
                 resource_profile_source_sha256=resource_source_sha256,
             )
         )
-    return HarnessService(database, artifacts, verifier)
+    return HarnessService(database, artifacts, verifier, model_prices=settings.model_prices)
