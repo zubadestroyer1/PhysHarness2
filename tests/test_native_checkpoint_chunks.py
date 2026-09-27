@@ -1,15 +1,75 @@
 """Native checkpoint payloads remain exact while repeated prefixes are shared."""
 
+import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from test_core import setup_experiment
 
-from physharness.domain import ArtifactCreate, BranchCreate, TaskCreate, digest_json
+from physharness.domain import (
+    ArtifactCreate,
+    BranchCreate,
+    TaskCreate,
+    canonical_json,
+    digest_json,
+)
 from physharness.errors import HarnessError
 from physharness.execution import ModelConfig, RuntimeCheckpoint, RuntimeLimits, RuntimeSession
+from physharness.execution.checkpoint_chunks import decode, encode
 from physharness.orchestration.research_worker import CanonicalRuntimeStore
 from physharness.reproduction import validate_export
+
+GOLDEN = Path(__file__).parent / "fixtures" / "native_checkpoint_golden.json"
+
+GOLDEN_SESSION = RuntimeSession(
+    id="golden-session",
+    runtime="openai_responses",
+    model=ModelConfig(model="exact-model"),
+    limits=RuntimeLimits(),
+)
+
+
+def golden_cases():
+    unicode, tool = "∀ ε > 0, ∃ δ ≥ 0 — ℝ", {"type": "string", "description": "d" * 300}
+    return {
+        "small": {"input": [{"role": "user", "content": "hi"}], "settled_boundary": True},
+        "paged_list": {"input": [{"id": str(i), "content": "x" * 4096} for i in range(40)]},
+        "nested_map": {
+            "tool_results": {f"s:{i}": {"result": {"text": unicode * 200}} for i in range(30)}
+        },
+        "long_text": {"initial_anchor": ("é" * 3000 + "a") * 20},
+        "legacy_response": {
+            "responses": [
+                {
+                    "id": "r1",
+                    "output": [],
+                    "tools": [{"name": f"t{i}", "parameters": tool} for i in range(40)],
+                }
+            ]
+        },
+    }
+
+
+def encode_to_memory(state):
+    chunks, order = {}, []
+
+    def put(content):
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        chunks[digest] = content.encode("utf-8")
+        order.append(digest)
+        return {"id": digest, "sha256": digest}
+
+    checkpoint = RuntimeCheckpoint.build(GOLDEN_SESSION, state)
+    return checkpoint, encode(checkpoint, put), chunks, order
+
+
+def chunk_digests(state):
+    _, manifest, _, order = encode_to_memory(state)
+    return {
+        "chunks": order,
+        "manifest": hashlib.sha256(canonical_json(manifest).encode()).hexdigest(),
+    }
 
 
 @pytest.fixture
@@ -100,28 +160,100 @@ async def test_chunk_missing_or_tampered_fails_closed(native_store):
         path.write_bytes(original)
 
 
+def test_encoder_is_byte_identical_to_golden_and_round_trips():
+    assert {n: chunk_digests(s) for n, s in golden_cases().items()} == json.loads(
+        GOLDEN.read_text()
+    )
+    for state in golden_cases().values():
+        checkpoint, manifest, chunks, _ = encode_to_memory(state)
+        assert (
+            decode(
+                canonical_json(manifest).encode(), lambda ref, chunks=chunks: chunks[ref["sha256"]]
+            )
+            == checkpoint
+        )
+
+
 @pytest.mark.asyncio
-async def test_interrupted_chunk_save_does_not_publish_manifest(native_store, monkeypatch):
+async def test_save_verifies_the_checkpoint_digest_exactly_once(native_store, monkeypatch):
+    _, _, _, _, store, session = native_store
+    calls, original = [], RuntimeCheckpoint.verify
+    checkpoint = RuntimeCheckpoint.build(
+        session, {"input": [{"content": "x" * 4096, "id": str(i)} for i in range(80)]}
+    )
+    monkeypatch.setattr(
+        RuntimeCheckpoint,
+        "verify",
+        lambda self, runtime=None: calls.append(1) or original(self, runtime),
+    )
+    await store.save(checkpoint)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_single_transaction_commit_is_atomic(native_store, monkeypatch):
     service, actor, _, _, store, session = native_store
     first = RuntimeCheckpoint.build(session, {"input": ["first"]})
     await store.save(first)
-    before = service.list_records("session", actor)[0]
-    original = service.create_artifact
 
-    def fail_manifest(request, *args):
+    def chunk_rows():
+        return [
+            a["id"]
+            for a in service.list_records("artifact", actor)
+            if a["artifact_kind"] == "native_checkpoint_chunk"
+        ]
+
+    before = (service.list_records("session", actor)[0], service.list_records("artifact", actor))
+    chunks_before, inserted = chunk_rows(), []
+    original = service._artifact_record
+
+    def fail_manifest(db_session, request, *args, **kwargs):
         if request.kind == "native_checkpoint":
             raise RuntimeError("crash before manifest")
-        return original(request, *args)
+        inserted.append(original(db_session, request, *args, **kwargs))
+        return inserted[-1]
 
-    monkeypatch.setattr(service, "create_artifact", fail_manifest)
+    monkeypatch.setattr(service, "_artifact_record", fail_manifest)
     with pytest.raises(RuntimeError, match="crash before manifest"):
         await store.save(
             RuntimeCheckpoint.build(
                 session, {"input": [{"content": "x" * 4096, "id": str(i)} for i in range(80)]}
             )
         )
-    assert service.list_records("session", actor)[0] == before
+    # The failed save inserted chunk rows in its transaction; none of them survive.
+    assert inserted
+    assert chunk_rows() == chunks_before
+    assert (
+        service.list_records("session", actor)[0],
+        service.list_records("artifact", actor),
+    ) == before
     assert await store.load(session.id) == first
+
+
+@pytest.mark.asyncio
+async def test_restart_dedupes_existing_chunks_without_cache(native_store):
+    service, actor, experiment, task, store, session = native_store
+    history = [{"content": "x" * 4096, "id": str(i)} for i in range(80)]
+    await store.save(RuntimeCheckpoint.build(session, {"input": history}))
+
+    def chunk_rows():
+        return sum(
+            a["artifact_kind"] == "native_checkpoint_chunk"
+            for a in service.list_records("artifact", actor)
+        )
+
+    before = chunk_rows()
+    restarted = CanonicalRuntimeStore(
+        service, actor, experiment["id"], task["id"], "worker", store.fence
+    )
+    await restarted.save(
+        RuntimeCheckpoint.build(session, {"input": [*history, {"content": "y", "id": "80"}]})
+    )
+    assert chunk_rows() - before <= 6  # new last page, sequence, map leaf, root; not all 11 pages
+    assert (await restarted.load(session.id)).native_state["input"][-1] == {
+        "content": "y",
+        "id": "80",
+    }
 
 
 @pytest.mark.asyncio
@@ -306,8 +438,8 @@ async def test_save_and_load_sql_cost_scales_with_new_chunks_not_history(native_
         statements.clear()
     total = chunk_count()
     assert total > 60
-    # A fixed per-new-chunk transaction plus the fenced manifest publication.
-    assert all(sql <= 12 * new + 40 for new, sql in costs), costs
+    # One row insert per new chunk inside the single fenced save transaction.
+    assert all(sql <= 2 * new + 40 for new, sql in costs), costs
     event.listen(service.db.engine, "before_cursor_execute", count)
     assert (await store.load(session.id)).native_state["input"] == history
     event.remove(service.db.engine, "before_cursor_execute", count)

@@ -162,6 +162,7 @@ class CanonicalRuntimeStore:
         self.task_id, self.holder, self.fence = task_id, holder, fence
         self.tool_definition_digest = None
         self._chunk_cache = {}
+        self._warm_sessions: set[str] = set()
 
     async def save(self, checkpoint):
         # Cancellation may still retain uncertain evidence; stale holders cannot
@@ -171,42 +172,82 @@ class CanonicalRuntimeStore:
         ):
             self._save_checkpoint(checkpoint)
 
+    def _warm_chunk_cache(self, session_id):
+        """After a restart, learn this session's stored chunks once so they are reused."""
+        if session_id in self._warm_sessions:
+            return
+        with self.service.db.sessions() as session:
+            for row in session.scalars(
+                select(RecordRow)
+                .where(
+                    RecordRow.project_id == self.actor.project_id,
+                    RecordRow.kind == "artifact",
+                    RecordRow.payload["artifact_kind"].as_string() == "native_checkpoint_chunk",
+                    RecordRow.payload["experiment_id"].as_string() == self.experiment_id,
+                    RecordRow.payload["provenance"]["task_id"].as_string() == self.task_id,
+                    RecordRow.payload["provenance"]["session_id"].as_string() == session_id,
+                )
+                .order_by(RecordRow.id)
+            ):
+                digest = row.payload["sha256"]
+                self._chunk_cache.setdefault((session_id, digest), {"id": row.id, "sha256": digest})
+        self._warm_sessions.add(session_id)
+
     def _save_checkpoint(self, checkpoint):
+        """Store new chunk and manifest bytes, then commit their rows and the pointer at once.
+
+        Bytes are durable before the single ``runtime.save`` transaction, so a committed row
+        never references missing bytes; a failed or replayed transaction leaves only orphan
+        bytes. Chunks get no ``artifact.created`` event or command row of their own.
+        """
+        # The one digest check per save; encoding derives every byte from this object in the
+        # same synchronous call, so nothing can change it in between.
         checkpoint.verify()
+        session_id = checkpoint.session.id
+        self._warm_chunk_cache(session_id)
+        provenance, rows, written = {"task_id": self.task_id, "session_id": session_id}, [], {}
+
+        def artifact(kind, content):
+            return ArtifactCreate(
+                experiment_id=self.experiment_id,
+                kind=kind,
+                content=content,
+                media_type="application/json",
+                provenance=provenance,
+            )
 
         def put_chunk(content):
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-            cache_key = (checkpoint.session.id, digest)
-            if cache_key in self._chunk_cache:
-                return self._chunk_cache[cache_key]
-            artifact = self.service.create_artifact(
-                ArtifactCreate(
-                    experiment_id=self.experiment_id,
-                    kind="native_checkpoint_chunk",
-                    content=content,
-                    media_type="application/json",
-                    provenance={"task_id": self.task_id, "session_id": checkpoint.session.id},
-                ),
-                self.actor,
-                f"runtime-chunk:{self.task_id}:{checkpoint.session.id}:{digest}",
+            raw = content.encode("utf-8")
+            digest = hashlib.sha256(raw).hexdigest()
+            if (
+                known := self._chunk_cache.get((session_id, digest)) or written.get(digest)
+            ) is not None:
+                return known
+            self.service.artifacts.put(raw)  # durable before any row can reference it
+            written[digest] = {"id": new_id(), "sha256": digest}
+            rows.append(
+                (
+                    written[digest]["id"],
+                    artifact("native_checkpoint_chunk", content),
+                    digest,
+                    len(raw),
+                )
             )
-            self._chunk_cache[cache_key] = artifact
-            return artifact
+            return written[digest]
 
         data = encode_native_checkpoint(checkpoint, put_chunk)
-        artifact = self.service.create_artifact(
-            ArtifactCreate(
-                experiment_id=self.experiment_id,
-                kind="native_checkpoint",
-                content=canonical_json(data),
-                media_type="application/json",
-                provenance={"task_id": self.task_id, "session_id": checkpoint.session.id},
-            ),
-            self.actor,
-            f"runtime-artifact:{checkpoint.state_digest}",
+        manifest, manifest_id = canonical_json(data), new_id()
+        raw_manifest = manifest.encode("utf-8")
+        rows.append(
+            (
+                manifest_id,
+                artifact("native_checkpoint", manifest),
+                self.service.artifacts.put(raw_manifest),
+                len(raw_manifest),
+            )
         )
 
-        def action(session, op):
+        def publish(session, op, records):
             self.service._fenced(session, self.task_id, self.holder, self.fence)
             task = self.service._get(session, "task", self.task_id, self.actor)
             row = session.scalar(
@@ -288,7 +329,7 @@ class CanonicalRuntimeStore:
                 "runtime": checkpoint.session.runtime,
                 "model": checkpoint.session.model.model_dump(mode="json"),
                 "status": checkpoint.session.status,
-                "checkpoint_artifact_id": artifact["id"],
+                "checkpoint_artifact_id": records[manifest_id]["id"],
                 "input_tokens": checkpoint.session.input_tokens,
                 "output_tokens": checkpoint.session.output_tokens,
                 "tool_definition_digest": self.tool_definition_digest,
@@ -323,9 +364,13 @@ class CanonicalRuntimeStore:
             )
             return record
 
-        self.service._execute(
-            self.actor, f"runtime-save:{checkpoint.state_digest}", "runtime.save", data, action
+        record = self.service.commit_native_checkpoint(
+            self.actor, f"runtime-save:{checkpoint.state_digest}", data, rows, publish
         )
+        # A replayed save returns the earlier record without inserting these rows; only a save
+        # that committed this manifest may teach the cache new chunk ids.
+        if record.get("checkpoint_artifact_id") == manifest_id:
+            self._chunk_cache.update({(session_id, d): ref for d, ref in written.items()})
 
     async def load(self, session_id):
         rows = self.service.list_records("session", self.actor, self.experiment_id)

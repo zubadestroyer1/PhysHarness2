@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Awaitable, Callable
-from copy import deepcopy
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
@@ -124,10 +123,12 @@ class RuntimeCheckpoint(Record):
     @classmethod
     def build(cls, session: RuntimeSession, native_state: dict[str, Any]) -> RuntimeCheckpoint:
         data = {"session": session.model_dump(mode="json"), "native_state": native_state}
+        # One serialization yields both the digest and an independent copy of JSON state.
+        raw = json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False)
         return cls(
             session=session.model_copy(deep=True),
-            native_state=deepcopy(native_state),
-            state_digest=digest(data),
+            native_state=json.loads(raw)["native_state"],
+            state_digest=hashlib.sha256(raw.encode()).hexdigest(),
         )
 
     def verify(self, runtime: str | None = None) -> None:

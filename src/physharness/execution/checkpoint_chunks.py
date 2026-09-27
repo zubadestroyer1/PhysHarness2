@@ -71,13 +71,47 @@ def references(node: Any) -> list[dict]:
     return []
 
 
+def _serialized_size(item: Any, sizes: dict[int, int]) -> int:
+    """UTF-8 length of ``canonical_json(item)``, computed once per container (by id)."""
+    if isinstance(item, (dict, list)):
+        key = id(item)
+        if key not in sizes:
+            parts = (
+                [
+                    len(canonical_json(k).encode("utf-8")) + 1 + _serialized_size(v, sizes)
+                    for k, v in item.items()
+                ]
+                if isinstance(item, dict)
+                else [_serialized_size(v, sizes) for v in item]
+            )
+            sizes[key] = 2 + max(len(parts) - 1, 0) + sum(parts)
+        return sizes[key]
+    return len(canonical_json(item).encode("utf-8"))
+
+
 def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
-    """Store chunks using ``put`` and return a small, versioned root manifest."""
-    checkpoint.verify()
-    if len(canonical_json(checkpoint.model_dump(mode="json")).encode("utf-8")) > MAX_BYTES:
+    """Store chunks using ``put`` and return a small, versioned root manifest.
+
+    The caller verifies the checkpoint digest once, at the store boundary; this
+    synchronous call then derives every byte from that same object, so nothing can
+    change it in between. Encoding stays on the caller's thread by design.
+    There is no decode round-trip here: a golden byte-identity test and a
+    round-trip test pin the encoder instead. Sizes are measured in one pass and
+    cached per container, so each value is serialized about once, not once per
+    level of nesting.
+    """
+    sizes: dict[int, int] = {}
+    # Keep one session dump alive for the whole call: cached sizes are keyed by id.
+    session_value = checkpoint.session.model_dump(mode="json")
+    whole = {
+        "native_state": checkpoint.native_state,
+        "session": session_value,
+        "state_digest": checkpoint.state_digest,
+        "version": checkpoint.version,
+    }
+    if _serialized_size(whole, sizes) > MAX_BYTES:
         raise _invalid("Native checkpoint exceeds the write bound.")
     node_count = 0
-    written: dict[str, bytes] = {}
 
     def store(node: dict) -> dict:
         nonlocal node_count
@@ -88,7 +122,6 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
         if len(content.encode("utf-8")) > MAX_CHUNK_BYTES:
             raise _invalid("Native checkpoint chunk exceeds the artifact bound.")
         artifact = put(content)
-        written[artifact["id"]] = content.encode("utf-8")
         return {"artifact_id": artifact["id"], "sha256": artifact["sha256"]}
 
     def paged(kind: str, entries: list, page_size: int) -> dict:
@@ -154,8 +187,7 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
     def value(item: Any, depth: int = 0, atom_threshold: int = LEAF_BYTES) -> dict:
         if depth > MAX_DEPTH:
             raise _invalid("Native checkpoint structure is too deep.")
-        serialized = canonical_json(item)
-        byte_size = len(serialized.encode("utf-8"))
+        byte_size = _serialized_size(item, sizes)
         if byte_size <= atom_threshold:
             return {"inline": item}
         if byte_size <= LEAF_BYTES:
@@ -177,24 +209,17 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
     root = store(
         {
             "type": "checkpoint",
-            "session": value(checkpoint.session.model_dump(mode="json")),
+            "session": value(session_value),
             "native_state": value(checkpoint.native_state),
         }
     )
-    manifest = {
+    return {
         "format": FORMAT,
         "version": 2,
         "session_id": checkpoint.session.id,
         "state_digest": checkpoint.state_digest,
         "root": root,
     }
-    # Check the same graph and aggregate read bounds before publishing its pointer.
-    if (
-        decode(canonical_json(manifest).encode("utf-8"), lambda ref: written[ref["artifact_id"]])
-        != checkpoint
-    ):
-        raise _invalid("Native checkpoint changed during encoding.")
-    return manifest
 
 
 def decode(

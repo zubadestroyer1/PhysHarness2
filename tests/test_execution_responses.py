@@ -310,6 +310,21 @@ def test_checkpoint_snapshots_native_state_without_mutable_alias():
     assert checkpoint.native_state["input"][0]["content"] == "exact assumptions"
 
 
+def test_build_copies_state_through_json():
+    from physharness.execution import RuntimeCheckpoint, RuntimeSession
+    from physharness.execution.types import digest
+
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    state = {"pair": (1, 2), "input": [{"content": "x"}]}
+    checkpoint = RuntimeCheckpoint.build(session, state)
+    assert checkpoint.native_state["pair"] == [1, 2]
+    assert checkpoint.state_digest == digest(
+        {"session": session.model_dump(mode="json"), "native_state": state}
+    )
+
+
 async def test_continuation_marks_session_running_before_awaiting_preflight(tmp_path):
     """A second adapter must observe the in-progress continuation in the shared store."""
     entered, release = asyncio.Event(), asyncio.Event()

@@ -150,9 +150,15 @@ be idempotent by operation ID. If the provider response was persisted but delive
 callback failed, reconcile from the saved native response. The adapter does not implement a
 transactional outbox or monetary pricing; those belong to the controller/ledger.
 
-The session is checkpointed before each external request and host tool. A crash or tool failure
-with a pending marker prohibits automatic resume. Provider usage absent from a response also
-requires reconciliation. A session's total token budget persists across `continue_session`.
+The session is checkpointed before each external request and host tool. The controller's store
+verifies each checkpoint's digest once, then encodes it into content-addressed chunks; encoding
+stays on the event loop by design. A save first stores its new chunk and manifest bytes, then
+commits their artifact rows, the session pointer and one `session.saved` event in one
+`runtime.save` transaction. A committed row therefore never references missing bytes, and an
+interrupted save publishes nothing and leaves only orphan bytes. Chunks carry no
+`artifact.created` event. A crash or tool failure with a pending marker prohibits automatic
+resume. Provider usage absent from a response also requires reconciliation. A session's total
+token budget persists across `continue_session`.
 `start_from_handoff` and `start(..., predecessor=checkpoint)` seed a successor with its
 lineage's cumulative usage, so the budget also persists across a task's continuations.
 `interrupt` cancels the active local coroutine; provider completion/billing may remain uncertain.
@@ -172,6 +178,8 @@ experiments too.
 - `usage.cached_input_tokens`: the provider's reported cache hit (0 when absent or inconsistent).
   The controller/ledger settles those tokens at an optional cached rate, while every reservation
   stays at the full input rate, since a cache hit is never guaranteed in advance.
+- A checkpoint chunk has no `artifact.created` event and no command row of its own; each save is
+  one `runtime.save` transaction.
 
 ## Official Codex SDK
 
