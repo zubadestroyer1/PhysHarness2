@@ -77,7 +77,8 @@ async def test_boundary_hook_can_complete_after_settled_response_without_success
     store.close()
 
 
-@pytest.mark.parametrize("reason", [*sorted(COMPLETION_REASONS), "other"])
+# An unknown or unhashable reason is an invalid continuation, never a crash.
+@pytest.mark.parametrize("reason", [*sorted(COMPLETION_REASONS), "other", ["scope_proved"]])
 async def test_boundary_hook_completion_reasons(tmp_path, reason):
     assert COMPLETION_REASONS == {
         "target_verified",
@@ -94,7 +95,7 @@ async def test_boundary_hook_completion_reasons(tmp_path, reason):
 
     runtime = ResponsesRuntime(store=store, client=client, boundary_hook=boundary)
     try:
-        if reason == "other":
+        if reason == "other" or not isinstance(reason, str):
             with pytest.raises(ExecutionError) as caught:
                 await runtime.start("target", ModelConfig(model="exact-model"), RuntimeLimits())
             assert caught.value.code == "INVALID_CONTINUATION"

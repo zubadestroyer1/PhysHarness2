@@ -313,17 +313,23 @@ tools, the prompts and the delivery shapes.
   - Every recruit brief ends with a scope paragraph: the brief only; the target statement
     is context, not the recruit's assignment, so it never attempts, assembles or submits
     the whole target. When the brief is done or blocked, a joined recruit calls
-    `return_result` and a detached one posts what it has on its focus node and finishes.
+    `return_result`, and a detached one posts what it has on its focus node (on the
+    commons when it has none) and finishes.
   - A joined recruit's session ends after `return_result`: at the next settled boundary
     the platform completes its task (`result_returned`) without another model request,
     and the parent's joined handoff proceeds.
   - `until_proved=true` needs a focus node that is open and has an elaborated Lean
     statement (`SCOPE_NEEDS_STATEMENT`, 422, otherwise). The brief then names the exact
-    theorem and the task records its scope (node, statement digest and module). The task
-    ends by itself (`scope_proved`) once the node has a `complete` or `verified` source of
-    that statement, published by the recruit or anyone else; a joined recruit then returns
-    that source to its parent as an unverified result. If the node closes first, the task
-    ends (`scope_closed`).
+    theorem (a statement longer than the 2,000-character excerpt is marked truncated)
+    and the task records its scope (node, statement digest and module). The task ends by
+    itself (`scope_proved`) once the node has a `complete` or `verified` source of that
+    statement, published by the recruit or anyone else; a joined recruit then returns
+    that source to its parent as an unverified result. A source of a since-changed
+    statement does not count. If the node closes first, the task ends (`scope_closed`).
+  - Each of these endings waits until the recruit's own joined recruits have settled. Until
+    then its task cannot complete, so the recruit keeps working and parks on its next
+    final message through the joined-children handoff. When it resumes with their
+    results it may amend its `return_result`, and it ends at the next settled boundary.
   - The goal cannot be a recruit's focus (`GOAL_NOT_CLAIMABLE`), refused before any branch
     or task is created.
 - **Workforce.** Society work is admitted by dollars, not task counts. A new task (a

@@ -1934,6 +1934,7 @@ class ResponsesRuntime:
         if (
             isinstance(request, dict)
             and set(request) == {"complete_reason"}
+            and isinstance(request["complete_reason"], str)
             and request["complete_reason"] in COMPLETION_REASONS
         ):
             # All external effects from this response are settled. Complete the

@@ -1659,9 +1659,48 @@ def test_every_recruit_brief_gets_a_scope_paragraph():
     )
     assert "look up library names, signatures and duplicates for this brief, then return" in joined
     assert joined.index("Suggested hat") < joined.index(SCOPE)
-    detached = _recruit_objective("Explore.", None, None, detached=True)
+    focus = {
+        "id": "abcdef12-0000-4000-8000-000000000001",
+        "node_type": "lemma",
+        "status": "informal",
+        "title": "Trace lemma",
+        "statement": "The trace is additive.",
+    }
+    detached = _recruit_objective("Explore.", focus, None, detached=True)
     assert SCOPE in detached and "post what you have on your focus node and finish" in detached
     assert "return_result" not in detached
+    # With no focus node there is none to post on.
+    unfocused = _recruit_objective("Explore.", None, None, detached=True)
+    assert "post what you have on the commons and finish." in unfocused
+    assert "focus node" not in unfocused
+
+
+def test_scope_line_marks_a_truncated_statement():
+    node = {
+        "id": "abcdef12-0000-4000-8000-000000000001",
+        "node_type": "lemma",
+        "status": "formally_stated",
+        "title": "Long lemma",
+        "statement": "A long statement.",
+        "lean_name": "long_lemma",
+    }
+    short = _recruit_objective(
+        "P.",
+        {**node, "lean_statement": ": True"},
+        None,
+        detached=False,
+        scope={**node, "lean_statement": ": True"},
+    )
+    assert "Prove exactly theorem long_lemma : True (node abcdef12)." in short
+    assert "truncated" not in short
+    statement = ": " + " ∧ ".join(["True"] * 600)  # over the 2,000-character excerpt
+    long = _recruit_objective(
+        "P.", None, None, detached=False, scope={**node, "lean_statement": statement}
+    )
+    line = long.rsplit("\n\n", 1)[1]
+    assert line.startswith("Prove exactly theorem long_lemma " + statement[:2000] + " …")
+    assert "(truncated; read the node) (node abcdef12)." in line
+    assert statement not in long
 
 
 async def test_until_proved_needs_an_elaborated_focus_statement(lab):
@@ -1770,7 +1809,9 @@ async def test_scoped_recruit_completes_once_its_node_has_a_complete_source(lab)
     assert note == "The recruit's node has a complete published source; its session ended."
 
 
-async def test_scoped_recruit_ends_when_its_node_closes(lab):
+async def scoped_recruit(lab, *, detached=False):
+    """alpha's elaborated trace lemma and a recruit scoped to it (until_proved), leased the
+    way the worker leases it; ``completion()`` asks ``_society_completion`` about it now."""
     service, author, exp, _, (alpha, _) = society_lab(lab)
     agent, context = running(service, author, exp, alpha.branch_id)
     tools = profile(service, agent, context, workspace=FakeWorkspace())
@@ -1786,6 +1827,7 @@ async def test_scoped_recruit_ends_when_its_node_closes(lab):
             "title": "Prover",
             "focus_node_id": node["id"],
             "until_proved": True,
+            "detached": detached,
         },
     )
     task = service.get_record("task", recruited["task_id"], author)
@@ -1798,12 +1840,88 @@ async def test_scoped_recruit_ends_when_its_node_closes(lab):
             current, recruit, recruit_context["holder"], recruit_context["fence"]
         )
 
-    assert completion() is None  # joined, nothing returned, the scope still open
-    await call(
-        tools, "commons_node", {"action": "abandon", "node_id": node["id"], "reason": "Moot."}
+    def record():
+        return service.get_record("task", task["id"], author)
+
+    return SimpleNamespace(
+        service=service,
+        author=author,
+        exp=exp,
+        node=node,
+        tools=tools,
+        recruit=recruit,
+        recruit_tools=profile(service, recruit, recruit_context, workspace=FakeWorkspace()),
+        completion=completion,
+        record=record,
     )
-    assert completion() == "scope_closed"
-    assert service.get_record("task", task["id"], author).get("return_result") is None
+
+
+async def test_scoped_recruit_ends_when_its_node_closes(lab):
+    scoped = await scoped_recruit(lab)
+    assert scoped.completion() is None  # joined, nothing returned, the scope still open
+    await call(
+        scoped.tools,
+        "commons_node",
+        {"action": "abandon", "node_id": scoped.node["id"], "reason": "M."},
+    )
+    assert scoped.completion() == "scope_closed"
+    assert scoped.record().get("return_result") is None
+
+
+async def test_detached_scoped_recruit_ends_without_returning_a_result(lab):
+    scoped = await scoped_recruit(lab, detached=True)
+    checked = await call(
+        scoped.recruit_tools, "lean_check", {"source": PROOF, "node_id": scoped.node["id"]}
+    )
+    assert checked["published"]["recorded"] is True
+    assert scoped.completion() == "scope_proved"
+    assert scoped.record().get("return_result") is None  # nobody waits for a detached recruit
+
+
+async def test_scoped_recruit_ends_when_anyone_publishes_its_source(lab):
+    scoped = await scoped_recruit(lab)
+    # alpha, the node's author on another branch, publishes the complete source.
+    await call(scoped.tools, "lean_check", {"source": PROOF, "node_id": scoped.node["id"]})
+    source = scoped.service.read_node(scoped.node["id"], scoped.recruit)["node"]["lean_source"]
+    assert source["branch_id"] != scoped.recruit.branch_id
+    assert scoped.completion() == "scope_proved"
+    returned = scoped.record()["return_result"]
+    assert returned["artifact_ids"] == [source["artifact_id"]]
+    assert (
+        returned["summary"]
+        == f"Node {scoped.node['id'][:8]} is proved as Commons.N{scoped.node['id'][:8]}; import it."
+    )
+    assert scoped.completion() == "scope_proved"  # idempotent: the result is recorded once
+    assert scoped.record()["return_result"] == returned
+
+
+async def test_scoped_recruit_ignores_a_source_of_a_changed_statement(lab):
+    scoped = await scoped_recruit(lab)
+    changed = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    await call(
+        scoped.tools,
+        "commons_node",
+        {"action": "set_lean_statement", "node_id": scoped.node["id"], **changed},
+    )
+    proof = PROOF.replace("(1 : Nat) + 1 = 2", "(2 : Nat) + 2 = 4")
+    checked = await call(
+        scoped.tools, "lean_check", {"source": proof, "node_id": scoped.node["id"]}
+    )
+    assert checked["published"]["recorded"] is True
+    assert scoped.completion() is None  # a complete source, but not of the scoped statement
+    assert scoped.record().get("return_result") is None
+
+
+async def test_scoped_recruit_waits_for_its_own_joined_recruits(lab):
+    scoped = await scoped_recruit(lab)
+    helper = await call(scoped.recruit_tools, "recruit", {"brief": "Look up.", "title": "Lookup"})
+    await call(scoped.tools, "lean_check", {"source": PROOF, "node_id": scoped.node["id"]})
+    # finish_task would refuse the recruit while its helper is pending (JOINED_CHILDREN_PENDING)
+    assert scoped.completion() is None
+    assert scoped.record().get("return_result") is None
+    finish_task(scoped.service, helper["task_id"])
+    assert scoped.completion() == "scope_proved"
+    assert scoped.record()["return_result"]["summary"].startswith("Node ")
 
 
 async def test_fetch_source_hides_screen_numbers_and_records_fetch(lab):
@@ -2173,9 +2291,9 @@ def run_manifest(experiment, author, root_task, **extra):
     )
 
 
-def scripted_society_route(root_steps, recruit_steps=None):
-    """Route by prompt: a referee submits one sound verdict; with ``recruit_steps``, a task
-    whose objective is not "Root" follows that script; the root follows its script."""
+def scripted_society_route(root_steps, recruits=None):
+    """Route by prompt: a referee submits one sound verdict; a task whose objective starts
+    with a key of ``recruits`` follows that script; the root follows its script."""
     phases = {"root": 0, "referee": 0}
 
     async def route(request):
@@ -2186,8 +2304,9 @@ def scripted_society_route(root_steps, recruit_steps=None):
         role = (
             "referee" if prompt["instructions"].startswith("Research society referee") else "root"
         )
-        if role == "root" and recruit_steps is not None and prompt["objective"] != "Root":
-            role = "recruit"
+        if role == "root":
+            starts = [key for key in recruits or {} if prompt["objective"].startswith(key)]
+            role = starts[0] if starts else role
         phase = phases.get(role, 0)
         phases[role] = phase + 1
         outputs = [
@@ -2201,10 +2320,10 @@ def scripted_society_route(root_steps, recruit_steps=None):
                 if phase == 0
                 else [message("Reviewed.")]
             )
-        elif role == "recruit":
-            items = recruit_steps(phase, outputs, prompt)
-        else:
+        elif role == "root":
             items = root_steps(phase, outputs)
+        else:
+            items = recruits[role](phase, outputs)
         return httpx.Response(200, json=response(items, response_id=f"{role}-{phase}"))
 
     return route, phases
@@ -2271,20 +2390,19 @@ async def test_joined_recruit_ends_after_return_result(lab):
             return [message("Root waits for its recruit.")]
         return [message("Root done.")]
 
-    def recruit_steps(phase, outputs, prompt):
-        assert prompt["objective"].startswith("Look up")
+    def recruit_steps(phase, outputs):
         if phase == 0:
             return [tool_call("return_result", returned, "result-1")]
         return [message("Recruit kept going after returning.")]
 
-    route, phases = scripted_society_route(root_steps, recruit_steps)
+    route, phases = scripted_society_route(root_steps, {"Look up": recruit_steps})
     runner, client = society_runner(service, route)
     try:
         report = await runner.run(run_manifest(exp, author, root))
     finally:
         await client.close()
     assert report["status"] == "completed"
-    assert phases == {"root": 3, "referee": 0, "recruit": 1}
+    assert phases == {"root": 3, "referee": 0, "Look up": 1}
     (recruit,) = [
         task
         for task in service.list_records("task", author, exp["id"])
@@ -2302,6 +2420,69 @@ async def test_joined_recruit_ends_after_return_result(lab):
     assert note == "The recruit returned its result to its parent; its session ended."
     parent = service.get_record("task", root["id"], author)
     assert parent["status"] == "completed" and parent["continuation_count"] == 1
+
+
+async def test_recruit_that_returns_before_its_own_recruit_settles_waits_then_completes(lab):
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    lemma = {"brief": "Split the trace lemma.", "title": "Splitter"}
+    lookup = {"brief": "Look up the trace lemma in Mathlib.", "title": "Lookup"}
+
+    def returned(summary):
+        return {
+            "evidence_status": "unverified",
+            "artifact_ids": [],
+            "unresolved_obligations": [],
+            "summary": summary,
+            "execution_failure": None,
+        }
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            return [tool_call("recruit", lemma, "recruit-split")]
+        return [message("Root waits." if phase == 1 else "Root done.")]
+
+    def split_steps(phase, outputs):
+        if phase == 0:  # recruit a helper, then return at once, in one response
+            return [
+                tool_call("recruit", lookup, "recruit-lookup"),
+                tool_call("return_result", returned("Split in two."), "split-result"),
+            ]
+        return [message("Splitter waits." if phase == 1 else "Splitter done.")]
+
+    def lookup_steps(phase, outputs):
+        if phase == 0:
+            return [tool_call("return_result", returned("Matrix.trace_add."), "lookup-result")]
+        return [message("Lookup kept going after returning.")]
+
+    route, phases = scripted_society_route(
+        root_steps, {"Split": split_steps, "Look up": lookup_steps}
+    )
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["status"] == "completed"
+    # The splitter's return waited for its helper: it parked on its next final message
+    # through the joined-children handoff, resumed once the helper settled, then ended.
+    assert phases == {"root": 3, "referee": 0, "Split": 3, "Look up": 1}
+    tasks = service.list_records("task", author, exp["id"])
+    (split,) = [task for task in tasks if task.get("reply_to_parent_task_id") == root["id"]]
+    (helper,) = [task for task in tasks if task.get("reply_to_parent_task_id") == split["id"]]
+    assert (split["status"], helper["status"]) == ("completed", "completed")
+    assert split["continuation_count"] == 1
+    assert split["return_result"]["summary"] == "Split in two."
+    assert split["return_result"]["execution_failure"] is None
+    failures = [
+        item
+        for item in service.list_records("artifact", author, exp["id"])
+        if item["artifact_kind"] == "execution_failure"
+    ]
+    assert failures == []  # no JOINED_CHILDREN_PENDING
+    assert service.get_record("task", root["id"], author)["status"] == "completed"
 
 
 async def test_synthesis_gate_opens_with_a_referee_lineage_present(lab, monkeypatch):

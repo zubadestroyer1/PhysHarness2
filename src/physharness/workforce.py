@@ -6,9 +6,8 @@ from decimal import Decimal
 from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 
-from .commons import _lean_digest
 from .commons_review import REFEREE_HAT
-from .commons_sources import node_module, node_refusal
+from .commons_sources import _statement_digest, node_module, node_refusal
 from .domain import Principal, make_record, new_id, utcnow
 from .errors import HarnessError
 from .storage import BudgetRow, EdgeRow, EventRow, LeaseRow, RecordRow, record_json_text
@@ -718,9 +717,7 @@ class WorkforceMixin:
                     raise refusal
                 scope = {
                     "node_id": node["id"],
-                    "lean_statement_sha256": _lean_digest(
-                        node.get("lean_header"), node["lean_name"], node["lean_statement"]
-                    ),
+                    "lean_statement_sha256": _statement_digest(node),
                     "module": node_module(node),
                 }
             parent = session.get(RecordRow, request.parent_branch_id)

@@ -1014,10 +1014,12 @@ class ResearchTaskExecutor:
 
         A scoped recruit ends once its node has a complete source of the scoped statement,
         published by anyone (a joined recruit returns that source to its parent), or once the
-        node is closed. A joined recruit ends once it has called return_result.
+        node is closed. A joined recruit ends once it has called return_result. None while the
+        task's own joined recruits are pending: finish_task would refuse it, so the
+        joined-children handoff waits for them and the resumed task may amend its result.
         """
         joined = bool(task.get("reply_to_parent_task_id"))
-        scope = task.get("scope")
+        scope, reason, source = task.get("scope"), None, None
         if scope:
             node = self.service.get_record("commons_node", scope["node_id"], agent)
             source = node.get("lean_source") or {}
@@ -1025,25 +1027,27 @@ class ResearchTaskExecutor:
                 source.get("rank") in COMPLETE_RANKS
                 and source.get("lean_statement_sha256") == scope["lean_statement_sha256"]
             ):
-                if joined and not task.get("return_result"):
-                    with worker_effects(agent, task["id"], holder, fence):
-                        self.service.return_result(
-                            task["id"],
-                            evidence_status="unverified",
-                            artifact_ids=[source["artifact_id"]],
-                            unresolved_obligations=[],
-                            summary=f"Node {scope['node_id'][:8]} is proved as "
-                            f"{scope['module']}; import it.",
-                            execution_failure=None,
-                            actor=agent,
-                            key=f"scope-result:{task['id']}",
-                        )
-                return "scope_proved"
-            if node["status"] in CLOSED_STATUSES:
-                return "scope_closed"
-        if joined and task.get("return_result"):
-            return "result_returned"
-        return None
+                reason = "scope_proved"
+            elif node["status"] in CLOSED_STATUSES:
+                reason = "scope_closed"
+        if reason is None and joined and task.get("return_result"):
+            reason = "result_returned"
+        if reason is None or self.service.joined_task_statuses(task["id"], agent)["pending_ids"]:
+            return None
+        if reason == "scope_proved" and joined and not task.get("return_result"):
+            with worker_effects(agent, task["id"], holder, fence):
+                self.service.return_result(
+                    task["id"],
+                    evidence_status="unverified",
+                    artifact_ids=[source["artifact_id"]],
+                    unresolved_obligations=[],
+                    summary=f"Node {scope['node_id'][:8]} is proved as {scope['module']}; "
+                    "import it.",
+                    execution_failure=None,
+                    actor=agent,
+                    key=f"scope-result:{task['id']}",
+                )
+        return reason
 
     async def execute(self, task_id: str, project_id: str, *, stop_on_verified_target=True):
         actor = Principal(id="research-controller", project_id=project_id, role="operator")

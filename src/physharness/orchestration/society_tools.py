@@ -557,16 +557,13 @@ def _referee_view(result, keep=(), *, items=False):
 
 
 # S1 audit #23: every recruit brief is scoped, so a recruit never takes on the whole target.
-SCOPE_JOINED = (
+SCOPE = (
     "Scope: this brief only. The target statement is context, not your assignment: do not "
-    "attempt, assemble or submit the whole target. When the brief is done or blocked, call "
-    "return_result with what you have; your session then ends."
+    "attempt, assemble or submit the whole target. When the brief is done or blocked, "
 )
-SCOPE_DETACHED = (
-    "Scope: this brief only. The target statement is context, not your assignment: do not "
-    "attempt, assemble or submit the whole target. When the brief is done or blocked, post "
-    "what you have on your focus node and finish."
-)
+SCOPE_JOINED = SCOPE + "call return_result with what you have; your session then ends."
+SCOPE_DETACHED = SCOPE + "post what you have on your focus node and finish."
+SCOPE_UNFOCUSED = SCOPE + "post what you have on the commons and finish."
 
 
 def _recruit_objective(brief, focus, hat, *, detached, scope=None):
@@ -588,14 +585,19 @@ def _recruit_objective(brief, focus, hat, *, detached, scope=None):
         parts.append("\n".join(lines))
     if hat is not None:
         parts.append(f"Suggested hat (optional; you may change it): {hat}, to {HATS[hat]}.")
-    parts.append(SCOPE_DETACHED if detached else SCOPE_JOINED)
+    if not detached:
+        parts.append(SCOPE_JOINED)
+    else:
+        parts.append(SCOPE_DETACHED if focus is not None else SCOPE_UNFOCUSED)
     if scope is not None:
         id8 = scope["id"][:8]
+        statement = scope["lean_statement"]
+        if len(statement) > FOCUS_EXCERPT:
+            statement = statement[:FOCUS_EXCERPT] + " … (truncated; read the node)"
         parts.append(
-            f"Prove exactly theorem {scope['lean_name']} "
-            f"{scope['lean_statement'][:FOCUS_EXCERPT]} (node {id8}). Publish it with "
-            f"lean_check(node_id={id8}). Your task ends by itself once a complete source for "
-            "the node is recorded, by you or anyone; do not work beyond it."
+            f"Prove exactly theorem {scope['lean_name']} {statement} (node {id8}). Publish it "
+            f"with lean_check(node_id={id8}). Your task ends by itself once a complete source "
+            "for the node is recorded, by you or anyone; do not work beyond it."
         )
     return "\n\n".join(parts)
 
