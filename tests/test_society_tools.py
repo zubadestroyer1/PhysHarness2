@@ -1673,7 +1673,8 @@ async def test_a_source_that_imports_its_own_module_is_not_published(lab):
     assert both["commons"]["modules"] == [module, other_module]
 
 
-STUB_HEADER = "import Mathlib\nset_option autoImplicit false"
+# Stubs elaborate with auto-bound names off; each stores the skeleton's plain header.
+STRICT_HEADER = "import Mathlib\nset_option autoImplicit false"
 SKELETON = (
     "import Mathlib\n\n"
     "theorem step_one : (1 : Nat) + 1 = 2 := by sorry\n\n"
@@ -1766,7 +1767,7 @@ async def test_skeleton_publication_creates_linked_stub_nodes(lab):
     assert batch == [
         (
             "elaborate_batch",
-            STUB_HEADER,
+            STRICT_HEADER,
             [("step_one", ": (1 : Nat) + 1 = 2", ()), ("step_two", ": (2 : Nat) + 2 = 4", ())],
         )
     ]
@@ -1775,7 +1776,7 @@ async def test_skeleton_publication_creates_linked_stub_nodes(lab):
         assert node["lean_elaborated"] is True and stub["module"] == node["lean_module"]
         # The parent's title reaches the stub's statement on one line.
         assert node["statement"] == f"Stub in Trace lemma: {stub['lean_name']}"
-        assert node["lean_header"] == STUB_HEADER and node["title"] == stub["lean_name"]
+        assert node["lean_header"] == "import Mathlib" and node["title"] == stub["lean_name"]
     edges = {
         e["node_id"]
         for e in service.read_node(parent["id"], agent)["edges_out"]
@@ -1861,14 +1862,11 @@ async def test_filling_a_stub_with_another_signature_is_not_published(lab):
     step_one, step_two = (stub["node_id"] for stub in checked["stubs"])
     peer, peer_context = running(service, author, exp, beta.branch_id)
     peer_tools = profile(service, peer, peer_context, workspace=FakeWorkspace())
-    wrong = f"{STUB_HEADER}\n\ntheorem step_one : (1 : Nat) + 1 = 3 := by\n  decide\n"
+    wrong = "import Mathlib\n\ntheorem step_one : (1 : Nat) + 1 = 3 := by\n  decide\n"
     refused = await call(peer_tools, "lean_check", {"source": wrong, "node_id": step_one})
     assert refused["published"]["reason"] == "statement_not_found"
-    # A filler holds the stub's header lines, auto-bound names off included.
-    unheaded = wrong.replace("set_option autoImplicit false\n", "").replace("= 3", "= 2")
-    refused = await call(peer_tools, "lean_check", {"source": unheaded, "node_id": step_one})
-    assert refused["published"]["reason"] == "header_mismatch"
-    # A peer fills the stub; the skeleton, importing it, republishes without a cycle.
+    # A peer fills the stub under the skeleton's plain header; the skeleton, importing it,
+    # republishes without a cycle.
     filled = wrong.replace("= 3", "= 2")
     proved = await call(peer_tools, "lean_check", {"source": filled, "node_id": step_one})
     assert proved["published"]["rank"] == "verified"
@@ -1935,8 +1933,9 @@ async def test_stub_headers_turn_auto_bound_names_off(lab):
     service, author, exp, _, (alpha, _) = society_lab(lab)
     agent, context = running(service, author, exp, alpha.branch_id)
     # As in Lean: with auto-bound implicits, f0's unknown f binds as a variable and the
-    # statement elaborates (and is false); with them off, Lean refuses it.
-    lean = FakeLean(elaborates=lambda h, n, s: n != "f0" or "autoImplicit false" not in h)
+    # statement elaborates (and is false); with them off (the header's last word), Lean
+    # refuses it.
+    lean = FakeLean(elaborates=lambda h, n, s: n != "f0" or not h.endswith("autoImplicit false"))
     workspace = FakeWorkspace(lean)
     tools = profile(service, agent, context, workspace=workspace)
     parent = await call(tools, "commons_node", lemma_args())
@@ -1956,11 +1955,19 @@ async def test_stub_headers_turn_auto_bound_names_off(lab):
         ("f0", False, "stub_needs_definition_node")
     ]
     assert checked["skeleton_source"] == skeleton
-    # A skeleton's own autoImplicit setting never reaches a stub's header.
+    # A skeleton's own autoImplicit line stays in its header; the elaboration turns
+    # auto-bound names off after it.
     permissive = skeleton.replace("\n\ndef", "\nset_option autoImplicit true\n\ndef", 1)
-    await call(tools, "lean_check", {"source": permissive, "node_id": parent["id"], "stubs": True})
+    checked = await call(
+        tools, "lean_check", {"source": permissive, "node_id": parent["id"], "stubs": True}
+    )
+    assert checked["stubs"][0]["reason"] == "stub_needs_definition_node"
     batch = [entry for entry in lean.calls if entry[0] == "elaborate_batch"]
-    assert [entry[1] for entry in batch] == [STUB_HEADER, STUB_HEADER]
+    loose = "import Mathlib\nset_option autoImplicit true"
+    assert [entry[1] for entry in batch] == [
+        STRICT_HEADER,
+        f"{loose}\nset_option autoImplicit false",
+    ]
 
 
 class IllTypedLean(FakeLean):
@@ -2007,6 +2014,35 @@ async def test_stubs_are_made_only_for_a_skeleton_that_could_be_published(lab):
         assert "elaborate_batch" not in [entry[0] for entry in lean.calls]
     edges = service.read_node(parent["id"], agent)["edges_out"]
     assert not [edge for edge in edges if edge["relation"] == "depends_on"]
+
+
+async def test_a_goal_skeleton_makes_stubs_and_publishes_nothing(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace(IllTypedLean())
+    tools = profile(service, agent, context, workspace=workspace)
+    arguments = {"source": SKELETON, "node_id": goal["id"], "stubs": True}
+    before = node_count(service, exp, agent)
+    # The skeleton must still compile: an ill-typed one makes no stub.
+    ill_typed = await call(tools, "lean_check", arguments)
+    assert ill_typed["published"]["reason"] == "lean_errors" and ill_typed["stubs"] == []
+    assert node_count(service, exp, agent) == before
+    # Decomposing the target: the goal takes no source, yet its stubs are made and linked.
+    workspace.lean = FakeLean()
+    checked = await call(tools, "lean_check", arguments)
+    assert [(s["lean_name"], s["created"]) for s in checked["stubs"]] == [
+        ("step_one", True),
+        ("step_two", True),
+    ]
+    assert checked["published"]["recorded"] is False
+    assert checked["published"]["reason"] == "goal_node"
+    assert "theorem step_one" not in checked["skeleton_source"]
+    assert [entry[0] for entry in workspace.lean.calls] == ["check", "elaborate_batch", "check"]
+    edges = service.read_node(goal["id"], agent)["edges_out"]
+    assert {e["node_id"] for e in edges if e["relation"] == "depends_on"} == {
+        s["node_id"] for s in checked["stubs"]
+    }
 
 
 async def test_an_abandoned_stub_is_replaced_and_an_accepted_one_reused(lab):

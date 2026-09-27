@@ -203,10 +203,9 @@ async def test_a_skeleton_ranks_partial_until_its_stubs_are_filled(lab, real_lea
     # The published text has no sorry of its own; the stub it imports inlines as sorry.
     assert "sorry" not in checked["skeleton_source"]
     assert checked["complete"] is False and checked["published"]["rank"] == "partial", checked
-    # Filled under the stub's header (auto-bound names off), the stub passes the statement
-    # check, and the republished skeleton is verified.
-    header = "import Lean\nset_option autoImplicit false"
-    filled = f"{header}\n\ntheorem step : (2 : Nat) + 2 = 4 := rfl\n"
+    # Filled under the skeleton's plain header, the stub passes the statement check, and the
+    # republished skeleton is verified.
+    filled = "import Lean\n\ntheorem step : (2 : Nat) + 2 = 4 := rfl\n"
     proved = await call(tools, "lean_check", {"source": filled, "node_id": stub["node_id"]})
     assert proved["published"]["rank"] == "verified", proved
     source = checked["skeleton_source"]
@@ -241,6 +240,12 @@ async def test_stub_headers_refuse_auto_bound_definition_names(lab, real_lean):
         ("f0", False, "stub_needs_definition_node"),
     ], checked
     assert checked["skeleton_source"] == skeleton and checked["published"]["rank"] == "partial"
+    # The skeleton's own autoImplicit true does not reach the stub elaboration.
+    permissive = skeleton.replace("\n\ndef two", "\nset_option autoImplicit true\n\ndef two", 1)
+    checked = await call(
+        tools, "lean_check", {"source": permissive, "node_id": node, "stubs": True}
+    )
+    assert [s["reason"] for s in checked["stubs"]] == ["stub_needs_definition_node"] * 2, checked
 
 
 @pytest.mark.lean

@@ -264,15 +264,18 @@ tools, the prompts and the delivery shapes.
     line or the end of another sorry lemma, so deleting a stub never moves an attribute,
     docstring or `… in` command onto the next declaration.
     - Its Lean header is the file's environment imports and its `open`, `set_option` and
-      `universe` lines before any other command, then `set_option autoImplicit false` (in
-      place of the file's own autoImplicit line). With auto-bound names on, a stub naming a
-      skeleton definition would elaborate as a false statement about a variable
-      (`theorem two_eq : two = 2` as `∀ {two : Nat}, two = 2`); off, Lean refuses it. A
-      header that is not plain refuses the call.
+      `universe` lines before any other command; a header that is not plain refuses the
+      call. Stubs elaborate with `set_option autoImplicit false` after that header, and
+      only there: with auto-bound names on, a stub naming a skeleton definition would
+      elaborate as a false statement about a variable (`theorem two_eq : two = 2` as
+      `∀ {two : Nat}, two = 2`); off, Lean refuses it. A statement that elaborates without
+      them means the same with them, so the stub stores the plain header.
     - Before any stub is made, the skeleton is checked as written. When it has Lean errors
-      or could not be published as the node's module (the goal, `lower_rank` because the
-      node holds a complete or verified source while the skeleton ranks partial, …), the
-      result is that check with the refusal and `stubs: []`: nothing is made.
+      or could not be published as the node's module (`lower_rank` because the node holds
+      a complete or verified source while the skeleton ranks partial, …), the result is
+      that check with the refusal and `stubs: []`: nothing is made. The goal takes no
+      source, so a goal skeleton (the target's decomposition) needs only to compile: its
+      stubs are made and linked, and the result reports the goal's `goal_node` refusal.
     - All stubs elaborate in one Lean run under the header (the whole stub list, so a
       replayed call records each stub with the same inputs). Each one Lean elaborates
       becomes a `lemma` node (title its name, statement "Stub in <node title>: <name>")
@@ -286,8 +289,8 @@ tools, the prompts and the delivery shapes.
       imports as `sorry` it ranks partial. The result adds `stubs` (`lean_name`, `node_id`,
       `module`, `created`) and `skeleton_source`. The skeleton imports its stubs, which is
       no cycle.
-    - Peers fill a stub by publishing a source of its statement under its header (the
-      autoImplicit line included). `commons_read` lists the stubs a node still rests on
+    - Peers fill a stub by publishing a source of its statement under its header.
+      `commons_read` lists the stubs a node still rests on
       (`rests_on.stubs`: not abandoned, nearest first, at most 50; `counts` counts every
       stub). Submit the skeleton once none remain.
   - An opt-in real-image test (`tests/test_real_commons_flattening.py`) compiles a

@@ -501,8 +501,10 @@ _STUB = re.compile(
     r"\s*(?:theorem|lemma)\s+(?P<name>[\w.'!?]+)(?P<signature>.*?):=\s*(?:by\s+)?sorry\s*", re.S
 )
 _STUB_HEADER_COMMANDS = ("open", "set_option", "universe")
-# With auto-bound implicits a skeleton definition's name becomes a variable of the stub
-# (`theorem two_eq : two = 2` elaborates as `∀ {two : Nat}, two = 2`); off, Lean refuses it.
+# Stubs elaborate with this after their header. With auto-bound implicits a skeleton
+# definition's name becomes a variable of the stub (`theorem two_eq : two = 2` elaborates as
+# `∀ {two : Nat}, two = 2`); off, Lean refuses it. A statement that elaborates without them
+# means the same with them, so the stored header stays the skeleton's own.
 _NO_AUTO_BOUND = "set_option autoImplicit false"
 
 
@@ -567,13 +569,9 @@ def stub_declarations(source):
 
 
 def _stub_header(source):
-    """``(header, end)``: a stub's Lean header, and the 0-based index of the line that ends
-    the lines it is taken from.
-
-    The header is the file's environment imports, then its open, set_option and universe
-    lines before any other command, without comments, then ``set_option autoImplicit
-    false`` in place of any autoImplicit line of the file's.
-    """
+    """``(header, end)``: a stub's Lean header (the file's environment imports, then its
+    open, set_option and universe lines before any other command, without comments), and
+    the 0-based index of the line that ends those lines."""
     _, env, _, index = split_imports(source)
     code, lines = lean_code(source).split("\n"), []
     while index < len(code):
@@ -582,10 +580,9 @@ def _stub_header(source):
             # An indented line after one of them continues it (an open's namespaces).
             if words[0] not in _STUB_HEADER_COMMANDS and not (lines and line[:1].isspace()):
                 break
-            if not (len(words) == 3 and words[:2] == ["set_option", "autoImplicit"]):
-                lines.append(line.rstrip())
+            lines.append(line.rstrip())
         index += 1
-    return "\n".join([*env, *lines, _NO_AUTO_BOUND]), index
+    return "\n".join(env + lines), index
 
 
 def _skeleton(source, spans, modules):
@@ -981,7 +978,8 @@ def society_tools(
             one entry per stub, and None. Before it makes a stub, the skeleton is checked as
             written: when it has Lean errors or could not be published (it ranks partial
             while a stub imports as sorry), no stub is made, and the third value is that
-            check with the refusal.
+            check with the refusal. The goal takes no source, so a goal skeleton (the
+            target's decomposition) needs only to compile.
             """
             node = read["node"]
             if not is_open(node["status"]):
@@ -1019,8 +1017,11 @@ def society_tools(
             elaborated = {}
             if fresh:
                 checked, expansion = await expanded_check(source, automate, f"{key}:skeleton")
-                reason = _checked_refusal(source, node, expansion, checked)
-                held = None if reason else blocking_rank(node, "partial", agent.branch_id)
+                if node["node_type"] == "goal":
+                    reason, held = (None if checked["ok"] else "lean_errors"), None
+                else:
+                    reason = _checked_refusal(source, node, expansion, checked)
+                    held = None if reason else blocking_rank(node, "partial", agent.branch_id)
                 if reason or held:
                     refused = {
                         "recorded": False,
@@ -1033,7 +1034,7 @@ def society_tools(
                 # The batch is the whole stub list, whatever is reused: a replayed call
                 # elaborates the same file and records each stub with the same inputs.
                 outcomes = await lean().elaborate_statements(
-                    header,
+                    f"{header}\n{_NO_AUTO_BOUND}",
                     [(name, signature, ()) for name, signature, _, _ in found],
                     operation_id=f"{key}:stubs",
                 )
