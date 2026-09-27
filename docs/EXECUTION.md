@@ -148,10 +148,7 @@ the task for an operator to resume.
 The usage event includes the stable operation ID and actual native usage; reconciliation should
 be idempotent by operation ID. If the provider response was persisted but delivery of a usage
 callback failed, reconcile from the saved native response. The adapter does not implement a
-transactional outbox or monetary pricing; those belong to the controller/ledger. The usage event's
-`usage.cached_input_tokens` carries the provider's reported cache hit (0 when absent or
-inconsistent); the controller/ledger settles those tokens at an optional cached rate, while every
-reservation stays at the full input rate, since a cache hit is never guaranteed in advance.
+transactional outbox or monetary pricing; those belong to the controller/ledger.
 
 The session is checkpointed before each external request and host tool. A crash or tool failure
 with a pending marker prohibits automatic resume. Provider usage absent from a response also
@@ -172,6 +169,9 @@ experiments too.
   bound) and `input_tokens_counted`.
 - `preflight_error.stage` may be `create`, with the generation's operation ID, after a 400 from
   `create`; its `generation_aborted` has `reason="request_invalid"`.
+- `usage.cached_input_tokens`: the provider's reported cache hit (0 when absent or inconsistent).
+  The controller/ledger settles those tokens at an optional cached rate, while every reservation
+  stays at the full input rate, since a cache hit is never guaranteed in advance.
 
 ## Official Codex SDK
 
