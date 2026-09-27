@@ -204,11 +204,11 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 - Check-ins and stagnation nudges were removed after S1 (acted on 20% of the time; nudges never fired). The stagnation detector remains the loop guard.
 - **Sketch-then-fill formalization** (the draft–sketch–prove pattern; optional, not a phase; S1 audit #21). A skeleton is any node whose published source imports stub nodes; `lean_check(stubs=true)` creates them, replacing S1's `lean_sketch` holes:
   1. An agent writes the proof with top-level `theorem X … := sorry` lemmas and checks it with `lean_check(node_id=…, stubs=true)`.
-  2. Each sorry lemma that elaborates under the file's header becomes a `lemma` stub node the skeleton's node depends on (a dependency with the same Lean statement is reused); one that needs the skeleton's own definitions stays in its text.
+  2. If the skeleton checks as written and could be published as the node's module, each sorry lemma that elaborates under the file's header, with auto-bound names off, becomes a `lemma` stub node the skeleton's node depends on (a dependency with the same Lean statement that is not abandoned is reused); one that needs the skeleton's own definitions stays in its text.
   3. The platform replaces each stub's lines with `import Commons.N…` and publishes that text as the node's module. Peers fill the stubs in parallel by publishing their sources.
   4. Once none remain (`rests_on.stubs`), the skeleton goes to independent checking.
 
-  The blueprint and the proof structure stay in sync: the skeleton's imports are its `depends_on` edges.
+  The blueprint follows the proof structure: each stub the skeleton imports is a `depends_on` edge of its node (an abandoned stub stays linked but is never left to fill).
 - **Honesty rule.** No scaffold, hint or nudge is derived from a benchmark's hidden reference solution.
 
 ---

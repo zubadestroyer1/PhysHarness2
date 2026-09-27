@@ -259,23 +259,37 @@ tools, the prompts and the delivery shapes.
   - A skeleton is any node whose published source imports stub nodes; `lean_check(stubs=true)`
     creates them. It is optional. With `node_id`, each top-level
     `theorem X <signature> := sorry` (or `:= by sorry`) whose lines hold nothing else
-    becomes a stub:
+    becomes a stub. Its lines run from the keyword to the `sorry` and the blank lines after
+    it. The line before them, past whole-line `--` comments, must be blank, a plain header
+    line or the end of another sorry lemma, so deleting a stub never moves an attribute,
+    docstring or `… in` command onto the next declaration.
     - Its Lean header is the file's environment imports and its `open`, `set_option` and
-      `universe` lines before any other command; a header that is not plain refuses the
-      call. All stubs elaborate in one Lean run under it.
-    - Each one Lean elaborates becomes a `lemma` node (title its name, statement
-      "Stub in <node title>: <name>") with that elaborated Lean statement, and the node
-      `depends_on` it. A dependency of the node with the same Lean statement that already
-      imports is reused instead (`created: false`). One Lean rejects stays in the text
-      (`stub_needs_definition_node`, or `lean_infrastructure_failure` when Lean could not
-      judge it); the node's own theorem is never a stub.
+      `universe` lines before any other command, then `set_option autoImplicit false` (in
+      place of the file's own autoImplicit line). With auto-bound names on, a stub naming a
+      skeleton definition would elaborate as a false statement about a variable
+      (`theorem two_eq : two = 2` as `∀ {two : Nat}, two = 2`); off, Lean refuses it. A
+      header that is not plain refuses the call.
+    - Before any stub is made, the skeleton is checked as written. When it has Lean errors
+      or could not be published as the node's module (the goal, `lower_rank` because the
+      node holds a complete or verified source while the skeleton ranks partial, …), the
+      result is that check with the refusal and `stubs: []`: nothing is made.
+    - All stubs elaborate in one Lean run under the header (the whole stub list, so a
+      replayed call records each stub with the same inputs). Each one Lean elaborates
+      becomes a `lemma` node (title its name, statement "Stub in <node title>: <name>")
+      with that elaborated Lean statement, and the node `depends_on` it. A dependency of
+      the node with the same Lean statement that imports and is not abandoned is reused
+      instead (`created: false`); an accepted one is the best reuse. One Lean rejects stays
+      in the text (`stub_needs_definition_node`, or `lean_infrastructure_failure` when Lean
+      could not judge it); the node's own theorem is never a stub.
     - The platform deletes each stub's lines, imports its module right after the file's
-      imports, and checks and publishes that text as the node's module. The result adds
-      `stubs` (`lean_name`, `node_id`, `module`, `created`) and `skeleton_source`. The
-      skeleton imports its stubs, which is no cycle.
-    - Peers fill a stub by publishing a source of its statement. `commons_read` lists the
-      stubs a node still rests on (`rests_on.stubs`, nearest first, at most 50; `counts`
-      has the total). Submit the skeleton once none remain.
+      imports, and checks and publishes that text as the node's module; while a stub
+      imports as `sorry` it ranks partial. The result adds `stubs` (`lean_name`, `node_id`,
+      `module`, `created`) and `skeleton_source`. The skeleton imports its stubs, which is
+      no cycle.
+    - Peers fill a stub by publishing a source of its statement under its header (the
+      autoImplicit line included). `commons_read` lists the stubs a node still rests on
+      (`rests_on.stubs`: not abandoned, nearest first, at most 50; `counts` counts every
+      stub). Submit the skeleton once none remain.
   - An opt-in real-image test (`tests/test_real_commons_flattening.py`) compiles a
     flattened two-module file in the workbench and passes the statement check on it. The
     independent verifier's first run on a flattened candidate is the first A/B smoke run.

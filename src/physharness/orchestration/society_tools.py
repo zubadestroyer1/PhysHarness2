@@ -470,6 +470,16 @@ def _publication_refusal(source, node, result):
     return None
 
 
+def _checked_refusal(source, node, expansion, result):
+    """Why a checked file cannot be the node's module, before its statement check and rank,
+    or None: ``_publication_refusal``, or ``imports_own_module``."""
+    refusal = _publication_refusal(source, node, result)
+    if refusal is None and node_module(node) in {module.name for module in expansion.modules}:
+        # Published, the module would import itself and fail every importer.
+        return "imports_own_module"
+    return refusal
+
+
 def _source_rank(node, result, verdict):
     """verified, complete or partial; None when the statement check rejected the file.
     Without a working checker (S1: it never ran) a source stops at complete."""
@@ -491,6 +501,14 @@ _STUB = re.compile(
     r"\s*(?:theorem|lemma)\s+(?P<name>[\w.'!?]+)(?P<signature>.*?):=\s*(?:by\s+)?sorry\s*", re.S
 )
 _STUB_HEADER_COMMANDS = ("open", "set_option", "universe")
+# With auto-bound implicits a skeleton definition's name becomes a variable of the stub
+# (`theorem two_eq : two = 2` elaborates as `∀ {two : Nat}, two = 2`); off, Lean refuses it.
+_NO_AUTO_BOUND = "set_option autoImplicit false"
+
+
+def _plain(line, code):
+    """Whether a source line's only comment, if any, is a trailing line comment."""
+    return line.split("--", 1)[0].rstrip() == code.rstrip()
 
 
 def stub_declarations(source):
@@ -498,45 +516,76 @@ def stub_declarations(source):
     := sorry`` (or ``:= by sorry``) whose lines hold nothing else; None when comments or
     literals change the line structure.
 
-    Deleting a stub's lines leaves the rest of the file as it was: no comment or literal
-    crosses the span's edges. The signature is whitespace-collapsed code, so comments in it
-    drop out; one with a literal (an opaque token in code) is no stub.
+    A stub's lines run from its keyword to its ``sorry`` and the blank lines after it, so a
+    comment after it (the next declaration's docstring) stays. Deleting them leaves the rest
+    of the file as it was: no comment or literal crosses their edges, and the line before
+    them, past whole-line ``--`` comments, is blank, a plain header line or the end of
+    another sorry lemma, so no attribute, docstring or ``… in`` command moves onto the next
+    declaration. The signature is whitespace-collapsed code, so comments in it drop out;
+    one with a literal (an opaque token in code) is no stub.
     """
     spans = declaration_spans(source)
     if spans is None:
         return None
     lines, code, stubs = source.split("\n"), lean_code(source).split("\n"), []
-    for keyword, name, first, last in spans:
-        text, span = "\n".join(lines[first - 1 : last]), "\n".join(code[first - 1 : last])
-        match = _STUB.fullmatch(span) if keyword in ("theorem", "lemma") else None
-        if (
-            match is None
-            or match["name"] != name
-            or lean_code(text) != span
-            or _unterminated(text)
-            or re.fullmatch(LEAN_NAME, name) is None
+    header_end, shaped = _stub_header(source)[1], set()
+
+    def boundary(index):
+        while (
+            index >= 0
+            and not code[index].strip()
+            and lines[index].lstrip().startswith("--")
+            and not _unterminated("\n".join(lines[:index]))  # a line comment, not inside one
         ):
+            index -= 1
+        return (
+            index < 0
+            or not lines[index].strip()
+            or _plain(lines[index], code[index])
+            and (index in shaped or (index < header_end and header_problem(code[index]) is None))
+        )
+
+    for keyword, name, first, last in spans:
+        start = first - 1
+        stop = max(index for index in range(start, last) if code[index].strip()) + 1
+        text, span = "\n".join(lines[start:stop]), "\n".join(code[start:stop])
+        match = _STUB.fullmatch(span) if keyword in ("theorem", "lemma") else None
+        if match is None or match["name"] != name or lean_code(text) != span or _unterminated(text):
             continue
+        shaped.add(stop - 1)
+        while stop < last and not lines[stop].strip():
+            stop += 1
         signature = " ".join(match["signature"].split())
-        if "\x00" not in signature and signature_problem(signature) is None:
-            stubs.append((name, signature, first, last))
+        if (
+            boundary(start - 1)
+            and re.fullmatch(LEAN_NAME, name) is not None
+            and "\x00" not in signature
+            and signature_problem(signature) is None
+        ):
+            stubs.append((name, signature, first, stop))
     return stubs
 
 
 def _stub_header(source):
-    """A stub's Lean header: the file's environment imports, then its open, set_option and
-    universe lines before any other command, without comments."""
-    _, env, _, first = split_imports(source)
-    lines = []
-    for line in lean_code(source).split("\n")[first:]:
-        words = line.split()
-        if not words:
-            continue
-        # An indented line after one of them continues it (an open's namespaces).
-        if words[0] not in _STUB_HEADER_COMMANDS and not (lines and line[:1].isspace()):
-            break
-        lines.append(line.rstrip())
-    return "\n".join(env + lines)
+    """``(header, end)``: a stub's Lean header, and the 0-based index of the line that ends
+    the lines it is taken from.
+
+    The header is the file's environment imports, then its open, set_option and universe
+    lines before any other command, without comments, then ``set_option autoImplicit
+    false`` in place of any autoImplicit line of the file's.
+    """
+    _, env, _, index = split_imports(source)
+    code, lines = lean_code(source).split("\n"), []
+    while index < len(code):
+        line, words = code[index], code[index].split()
+        if words:
+            # An indented line after one of them continues it (an open's namespaces).
+            if words[0] not in _STUB_HEADER_COMMANDS and not (lines and line[:1].isspace()):
+                break
+            if not (len(words) == 3 and words[:2] == ["set_option", "autoImplicit"]):
+                lines.append(line.rstrip())
+        index += 1
+    return "\n".join([*env, *lines, _NO_AUTO_BOUND]), index
 
 
 def _skeleton(source, spans, modules):
@@ -903,7 +952,7 @@ def society_tools(
             return result, expansion
 
         async def lean_check(a, k):
-            read = node = stubs = None
+            read = node = stubs = refused = None
             if a["node_id"] is not None:
                 read = service.read_node(a["node_id"], agent)
                 node = read["node"]
@@ -911,20 +960,29 @@ def society_tools(
                 raise invalid("stubs needs node_id: the node the skeleton is published on.")
             source = a["source"]
             if a["stubs"]:
-                source, stubs = await publish_stubs(read, source, k)
-            result, expansion = await expanded_check(source, a["automate"], k)
-            if node is None:
-                return result
-            published = await publish(node, source, expansion, result, k)
+                source, stubs, refused = await publish_stubs(read, source, a["automate"], k)
+            if refused is not None:
+                result, published = refused
+            else:
+                result, expansion = await expanded_check(source, a["automate"], k)
+                if node is None:
+                    return result
+                published = await publish(node, source, expansion, result, k)
             checked = {**result, "published": published, "claimed": claim(node["id"], published, k)}
             if stubs is not None:
                 checked.update(stubs=stubs, skeleton_source=source)
             return checked
 
-        async def publish_stubs(read, source, key):
+        async def publish_stubs(read, source, automate, key):
             """Make each sorry lemma of the skeleton a stub node its node depends on, reusing
-            a dependency with the same Lean statement. Returns the skeleton with each stub's
-            lines replaced by an import of its module, and one entry per stub."""
+            a dependency with the same Lean statement that is not abandoned.
+
+            Returns the skeleton with each stub's lines replaced by an import of its module,
+            one entry per stub, and None. Before it makes a stub, the skeleton is checked as
+            written: when it has Lean errors or could not be published (it ranks partial
+            while a stub imports as sorry), no stub is made, and the third value is that
+            check with the refusal.
+            """
             node = read["node"]
             if not is_open(node["status"]):
                 raise invalid("stubs: the node is closed; publish a skeleton on an open node.")
@@ -937,13 +995,14 @@ def society_tools(
             # The node's own theorem is the skeleton's, never a stub.
             found = [stub for stub in found if stub[0] != node.get("lean_name")]
             if not found:
-                return source, []
-            header = _stub_header(source)
+                return source, [], None
+            header = _stub_header(source)[0]
             if header_problem(header) is not None:
                 raise invalid("stubs need a plain header: imports, open, set_option, universe.")
             reusable = {}
             for edge in read["edges_out"]:
-                if edge["relation"] == "depends_on":
+                # An abandoned node takes no source, so its stub could never be filled.
+                if edge["relation"] == "depends_on" and edge["status"] != "abandoned":
                     target = service.get_record("commons_node", edge["node_id"], agent)
                     if source_state(target) != "none":  # it imports
                         digest = _lean_digest(
@@ -957,16 +1016,28 @@ def society_tools(
                 for index, (name, signature, _, _) in enumerate(found)
                 if _lean_digest(header, name, signature) not in reusable
             ]
-            outcomes = (
-                await lean().elaborate_statements(
+            elaborated = {}
+            if fresh:
+                checked, expansion = await expanded_check(source, automate, f"{key}:skeleton")
+                reason = _checked_refusal(source, node, expansion, checked)
+                held = None if reason else blocking_rank(node, "partial", agent.branch_id)
+                if reason or held:
+                    refused = {
+                        "recorded": False,
+                        "module": node_module(node),
+                        "reason": reason or "lower_rank",
+                    }
+                    if held:
+                        refused["rank"] = held
+                    return source, [], (checked, refused)
+                # The batch is the whole stub list, whatever is reused: a replayed call
+                # elaborates the same file and records each stub with the same inputs.
+                outcomes = await lean().elaborate_statements(
                     header,
-                    [(*found[index][:2], ()) for index in fresh],
+                    [(name, signature, ()) for name, signature, _, _ in found],
                     operation_id=f"{key}:stubs",
                 )
-                if fresh
-                else []
-            )
-            elaborated = dict(zip(fresh, outcomes, strict=True))
+                elaborated = {index: outcomes[index] for index in fresh}
             title = _one_line(node["title"])[:150]
             requests = {  # validated before any node is created
                 index: NodeCreate(
@@ -983,27 +1054,7 @@ def society_tools(
             entries, spans, modules = [], [], []
             for index, (name, signature, first, last) in enumerate(found):
                 if index in requests:
-                    # Keys carry the stub's index: a Lean name may be up to 200 characters.
-                    target = service.create_node(
-                        experiment_id, requests[index], agent, f"{key}:stub:{index}"
-                    )
-                    service.set_lean_statement(
-                        target["id"],
-                        header,
-                        name,
-                        signature,
-                        _elaboration(elaborated[index]),
-                        agent,
-                        f"{key}:stub-lean:{index}",
-                    )
-                    service.link_nodes(
-                        experiment_id,
-                        node["id"],
-                        "depends_on",
-                        target["id"],
-                        agent,
-                        f"{key}:stub-link:{index}",
-                    )
+                    target = make_stub(node, requests[index], elaborated[index], key, index)
                 elif index in elaborated:  # Lean did not elaborate it: it stays in the text
                     failed = _infrastructure_failure(elaborated[index])
                     entries.append(
@@ -1031,16 +1082,36 @@ def society_tools(
                 )
                 spans.append((first, last))
                 modules.append(module)
-            return _skeleton(source, spans, modules), entries
+            return _skeleton(source, spans, modules), entries, None
+
+        def make_stub(node, request, result, key, index):
+            """Create a stub node with its elaborated Lean statement, and make ``node`` depend
+            on it. Keys carry the stub's index: a Lean name may be 200 characters."""
+            stub = service.create_node(experiment_id, request, agent, f"{key}:stub:{index}")
+            service.set_lean_statement(
+                stub["id"],
+                request.lean_header,
+                request.lean_name,
+                request.lean_statement,
+                _elaboration(result),
+                agent,
+                f"{key}:stub-lean:{index}",
+            )
+            service.link_nodes(
+                experiment_id,
+                node["id"],
+                "depends_on",
+                stub["id"],
+                agent,
+                f"{key}:stub-link:{index}",
+            )
+            return stub
 
         async def publish(node, source, expansion, result, key):
             """Publish a clean check as the node's ranked module. The statement check reads
             the flattened file; the published source is the caller's own text."""
             module = node_module(node)
-            refusal = _publication_refusal(source, node, result)
-            if refusal is None and module in {imported.name for imported in expansion.modules}:
-                # Published, the module would import itself and fail every importer.
-                refusal = "imports_own_module"
+            refusal = _checked_refusal(source, node, expansion, result)
             if refusal is not None:
                 return {"recorded": False, "module": module, "reason": refusal}
             header, name, statement = (

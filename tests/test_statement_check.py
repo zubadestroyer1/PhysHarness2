@@ -186,6 +186,64 @@ async def test_elaboration_tricks_cannot_forge_a_verified_source(lab, real_lean,
 
 
 @pytest.mark.lean
+async def test_a_skeleton_ranks_partial_until_its_stubs_are_filled(lab, real_lean):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    session = LeanSession(_tools(real_lean, "one_shot"))
+    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean=session))
+    node = await _formal_node(tools, service, TRUE)
+    skeleton = (
+        "import Lean\n\n"
+        "theorem step : (2 : Nat) + 2 = 4 := sorry\n\n"
+        "theorem good : (2 : Nat) + 2 = 4 := step\n"
+    )
+    checked = await call(tools, "lean_check", {"source": skeleton, "node_id": node, "stubs": True})
+    (stub,) = checked["stubs"]
+    assert stub["created"] is True, checked
+    # The published text has no sorry of its own; the stub it imports inlines as sorry.
+    assert "sorry" not in checked["skeleton_source"]
+    assert checked["complete"] is False and checked["published"]["rank"] == "partial", checked
+    # Filled under the stub's header (auto-bound names off), the stub passes the statement
+    # check, and the republished skeleton is verified.
+    header = "import Lean\nset_option autoImplicit false"
+    filled = f"{header}\n\ntheorem step : (2 : Nat) + 2 = 4 := rfl\n"
+    proved = await call(tools, "lean_check", {"source": filled, "node_id": stub["node_id"]})
+    assert proved["published"]["rank"] == "verified", proved
+    source = checked["skeleton_source"]
+    again = await call(tools, "lean_check", {"source": source, "node_id": node})
+    assert again["published"]["rank"] == "verified", again
+
+
+@pytest.mark.lean
+async def test_stub_headers_refuse_auto_bound_definition_names(lab, real_lean):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    session = LeanSession(_tools(real_lean, "one_shot"))
+    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean=session))
+    node = await _formal_node(tools, service, TRUE)
+    # Lean's default binds an unknown non-function name as a variable: false, yet it elaborates.
+    # (An unknown applied name, f 0, is refused either way.)
+    auto = await session.elaborate_statements(
+        "import Lean", [("two_eq", ": two = 2", ()), ("f0", ": f 0 = 1", ())], operation_id="a"
+    )
+    assert [result["ok"] for result in auto] == [True, False], auto
+    skeleton = (
+        "import Lean\n\n"
+        "def two : Nat := 2\n\n"
+        "def f (n : Nat) : Nat := n\n\n"
+        "theorem two_eq : two = 2 := sorry\n\n"
+        "theorem f0 : f 0 = 1 := sorry\n\n"
+        "theorem good : (2 : Nat) + 2 = 4 := rfl\n"
+    )
+    checked = await call(tools, "lean_check", {"source": skeleton, "node_id": node, "stubs": True})
+    assert [(s["lean_name"], s["created"], s["reason"]) for s in checked["stubs"]] == [
+        ("two_eq", False, "stub_needs_definition_node"),
+        ("f0", False, "stub_needs_definition_node"),
+    ], checked
+    assert checked["skeleton_source"] == skeleton and checked["published"]["rank"] == "partial"
+
+
+@pytest.mark.lean
 async def test_statement_check_verdicts_on_real_lean(real_lean):
     session = LeanSession(_tools(real_lean, "one_shot"))
 

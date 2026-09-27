@@ -232,7 +232,9 @@ class FakeLean:
     """A LeanSession stand-in with scripted results; no Lean or workspace is involved.
 
     ``axioms`` is the session's own report (the file's ``#print axioms`` output);
-    ``checked_axioms`` is what the statement check finds, and ``verdict`` overrides it.
+    ``checked_axioms`` is what the statement check finds, and ``verdict`` overrides it. As in
+    Lean, a checked file with a ``sorry`` is never complete, and a batch elaboration's
+    diagnostics digest covers the whole batch file.
     """
 
     def __init__(self, *, complete=True, sketch=None, elaborates=None):
@@ -248,7 +250,7 @@ class FakeLean:
         return {
             "backend": "repl",
             "ok": True,
-            "complete": self.complete,
+            "complete": self.complete and "sorry" not in source,
             "messages": [],
             "holes": [],
             "axioms": self.axioms,
@@ -285,7 +287,9 @@ class FakeLean:
             node_header = "\n".join(
                 [header, "universe " + " ".join(universes)] if universes else [header]
             )
-            results.append(self._elaborated(node_header, name, signature))
+            result = self._elaborated(node_header, name, signature)
+            batch = sha(json.dumps([header, entries, result["diagnostics_sha256"]]))
+            results.append({**result, "diagnostics_sha256": batch})
         return results
 
     def _elaborated(self, header, name, signature):
@@ -1669,6 +1673,7 @@ async def test_a_source_that_imports_its_own_module_is_not_published(lab):
     assert both["commons"]["modules"] == [module, other_module]
 
 
+STUB_HEADER = "import Mathlib\nset_option autoImplicit false"
 SKELETON = (
     "import Mathlib\n\n"
     "theorem step_one : (1 : Nat) + 1 = 2 := by sorry\n\n"
@@ -1706,6 +1711,32 @@ def test_stub_declarations_take_only_whole_top_level_sorry_lemmas():
     assert stub_declarations('def s := "a\nb"\n' + SKELETON) is None
 
 
+def test_stub_deletion_never_moves_attributes_or_docstrings():
+    source = (
+        "import Mathlib\n"
+        "open Nat\n"
+        "theorem head : True := sorry\n"  # after the header
+        "theorem next : True := sorry\n\n"  # after another sorry lemma
+        "-- A note.\n"
+        "theorem noted : True := sorry\n"  # a blank line above its whole-line comment
+        "/-- Doc. -/\n"
+        "theorem documented : True := sorry\n"  # its docstring would move
+        "theorem proved : True := trivial\n"
+        "@[simp]\n"
+        "theorem tagged : True := sorry\n\n"  # its attribute would move
+        "/-- Doc. -/\n-- A note.\n"
+        "theorem hidden : True := sorry\n\n"  # a docstring above its comment
+        "theorem last : True := trivial\n"
+    )
+    # A stub's lines end at its sorry and the blank lines after it: the next declaration's
+    # docstring stays in place.
+    assert stub_declarations(source) == [
+        ("head", ": True", 3, 3),
+        ("next", ": True", 4, 5),
+        ("noted", ": True", 7, 7),
+    ]
+
+
 async def test_skeleton_publication_creates_linked_stub_nodes(lab):
     service, author, exp, _, (alpha, _) = society_lab(lab)
     agent, context = running(service, author, exp, alpha.branch_id)
@@ -1722,12 +1753,20 @@ async def test_skeleton_publication_creates_linked_stub_nodes(lab):
         ("step_one", True),
         ("step_two", True),
     ]
-    # One Lean run elaborates every stub under the skeleton's header.
+    # The skeleton is checked as written, then one Lean run elaborates every stub under the
+    # skeleton's header with auto-bound names off, then the rewritten skeleton is checked.
+    assert [entry[0] for entry in workspace.lean.calls] == [
+        "elaborate",
+        "check",
+        "elaborate_batch",
+        "check",
+    ]
+    assert workspace.lean.sources[0] == SKELETON
     batch = [entry for entry in workspace.lean.calls if entry[0] == "elaborate_batch"]
     assert batch == [
         (
             "elaborate_batch",
-            "import Mathlib",
+            STUB_HEADER,
             [("step_one", ": (1 : Nat) + 1 = 2", ()), ("step_two", ": (2 : Nat) + 2 = 4", ())],
         )
     ]
@@ -1736,7 +1775,7 @@ async def test_skeleton_publication_creates_linked_stub_nodes(lab):
         assert node["lean_elaborated"] is True and stub["module"] == node["lean_module"]
         # The parent's title reaches the stub's statement on one line.
         assert node["statement"] == f"Stub in Trace lemma: {stub['lean_name']}"
-        assert node["lean_header"] == "import Mathlib" and node["title"] == stub["lean_name"]
+        assert node["lean_header"] == STUB_HEADER and node["title"] == stub["lean_name"]
     edges = {
         e["node_id"]
         for e in service.read_node(parent["id"], agent)["edges_out"]
@@ -1751,8 +1790,9 @@ async def test_skeleton_publication_creates_linked_stub_nodes(lab):
         + "\ntheorem trace_add : (1 : Nat) + 1 = 2 := step_one\n"
     )
     assert "theorem step_one : (1 : Nat) + 1 = 2 := sorry" in workspace.lean.sources[-1]
-    # The skeleton is the parent's module: it imports its stubs, which are no cycle.
-    assert checked["published"]["recorded"] is True
+    # The skeleton is the parent's module: it imports its stubs, which are no cycle. Each
+    # stub imports as sorry, so the skeleton is partial.
+    assert checked["published"]["rank"] == "partial" and checked["complete"] is False
     stored = service.read_node(parent["id"], agent)
     assert service.artifact_content(stored["node"]["lean_source"]["artifact_id"], agent) == (
         skeleton.encode()
@@ -1821,9 +1861,13 @@ async def test_filling_a_stub_with_another_signature_is_not_published(lab):
     step_one, step_two = (stub["node_id"] for stub in checked["stubs"])
     peer, peer_context = running(service, author, exp, beta.branch_id)
     peer_tools = profile(service, peer, peer_context, workspace=FakeWorkspace())
-    wrong = "import Mathlib\n\ntheorem step_one : (1 : Nat) + 1 = 3 := by\n  decide\n"
+    wrong = f"{STUB_HEADER}\n\ntheorem step_one : (1 : Nat) + 1 = 3 := by\n  decide\n"
     refused = await call(peer_tools, "lean_check", {"source": wrong, "node_id": step_one})
     assert refused["published"]["reason"] == "statement_not_found"
+    # A filler holds the stub's header lines, auto-bound names off included.
+    unheaded = wrong.replace("set_option autoImplicit false\n", "").replace("= 3", "= 2")
+    refused = await call(peer_tools, "lean_check", {"source": unheaded, "node_id": step_one})
+    assert refused["published"]["reason"] == "header_mismatch"
     # A peer fills the stub; the skeleton, importing it, republishes without a cycle.
     filled = wrong.replace("= 3", "= 2")
     proved = await call(peer_tools, "lean_check", {"source": filled, "node_id": step_one})
@@ -1873,12 +1917,157 @@ async def test_stub_requests_need_a_node_and_a_plain_skeleton(lab):
         tools, "lean_check", {"source": opened, "node_id": parent["id"], "stubs": True}
     )
     batch = [entry for entry in workspace.lean.calls if entry[0] == "elaborate_batch"]
-    assert [entry[1] for entry in batch] == ["import Mathlib\nopen Nat"]
+    assert [entry[1] for entry in batch] == [
+        "import Mathlib\nopen Nat\nset_option autoImplicit false"
+    ]
     own = "import Mathlib\n\ntheorem trace_add : (1 : Nat) + 1 = 2 := sorry\n"
     plain = await call(tools, "lean_check", {"source": own, "node_id": parent["id"], "stubs": True})
     assert plain["stubs"] == [] and plain["skeleton_source"] == own
     assert plain["published"]["recorded"] is True
     assert checked["skeleton_source"].startswith("import Mathlib\nimport Commons.N")
+
+
+def node_count(service, exp, agent):
+    return len(service.query_nodes(exp["id"], agent, limit=20)["items"])
+
+
+async def test_stub_headers_turn_auto_bound_names_off(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    # As in Lean: with auto-bound implicits, f0's unknown f binds as a variable and the
+    # statement elaborates (and is false); with them off, Lean refuses it.
+    lean = FakeLean(elaborates=lambda h, n, s: n != "f0" or "autoImplicit false" not in h)
+    workspace = FakeWorkspace(lean)
+    tools = profile(service, agent, context, workspace=workspace)
+    parent = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": parent["id"], **LEAN}
+    )
+    skeleton = (
+        "import Mathlib\n\n"
+        "def f (n : Nat) : Nat := n\n\n"
+        "theorem f0 : f 0 = 1 := sorry\n\n"
+        "theorem trace_add : (1 : Nat) + 1 = 2 := rfl\n"
+    )
+    checked = await call(
+        tools, "lean_check", {"source": skeleton, "node_id": parent["id"], "stubs": True}
+    )
+    assert [(s["lean_name"], s["created"], s["reason"]) for s in checked["stubs"]] == [
+        ("f0", False, "stub_needs_definition_node")
+    ]
+    assert checked["skeleton_source"] == skeleton
+    # A skeleton's own autoImplicit setting never reaches a stub's header.
+    permissive = skeleton.replace("\n\ndef", "\nset_option autoImplicit true\n\ndef", 1)
+    await call(tools, "lean_check", {"source": permissive, "node_id": parent["id"], "stubs": True})
+    batch = [entry for entry in lean.calls if entry[0] == "elaborate_batch"]
+    assert [entry[1] for entry in batch] == [STUB_HEADER, STUB_HEADER]
+
+
+class IllTypedLean(FakeLean):
+    """Every check reports a located Lean error."""
+
+    async def check(self, source, **kwargs):
+        result = await super().check(source, **kwargs)
+        error = {"severity": "error", "line": 7, "col": 42, "text": "type mismatch"}
+        return {**result, "ok": False, "messages": [error]}
+
+
+async def test_stubs_are_made_only_for_a_skeleton_that_could_be_published(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace(IllTypedLean())
+    tools = profile(service, agent, context, workspace=workspace)
+    parent = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": parent["id"], **LEAN}
+    )
+    before = node_count(service, exp, agent)
+    arguments = {"source": SKELETON, "node_id": parent["id"], "stubs": True}
+    ill_typed = await call(tools, "lean_check", arguments)
+    module = "Commons.N" + parent["id"][:8]
+    assert ill_typed["published"] == {"recorded": False, "module": module, "reason": "lean_errors"}
+    assert ill_typed["messages"][0]["text"] == "type mismatch"  # the skeleton's own check
+    assert ill_typed["stubs"] == [] and ill_typed["skeleton_source"] == SKELETON
+    assert ill_typed["claimed"] is False  # a refused publication claims nothing afresh
+    # A node that already holds a complete source takes no partial skeleton: no stubs either.
+    ill = workspace.lean
+    workspace.lean = FakeLean()
+    proved = await call(tools, "lean_check", {"source": PROOF, "node_id": parent["id"]})
+    assert proved["published"]["rank"] == "verified"
+    held = await call(tools, "lean_check", arguments)
+    assert held["published"] == {
+        "recorded": False,
+        "module": module,
+        "reason": "lower_rank",
+        "rank": "verified",
+    }
+    assert held["stubs"] == [] and held["skeleton_source"] == SKELETON
+    assert node_count(service, exp, agent) == before
+    for lean in (ill, workspace.lean):
+        assert "elaborate_batch" not in [entry[0] for entry in lean.calls]
+    edges = service.read_node(parent["id"], agent)["edges_out"]
+    assert not [edge for edge in edges if edge["relation"] == "depends_on"]
+
+
+async def test_an_abandoned_stub_is_replaced_and_an_accepted_one_reused(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace()
+    tools = profile(service, agent, context, workspace=workspace)
+    parent = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": parent["id"], **LEAN}
+    )
+    arguments = {"source": SKELETON, "node_id": parent["id"], "stubs": True}
+    first = await call(tools, "lean_check", arguments)
+    one, two = (stub["node_id"] for stub in first["stubs"])
+    abandon = {"action": "abandon", "node_id": one, "reason": "Wrong route."}
+    await call(tools, "commons_node", abandon)
+    set_status(service, two, "accepted")
+    assert service.read_node(parent["id"], agent)["rests_on"]["stubs"] == [two]
+    again = await call(tools, "lean_check", arguments)
+    fresh, reused = again["stubs"]
+    assert fresh["created"] is True and fresh["node_id"] != one
+    assert reused == {**first["stubs"][1], "created": False}
+    assert f"import {fresh['module']}" in again["skeleton_source"]
+    stubs = service.read_node(parent["id"], agent)["rests_on"]["stubs"]
+    assert sorted(stubs) == sorted([fresh["node_id"], two])  # never the abandoned one
+    # The Lean batch is the skeleton's whole stub list whenever one is made: a replay of the
+    # call elaborates the same file.
+    batch = [entry for entry in workspace.lean.calls if entry[0] == "elaborate_batch"]
+    assert batch[0] == batch[1]
+
+
+async def test_a_replayed_skeleton_call_links_the_stub_a_crash_left_unlinked(lab, monkeypatch):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    parent = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": parent["id"], **LEAN}
+    )
+    link = service.link_nodes
+
+    def crash_before_the_second_link(*arguments):
+        if arguments[-1].endswith(":stub-link:1"):
+            raise RuntimeError("the worker died")
+        return link(*arguments)
+
+    monkeypatch.setattr(service, "link_nodes", crash_before_the_second_link)
+    before = node_count(service, exp, agent)
+    arguments = {"source": SKELETON, "node_id": parent["id"], "stubs": True}
+    with pytest.raises(ExecutionError):
+        await tools.dispatch("lean_check", arguments, "lean_check-replayed")
+    monkeypatch.setattr(service, "link_nodes", link)
+    # The replay sends each stub's create and Lean record with the same inputs as before.
+    replayed = await tools.dispatch("lean_check", arguments, "lean_check-replayed")
+    assert [(s["lean_name"], s["created"]) for s in replayed["stubs"]] == [
+        ("step_one", False),
+        ("step_two", True),
+    ]
+    edges = service.read_node(parent["id"], agent)["edges_out"]
+    assert {e["node_id"] for e in edges} == {s["node_id"] for s in replayed["stubs"]}
+    assert node_count(service, exp, agent) == before + 2
 
 
 async def test_lean_check_reports_the_callers_digest_and_the_expanded_one(lab):

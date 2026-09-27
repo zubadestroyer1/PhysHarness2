@@ -580,7 +580,12 @@ class CommonsMixin:
             ]
 
         sources = [views[i]["source"] for i in rests_on if i in views]
-        stubs = [i for i in rests_on if i in views and views[i]["source"] == "stub"]
+        # An abandoned stub takes no source: it is never left to fill.
+        stubs = [
+            i
+            for i in rests_on
+            if i in views and views[i]["source"] == "stub" and views[i]["status"] != "abandoned"
+        ]
         return {
             "node": self._goal_view(node, receipt),
             "edges_out": edges(edges_out),
