@@ -446,6 +446,45 @@ def test_split_imports_reads_past_comments_and_scope_closers_track_nesting():
     assert scope_closers(A, nested) == ["end", "end Bar", "end Foo"]
 
 
+def test_only_plain_module_names_make_an_import_line():
+    # A line with anything but module names stays in place, where Lean judges it.
+    for line in ("import Mathlib set_option pp.all true", "import «Mathlib»", "import"):
+        text = f"import {A}\n{line}\ntheorem t : True := trivial\n"
+        assert split_imports(text) == ([A], [], [line, "theorem t : True := trivial", ""], 1)
+    # An unterminated comment after the imports keeps the caller's own lines.
+    text = f"import {A}\n/- open\ntheorem t : False := sorry\n"
+    assert split_imports(text)[2:] == (["/- open", "theorem t : False := sorry", ""], 1)
+
+
+def test_scope_keywords_are_found_after_lean_notation():
+    # `ᵀ` is a word character to Python but notation to Lean, which runs the `end`.
+    assert scope_closers(A, "section\ndef y := Aᵀend\n") == []
+    with pytest.raises(HarnessError) as refused:
+        scope_closers(A, "def y := Aᵀend\n")
+    assert refused.value.code == "COMMONS_MODULE_REFUSED"
+
+
+def test_the_exact_size_is_checked_after_the_wrappers_are_added():
+    a = module(A, "theorem a : True := trivial\n")
+    with pytest.raises(HarnessError) as big:
+        inline_commons(f"import {A}\n", resolver(a), max_bytes=40)
+    flat = inline_commons(f"import {A}\n", resolver(a), max_bytes=30_000)
+    assert big.value.code == "COMMONS_EXPANSION_TOO_LARGE"
+    assert big.value.details == {"bytes": len(flat.source.encode()), "limit": 40}
+
+
+def test_refusals_say_what_to_do():
+    loop = resolver(module(A, f"import {B}\n"), module(B, f"import {A}\n"))
+    chain = [
+        (loop, "republish"),
+        (resolver(module(A, "#exit\n")), "republish"),
+    ]
+    for resolve, fragment in chain:
+        with pytest.raises(HarnessError) as refused:
+            inline_commons(f"import {A}\n", resolve, max_bytes=30_000)
+        assert fragment in refused.value.remediation.lower()
+
+
 def test_expand_commons_reads_live_sources_stubs_and_flags_stale_ones(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     used = lemma(service, exp, alpha, "Trace", "used", **LEAN)

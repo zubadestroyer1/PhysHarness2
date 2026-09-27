@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from .commons_models import CLOSED_STATUSES
 from .domain import utcnow
 from .errors import HarnessError
-from .orchestration.lean_session import lean_code
+from .orchestration.lean_session import _ID_FIRST, _command_word, lean_code
 from .worker_authority import current_worker_effects
 
 RANKS = {"partial": 1, "complete": 2, "verified": 3}
@@ -28,7 +28,10 @@ MODULE = re.compile(r"Commons\.N([0-9a-f]{8}|[0-9a-f]{12}|[0-9a-f]{16})")
 SKIPPED_IMPORT_EDGES = frozenset({"DEPENDENCY_CYCLE", "SELF_EDGE"})
 COMMONS_IMPORT = re.compile(r"Commons\.N[0-9a-f]{8}(?:[0-9a-f]{4}){0,2}")
 MAX_COMMONS_MODULES = 200
-_SCOPE = re.compile(r"(?<![\w.'!?])(namespace|section|mutual|end)(?![\w'!?])")
+_MODULE_NAME = re.compile(r"[A-Za-z_][\w.']*")
+# Lean's identifier characters, not Python's \w: after notation such as `ᵀ`, Lean reads `end`.
+_ID_REST = _ID_FIRST + "0-9'\u2080-\u2089\u2090-\u209c\u1d62-\u1d6a"
+_SCOPE = re.compile(rf"(?<![{_ID_REST}.!?])(namespace|section|mutual|end)(?![{_ID_REST}!?])")
 _SCOPE_NAME = re.compile(r"[ \t]+([\w.'!?]+)")
 
 
@@ -123,24 +126,30 @@ def source_state(node: dict) -> str:
     return "none"
 
 
+def _module_name(token):
+    return _MODULE_NAME.fullmatch(token) is not None and not _command_word(token)
+
+
 def split_imports(source):
-    """(commons modules, environment import lines, the lines from the first non-import
-    line on, that line's 0-based index). Blank lines and comments before it are skipped."""
-    lines, modules, env = source.split("\n"), [], []
+    """(commons modules, environment import lines, the lines after the imports, the first
+    such line's 0-based index). An import line holds only module names; any other line, a
+    comment or blank line aside, ends the imports and stays where it is."""
+    lines, modules, env, end = source.split("\n"), [], [], 0
     # Blanked comments keep their newlines, so code lines match source lines up to the
     # first non-import line. A source too nested to scan is read as written.
     for index, line in enumerate((lean_code(source) or source).split("\n")):
-        code = line.split("--", 1)[0].strip()
-        if not code:
+        words = line.split("--", 1)[0].split()
+        if not words:
             continue
-        if not code.startswith("import "):
+        names = words[1:]
+        if words[0] != "import" or not names or not all(map(_module_name, names)):
             return modules, env, lines[index:], index
-        names = code.split()[1:]
         modules += [n for n in names if COMMONS_IMPORT.fullmatch(n) and n not in modules]
         others = [n for n in names if not COMMONS_IMPORT.fullmatch(n)]
         if others:
             env.append("import " + " ".join(others))
-    return modules, env, [], len(lines)
+        end = index + 1
+    return modules, env, lines[end:], end
 
 
 def scope_closers(module, source):
@@ -155,11 +164,18 @@ def scope_closers(module, source):
                     f"{module} closes a scope it never opened.",
                     status=422,
                     details={"module": module},
+                    remediation=_REPUBLISH,
                 )
             stack.pop()
         else:
             stack.append(label.group(1) if label and match.group(1) != "mutual" else "")
     return [f"end {label}".rstrip() for label in reversed(stack)]
+
+
+_REPUBLISH = (
+    "Republish the module without #exit and with every end matching a namespace or section "
+    "it opened, or do not import it."
+)
 
 
 def _too_large(size, limit):
@@ -197,12 +213,15 @@ def inline_commons(source, resolve, *, max_bytes):
                 f"{name} imports itself through {', '.join(active)}.",
                 status=422,
                 details={"modules": [*active, name]},
+                remediation="Republish one module of the cycle without the import that closes "
+                "it; a source that imports its own module is no longer published.",
             )
         if len(done) + len(active) >= MAX_COMMONS_MODULES:
             raise HarnessError(
                 "COMMONS_EXPANSION_LIMIT",
                 f"A closure inlines at most {MAX_COMMONS_MODULES} modules.",
                 status=422,
+                remediation="Import fewer modules, or copy the few lemmas you need into the file.",
             )
         active.append(name)
         found = resolve(name)
@@ -212,6 +231,7 @@ def inline_commons(source, resolve, *, max_bytes):
                 f"{name} contains #exit.",
                 status=422,
                 details={"module": name},
+                remediation=_REPUBLISH,
             )
         parts = split_imports(found.source)
         closers = scope_closers(name, found.source)

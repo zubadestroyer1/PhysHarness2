@@ -1294,6 +1294,7 @@ async def test_peer_import_expands_and_records_a_depends_on_edge(lab):
         "closure_complete": True,
         "stubs": [],
         "stale": [],
+        "expanded_sha256": sha(flat),
     }
     assert checked["published"]["rank"] == "verified"
     read = service.read_node(uses["id"], agent)
@@ -1390,6 +1391,121 @@ async def test_submit_with_commons_imports_verifies_one_flattened_artifact(lab):
     target = {"path": "P.lean", "sha256": "e" * 64, "target_digest": exp["target_digest"]}
     assert [name for name, _ in plain.calls] == ["read", "submit"]
     assert plain.calls[-1] == ("submit", target)
+
+
+async def test_a_source_that_imports_its_own_module_is_not_published(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    own = await call(tools, "commons_node", lemma_args(title="Own", statement="Own."))
+    other = await call(tools, "commons_node", lemma_args(title="Other", statement="Other."))
+    module, other_module = (
+        service.read_node(node["id"], agent)["node"]["lean_module"] for node in (own, other)
+    )
+    first = "import Mathlib\n\ntheorem a : True := trivial\n"
+    published = await call(tools, "lean_check", {"source": first, "node_id": own["id"]})
+    assert published["published"]["recorded"] is True
+    refused = {"recorded": False, "module": module, "reason": "imports_own_module"}
+    # Building on the node's own current source would make its module import itself.
+    selfish = f"import {module}\n\ntheorem b : True := a\n"
+    checked = await call(tools, "lean_check", {"source": selfish, "node_id": own["id"]})
+    assert checked["complete"] is True and checked["published"] == refused
+    # So would a cycle through another node's current source.
+    uses = f"import {module}\n\ntheorem c : True := a\n"
+    used = await call(tools, "lean_check", {"source": uses, "node_id": other["id"]})
+    assert used["published"]["recorded"] is True
+    back = f"import {other_module}\n\ntheorem d : True := c\n"
+    cyclic = await call(tools, "lean_check", {"source": back, "node_id": own["id"]})
+    assert cyclic["published"] == refused
+    # Both modules still import for everyone.
+    peer, peer_context = running(service, author, exp, beta.branch_id)
+    peer_tools = profile(service, peer, peer_context, workspace=FakeWorkspace())
+    both = await call(peer_tools, "lean_check", {"source": f"import {other_module}\n"})
+    assert both["commons"]["modules"] == [module, other_module]
+
+
+async def test_lean_check_reports_the_callers_digest_and_the_expanded_one(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    _, _, module = await published_lemma(service, author, exp, alpha.branch_id)
+    agent, context = running(service, author, exp, beta.branch_id)
+    workspace = FakeWorkspace()
+    tools = profile(service, agent, context, workspace=workspace)
+    source = f"import {module}\n\ntheorem uses : (1 : Nat) + 1 = 2 := trace_add\n"
+    checked = await call(tools, "lean_check", {"source": source})
+    # The caller's digest is what submit_for_verification captures.
+    assert checked["source_sha256"] == sha(source)
+    assert checked["commons"]["expanded_sha256"] == sha(workspace.lean.sources[-1])
+
+
+async def test_submit_flags_a_stale_import_on_the_receipt(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    alpha_tools, lemma_id, module = await published_lemma(service, author, exp, alpha.branch_id)
+    restated = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    await call(
+        alpha_tools,
+        "commons_node",
+        {"action": "set_lean_statement", "node_id": lemma_id, **restated},
+    )
+    agent, context = running(service, author, exp, beta.branch_id)
+    text = f"import {module}\n\ntheorem target : (1 : Nat) + 1 = 2 := trace_add\n"
+    tools = profile(service, agent, context, workspace=CapturingWorkspace(service, text))
+    submitted = await call(
+        tools, "submit_for_verification", {"path": "Proof.lean", "sha256": sha(text)}
+    )
+    receipt = service.get_record("verification", submitted["receipt_id"], agent)
+    assert [entry["stale"] for entry in receipt["commons_modules"]] == [True]
+
+
+async def test_submit_of_a_missing_path_keeps_the_captures_error_code(lab, monkeypatch):
+    monkeypatch.setitem(workspace_tools_module._CHECKER_SELF_TESTS, "qualified-template", True)
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+
+    async def missing(path, **kwargs):
+        # What the local Docker and E2B helpers raise for a missing workspace path.
+        raise ExecutionError("WORKSPACE_TRANSFER_REJECTED", "Guest refused a missing path")
+
+    def vm(*, journal):
+        provider = FakeVM(journal, [])
+        provider.download_file = provider.capture_file = missing
+        return provider
+
+    broker = WorkspaceBroker(
+        service,
+        actor=OPERATOR,
+        task_id=context["task_id"],
+        holder=context["holder"],
+        fence=context["fence"],
+        provider_factory=vm,
+        provider_spec={
+            "provider": "e2b",
+            "template_id": "qualified-template",
+            "timeout_seconds": 60,
+        },
+    )
+    workspace = WorkspaceTools(
+        broker,
+        WorkspacePolicy(
+            template_id="qualified-template",
+            environment_digest="a" * 64,
+            qualification_report_sha256="a" * 64,
+            timeout_seconds=60,
+            cost_bound_usd="0.2",
+            cost_source="synthetic test bound",
+        ),
+    )
+    tools = profile(service, agent, context, workspace=workspace)
+    request = {"path": "Missing.lean", "sha256": "e" * 64}
+    refused = await call(tools, "submit_for_verification", request)
+    assert refused["error"]["code"] == "WORKSPACE_TRANSFER_REJECTED"
+    # The same code the capture gave before the peek existed, and the VM stays usable.
+    with pytest.raises(HarnessError) as captured:
+        await workspace.submit_workspace_candidate(
+            {**request, "target_digest": exp["target_digest"]}, "legacy", agent
+        )
+    assert captured.value.code == "WORKSPACE_TRANSFER_REJECTED"
+    assert broker.inspect(workspace.workspace["id"])["status"] == "ready"
+    assert service.list_records("verification", author, exp["id"]) == []
 
 
 async def test_submit_refuses_an_incomplete_closure(lab):

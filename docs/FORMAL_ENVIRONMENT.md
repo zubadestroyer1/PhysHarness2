@@ -282,7 +282,12 @@ If a challenge imports another module, extend the builder's explicit roots, rebu
 that closure, and separately qualify the changed image. Never allow Lake to retrieve a
 missing dependency during checking. A society submission that imports commons node
 modules (`import Commons.N…`) is flattened by the platform into one self-contained
-candidate before verification, so the verifier never resolves a `Commons` import.
+candidate before verification, so the verifier never resolves a `Commons` import. On
+`physharness-pilot` with the workbench-v2 digest, after the full pre-warm, a flattened
+two-module `Mathlib.Data.Real.Basic` file (sections, a closed namespace and hoisted
+imports) compiled in 0.8 s and passed the statement check in 2.9 s, with no OOM
+(`tests/test_real_commons_flattening.py`). The independent verifier has not yet run on a
+flattened candidate; the first A/B smoke run does that.
 
 ## Declaration audit
 

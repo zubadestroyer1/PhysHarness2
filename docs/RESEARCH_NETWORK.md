@@ -214,9 +214,12 @@ tools, the prompts and the delivery shapes.
     (`theorem <lean_name> <lean_statement> := sorry`) for a node with only an elaborated
     Lean statement. `lean_check` checks the flattened file (the statement check too),
     reports lines on the caller's text (a line inside a module names the module), and
-    returns `commons`: the `modules`, `closure_complete`, the `stubs`, and the `stale`
-    nodes, whose source proves an older statement than the node's current one. The
-    published source stays the caller's own text, and its direct imports are recorded.
+    returns `commons`: the `modules`, `closure_complete`, the `stubs`, the `stale`
+    nodes (whose source proves an older statement than the node's current one) and the
+    flattened file's `expanded_sha256`; `source_sha256` stays the caller's file's. The
+    published source stays the caller's own text, and its direct imports are recorded. A
+    file whose imports reach the node's own module is not published
+    (`imports_own_module`): the module would import itself and fail every importer.
   - `submit_for_verification` flattens an importing file the same way, so the verifier
     still checks one `Solution.lean`. The flattened artifact's provenance lists the
     inlined modules (descriptive only). The receipt's `commons_modules`, which only this
@@ -224,6 +227,9 @@ tools, the prompts and the delivery shapes.
     flag. Every imported module must have a complete or verified source
     (`COMMONS_CLOSURE_INCOMPLETE`). Import cycles, more than 200 modules, a module with
     `#exit` or an unopened `end`, and an expansion over the size limit are refused.
+  - An opt-in real-image test (`tests/test_real_commons_flattening.py`) compiles a
+    flattened two-module file in the workbench and passes the statement check on it. The
+    independent verifier's first run on a flattened candidate is the first A/B smoke run.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL
   (default 900 s) unless renewed by activity. Several branches may hold one claim, and
   the frontier shows the count; a claim's result lists its co-claimants. The goal takes

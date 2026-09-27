@@ -16,6 +16,7 @@ fatal schema failure. Arrays keep ``maxItems``.
 """
 
 import asyncio
+import hashlib
 import inspect
 import logging
 from contextlib import contextmanager
@@ -723,11 +724,14 @@ def society_tools(
             checked = await lean().check(expansion.source, automate=automate, operation_id=key)
             result = remap(checked, expansion)
             if expansion.modules:
+                # The caller's digest is what submit_for_verification captures.
+                result["source_sha256"] = hashlib.sha256(source.encode("utf-8")).hexdigest()
                 result["commons"] = {
                     "modules": [module.name for module in expansion.modules],
                     "closure_complete": expansion.closure_complete,
                     "stubs": list(expansion.stubs),
                     "stale": [module.node_id for module in expansion.modules if module.stale],
+                    "expanded_sha256": checked["source_sha256"],
                 }
             return result, expansion
 
@@ -752,6 +756,9 @@ def society_tools(
             reads the flattened file; the published source is the caller's own text."""
             module = node_module(node)
             refusal = _publication_refusal(source, node, result)
+            if refusal is None and module in {imported.name for imported in expansion.modules}:
+                # Published, the module would import itself and fail every importer.
+                refusal = "imports_own_module"
             if refusal is not None:
                 return {"recorded": False, "module": module, "reason": refusal}, None
             header, name, statement = (
