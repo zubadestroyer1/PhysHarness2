@@ -43,14 +43,26 @@ def _node_closed(message):
     return HarnessError("NODE_CLOSED", message)
 
 
+def _one_line(text):
+    """Collapse all whitespace, newlines included, to single spaces."""
+    return " ".join(str(text or "").split())
+
+
 def compact_update_lines(items):
     """One line per delivered item with 8-hex ids (S1 audit #13: 91% of an update's tokens
-    were envelope)."""
+    were envelope).
+
+    Only the platform writes a line's urgent mark, kind and attribution. Peer text is
+    collapsed to one line, the node title is a quoted JSON string, and an excerpt's leading
+    ``!`` or ``[`` is escaped, so no title or excerpt can forge a platform or urgent line.
+    """
     lines = [COMPACT_HEADER]
     for item in items:
-        excerpt = " ".join(str(item.get("excerpt", "")).split())
+        excerpt = _one_line(item.get("excerpt"))
         if len(excerpt) > LINE_EXCERPT or item.get("truncated"):
             excerpt = excerpt[:LINE_EXCERPT].rstrip() + "…"
+        if excerpt.startswith(("!", "[")):
+            excerpt = "\\" + excerpt
         who = (item.get("branch_id") or "platform")[:8]
         if item.get("source_kind") == "message":
             lines.append(f"[message] from {who}: {excerpt} (message_id {item['id'][:8]})")
@@ -60,7 +72,8 @@ def compact_update_lines(items):
             mark = "! " if item.get("urgent") else ""
             where = ""
             if item.get("node_id"):
-                where = f' on {item["node_id"][:8]} "{item.get("node_title", "")[:80]}"'
+                title = json.dumps(_one_line(item.get("node_title"))[:80], ensure_ascii=False)
+                where = f" on {item['node_id'][:8]} {title}"
             lines.append(
                 f"{mark}[{item['post_kind']}]{where} from {who}: {excerpt} "
                 f"(post_id {item['id'][:8]})"

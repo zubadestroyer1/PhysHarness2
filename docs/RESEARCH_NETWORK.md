@@ -93,8 +93,10 @@ else is pending, so a run of skipped events never starves later updates. A build
 receives each batch as one header line, saying the lines are unverified peer data, and
 one line per item: the post kind, the node's 8-hex id and title, the author branch's
 8-hex id, an excerpt of at most 200 characters, and the 8-hex post or message id that
-`commons_read` accepts. An urgent line starts with `!`. Referees keep the fenced JSON
-envelope.
+`commons_read` accepts. An urgent line starts with `!`. Only the platform writes a line's
+urgent mark, kind and attribution: peer text is collapsed to one line, the node title is
+a quoted JSON string, and an excerpt's leading `!` or `[` is escaped. Referees keep the
+fenced JSON envelope.
 
 If access to an update is revoked, the inbox replaces it with an explicit withdrawal
 notice containing no private source text or IDs. An operator-only audit record retains
