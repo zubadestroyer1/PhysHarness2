@@ -129,6 +129,7 @@ class ContextBudget(StrictModel):
     elide_min_chars: int = Field(default=4000, ge=500, le=1_000_000)
     elide_after_turns: int = Field(default=5, ge=1, le=1000)
     elide_every_turns: int = Field(default=10, ge=1, le=1000)
+    # A truncated view may exceed this by its ~150-character envelope (docs/EXECUTION.md).
     max_output_chars: int | None = Field(default=24_000, ge=20_000, le=1_000_000)
 
 

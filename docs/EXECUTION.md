@@ -255,7 +255,8 @@ native state are exactly as described above. The fields and their defaults are:
 - `elide_min_chars`: 4,000 (at least 500);
 - `elide_after_turns`: 5 (at least 1);
 - `elide_every_turns`: 10 (at least 1);
-- `max_output_chars`: 24,000 (at least 20,000), or `null` for no cap.
+- `max_output_chars`: 24,000 (at least 20,000), or `null` for no cap. A truncated view may exceed
+  it by its envelope, about 150 characters plus the tool name and call ID.
 
 The `elide_*` fields are validated and stored, but block elision does not apply them yet. The
 executor passes `ResponsesRuntime(context_budget=...)` only when the field is set. `start` stores
