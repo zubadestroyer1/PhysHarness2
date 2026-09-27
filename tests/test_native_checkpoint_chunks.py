@@ -15,7 +15,13 @@ from physharness.domain import (
     digest_json,
 )
 from physharness.errors import HarnessError
-from physharness.execution import ModelConfig, RuntimeCheckpoint, RuntimeLimits, RuntimeSession
+from physharness.execution import (
+    ModelConfig,
+    RuntimeCheckpoint,
+    RuntimeLimits,
+    RuntimeSession,
+    checkpoint_chunks,
+)
 from physharness.execution.checkpoint_chunks import decode, encode
 from physharness.orchestration.research_worker import CanonicalRuntimeStore
 from physharness.reproduction import validate_export
@@ -70,6 +76,34 @@ def chunk_digests(state):
         "chunks": order,
         "manifest": hashlib.sha256(canonical_json(manifest).encode()).hexdigest(),
     }
+
+
+def nested_state(shape, depth):
+    """A state nested ``depth`` levels deep whose every level is chunked, not inlined."""
+    node = "z" * 20000
+    for _ in range(depth):
+        if shape == "list":
+            node = [node, *range(300)]  # 38 pages, so one index level
+        else:
+            width = 40 if shape == "map" else 0  # 41 keys split into dict branches
+            node = {**{f"k{i}": i for i in range(width)}, "child": node}
+    return {"doc": node}
+
+
+def encodes(state):
+    try:
+        encode_to_memory(state)
+    except HarnessError:
+        return False
+    return True
+
+
+def decodes(manifest, chunks, checkpoint):
+    try:
+        raw = canonical_json(manifest).encode()
+        return decode(raw, lambda ref: chunks[ref["sha256"]]) == checkpoint
+    except HarnessError:
+        return False
 
 
 @pytest.fixture
@@ -172,6 +206,54 @@ def test_encoder_is_byte_identical_to_golden_and_round_trips():
             )
             == checkpoint
         )
+
+
+@pytest.mark.parametrize("shape", ["map", "single_key", "list"])
+def test_encoder_refuses_exactly_the_depths_decode_refuses(shape, monkeypatch):
+    accepted = {depth: encodes(nested_state(shape, depth)) for depth in range(4, 34)}
+    assert set(accepted.values()) == {True, False}
+    for depth, ok in accepted.items():
+        # Build the same graph with the depth bound lifted, then ask decode's real bound.
+        with monkeypatch.context() as unbounded:
+            unbounded.setattr(checkpoint_chunks, "MAX_DEPTH", 10**6)
+            checkpoint, manifest, chunks, _ = encode_to_memory(nested_state(shape, depth))
+        assert decodes(manifest, chunks, checkpoint) == ok, (shape, depth)
+
+
+def test_encoder_refuses_exactly_the_bytes_decode_refuses(monkeypatch):
+    state = golden_cases()["paged_list"]
+    checkpoint, manifest, chunks, order = encode_to_memory(state)
+    total = len(canonical_json(manifest).encode()) + sum(len(chunks[d]) for d in order)
+    # The band: the whole checkpoint fits the bound while its graph does not.
+    assert len(canonical_json(checkpoint.model_dump(mode="json")).encode()) < total - 1
+    for limit, ok in ((total, True), (total - 1, False)):
+        monkeypatch.setattr(checkpoint_chunks, "MAX_BYTES", limit)
+        assert encodes(state) == ok
+        assert decodes(manifest, chunks, checkpoint) == ok
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bound", ["depth", "bytes"])
+async def test_save_refuses_an_unloadable_graph_and_keeps_the_last_good_checkpoint(
+    native_store, monkeypatch, bound
+):
+    service, actor, _, _, store, session = native_store
+    first = RuntimeCheckpoint.build(session, {"input": ["first"]})
+    await store.save(first)
+    before = (service.list_records("session", actor)[0], service.list_records("artifact", actor))
+    state = nested_state("map", 20) if bound == "depth" else golden_cases()["paged_list"]
+    checkpoint = RuntimeCheckpoint.build(session, state)
+    if bound == "bytes":
+        whole = canonical_json(checkpoint.model_dump(mode="json")).encode()
+        monkeypatch.setattr(checkpoint_chunks, "MAX_BYTES", len(whole))
+    with pytest.raises(HarnessError) as caught:
+        await store.save(checkpoint)
+    assert caught.value.code == "NATIVE_CHECKPOINT_INVALID"
+    assert (
+        service.list_records("session", actor)[0],
+        service.list_records("artifact", actor),
+    ) == before
+    assert await store.load(session.id) == first
 
 
 @pytest.mark.asyncio

@@ -99,6 +99,11 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
     round-trip test pin the encoder instead. Sizes are measured in one pass and
     cached per container, so each value is serialized about once, not once per
     level of nesting.
+
+    ``depth`` below is the depth at which ``decode`` will read each value or node,
+    and the graph's bytes are summed as ``decode`` sums them. A save therefore
+    refuses exactly what a load would refuse, and never publishes an unloadable
+    manifest.
     """
     sizes: dict[int, int] = {}
     # Keep one session dump alive for the whole call: cached sizes are keyed by id.
@@ -111,20 +116,22 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
     }
     if _serialized_size(whole, sizes) > MAX_BYTES:
         raise _invalid("Native checkpoint exceeds the write bound.")
-    node_count = 0
+    node_count = graph_bytes = 0
 
     def store(node: dict) -> dict:
-        nonlocal node_count
+        nonlocal node_count, graph_bytes
         node_count += 1
         if node_count > MAX_NODES:
             raise _invalid("Native checkpoint graph exceeds the node bound.")
         content = canonical_json(node)
-        if len(content.encode("utf-8")) > MAX_CHUNK_BYTES:
+        size = len(content.encode("utf-8"))
+        if size > MAX_CHUNK_BYTES:
             raise _invalid("Native checkpoint chunk exceeds the artifact bound.")
+        graph_bytes += size
         artifact = put(content)
         return {"artifact_id": artifact["id"], "sha256": artifact["sha256"]}
 
-    def paged(kind: str, entries: list, page_size: int) -> dict:
+    def paged(kind: str, entries: list, page_size: int, depth: int) -> dict:
         leaves = [
             store({"type": kind, "items": entries[i : i + page_size]})
             for i in range(0, len(entries), page_size)
@@ -138,8 +145,9 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
                 for i in range(0, len(leaves), INDEX_PAGE)
             ]
             level += 1
-            if level > MAX_DEPTH:
-                raise _invalid("Native checkpoint index is too deep.")
+        # Decode reads the pages one level below this header, plus one per index level.
+        if depth + 1 + level > MAX_DEPTH:
+            raise _invalid("Native checkpoint index is too deep.")
         return store(
             {
                 "type": "sequence",
@@ -150,12 +158,29 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
             }
         )
 
+    def leaf_nibbles(digests: list[str], nibble: int) -> dict[str, int]:
+        """The nibble of the leaf holding each key digest, split exactly as ``branch``."""
+        if len(digests) <= LIST_PAGE or nibble >= 64:
+            return dict.fromkeys(digests, nibble)
+        buckets: dict[str, list] = {}
+        for key_digest in digests:
+            buckets.setdefault(key_digest[nibble], []).append(key_digest)
+        return {
+            key_digest: leaf
+            for group in buckets.values()
+            for key_digest, leaf in leaf_nibbles(group, nibble + 1).items()
+        }
+
     def mapping(item: dict, depth: int) -> dict:
+        digests = {key: hashlib.sha256(key.encode()).hexdigest() for key in item}
+        # Decode reads each value one level below its leaf, and each branch adds a level.
+        # Values are still encoded in key order, so chunks are stored in the same order.
+        leaves = leaf_nibbles(list(digests.values()), 0)
         entries = [
             (
                 key,
-                value(entry, depth + 1, atom_threshold=1024),
-                hashlib.sha256(key.encode()).hexdigest(),
+                value(entry, depth + leaves[digests[key]] + 1, atom_threshold=1024),
+                digests[key],
             )
             for key, entry in item.items()
         ]
@@ -184,7 +209,7 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
 
         return branch(entries, 0)
 
-    def value(item: Any, depth: int = 0, atom_threshold: int = LEAF_BYTES) -> dict:
+    def value(item: Any, depth: int, atom_threshold: int = LEAF_BYTES) -> dict:
         if depth > MAX_DEPTH:
             raise _invalid("Native checkpoint structure is too deep.")
         byte_size = _serialized_size(item, sizes)
@@ -193,7 +218,8 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
         if byte_size <= LEAF_BYTES:
             return {"atom": store({"type": "atom", "value": item})}
         if isinstance(item, list):
-            return {"ref": paged("list", [value(entry, depth + 1) for entry in item], LIST_PAGE)}
+            entries = [value(entry, depth + 1) for entry in item]
+            return {"ref": paged("list", entries, LIST_PAGE, depth)}
         if isinstance(item, dict):
             return {"map": mapping(item, depth)}
         if isinstance(item, str):
@@ -201,7 +227,10 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
             # both the inline and artifact limits even for four-byte scalars.
             return {
                 "ref": paged(
-                    "text", [item[i : i + 2048] for i in range(0, len(item), 2048)], LIST_PAGE
+                    "text",
+                    [item[i : i + 2048] for i in range(0, len(item), 2048)],
+                    LIST_PAGE,
+                    depth,
                 )
             }
         raise _invalid("Unsupported large native checkpoint value.")
@@ -209,17 +238,21 @@ def encode(checkpoint: RuntimeCheckpoint, put: Callable[[str], dict]) -> dict:
     root = store(
         {
             "type": "checkpoint",
-            "session": value(session_value),
-            "native_state": value(checkpoint.native_state),
+            "session": value(session_value, 1),
+            "native_state": value(checkpoint.native_state, 1),
         }
     )
-    return {
+    manifest = {
         "format": FORMAT,
         "version": 2,
         "session_id": checkpoint.session.id,
         "state_digest": checkpoint.state_digest,
         "root": root,
     }
+    # Decode bounds the manifest plus every chunk it reads, one read per reference.
+    if len(canonical_json(manifest).encode("utf-8")) + graph_bytes > MAX_BYTES:
+        raise _invalid("Native checkpoint graph exceeds the byte bound.")
+    return manifest
 
 
 def decode(
