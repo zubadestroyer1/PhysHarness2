@@ -520,7 +520,7 @@ async def test_find_declaration_surfaces_library_notes_on_a_weak_hit(lab):
 
 def review_of(service, author, exp, node, requester, *, lean=None):
     """A referee of ``node`` requested by ``requester``, leased, with its tool profile."""
-    requested = service.request_review(node["id"], "informal", requester, f"review-{new_id()}")
+    requested = service.request_review(node["id"], requester, f"review-{new_id()}")
     task = service.get_record("task", requested["review_task_id"], author)
     referee, context = running(service, author, exp, requested["branch_id"], task=task)
     return profile(service, referee, context, workspace=FakeWorkspace(lean=lean))
@@ -639,7 +639,13 @@ async def test_a_referee_lean_check_keeps_only_its_own_declarations_axioms(lab):
     assert published["published"]["recorded"] is True
     module = "Commons.N" + node["id"][:8]
     source = f"import Mathlib\nimport {module}\n\ntheorem uses : (1 : Nat) + 1 = 2 := trace_add\n"
-    referee = review_of(service, author, exp, node, beta, lean=AxiomLean())
+    # A compiled node needs no referee (REVIEW_UNNEEDED), so the referee reviews a plan.
+    plan = await call(
+        tools,
+        "commons_node",
+        lemma_args(title="Plan using the lemma", statement="Apply the trace lemma twice."),
+    )
+    referee = review_of(service, author, exp, plan, beta, lean=AxiomLean())
     checked = await call(referee, "lean_check", {"source": source})
     assert checked["axioms"] == {"uses": ["propext"]} and checked["axioms_withheld"] == 2
     assert "SYSTEM" not in json.dumps(checked)
