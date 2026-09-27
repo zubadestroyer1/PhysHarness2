@@ -153,7 +153,7 @@ async def test_tool_turn_save_sequence_is_pinned(tmp_path):
         "input_tokens", "responses", "input_tokens", "responses"]
     await client.close()
 ```
-- [ ] **Step 2: Record the baseline.** Run `... -m pytest tests/test_execution_responses.py tests/test_execution_context.py tests/test_research_context_policy.py tests/test_society_scaffolding.py tests/test_research_loop_integration.py -q`. It should PASS on the unchanged code; record the count. The rate-limit tests already on main (`test_rate_limit_refusal_resends_the_same_generation`, `test_rate_limit_give_up_releases_the_reservation_at_zero`, `test_interrupting_a_rate_limit_wait_is_definite`, `test_rate_limited_token_count_is_resent` and the team-stop test in `test_research_loop_integration.py`) pin `_resend_rate_limited` and `_abandon_refused` through the split.
+- [ ] **Step 2: Record the baseline.** Run `... -m pytest tests/test_execution_responses.py tests/test_execution_context.py tests/test_research_context_policy.py tests/test_society_scaffolding.py tests/test_research_loop_integration.py -q`. It should PASS on the unchanged code; record the count. The rate-limit tests already on main (`test_rate_limit_refusal_resends_the_same_generation`, `test_rate_limit_give_up_releases_the_reservation_at_zero`, `test_interrupting_a_rate_limit_wait_is_definite`, `test_rate_limited_token_count_is_resent`, plus `test_rate_limit_give_up_releases_the_model_reservation`, `test_rate_limit_resends_one_operation_until_giving_up` and `test_stopping_the_team_during_a_rate_limit_wait_releases_the_reservation` in `test_research_loop_integration.py`) pin `_resend_rate_limited` and `_abandon_refused` through the split.
 - [ ] **Step 3: Refactor.**
   1. Add `from dataclasses import dataclass` to the imports. Define `_Prepared` and `_Sent` (one-line docstrings) right after `lineage_token_usage` (lines 113–119). Use `kw_only=True`, so later tasks can add defaulted fields in any order; every construction uses keywords.
   2. `_prepare_request(self, session, state, client, deadline)` is lines 754–841, moved verbatim: from `params = dict(session.model.parameters)` through the `output_reservation` assignment. It takes `deadline` because the count already resends through `_resend_rate_limited(partial(client.responses.input_tokens.count, ...), deadline)`.
@@ -191,26 +191,26 @@ async def test_tool_turn_save_sequence_is_pinned(tmp_path):
 Main already has the rest of #6, so this task neither re-implements nor re-tests it: the resend of a refused count or create, the give-up at the deadline (a definite, retryable `PROVIDER_RATE_LIMITED`), `_abandon_refused` (emit `generation_aborted(reason="rate_limited")`, then clear `pending_operation`) and abandon-on-interrupt. Main's tests `test_rate_limit_give_up_releases_the_reservation_at_zero`, `test_interrupting_a_rate_limit_wait_is_definite` and `test_rate_limited_token_count_is_resent` pin that behaviour. This task adds telemetry only, through an `on_wait` hook on `_resend_rate_limited`.
 
 **Files:**
-- Modify `responses.py`: the imports and a logger; `_rate_limit_wait` (45–64); `_resend_rate_limited` (67–103); new header parsing; `_Prepared`, `_Sent`, `_prepare_request` (the count call), `_send` (the create call) and the `usage` emit.
+- Modify `responses.py`: the imports and a logger; `_rate_limit_wait` (45–64); `_resend_rate_limited` (67–103); new header parsing; `_Sent`, `_prepare_request` (the count call), `_send` (the create call) and the `usage` emit.
 - Modify `docs/EXECUTION.md:101-105`.
 - Test in `tests/test_execution_responses.py`.
 
 **Interfaces:**
-- Consumes `_prepare_request`, `_send`, `_Prepared` and `_Sent` from Task 1. Also consumes main's `_resend_rate_limited`, `_abandon_refused`, `rate_limited_client(replies, requests, counts=())` and `refusal(code)`.
+- Consumes `_prepare_request`, `_send` and `_Sent` from Task 1. Also consumes main's `_resend_rate_limited`, `_abandon_refused`, `rate_limited_client(replies, requests, counts=())` and `refusal(code)`.
 - Produces:
   - `_rate_limit_wait(error, fallback) -> tuple[float, str] | None`, where the source is `retry-after-ms`, `retry-after` or `backoff`;
   - `_resend_rate_limited(send, deadline, *, operation_id=None, abandon=None, on_wait=None)`. When given, `on_wait(attempt, seconds, source, error)` performs each wait in place of `asyncio.sleep(seconds)`, under the same abandon-on-interrupt guard. Task 7 re-queues through it;
   - `_duration_seconds(value) -> float | None`;
   - `_rate_limit_headers(error) -> dict`;
   - `ResponsesRuntime._emit_telemetry(kind, session, operation_id=None, **payload)`;
-  - `ResponsesRuntime._throttle_hook(session, operation_id, stage, waits) -> on_wait`. The hook appends each wait to `waits`, emits `provider_throttled`, then sleeps;
-  - `_Prepared.rate_limit_waits: tuple[float, ...] = ()` (the count's waits), plus `_Sent.rate_limit_waits: int = 0` and `_Sent.rate_limit_wait_seconds: float = 0.0` (the turn's count and create together);
-  - the event `provider_throttled`, with `stage` (`count` or `create`), `attempt`, `wait_seconds`, `wait_source` and optionally `limit_tokens`, `remaining_tokens`, `limit_requests`, `remaining_requests`, `reset_tokens_seconds` and `reset_requests_seconds`. A create's event carries the generation's operation id; a count's carries none;
+  - `ResponsesRuntime._throttle_hook(session, operation_id, waits) -> on_wait`. The hook appends each wait to `waits`, emits `provider_throttled`, then sleeps. The hook performs the wait (default `asyncio.sleep`) rather than running before a fixed sleep, so Task 7 can replace the sleep with a governor re-queue without waiting twice;
+  - `_Sent.rate_limit_waits: int = 0` and `_Sent.rate_limit_wait_seconds: float = 0.0`, the create's waits;
+  - the event `provider_throttled`, with `attempt`, `wait_seconds`, `wait_source` and optionally `limit_tokens`, `remaining_tokens`, `limit_requests`, `remaining_requests`, `reset_tokens_seconds` and `reset_requests_seconds`. A create's event carries the generation's operation id. A count's event carries `operation_id=None`, and its waits stay out of the totals, because a count has no operation and no reservation (F11);
   - `usage.rate_limit_waits` and `usage.rate_limit_wait_seconds`.
 
-- [ ] **Step 1: Write the failing test.**
+- [ ] **Step 1: Write the failing tests.**
 ```python
-async def test_rate_limit_waits_emit_provider_throttled_events(tmp_path):
+async def test_rate_limit_wait_emits_provider_throttled_event(tmp_path):
     events = []
     async def emit(event):
         events.append(event)
@@ -221,29 +221,37 @@ async def test_rate_limit_waits_emit_provider_throttled_events(tmp_path):
                "x-ratelimit-reset-requests": "20ms"}
     client = rate_limited_client([(429, leaky, headers),
                                   (429, refusal("rate_limit_exceeded"), {"retry-after": "0.01"}),
-                                  (200, response([message("done")]), {})], [],
+                                  (200, response([message("done")]), {})], [])
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=emit)
+    await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    throttled = [e for e in events if e.kind == "provider_throttled"]
+    assert throttled[0].payload == {"attempt": 1, "wait_seconds": 0.005, "wait_source": "retry-after-ms",
+                                    "limit_tokens": 2000000, "remaining_tokens": 0,
+                                    "reset_tokens_seconds": 360.0, "reset_requests_seconds": 0.02}
+    assert throttled[1].payload == {"attempt": 2, "wait_seconds": 0.01, "wait_source": "retry-after"}
+    assert {e.operation_id for e in throttled} == {events[0].operation_id}
+    assert "SECRET" not in json.dumps([e.payload for e in events])
+    usage = next(e for e in events if e.kind == "usage").payload
+    assert (usage["rate_limit_waits"], usage["rate_limit_wait_seconds"]) == (2, 0.015)
+    await client.close()
+
+async def test_rate_limited_count_is_announced_but_not_totalled(tmp_path):
+    events = []
+    async def emit(event):
+        events.append(event)
+    client = rate_limited_client([(200, response([message("done")]), {})], [],
                                  counts=[(429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"})])
     runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, event_sink=emit)
     await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
-    started = next(e for e in events if e.kind == "generation_started")
-    throttled = [e for e in events if e.kind == "provider_throttled"]
-    assert [(e.payload["stage"], e.operation_id) for e in throttled] == [
-        ("count", None), ("create", started.operation_id), ("create", started.operation_id)]
-    assert throttled[0].payload == {"stage": "count", "attempt": 1, "wait_seconds": 0.005,
-                                    "wait_source": "retry-after-ms"}
-    assert throttled[1].payload == {"stage": "create", "attempt": 1, "wait_seconds": 0.005,
-                                    "wait_source": "retry-after-ms", "limit_tokens": 2000000,
-                                    "remaining_tokens": 0, "reset_tokens_seconds": 360.0,
-                                    "reset_requests_seconds": 0.02}
-    assert throttled[2].payload == {"stage": "create", "attempt": 2, "wait_seconds": 0.01,
-                                    "wait_source": "retry-after"}
-    assert "SECRET" not in json.dumps([e.payload for e in events])
+    # A count has no operation and no reservation: its wait is announced, not added to usage (F11).
+    assert [(e.operation_id, e.payload) for e in events if e.kind == "provider_throttled"] == [
+        (None, {"attempt": 1, "wait_seconds": 0.005, "wait_source": "retry-after-ms"})]
     usage = next(e for e in events if e.kind == "usage").payload
-    assert (usage["rate_limit_waits"], usage["rate_limit_wait_seconds"]) == (3, 0.02)
+    assert (usage["rate_limit_waits"], usage["rate_limit_wait_seconds"]) == (0, 0.0)
     await client.close()
 ```
-  Do not add a give-up or interrupt test; main's tests cover both. One of them changes, because a wait now announces itself first. In `test_interrupting_a_rate_limit_wait_is_definite`, the last assertion becomes `assert events == ["generation_started", "provider_throttled", "generation_aborted"]`. `test_rate_limit_give_up_releases_the_reservation_at_zero` stays unmodified: its only refusal gives up without waiting, so it emits no `provider_throttled`.
-- [ ] **Step 2: Run the new test.** `... -m pytest tests/test_execution_responses.py -q -k "throttled or interrupting_a_rate_limit"` should FAIL.
+  Test 1 is the plan's original test, unchanged. The second test covers F11's count rule; it does not overlap main's `test_rate_limited_token_count_is_resent`, which checks only the resent URLs. Do not add a give-up or interrupt test; main's tests cover both. One of them changes, because a wait now announces itself first. In `test_interrupting_a_rate_limit_wait_is_definite`, the last assertion becomes `assert events == ["generation_started", "provider_throttled", "generation_aborted"]`. `test_rate_limit_give_up_releases_the_reservation_at_zero` stays unmodified: its only refusal gives up without waiting, so it emits no `provider_throttled`.
+- [ ] **Step 2: Run the new test.** `... -m pytest tests/test_execution_responses.py -q -k "throttled or totalled or interrupting_a_rate_limit"` should FAIL.
 - [ ] **Step 3: Implement.**
   1. Add `import logging` and `log = logging.getLogger(__name__)`. `_rate_limit_wait` returns `(min(hinted, MAX_RATE_LIMIT_WAIT_SECONDS), name)` for a header hint, and otherwise `(min(fallback, MAX_RATE_LIMIT_WAIT_SECONDS), "backoff")`. Update its return annotation and docstring to match. Add:
 ```python
@@ -325,7 +333,7 @@ async def _resend_rate_limited(
             raise
         backoff *= 2
 ```
-  3. Add `rate_limit_waits: tuple[float, ...] = ()` to `_Prepared`, and `rate_limit_waits: int = 0` and `rate_limit_wait_seconds: float = 0.0` to `_Sent`. Add two methods:
+  3. Add `rate_limit_waits: int = 0` and `rate_limit_wait_seconds: float = 0.0` to `_Sent`. Add two methods:
 ```python
     async def _emit_telemetry(self, kind, session, operation_id=None, **payload) -> None:
         """Observability only: a sink failure is logged and never turns a request that was
@@ -336,24 +344,24 @@ async def _resend_rate_limited(
             log.warning("runtime_telemetry_failed", extra={
                 "event_kind": kind, "session_id": session.id, "operation_id": operation_id})
 
-    def _throttle_hook(self, session, operation_id, stage, waits):
+    def _throttle_hook(self, session, operation_id, waits):
         """The on_wait hook of one provider call: record and announce each rate-limit wait,
         then wait it out."""
         async def on_wait(attempt: int, wait: float, source: str, error: Exception) -> None:
             waits.append(wait)
-            await self._emit_telemetry("provider_throttled", session, operation_id, stage=stage,
-                                       attempt=attempt, wait_seconds=round(wait, 3),
-                                       wait_source=source, **_rate_limit_headers(error))
+            await self._emit_telemetry("provider_throttled", session, operation_id, attempt=attempt,
+                                       wait_seconds=round(wait, 3), wait_source=source,
+                                       **_rate_limit_headers(error))
             await asyncio.sleep(wait)
         return on_wait
 ```
-  4. In `_prepare_request`, set `count_waits: list[float] = []` before the count, and pass `on_wait=self._throttle_hook(session, None, "count", count_waits)` to its `_resend_rate_limited` call. Add `rate_limit_waits=tuple(count_waits)` to the `_Prepared(...)` return.
-  5. In `_send`, set `waits = list(prepared.rate_limit_waits)` before the create, and pass `on_wait=self._throttle_hook(session, operation_id, "create", waits)` to its `_resend_rate_limited` call. Keep `operation_id=` and `abandon=partial(self._abandon_refused, session, state, operation_id)` exactly as on main. Return `_Sent(response=response, operation_id=operation_id, rate_limit_waits=len(waits), rate_limit_wait_seconds=round(sum(waits), 3))`.
+  4. In `_prepare_request`, pass `on_wait=self._throttle_hook(session, None, [])` to the count's `_resend_rate_limited` call (main's `:759-769`). Its waits are announced with no operation id and are discarded, not totalled (F11).
+  5. In `_send`, set `waits: list[float] = []` before the create, and pass `on_wait=self._throttle_hook(session, operation_id, waits)` to its `_resend_rate_limited` call (main's `:873-889`). Keep `operation_id=` and `abandon=partial(self._abandon_refused, session, state, operation_id)` exactly as on main. Return `_Sent(response=response, operation_id=operation_id, rate_limit_waits=len(waits), rate_limit_wait_seconds=round(sum(waits), 3))`.
   6. Add `rate_limit_waits=sent.rate_limit_waits, rate_limit_wait_seconds=sent.rate_limit_wait_seconds` to `usage`.
   7. Add to `docs/EXECUTION.md`, after the event-sink paragraph at lines 101–105:
      - A 429 with code `rate_limit_exceeded` did no work, whether it refused the count or the create, so the same request is resent. The wait follows the provider's hint (`retry-after-ms`, then `retry-after`) or a doubling backoff, capped at 30 s per wait.
-     - `provider_throttled` is emitted once per wait. It carries the stage, the attempt, the wait, its source and bounded header numbers, never the error text. A sink failure is logged and ignored.
-     - `usage` reports the turn's wait totals, for the count and the create together.
+     - `provider_throttled` is emitted once per wait. It carries the attempt, the wait, its source and bounded header numbers, never the error text. A sink failure is logged and ignored. A create's event carries the generation's operation id. A count's event has none.
+     - `usage` reports the create's wait totals. A count has no operation or reservation, so its waits appear only as events.
      - The runtime gives up when the next wait would outlast the deadline or when the wait is interrupted. The give-up is definite: `generation_aborted(reason="rate_limited")` releases the reservation at zero, and only then is the marker cleared. The session fails with retryable `PROVIDER_RATE_LIMITED`, and the executor blocks the task for an operator to resume.
      - Start a "Stored shape changes (G3 infrastructure, all experiments)" list. Say that G1 covers the bytes the model sees and the pinned freeze tests (F7), so these changes reach legacy experiments too. Its first entries are the `usage` wait totals and the `provider_throttled` events. Later tasks add their own lines.
 - [ ] **Step 4: Run the suite.** `... -m pytest tests/test_execution_responses.py tests/test_research_loop_integration.py -q` should PASS. All of main's rate-limit tests except the one changed in Step 1 pass unmodified.
@@ -634,12 +642,12 @@ def _input_bound(previous: dict[str, Any] | None, elements: list[tuple[str, int]
   3. In `__init__`, set `self._last_request: dict[str, dict[str, Any]] = {}`. In `_run`'s `finally`, next to `self._active.pop(session.id, None)`, add `self._last_request.pop(session.id, None)`. This drop is what makes the first request of every `_run` count exactly (R3), and a native wake is a new `_run` (F9). No `first_request` flag is needed.
   4. In `_prepare_request`:
      - Right after `params`, set `tools = self.dispatcher.definitions` and use it for the count's `tools=`. Then set `elements = _request_elements(params, tools, state["input"])` and `bound = _input_bound(self._last_request.get(session.id), elements, state.get("active_input_epoch", 0))`.
-     - If `bound is None or self._near_limit(session, state, bound)`, run the existing count block. Its 400 handler starts with `code, provider_code, provider_param = _provider_rejection(exc)`. Set `input_tokens, counted = count.input_tokens, True`.
+     - If `bound is None or self._near_limit(session, state, bound)`, run the existing count block (main's `:758-795`). A count give-up raises an `ExecutionError` with no `status_code`, so the 400 handler re-raises it as today. The 400 handler starts with `code, provider_code, provider_param = _provider_rejection(exc)`. Set `input_tokens, counted = count.input_tokens, True`.
      - Otherwise set `input_tokens, counted = bound, False`. From here on, every use of `input_tokens` is the exact count or the margin-inclusive bound, never the raw bound: `remaining`, the context-pressure check, the reservation and, in Task 7, admission (F2).
      - Pass `counted=counted, digests=tuple(sha for sha, _ in elements)` to `_Prepared`.
-  5. In `_loop`, just before `state["input"].extend(native["output"])` (save B), record the baseline: `self._last_request[session.id] = {"epoch": state.get("active_input_epoch", 0), "digests": prepared.digests, "tokens": response.usage.input_tokens}`.
+  5. In `_loop`, just before `state["input"].extend(native["output"])` (save B, main's `:917`), record the baseline: `self._last_request[session.id] = {"epoch": state.get("active_input_epoch", 0), "digests": prepared.digests, "tokens": response.usage.input_tokens}`.
   6. `_abandon_refused` gains a keyword `reason: str = "rate_limited"` and emits `generation_aborted` with `reason=reason`. Keep its body order: emit first, then `state["pending_operation"] = None` (F1). Main's `abandon=partial(self._abandon_refused, session, state, operation_id)` keeps the default.
-  7. In `_send`, add `input_tokens_estimate=prepared.input_tokens, input_tokens_counted=prepared.counted` to `generation_started`. Non-429 errors escape `_resend_rate_limited`, so wrap the create call. This is R3: a refused request did no work, so it is definite and its reservation is released at zero.
+  7. In `_send`, add `input_tokens_estimate=prepared.input_tokens, input_tokens_counted=prepared.counted` to `generation_started`. Non-429 errors escape `_resend_rate_limited`, so wrap the create call (main's `:873-889`; there is no inline resend loop any more). This is R3: a refused request did no work, so it is definite and its reservation is released at zero.
 ```python
         try:
             response = await _resend_rate_limited(...)  # Task 2's call, arguments as they are
@@ -1069,8 +1077,8 @@ Run `... -m pytest tests/test_execution_context.py -q -k "reservation or alarm"`
 
 **Interfaces:**
 - **Consumes:**
-  - Task 2: `_throttle_hook(session, operation_id, stage, waits)` and `_resend_rate_limited(..., on_wait=)`. The hook performs each 429 wait inside `_resend_rate_limited`'s abandon-on-interrupt guard;
-  - main's give-up and `_abandon_refused` (emit `generation_aborted`, then clear `pending_operation`). This task adds no abort block of its own;
+  - Task 2: `_throttle_hook(session, operation_id, waits)` and `_resend_rate_limited(..., on_wait=)`. The hook performs each 429 wait inside `_resend_rate_limited`'s abandon-on-interrupt guard;
+  - main's give-up and `_abandon_refused` (emit `generation_aborted`, then clear `pending_operation`). This task adds no abort block of its own. On main the sleep being replaced is at `responses.py:97-102`, inside `_resend_rate_limited`, which cannot see the governor, so the re-queue has to arrive through the hook;
   - Task 4: `_Prepared.input_tokens` (the exact count or the margin-inclusive P1 bound) and the create's `except Exception as error:` 400 branch;
   - Task 5: `started_task` and `PRICES`.
 - **Produces:**
@@ -1427,7 +1435,7 @@ Run `... -m pytest tests/test_execution_responses.py tests/test_orchestration.py
             await (requeue() if requeue is not None else asyncio.sleep(wait))
 ```
      - The count's hook call in `_prepare_request` is unchanged, so a count 429 calls `throttled(wait)` and sleeps.
-     - In `_send`, define `requeue` right before the create call and pass `on_wait=self._throttle_hook(session, operation_id, "create", waits, requeue if self.token_governor is not None else None)`:
+     - In `_send`, define `requeue` right before the create call and pass `on_wait=self._throttle_hook(session, operation_id, waits, requeue if self.token_governor is not None else None)`:
 ```python
         async def requeue() -> None:
             # Re-queue behind the global pause instead of a private sleep, so waiting requests
@@ -2335,4 +2343,8 @@ git diff origin/main | grep -n "/Users/\|$(whoami)" || true
 - **F8.** The runtime lane lands first (header). Task 11 fixes the order in `execute` and adds the native-resume test for a budgeted `joined_children` wait in `tests/test_joined_delegation.py`.
 - **F9.** R3 counts on every native wake (Global R3, Task 4 docs). Carrying the bound across a native handoff is a G6 next step (Global G6, Task 13).
 - **F10.** A count 429 calls `throttled(wait)` and only pauses; only a create 429 re-queues (Global R5; Task 7's hook, test and docs).
+- **F11.** Task 2 keeps only what main lacks, and its line references come from preflight §0 (as do Task 1's and Task 4's):
+  - kept: the logger, `_rate_limit_wait` returning `(seconds, source)`, `_duration_seconds` and `_rate_limit_headers`, `_emit_telemetry`, the keyword-only `on_wait(attempt, wait, source, error)` hook, the `_Sent` and `usage` wait totals, the original test 1 and the `docs/EXECUTION.md` docs;
+  - dropped: the give-up rewrite and duplicate test 2;
+  - count 429s emit `provider_throttled` with `operation_id=None` and are left out of the totals, and a small test covers this.
 - **P1.** The bound is the last billed input, plus the bytes of the changed elements, plus `max(2048, 2%)`. Removed content earns no credit. Task 6 reports the ratio with and without the margin (Global G4; Tasks 4, 6 and 12).
