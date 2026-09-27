@@ -454,3 +454,30 @@ def test_working_context_skips_node_modules_for_the_active_source_candidate(lab)
     view = PortableMemory(service).working_context(alpha.branch_id, alpha, page_size=0)
     active = view["readable_work"]["active_source"]
     assert active["reference"]["id"] == candidate["id"] and active["content"] == "candidate"
+
+
+def test_working_context_finds_the_candidate_behind_many_node_modules(lab):
+    """Every node-bound lean_check stores a module; they never push the candidate out."""
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="L", statement="L."), alpha, "node"
+    )
+    candidate = service.create_artifact(
+        ArtifactCreate(experiment_id=exp["id"], kind="lean_source", content="candidate"),
+        alpha,
+        "candidate",
+    )
+    for index in range(25):
+        service.create_artifact(
+            ArtifactCreate(
+                experiment_id=exp["id"],
+                kind="lean_source",
+                content=f"lemma attempt {index}",
+                provenance={"node_id": node["id"], "module": node["lean_module"]},
+            ),
+            alpha,
+            f"module-{index}",
+        )
+    view = PortableMemory(service).working_context(alpha.branch_id, alpha, page_size=0)
+    active = view["readable_work"]["active_source"]
+    assert active["reference"]["id"] == candidate["id"] and active["content"] == "candidate"

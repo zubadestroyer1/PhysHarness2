@@ -507,12 +507,9 @@ class PortableMemory:
                 context = trial
 
             # Keep a small exact working set readable after compaction. Omitted
-            # records remain reachable through the indices and chunk readers. A node module
-            # (a lean_source whose provenance names a commons node) is that node's lemma,
-            # not the branch's own submission candidate.
-            source_rows = [
-                row
-                for row in session.scalars(
+            # records remain reachable through the indices and chunk readers.
+            source_rows = list(
+                session.scalars(
                     select(RecordRow)
                     .where(
                         RecordRow.project_id == reader.project_id,
@@ -520,12 +517,14 @@ class PortableMemory:
                         record_json_text("experiment_id") == reader.experiment_id,
                         record_json_text("branch_id") == branch_id,
                         record_json_text("artifact_kind") == "lean_source",
+                        # A node module (provenance names a commons node) is that node's
+                        # lemma, not the branch's own submission candidate.
+                        RecordRow.payload[("provenance", "node_id")].as_string().is_(None),
                     )
                     .order_by(record_json_text("created_at").desc(), RecordRow.id.desc())
-                    .limit(20)
+                    .limit(1)
                 )
-                if "node_id" not in (row.payload.get("provenance") or {})
-            ][:1]
+            )
             if source_rows:
                 row = self.service._get(session, "artifact", source_rows[0].id, reader)
                 content = self.service.artifacts.get(row.payload["sha256"])

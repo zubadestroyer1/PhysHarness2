@@ -49,6 +49,32 @@ def _effective_rank(source, digest):
     return source["rank"]
 
 
+def node_refusal(node: dict) -> str | None:
+    """Why a node takes no published source (the goal, or a closed node), or None."""
+    if node["node_type"] == "goal":
+        return "goal_node"
+    if node["status"] in CLOSED_STATUSES:
+        return "node_closed"
+    return None
+
+
+def blocking_rank(node: dict, rank: str, branch_id: str | None) -> str | None:
+    """The effective rank of the node's source when it keeps its place against a new source
+    of ``rank`` from ``branch_id``, else None. At equal rank the newer source wins, except
+    that a verified source of the current statement answers only to its publisher and the
+    node's author."""
+    current = node.get("lean_source")
+    if current is None:
+        return None
+    held = _effective_rank(current, _statement_digest(node))
+    if RANKS[rank] < RANKS[held] or (
+        rank == held == "verified"
+        and branch_id not in (current.get("branch_id"), node.get("branch_id"))
+    ):
+        return held
+    return None
+
+
 def source_state(node: dict) -> str:
     """The node's effective source rank; ``stub`` for an elaborated Lean statement with no
     source (it imports as a ``sorry`` stub), else ``none``."""
@@ -97,10 +123,9 @@ class CommonsSourceMixin:
             row, experiment = self._review_node(session, node_id, actor)
             node = row.payload
             module = node_module(node)
-            if node["node_type"] == "goal":
-                return {"recorded": False, "module": module, "reason": "goal_node"}
-            if node["status"] in CLOSED_STATUSES:
-                return {"recorded": False, "module": module, "reason": "node_closed"}
+            refusal = node_refusal(node)
+            if refusal is not None:
+                return {"recorded": False, "module": module, "reason": refusal}
             artifact = self._get(session, "artifact", artifact_id, actor)
             if (
                 artifact.payload.get("artifact_kind") != "lean_source"
@@ -117,21 +142,9 @@ class CommonsSourceMixin:
             if digest is not None and record["lean_statement_sha256"] != digest:
                 return {"recorded": False, "module": module, "reason": "statement_changed"}
             rank, current = record["rank"], node.get("lean_source")
-            if current is not None:
-                held = _effective_rank(current, digest)
-                # At equal rank the newer source wins, except that a verified source of the
-                # current statement answers only to its publisher and the node's author.
-                keeps = RANKS[rank] < RANKS[held] or (
-                    rank == held == "verified"
-                    and actor.branch_id not in (current.get("branch_id"), node.get("branch_id"))
-                )
-                if keeps:
-                    return {
-                        "recorded": False,
-                        "module": module,
-                        "reason": "lower_rank",
-                        "rank": held,
-                    }
+            held = blocking_rank(node, rank, actor.branch_id)
+            if held is not None:
+                return {"recorded": False, "module": module, "reason": "lower_rank", "rank": held}
             binding = current_worker_effects.get()
             source = {
                 "artifact_id": artifact.id,

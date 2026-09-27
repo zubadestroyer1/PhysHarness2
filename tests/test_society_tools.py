@@ -1214,6 +1214,43 @@ async def test_lean_check_publishes_only_what_the_statement_check_does_not_rejec
     }
 
 
+async def test_refused_publications_store_no_artifact(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace()
+    tools = profile(service, agent, context, workspace=workspace)
+    created = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **LEAN}
+    )
+
+    def modules():
+        return [
+            a
+            for a in service.list_records("artifact", agent, exp["id"])
+            if (a.get("provenance") or {}).get("node_id") == created["id"]
+        ]
+
+    assert (await call(tools, "lean_check", {"source": PROOF, "node_id": created["id"]}))[
+        "published"
+    ]["rank"] == "verified"
+    workspace.lean.complete = False
+    lower = await call(tools, "lean_check", {"source": PROOF, "node_id": created["id"]})
+    assert lower["published"] == {
+        "recorded": False,
+        "module": "Commons.N" + created["id"][:8],
+        "reason": "lower_rank",
+        "rank": "verified",
+    }
+    await call(
+        tools, "commons_node", {"action": "abandon", "node_id": created["id"], "reason": "Moot."}
+    )
+    workspace.lean.complete = True
+    closed = await call(tools, "lean_check", {"source": PROOF, "node_id": created["id"]})
+    assert closed["published"]["reason"] == "node_closed" and closed["claimed"] is False
+    assert len(modules()) == 1
+
+
 def test_publication_refusals_and_source_ranks():
     node, clean = {"node_type": "lemma", **LEAN}, {"ok": True, "complete": True}
     clean["axioms"] = {"trace_add": ["propext"]}

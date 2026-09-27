@@ -40,7 +40,7 @@ from ..commons_review import (
     fence_author_data,
     is_referee_task,
 )
-from ..commons_sources import SOURCE_STATES, node_module
+from ..commons_sources import SOURCE_STATES, blocking_rank, node_module, node_refusal
 from ..domain import ArtifactCreate, Principal
 from ..errors import HarnessError
 from ..execution import ToolDispatcher
@@ -756,17 +756,14 @@ def society_tools(
             rank = _source_rank(node, result, verdict)
             if rank is None:
                 return {"recorded": False, "module": module, "reason": verdict["reason"]}, verdict
-            artifact = service.create_artifact(
-                ArtifactCreate(
-                    experiment_id=experiment_id,
-                    branch_id=agent.branch_id,
-                    kind="lean_source",
-                    content=source,
-                    provenance={"node_id": node["id"], "module": module},
-                ),
-                agent,
-                f"{key}:source",
-            )
+            # Refused before any artifact is stored, so a refusal leaves none behind;
+            # record_lean_source repeats these checks under the node's lock.
+            refusal, held = node_refusal(node), blocking_rank(node, rank, agent.branch_id)
+            if refusal is not None:
+                return {"recorded": False, "module": module, "reason": refusal}, verdict
+            if held is not None:
+                refused = {"recorded": False, "module": module, "reason": "lower_rank"}
+                return {**refused, "rank": held}, verdict
             record = {
                 "rank": rank,
                 "bytes": len(source.encode("utf-8")),
@@ -776,12 +773,24 @@ def society_tools(
                 "lean_statement_sha256": _lean_digest(header, name, statement),
                 "imports": [],
             }
-            published = _soft(
-                lambda: service.record_lean_source(
+
+            def store():
+                artifact = service.create_artifact(
+                    ArtifactCreate(
+                        experiment_id=experiment_id,
+                        branch_id=agent.branch_id,
+                        kind="lean_source",
+                        content=source,
+                        provenance={"node_id": node["id"], "module": module},
+                    ),
+                    agent,
+                    f"{key}:source",
+                )
+                return service.record_lean_source(
                     node["id"], artifact["id"], record, agent, f"{key}:publish"
                 )
-            )
-            return published, verdict
+
+            return _soft(store), verdict
 
         def local_compile(node, source, result, verdict, key):
             """Record a local compile only on the statement check's verdict (``publish`` runs
