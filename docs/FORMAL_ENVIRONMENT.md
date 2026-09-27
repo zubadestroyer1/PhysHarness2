@@ -197,12 +197,16 @@ in both is copied onto the heap. With `import Lean`, an `import Lean` file copie
 Lean (1.6 GB of `.olean` data), and the 2 GiB workbench OOM-killed the checker. The narrow
 imports' closure is 555 modules (397 MiB). This was measured on `physharness-pilot` with
 the workbench-v2 digest. The checker step's anonymous memory used to reach 1.9 GiB (then
-the kill) for an `import Lean` file. It now peaks at 0.65–0.75 GiB for `import Lean`,
-`import Mathlib.Data.Real.Basic` and `import Mathlib` files, and no step is OOM-killed. A
-file that imports all of Mathlib still exceeds the check's 240-second budget at 2 GiB.
-Each of its three Lean steps takes about 80 seconds, because Mathlib's `.olean` working set
-does not fit in the workbench's page cache. A plain `lake env lean` on that file takes as
-long; with a 3 GiB or 4 GiB limit it takes 46 or 28 seconds.
+the kill) for an `import Lean` file. It now peaks at 0.65–0.85 GiB for `import Lean`,
+`import Mathlib.Data.Real.Basic` and `import Mathlib` files, and no step is OOM-killed.
+
+The statement check assumes a pre-warmed VM. The operator reads every `.olean`,
+`.olean.server` and `.olean.private` file under `/opt` once, outside the workbenches, so
+that page cache is neither charged to nor evicted within a workbench's 2 GiB. Pre-warmed,
+each of the check's three Lean steps takes 2–3 seconds for an `import Mathlib` file. In a
+cold VM each step takes about 80 seconds, so the check exceeds its 240-second budget.
+Warming only `.olean` and `.ilean` files leaves about 31 seconds per step, because Lean
+v4.33 also loads the `.olean.private` parts (3.6 GB for Mathlib).
 
 | Component | Route | Pin status |
 | --- | --- | --- |
