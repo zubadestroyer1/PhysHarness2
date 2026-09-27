@@ -1026,6 +1026,27 @@ class ResponsesRuntime:
             }
             state.pop("compaction_replay_pending", None)
             await self._save(session, state)
+            context = prepared.params.get("context_management")
+            if (
+                context
+                and prepared.input_reservation < session.limits.max_context_tokens
+                and any(item.get("type") == "compaction" for item in native["output"])
+            ):
+                # F4: compaction was assumed impossible below the gate, and the reservation's
+                # soundness depends on it. Name the cause before any limit check can stop the run.
+                log.warning(
+                    "bound_reservation_compacted",
+                    extra={"session_id": session.id, "operation_id": operation_id},
+                )
+                await self._emit_telemetry(
+                    "bound_reservation_compacted",
+                    session,
+                    operation_id,
+                    response_id=response.id,
+                    input_tokens_reserved=prepared.input_reservation,
+                    input_tokens=response.usage.input_tokens,
+                    compact_threshold=context[0]["compact_threshold"],
+                )
             if (
                 session.limits.max_total_tokens is not None
                 and state.get("cumulative_input_offset", 0)
@@ -1233,9 +1254,17 @@ class ResponsesRuntime:
                 if handoff is not None:
                     return handoff
             raise ExecutionError("CONTEXT_LIMIT", "Active request exceeds context token limit")
-        input_reservation = (
-            session.limits.max_context_tokens if params.get("context_management") else input_tokens
-        )
+        context = params.get("context_management")
+        if context:
+            # A compaction pass may bill more than the counted or bounded input, so the count or
+            # the margin-inclusive bound is reserved only while compaction cannot fire (G4, F4).
+            input_reservation = (
+                input_tokens
+                if input_tokens + CONTEXT_MARGIN <= context[0]["compact_threshold"]
+                else session.limits.max_context_tokens
+            )
+        else:
+            input_reservation = input_tokens
         output_reservation = (
             min(session.limits.max_output_tokens, remaining)
             if remaining is not None

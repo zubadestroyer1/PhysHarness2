@@ -93,15 +93,29 @@ the same position in the previous request, plus a margin of the larger of 2,048 
 that sum. The elements are the instructions, the tools array and each input item, and removed
 content earns no credit. The previous request's element digests stay in runtime memory for the
 current run only, so a restart counts again. A compaction voids the bound. The count or the bound
-feeds the budget checks and the input reservation. A 400 from `create` means the request was not
-sent: it is recorded as `preflight_error` (stage `create`), then
-`generation_aborted(reason="request_invalid")` releases the reservation at zero, and the session
-fails without being left uncertain. The next output cap is bounded by remaining cumulative
+feeds the budget checks and is the input reservation, except under `context_management`: there
+it is reserved only while it plus 8,192 is at most `compact_threshold`, and otherwise the whole
+window (`max_context_tokens`) is. The output reservation is `max_output_tokens`. A 400 from
+`create` means the request was not sent: it is recorded as `preflight_error` (stage `create`),
+then `generation_aborted(reason="request_invalid")` releases the reservation at zero, and the
+session fails without being left uncertain. The next output cap is bounded by remaining cumulative
 tokens. A provider consumption discrepancy raises a limit violation and stops further turns.
 No aliases or substitute models are selected by the adapter. Parameters supported here are
 `instructions`, `reasoning`, `text`, `temperature`, `top_p`, `service_tier`,
 `context_management`, and `parallel_tool_calls`. Unsupported provider parameter/model combinations
 fail at the provider.
+
+Reserving less than the window under `context_management` rests on a provider assumption. Server
+compaction fires only when a request's input exceeds `compact_threshold`, so a request under the
+gate cannot compact, and every compaction pass, which may bill more than the counted or bounded
+input, falls on a request that reserved the whole window. If a response to a request reserved
+below the window does carry a compaction item, the runtime logs a warning and emits
+`bound_reservation_compacted` (`response_id`, `input_tokens_reserved`, `input_tokens` and
+`compact_threshold`) before any limit check. A compaction that billed past the reservation still
+stops through `PROVIDER_LIMIT_VIOLATION` and the ledger's sticky halt; the alarm names the cause.
+`tools/reservation_bound.py` re-checks the bound offline on audit-extracted turns. On S1's 3,651
+consecutive completed turn pairs, the billed input was at most 0.9996 of the bound without its
+margin and 0.980 with it.
 
 `parallel_tool_calls` defaults to `false`, as today. With `true`, a response's function calls
 still run one at a time, in the order the provider emitted them: the calls in a batch are never
@@ -180,6 +194,10 @@ experiments too.
   stays at the full input rate, since a cache hit is never guaranteed in advance.
 - A checkpoint chunk has no `artifact.created` event and no command row of its own; each save is
   one `runtime.save` transaction.
+- Smaller input reservations under `context_management`: `generation_started.input_tokens_reserved`
+  and `settled_response.input_reserved` hold the count or the bound, not the whole window, while
+  that value plus 8,192 is at most `compact_threshold`.
+- The `bound_reservation_compacted` alarm event.
 
 ## Official Codex SDK
 

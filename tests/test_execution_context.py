@@ -7,6 +7,7 @@ import httpx
 import pytest
 from openai import AsyncOpenAI
 
+from physharness.domain import canonical_json
 from physharness.execution import (
     ExecutionError,
     ModelConfig,
@@ -1154,6 +1155,117 @@ async def test_compaction_epoch_invalidates_the_estimate(tmp_path):
         "input_tokens",
         "responses",
         "responses",
+    ]
+    await client.close()
+
+
+async def run_reserved(tmp_path, threshold, window, final_input=10):
+    requests, events, error = [], [], None
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            response([call_item("a")], "r1"),
+            response([text_item("done")], "r2", input_tokens=final_input),
+        ],
+        requests,
+    )
+    tmp_path.mkdir()
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(),
+        event_sink=emit,
+    )
+    params = {"context_management": [{"type": "compaction", "compact_threshold": threshold}]}
+    try:
+        await runtime.start(
+            "work",
+            ModelConfig(model="exact-model", parameters=params),
+            RuntimeLimits(
+                max_context_tokens=window, max_output_tokens=1_000, max_total_tokens=None
+            ),
+        )
+    except ExecutionError as caught:
+        error = caught
+    await client.close()
+    creates = [p for path, p in requests if path.endswith("/responses")]
+    return (
+        creates,
+        [e.payload["input_tokens_reserved"] for e in events if e.kind == "generation_started"],
+        error,
+    )
+
+
+async def test_reservation_bound_window_fallback_and_violation(tmp_path):
+    creates, reserved, error = await run_reserved(tmp_path / "bound", 40_000, 64_000)
+    appended = creates[1]["input"][len(creates[0]["input"]) :]
+    assert error is None and reserved == [
+        10,
+        10 + sum(len(canonical_json(i).encode("utf-8")) for i in appended) + 2048,  # P1 margin
+    ]
+    # count + 8,192 > threshold
+    _, reserved, error = await run_reserved(tmp_path / "near", 8_200, 10_000)
+    assert error is None and reserved == [10_000, 10_000]
+    _, reserved, error = await run_reserved(tmp_path / "over", 40_000, 64_000, final_input=5_000)
+    assert reserved[1] < 5_000 and error.code == "PROVIDER_LIMIT_VIOLATION"
+
+
+async def test_compaction_on_a_request_reserved_below_the_window_raises_an_alarm(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            response([compaction_item("one"), call_item("a")], "r1"),
+            response([text_item("done")], "r2"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(),
+        event_sink=emit,
+    )
+    await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
+    assert [e.payload for e in events if e.kind == "bound_reservation_compacted"] == [
+        {
+            "response_id": "r1",
+            "input_tokens_reserved": 10,
+            "input_tokens": 10,
+            "compact_threshold": 40_000,
+        }
+    ]
+    await client.close()
+
+
+async def test_the_alarm_names_a_compaction_that_overran_before_the_limit_stops_it(tmp_path):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [response([compaction_item("one"), call_item("a")], "r1", input_tokens=5_000)], []
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(),
+        event_sink=emit,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
+    assert error.value.code == "PROVIDER_LIMIT_VIOLATION"
+    assert [e.kind for e in events] == [
+        "generation_started",
+        "usage",
+        "bound_reservation_compacted",
     ]
     await client.close()
 

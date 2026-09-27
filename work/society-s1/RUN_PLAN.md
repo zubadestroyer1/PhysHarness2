@@ -288,6 +288,21 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 - Repetitions double the arm cost. Two per arm is the smallest design that shows any
   variance.
 
+### Output cap (recommended, not applied)
+
+- Set `runtime_limits.max_output_tokens: 16000` in society plans, and the same value in
+  every arm so the arms stay matched. The example plan keeps 64,000.
+- Every request reserves the whole output cap. S1's largest response used 3,234 output
+  tokens (p99 1,680), so 64,000 holds about 20 times more than any S1 response needed,
+  and 16,000 still leaves about 5 times headroom.
+- A response that reaches the cap ends incomplete: the runtime raises
+  `PROVIDER_INCOMPLETE` and the session fails.
+- With the `research` context profile the compaction threshold is the smaller of 3/4 of
+  the window and window − output cap − 8,192. On a 256,000-token window, 16,000 moves it
+  from 183,808 to 192,000 tokens, so compaction fires later.
+- This is a documented recommendation only. Neither `run-plan.example.json` nor any code
+  default changes.
+
 ## 6. Stop rules (predeclared)
 
 1. **Root accepted.** An independent-kernel receipt on the exact target stops the run
