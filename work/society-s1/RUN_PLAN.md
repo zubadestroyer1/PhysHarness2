@@ -323,8 +323,10 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 ### Context budget arm (opt-in, not applied)
 
 - `context_budget` changes what the model sees. It caps each tool output (the rest can be
-  recalled with `recall_output`) and keeps Unicode literal (docs/EXECUTION.md, "Context
-  budget (opt-in)"). It stays opt-in until a quality A/B has run.
+  recalled with `recall_output`), keeps Unicode literal, and every `elide_every_turns`
+  responses replaces large stale outputs with recall stubs (docs/EXECUTION.md, "Context
+  budget (opt-in)"). It stays opt-in until a quality A/B has run; for that A/B, blocks of 8 to
+  20 responses are recommended (the default is 10).
 - An example A/B arm makes three changes to an otherwise identical plan:
 
   ```json

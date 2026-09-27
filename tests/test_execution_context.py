@@ -1,6 +1,7 @@
 """Native Responses context management and clean continuation boundaries."""
 
 import asyncio
+import hashlib
 import json
 
 import httpx
@@ -1648,4 +1649,328 @@ async def test_a_lone_surrogate_under_a_budget_keeps_the_lineage_sendable():
         assert "notes/\\ud800∀.md" in outputs[call_id]  # escaped surrogate, literal ∀
     assert json.loads(outputs["a"])["head"] == original[:10_000]
     assert json.loads(outputs["p1"])["text"] == original[:16_000]
+    await client.close()
+
+
+ELIDE = ContextBudget(
+    elide_min_chars=500, elide_after_turns=1, elide_every_turns=3, max_output_chars=None
+)
+
+
+async def run_elided(tmp_path, requests, events, calls, store=None):
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in range(1, calls + 1)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=store or SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    await client.close()
+    return runtime, result
+
+
+async def test_elision_blocks_keep_the_prefix_stable_between_boundaries(tmp_path):
+    requests, events = [], []
+    await run_elided(tmp_path, requests, events, calls=6)
+    inputs = [p["input"] for p in creates_of(requests)]
+    assert [inputs[n + 1][: len(inputs[n])] == inputs[n] for n in range(6)] == [
+        True,
+        True,
+        False,
+        True,
+        True,
+        False,
+    ]
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2, 3]
+    fourth = outputs_of({"input": inputs[3]})
+    assert json.loads(fourth["c1"])["recall"] == {"tool": "recall_output", "call_id": "c1"}
+    assert fourth["c3"].startswith('{"text"')
+
+
+async def test_elision_skips_small_recent_and_legacy_outputs(tmp_path):
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "sessions.db"), client=object())
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    big = json.dumps({"text": "x" * 1_000})
+    outputs = {"legacy": big, "small": "{}", "recent": big, "old": big}
+    seqs = {"small": 1, "recent": 3, "old": 1}
+    state = {
+        "input": [
+            {"type": "function_call_output", "call_id": k, "output": v} for k, v in outputs.items()
+        ],
+        "tool_results": {
+            f"{session.id}:{k}": {
+                "identity": "i",
+                "result": {},
+                **({"seq": seqs[k], "name": "observe"} if k in seqs else {}),
+            }
+            for k in outputs
+        },
+        "context_budget": ELIDE.model_dump(mode="json"),
+        "elision": {"seq": 3, "last_block_seq": 0},
+    }
+    await runtime._elide_block(session, state)
+    after = {i["call_id"]: i["output"] for i in state["input"]}
+    assert (after["legacy"], after["small"], after["recent"]) == (big, "{}", big)
+    assert json.loads(after["old"])["elided"] is True and state["elision"]["last_block_seq"] == 3
+
+
+async def test_a_stub_longer_than_the_threshold_is_never_elided_again(tmp_path):
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "sessions.db"), client=object())
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    call_id = "c" * 120  # a long ID and an escaped head make the stub longer than elide_min_chars
+    state = {
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": json.dumps({"text": "\\" * 1_000}),
+            }
+        ],
+        "tool_results": {
+            f"{session.id}:{call_id}": {"identity": "i", "result": {}, "seq": 1, "name": "observe"}
+        },
+        "context_budget": ELIDE.model_dump(mode="json"),
+        "elision": {"seq": 3, "last_block_seq": 0},
+    }
+    await runtime._elide_block(session, state)
+    stub = state["input"][0]["output"]
+    assert json.loads(stub)["elided"] is True and len(stub) > ELIDE.elide_min_chars
+    state["elision"]["seq"] = 6
+    await runtime._elide_block(session, state)
+    assert state["input"][0]["output"] == stub and state["elision"]["last_block_seq"] == 6
+
+
+async def test_elision_state_survives_resume_without_reeliding(tmp_path):
+    requests, events = [], []
+    store = SQLiteRuntimeStore(tmp_path / "sessions.db")
+    runtime, result = await run_elided(tmp_path, requests, events, calls=3, store=store)
+    saved = (await runtime.checkpoint(result.session.id)).native_state
+    assert saved["elision"] == {"seq": 4, "last_block_seq": 3}
+    second = sdk_client([response([text_item("again")], "r5")], requests)
+    resumed = ResponsesRuntime(
+        store=store, client=second, dispatcher=observe_dispatcher(big_result(2_000))
+    )
+    assert (await resumed.continue_session(result.session.id, "next")).output_text == "again"
+    assert creates_of(requests)[-1]["input"][:-1] == saved["input"]
+    assert len([e for e in events if e.kind == "context_elided"]) == 1
+    await second.close()
+
+
+async def test_an_elided_output_recalls_in_full_and_a_recall_page_is_never_elided(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+            response([recall_item("p4", "c1", 0)], "r4"),
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (5, 6)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    original = json.dumps(big_result(2_000), ensure_ascii=False)
+    outputs = outputs_of(creates_of(requests)[-1])
+    assert json.loads(outputs["c1"]) == {
+        "elided": True,
+        "tool": "observe",
+        "chars": len(original),
+        "sha256": hashlib.sha256(original.encode("utf-8")).hexdigest()[:16],
+        "head": original[:160],
+        "recall": {"tool": "recall_output", "call_id": "c1"},
+    }
+    # The recall reads the full stored output, and its 2,000-character page is kept whole.
+    page = json.loads(outputs["p4"])
+    assert (page["text"], page["next_offset"]) == (original, None)
+    # Block 1 (seq 3): c1 and c2. Block 2 (seq 6): c3 and c5, not the page from response 4.
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2, 2]
+    assert [call_id for call_id, text in outputs.items() if text.startswith('{"elided"')] == [
+        "c1",
+        "c2",
+        "c3",
+        "c5",
+    ]
+    state = (await runtime.checkpoint(result.session.id)).native_state
+    assert {
+        k.split(":", 1)[1]: (v["seq"], v["name"]) for k, v in state["tool_results"].items()
+    } == {f"c{n}": (n, "observe") for n in (1, 2, 3, 5, 6)}
+    await client.close()
+
+
+async def test_a_native_handoff_carries_the_lineage_wide_elision_counter(tmp_path):
+    requests, events, store = [], [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+
+    async def emit(event):
+        events.append(event)
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"}
+
+    first = sdk_client([response([call_item("c1")], "r1")], requests)
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        boundary_hook=boundary,
+        context_budget=ELIDE,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [
+            response([call_item("c2")], "r2"),
+            response([call_item("c3")], "r3"),
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    successor = ResponsesRuntime(
+        store=store,
+        client=second,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+    )
+    result = await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    # The lineage's third response is the successor's second, so its third request elides the
+    # source's c1 and its own c2.
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2]
+    outputs = outputs_of(creates_of(requests)[-1])
+    assert [call_id for call_id, text in outputs.items() if text.startswith('{"elided"')] == [
+        "c1",
+        "c2",
+    ]
+    state = (await successor.checkpoint(result.session.id)).native_state
+    assert state["elision"] == {"seq": 4, "last_block_seq": 3}
+    assert (await source.checkpoint(handed.session.id)).native_state["elision"] == {
+        "seq": 1,
+        "last_block_seq": 0,
+    }
+    await first.close()
+    await second.close()
+
+
+def request_elements(payload):
+    """P1's positional elements of a sent request, as canonical UTF-8 bytes."""
+    elements = (payload.get("instructions"), payload["tools"], *payload["input"])
+    return [canonical_json(element).encode("utf-8") for element in elements]
+
+
+async def test_the_input_bound_stays_sound_through_elision_blocks(tmp_path):
+    # The provider bills one token per canonical byte of every element: the most P1 admits.
+    requests, events = [], []
+    scripted = [*[[call_item(f"c{i}")] for i in range(1, 8)], [text_item("done")]]
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append((request.url.path, payload))
+        tokens = sum(len(element) for element in request_elements(payload))
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(
+                200, json={"object": "response.input_tokens", "input_tokens": tokens}
+            )
+        items = scripted.pop(0)
+        return httpx.Response(200, json=response(items, f"r{len(requests)}", input_tokens=tokens))
+
+    async def emit(event):
+        events.append(event)
+
+    client = AsyncOpenAI(
+        api_key="test-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    result = await runtime.start(
+        "work",
+        ModelConfig(model="exact-model"),
+        RuntimeLimits(max_turns=10, max_total_tokens=None),
+    )
+    assert result.output_text == "done"  # no request billed past its reservation
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2, 3]
+    creates = [request_elements(p) for p in creates_of(requests)]
+    started = [e.payload for e in events if e.kind == "generation_started"]
+    assert [s["input_tokens_counted"] for s in started] == [True] + [False] * 7
+    rewritten = []
+    for n in range(1, len(creates)):
+        before, after = creates[n - 1], creates[n]
+        billed_before, billed = sum(map(len, before)), sum(map(len, after))
+        changed = [e for i, e in enumerate(after) if i >= len(before) or before[i] != e]
+        raw = billed_before + sum(map(len, changed))  # P1, without the margin
+        assert started[n]["input_tokens_reserved"] == raw + max(2_048, -(-raw * 2 // 100))
+        assert billed <= raw
+        # Only a block rewrites earlier elements, and the bytes it removes earn no credit.
+        replaced = [i for i in range(len(before)) if before[i] != after[i]]
+        assert raw - billed == sum(len(before[i]) for i in replaced)
+        rewritten.append(len(replaced))
+    assert rewritten == [0, 0, 2, 0, 0, 3, 0]
+    await client.close()
+
+
+# The creates of a 7-call run without a budget, as BASE (c1f16af) sent them.
+UNBUDGETED_REQUESTS_SHA256 = "765670738ca10f826d661a232eac444b8a15f4f0c82017342baa63612f52dde2"
+
+
+async def test_without_a_budget_long_runs_send_frozen_requests_and_state(tmp_path):
+    requests = []
+    client = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in range(1, 8)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    creates = creates_of(requests)
+    assert len(creates) == 8
+    assert (
+        hashlib.sha256(canonical_json(creates).encode("utf-8")).hexdigest()
+        == UNBUDGETED_REQUESTS_SHA256
+    )
+    state = (await runtime.checkpoint(result.session.id)).native_state
+    assert "elision" not in state
+    assert all(set(entry) == {"identity", "result"} for entry in state["tool_results"].values())
     await client.close()

@@ -329,6 +329,28 @@ def _tool_output_text(
     return text.encode("utf-8", "backslashreplace").decode()
 
 
+def _elision_stub(tool: str, call_id: str, output: str) -> str:
+    """What an elided output leaves in context: its size, digest, head and a recall handle."""
+    return json.dumps(
+        {
+            "elided": True,
+            "tool": tool,
+            "chars": len(output),
+            "sha256": hashlib.sha256(output.encode("utf-8")).hexdigest()[:16],
+            "head": output[:160],
+            "recall": {"tool": "recall_output", "call_id": call_id},
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def _is_elision_stub(output: Any) -> bool:
+    # Stubs use compact separators, and every rendered tool output has a space after its colons,
+    # so no output can pass for a stub.
+    return isinstance(output, str) and output.startswith('{"elided":true')
+
+
 @dataclass(frozen=True, kw_only=True)
 class _Prepared:
     """A counted or bounded request with its reservation, not yet sent."""
@@ -746,6 +768,51 @@ class ResponsesRuntime:
         state["input"].append({"role": "user", "content": canonical_json(content)})
         state["turn_note_turns"] = session.turns
 
+    async def _elide_block(self, session: RuntimeSession, state: dict[str, Any]) -> None:
+        """Replace old large tool outputs with recall stubs, once per block of responses.
+
+        Between blocks the input prefix is byte-stable, so provider prefix caching holds; a block
+        breaks it once, at its first newly elided item. Full outputs stay in tool_results for
+        recall_output. Runs at a settled boundary before request preparation; the generation
+        marker save persists it.
+        """
+        budget, elision = state.get("context_budget"), state.get("elision")
+        if not budget or not isinstance(elision, dict):
+            return
+        seq = elision["seq"]
+        if seq - elision["last_block_seq"] < budget["elide_every_turns"]:
+            return
+        entries = {
+            key.split(":", 1)[1]: entry for key, entry in state.get("tool_results", {}).items()
+        }
+        count = removed = 0
+        first = None
+        for index, item in enumerate(state["input"]):
+            entry, output = entries.get(item.get("call_id")), item.get("output")
+            if (
+                item.get("type") != "function_call_output"
+                or not isinstance(entry, dict)
+                or type(entry.get("seq")) is not int
+                or entry["seq"] > seq - budget["elide_after_turns"]
+                or not isinstance(output, str)
+                or len(output) <= budget["elide_min_chars"]
+                or _is_elision_stub(output)
+            ):
+                continue
+            item["output"] = _elision_stub(entry.get("name", "unknown"), item["call_id"], output)
+            count, removed = count + 1, removed + len(output) - len(item["output"])
+            first = index if first is None else first
+        elision["last_block_seq"] = seq
+        if count:
+            await self._emit_telemetry(
+                "context_elided",
+                session,
+                count=count,
+                chars_removed=removed,
+                first_index=first,
+                seq=seq,
+            )
+
     async def start(
         self,
         prompt: str,
@@ -770,6 +837,7 @@ class ResponsesRuntime:
         }
         if self.context_budget is not None:
             state["context_budget"] = self.context_budget.model_dump(mode="json")
+            state["elision"] = {"seq": 0, "last_block_seq": 0}
         if predecessor is not None:
             predecessor.verify()
             if predecessor.session.status != "handed_off":
@@ -1023,6 +1091,8 @@ class ResponsesRuntime:
         }
         if "context_budget" in prior:
             state["context_budget"] = deepcopy(prior["context_budget"])
+        if "elision" in prior:  # the response counter is lineage-wide
+            state["elision"] = deepcopy(prior["elision"])
         await self._save(session, state)
         return await self._run(session, state, prompt)
 
@@ -1128,6 +1198,7 @@ class ResponsesRuntime:
                 raise ExecutionError("BUDGET_EXHAUSTED", "Session exhausted provider-turn budget")
             await self._receive_updates(session, state)
             await self._receive_turn_note(session, state)
+            await self._elide_block(session, state)
             prepared = await self._prepare_request(session, state, client, deadline)
             if isinstance(prepared, RuntimeResult):
                 return prepared
@@ -1167,6 +1238,8 @@ class ResponsesRuntime:
                 "digests": prepared.digests,
                 "tokens": response.usage.input_tokens,
             }
+            if isinstance(state.get("elision"), dict):
+                state["elision"]["seq"] += 1
             state["input"].extend(native["output"])
             await self._save(session, state)
             context = prepared.params.get("context_management")
@@ -1693,6 +1766,9 @@ class ResponsesRuntime:
                     entry = {"identity": identity, "result": result}
                     if visible_output is not result:
                         entry["visible_output"] = visible_output
+                    # Only an entry with a seq is ever elided.
+                    if isinstance(state.get("elision"), dict):
+                        entry.update(seq=state["elision"]["seq"], name=call["name"])
                     results[tool_operation] = entry
             state["input"].append(
                 {

@@ -258,9 +258,8 @@ native state are exactly as described above. The fields and their defaults are:
 - `max_output_chars`: 24,000 (at least 20,000), or `null` for no cap. A truncated view may exceed
   it by its envelope, about 150 characters plus the tool name and call ID.
 
-The `elide_*` fields are validated and stored, but block elision does not apply them yet. The
-executor passes `ResponsesRuntime(context_budget=...)` only when the field is set. `start` stores
-the policy in native state under `context_budget`, and `start_from_handoff` copies it, so a
+The executor passes `ResponsesRuntime(context_budget=...)` only when the field is set. `start`
+stores the policy in native state under `context_budget`, and `start_from_handoff` copies it, so a
 continuation keeps the policy its lineage started with, even when its own runtime was built
 without one. Under a budget:
 - **Literal Unicode (#5e).** Tool outputs are serialized with `ensure_ascii=False`, so non-ASCII
@@ -287,6 +286,30 @@ without one. Under a budget:
   (and any stagnation signal, since stagnation counts it as a read) after the save that holds its
   output, so tool-call metrics count recalls. It is not part of the society tool catalog, and a
   dispatcher that registers its own `recall_output` under a budget fails with `INVALID_CONFIG`.
+- **Block elision.** Every `elide_every_turns` provider responses, at the settled boundary before
+  the next request is prepared, each tool output longer than `elide_min_chars` characters from a
+  response at least `elide_after_turns` responses old is replaced in place by a stub,
+  `{"elided":true,"tool","chars","sha256","head","recall":{"tool":"recall_output","call_id"}}`.
+  `chars` is the replaced text's length, `sha256` the first 16 hex digits of its digest and
+  `head` its first 160 characters. The full result stays in `tool_results`, so `recall_output`
+  on the stub's call ID pages it back. Recall pages, stubs, and outputs stored without a `seq`
+  (before this feature) are never elided. Between blocks the input only grows, so its prefix is
+  byte-stable and provider prefix caching holds; a block breaks the prefix once, at its first
+  newly elided item. A block that elides anything emits `context_elided` with `count`,
+  `chars_removed`, `first_index` (the input index of the first new stub) and `seq`.
+- **Elision state.** `elision = {"seq", "last_block_seq"}` in native state. `seq` counts the
+  lineage's provider responses: it grows with each response and is saved with it (save B), and
+  `start_from_handoff` copies it, so a native successor keeps the block schedule; a portable
+  successor starts a fresh context at 0. Every stored `tool_results` entry records its response's
+  `seq` and the tool `name`. The stubs and `last_block_seq` are saved with the next generation
+  marker, so a restart never elides twice. Checkpoints without `elision` never elide.
+- **Elision and the bound.** A stub is not byte-identical to the output it replaces, so the P1
+  bound counts it at its full size and credits nothing for the removed output: a block's request
+  adds every new stub to its bound, and the requests between blocks bound only their appended
+  items. The billed input still shrinks by the removed text.
+- **Not a default yet.** Elision changes what the model sees. Making it a default needs a quality
+  A/B; block sizes (`elide_every_turns`) of 8 to 20 are recommended for it. Larger blocks break
+  the cache less often but keep stale outputs longer.
 - **Tool digest.** The session record's `tool_definition_digest` covers the tools actually sent,
   including `recall_output`. If the digest changes between a joined-children wait and its wake,
   for example because the runtime stops accepting the budget, that in-flight native handoff falls
