@@ -108,7 +108,7 @@ async def test_429s_inside_the_cooldown_cause_no_extra_cut(monkeypatch):
     assert governor.snapshot()["effective_tokens_per_minute"] == round(1_710_000 * 0.8)
 
 
-async def test_one_isolated_429_a_minute_keeps_at_least_70_percent_of_the_limit(monkeypatch):
+async def test_one_isolated_429_a_minute_keeps_at_least_80_percent_of_the_limit(monkeypatch):
     limit = 1_800_000
     governor = TokenRateGovernor(tokens_per_minute=limit)
     clock = fake_clock(monkeypatch, governor)
@@ -118,8 +118,8 @@ async def test_one_isolated_429_a_minute_keeps_at_least_70_percent_of_the_limit(
         if second % 60 == 30:
             governor.throttled(1.0)  # one isolated refusal a minute, as from unseen traffic
         rates.append(governor.snapshot()["effective_tokens_per_minute"])
-    # Each cut takes 20% and has recovered before the next, so the rate cannot ratchet down.
-    assert min(rates) >= 0.7 * limit
+    # Each cut takes 20% of a fully recovered rate, so the rate never falls below 80%.
+    assert min(rates) >= 0.8 * limit
 
 
 async def test_one_cut_recovers_to_the_full_rate_within_a_minute(monkeypatch):

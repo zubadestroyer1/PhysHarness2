@@ -22,7 +22,7 @@
 - **Task 11b:** a lone surrogate in any tool result is escaped before the result is stored, so the session always saves.
 - **Task 12:** under the budget, every `elide_every_turns` responses, stale large outputs become recall stubs, and the input prefix stays byte-stable between blocks.
 - **Task 13:** this documentation sweep, plus the integration audits' minor fixes. Admission now uses the reservation's margin-inclusive input, the create sends exactly the tools its bound describes, a deadline abort emits before it clears the marker, and per-session caches end with their run.
-- **Tests:** the full suite passes 2,126 tests with 3 opt-in skips. Ruff check and format are clean.
+- **Tests:** the full suite passes 2,137 tests with 3 opt-in skips. Ruff check and format are clean.
 
 Next steps:
 - a harder target (audit #25);

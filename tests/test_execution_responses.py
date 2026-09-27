@@ -901,12 +901,14 @@ async def test_a_governed_throttle_event_carries_the_governor_snapshot(tmp_path)
     await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
     (throttled,) = [e.payload for e in events if e.kind == "provider_throttled"]
     # The governor's view when the 429 arrived, before it paused and cut, next to the provider's
-    # own: the bucket held 5,000 less the 4,106-token admission (10 input + 4,096 output).
+    # own: the bucket held 5,000 less the 4,106-token admission (10 input + 4,096 output), plus
+    # whatever refilled at 1 token/s meanwhile, which a slow runner may stretch.
     assert (throttled["limit_tokens"], throttled["remaining_tokens"]) == (2_000_000, 0)
-    assert throttled["governor"] == {
+    snapshot = throttled["governor"]
+    assert 894 <= snapshot.pop("level") < 1_000
+    assert snapshot == {
         "tokens_per_minute": 60,
         "effective_tokens_per_minute": 60,
-        "level": 894,
         "waiting": 0,
         "paused_seconds": 0.0,
     }
