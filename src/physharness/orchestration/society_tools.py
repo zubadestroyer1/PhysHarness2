@@ -197,6 +197,28 @@ def text(limit, description, *, nullable=False):
     }
 
 
+def ident(description, kinds, *, nullable=False):
+    """An id property: a full id, or a unique prefix of at least 8 hex characters (S1 #5d)."""
+    schema = text(
+        ID, f"{description} A unique 8+ hex character prefix works too.", nullable=nullable
+    )
+    return {**schema, "_id": tuple(kinds)}
+
+
+EVIDENCE_KINDS = (
+    "artifact",
+    "claim",
+    "task",
+    "verification",
+    "source",
+    "program",
+    "commons_node",
+    "discussion_post",
+    "message",
+    "branch",
+)
+
+
 def array(items, max_items, description, *, min_items=0):
     schema = {"type": "array", "items": items, "maxItems": max_items, "description": description}
     if min_items:
@@ -232,6 +254,9 @@ def _split(schema, path=()):
     cap = schema.pop("_cap", None)
     if cap is not None:
         caps.append((path, "chars", cap))
+    kinds = schema.pop("_id", None)
+    if kinds is not None:
+        caps.append((path, "id", kinds))
     if "maxItems" in schema:
         caps.append((path, "items", schema["maxItems"]))
     if "items" in schema:
@@ -258,6 +283,8 @@ def _values(value, path):
 
 def _check_caps(arguments, caps):
     for path, kind, limit in caps:
+        if kind == "id":
+            continue
         for value in _values(arguments, path):
             field = ".".join(path) or "arguments"
             if kind == "chars" and isinstance(value, str) and len(value) > limit:
@@ -284,11 +311,28 @@ def _validation_error(error: ValidationError) -> HarnessError:
     return invalid("; ".join(parts) or "The arguments are invalid.")
 
 
-def _guard(handler, caps):
-    """Enforce declared caps and turn pydantic rejections into recoverable tool errors."""
+def _resolved(value, path, resolve, kinds):
+    if not path:
+        return resolve(value, kinds) if isinstance(value, str) else value
+    if path[0] == "[]":
+        if not isinstance(value, list):
+            return value
+        return [_resolved(item, path[1:], resolve, kinds) for item in value]
+    if isinstance(value, dict) and path[0] in value:
+        return {**value, path[0]: _resolved(value[path[0]], path[1:], resolve, kinds)}
+    return value
+
+
+def _guard(handler, caps, resolve=None):
+    """Enforce declared caps, resolve id-typed arguments and turn pydantic rejections into
+    recoverable tool errors."""
 
     async def guarded(arguments, operation_id):
         _check_caps(arguments, caps)
+        if resolve is not None:
+            for path, kind, kinds in caps:
+                if kind == "id":
+                    arguments = _resolved(arguments, path, resolve, kinds)
         try:
             result = handler(arguments, operation_id)
             return await result if inspect.isawaitable(result) else result
@@ -533,7 +577,13 @@ def society_tools(
         if referee and name not in REFEREE_TOOL_NAMES:
             return
         schema, caps = _split({"type": "object", "properties": properties})
-        register(name, schema["properties"], _guard(handler, caps), description, defaults=defaults)
+        register(
+            name,
+            schema["properties"],
+            _guard(handler, caps, lambda value, kinds: service.resolve_id(value, agent, kinds)),
+            description,
+            defaults=defaults,
+        )
 
     def lean():
         if workspace_tools is None:
@@ -714,7 +764,11 @@ def society_tools(
                 "lean_check",
                 {
                     "source": source_property,
-                    "node_id": text(ID, "Commons node this file proves, or null.", nullable=True),
+                    "node_id": ident(
+                        "Commons node this file proves, or null.",
+                        ("commons_node",),
+                        nullable=True,
+                    ),
                     "automate": BOOLEAN,
                 },
                 lean_check,
@@ -871,7 +925,7 @@ def society_tools(
             "lean_sketch",
             {
                 "source": text(MAX_SOURCE, "Proof skeleton with sorry gaps; 30,000 UTF-8 bytes."),
-                "parent_node_id": text(ID, "The commons node the skeleton proves."),
+                "parent_node_id": ident("The commons node the skeleton proves.", ("commons_node",)),
                 "create_nodes": BOOLEAN,
             },
             lean_sketch,
@@ -1001,9 +1055,11 @@ def society_tools(
     add(
         "commons_read",
         {
-            "node_id": text(ID, "A commons node.", nullable=True),
-            "post_id": text(ID, "A node-thread or discussion post.", nullable=True),
-            "message_id": text(ID, "A message delivered to you.", nullable=True),
+            "node_id": ident("A commons node.", ("commons_node",), nullable=True),
+            "post_id": ident(
+                "A node-thread or discussion post.", ("discussion_post",), nullable=True
+            ),
+            "message_id": ident("A message delivered to you.", ("message",), nullable=True),
         },
         commons_read,
         "Read one exact record: a node with its edges, what it rests on and its claimants; "
@@ -1035,7 +1091,9 @@ def society_tools(
     add(
         "read_artifact",
         {
-            "artifact_id": text(ID, "An artifact id, such as one a node, post or message cites."),
+            "artifact_id": ident(
+                "An artifact id, such as one a node, post or message cites.", ("artifact",)
+            ),
             "offset": {"type": "integer", "minimum": 0},
         },
         read_artifact,
@@ -1098,7 +1156,11 @@ def society_tools(
         "commons_node",
         {
             "action": choice(NODE_ACTIONS, "What to do; each action reads only its fields."),
-            "node_id": text(ID, "The node (all actions but create; link's source).", nullable=True),
+            "node_id": ident(
+                "The node (all actions but create; link's source).",
+                ("commons_node",),
+                nullable=True,
+            ),
             "node_type": choice(authored_types, "create: the kind of node.", nullable=True),
             "title": text(200, "create: short title.", nullable=True),
             "statement": text(8000, "create: informal statement.", nullable=True),
@@ -1115,7 +1177,7 @@ def society_tools(
                     "type": "object",
                     "properties": {
                         "relation": choice(EDGE_RELATIONS, "How the new node relates."),
-                        "target_id": text(ID, "The related node."),
+                        "target_id": ident("The related node.", ("commons_node",)),
                     },
                     "required": ["relation", "target_id"],
                     "additionalProperties": False,
@@ -1123,9 +1185,9 @@ def society_tools(
                 16,
                 "create: edges from the new node (a tangent needs motivated_by).",
             ),
-            "artifact_ids": array(text(ID, "An artifact id."), 12, "create: evidence."),
+            "artifact_ids": array(ident("An artifact id.", ("artifact",)), 12, "create: evidence."),
             "relation": choice(EDGE_RELATIONS, "link: the relation.", nullable=True),
-            "target_id": text(ID, "link: the target node.", nullable=True),
+            "target_id": ident("link: the target node.", ("commons_node",), nullable=True),
             "reason": text(2000, "abandon: why the node is abandoned.", nullable=True),
             "scope": choice(tuple(REVIEW_VERDICTS), "request_review: scope.", nullable=True),
         },
@@ -1168,20 +1230,24 @@ def society_tools(
     add(
         "commons_post",
         {
-            "node_id": text(
-                ID,
+            "node_id": ident(
                 "Your assigned node (a referee posts only there)."
                 if referee
                 else "The node whose thread you post on.",
+                ("commons_node",),
             ),
             "kind": choice(REFEREE_POST_KINDS, "Post kind.")
             if referee
             else choice(POST_KINDS, "Post kind; closed nodes take synthesis and update."),
             "abstract": text(600, "Header: claim, evidence status and what you ask."),
             "body": text(12000, "Full argument, retrieved on demand."),
-            "cites": array(text(ID, "A cited node."), 20, "Nodes this post uses."),
-            "artifact_ids": array(text(ID, "An artifact id."), 12, "Evidence artifacts."),
-            "reply_to_post_id": text(ID, "A post on the same thread.", nullable=True),
+            "cites": array(ident("A cited node.", ("commons_node",)), 20, "Nodes this post uses."),
+            "artifact_ids": array(
+                ident("An artifact id.", ("artifact",)), 12, "Evidence artifacts."
+            ),
+            "reply_to_post_id": ident(
+                "A post on the same thread.", ("discussion_post",), nullable=True
+            ),
         },
         commons_post,
         "Post on a node's thread: findings, questions, objections, failed attempts, updates. "
@@ -1191,7 +1257,7 @@ def society_tools(
     add(
         "commons_claim",
         {
-            "node_id": text(ID, "The node."),
+            "node_id": ident("The node.", ("commons_node",)),
             "action": choice(CLAIM_ACTIONS, "claim, renew or release your work claim."),
         },
         lambda a, k: service.claim_node(a["node_id"], a["action"], agent, k),
@@ -1274,7 +1340,9 @@ def society_tools(
         {
             "brief": text(MAX_BRIEF, "What the recruit should do and why."),
             "title": text(200, "Short title for the new branch."),
-            "focus_node_id": text(ID, "Node the recruit works on, or null.", nullable=True),
+            "focus_node_id": ident(
+                "Node the recruit works on, or null.", ("commons_node",), nullable=True
+            ),
             "hat": choice(HATS, "Optional suggested hat.", nullable=True),
             "model_index": integer(0, 99, "Recorded experiment model, or null.", nullable=True),
             "lab": text(
@@ -1315,9 +1383,11 @@ def society_tools(
     add(
         "message",
         {
-            "to": text(ID, "A branch id in your lab or your parent/child, or 'lab'."),
+            "to": ident("A branch id in your lab or your parent/child, or 'lab'.", ("branch",)),
             "content": text(20000, "The message."),
-            "artifact_ids": array(text(ID, "An artifact id."), 12, "Attached evidence."),
+            "artifact_ids": array(
+                ident("An artifact id.", ("artifact",)), 12, "Attached evidence."
+            ),
         },
         message,
         "Send an attributed message to one branch or to every other member of your lab "
@@ -1340,7 +1410,7 @@ def society_tools(
             {
                 "for": choice(("tasks", "peer"), "What to wait for."),
                 "ids": array(
-                    text(ID, "A task or branch id."),
+                    ident("A task or branch id.", ("task", "branch")),
                     MAX_WAIT_IDS,
                     "tasks: your recruits' task ids; peer: one branch id.",
                     min_items=1,
@@ -1396,7 +1466,7 @@ def society_tools(
     add(
         "verification_status",
         {
-            "receipt_id": text(ID, "The verification receipt."),
+            "receipt_id": ident("The verification receipt.", ("verification",)),
             "wait_seconds": {"type": "number", "minimum": 0, "maximum": 30},
         },
         verification_status,
@@ -1439,7 +1509,9 @@ def society_tools(
                 text(500, "One open obligation."), MAX_OBLIGATIONS, "write: open obligations."
             ),
             "summary": text(MAX_NOTE_SUMMARY, "write: attributed summary.", nullable=True),
-            "evidence_ids": array(text(ID, "An evidence id."), MAX_EVIDENCE, "write: evidence."),
+            "evidence_ids": array(
+                ident("An evidence id.", EVIDENCE_KINDS), MAX_EVIDENCE, "write: evidence."
+            ),
         },
         notebook,
         "Your portable notebook. write checkpoints bounded research notes (unverified) that "
@@ -1468,7 +1540,9 @@ def society_tools(
             "return_result",
             {
                 "evidence_status": choice(("unverified", "rejected", "unknown"), "Status."),
-                "artifact_ids": array(text(ID, "An artifact id."), 100, "Result artifacts."),
+                "artifact_ids": array(
+                    ident("An artifact id.", ("artifact",)), 100, "Result artifacts."
+                ),
                 "unresolved_obligations": array(
                     text(2000, "One open obligation."), 100, "Open obligations."
                 ),

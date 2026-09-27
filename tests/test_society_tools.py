@@ -117,6 +117,10 @@ class CatalogOnlyService:
             return self.task
         raise AssertionError(f"unexpected read of {kind}")
 
+    def resolve_id(self, identifier, actor, kinds):
+        # No records exist in this catalog-only double; every id passes through unresolved.
+        return identifier
+
 
 @pytest.mark.parametrize("sharing", ["none", "ideas"])
 @pytest.mark.parametrize("with_task", [False, True])

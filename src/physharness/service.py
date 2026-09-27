@@ -54,6 +54,8 @@ from .workforce import WorkforceMixin
 
 log = logging.getLogger(__name__)
 MICRO_USD = Decimal(1_000_000)
+ID_PREFIX = re.compile(r"[0-9a-f]{8}[0-9a-f-]{0,27}")
+MAX_PREFIX_CANDIDATES = 20
 
 
 def money_units(value: str | Decimal) -> int:
@@ -515,6 +517,56 @@ class HarnessService(
     def get_record(self, kind: str, identifier: str, actor: Principal) -> dict:
         with self.db.sessions() as session:
             return copy.deepcopy(self._get(session, kind, identifier, actor).payload)
+
+    def _prefix_candidates(self, session, prefix, actor, kinds):
+        """Visible records of ``kinds`` in the actor's experiment whose id begins with
+        ``prefix``, ordered by id. Uses records_project_kind_experiment_keyset."""
+        rows = session.scalars(
+            select(RecordRow)
+            .where(
+                RecordRow.project_id == actor.project_id,
+                RecordRow.kind.in_(kinds),
+                record_json_text("experiment_id") == actor.experiment_id,
+                RecordRow.id.startswith(prefix, autoescape=True),
+            )
+            .order_by(RecordRow.id)
+            .limit(MAX_PREFIX_CANDIDATES + 1)
+        ).all()
+        return [row for row in rows if self._in_scope(session, row, actor)]
+
+    def _resolve_prefix(self, session, identifier, actor, kinds):
+        if (
+            not isinstance(identifier, str)
+            or len(identifier) >= 36
+            or not ID_PREFIX.fullmatch(identifier)
+            or not actor.experiment_id
+        ):
+            return identifier
+        candidates = self._prefix_candidates(session, identifier, actor, kinds)
+        if len(candidates) > 1:
+            raise HarnessError(
+                "AMBIGUOUS_ID",
+                f"{len(candidates)} records begin with {identifier}; give more characters.",
+                status=409,
+                details={
+                    "candidates": [
+                        {"id": row.id, "kind": row.kind}
+                        for row in candidates[:MAX_PREFIX_CANDIDATES]
+                    ]
+                },
+                remediation="Repeat the call with a longer prefix or a full id from "
+                "details.candidates.",
+            )
+        # Unknown ids pass through, so the caller's lookup still answers NOT_FOUND.
+        return candidates[0].id if candidates else identifier
+
+    def resolve_id(self, identifier, actor, kinds):
+        """The one resolver for model-supplied ids: a full id, or a unique prefix of at least
+        8 hex characters of a visible record of ``kinds`` in the actor's experiment."""
+        if not isinstance(identifier, str) or not ID_PREFIX.fullmatch(identifier):
+            return identifier
+        with self.db.sessions() as session:
+            return self._resolve_prefix(session, identifier, actor, kinds)
 
     def page_records(self, kind, actor, experiment_id=None, limit=500, after=None):
         if not 1 <= limit <= 5000:

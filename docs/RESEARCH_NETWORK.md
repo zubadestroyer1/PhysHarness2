@@ -228,6 +228,9 @@ tools, the prompts and the delivery shapes.
   another branch into that branch's lab. `message(to="lab")` fans out to the lab. Direct
   messages across labs are refused unless the policy allows them, so cross-lab
   discourse goes through the commons.
+- **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
+  least 8 hex characters of a record the agent can see; an ambiguous prefix returns
+  `AMBIGUOUS_ID` with the candidates.
 
 Society workers get the consolidated profile in
 `src/physharness/orchestration/society_tools.py`. It has 26 tools in all; a worker's
