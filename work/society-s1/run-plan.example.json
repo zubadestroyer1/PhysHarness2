@@ -82,6 +82,7 @@
     "tool_profile": "society",
     "claim_ttl_seconds": 900,
     "referee_quorum": 1,
+    "referee_slots": 2,
     "literature": {
       "mode": "benchmark",
       "blocked_sources": [

@@ -4,18 +4,27 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .domain import StrictModel
+from .domain import Money, StrictModel
 
 
 class ConfigureWorkforceRequest(StrictModel):
-    max_total_tasks: int = Field(ge=1, le=100_000)
-    max_pending_tasks: int = Field(ge=1, le=100_000)
+    # Optional count caps: legacy experiments default them to 10,000; in a society they are
+    # an operator guard that ignores referee tasks.
+    max_total_tasks: int | None = Field(default=None, ge=1, le=100_000)
+    max_pending_tasks: int | None = Field(default=None, ge=1, le=100_000)
     expected_revision: int | None = Field(default=None, ge=1)
     synthesis_interval_posts: int = Field(default=0, ge=0, le=100)
+    # Society experiments only: dollars that must remain per new task. None is no floor
+    # (read as 0) and is omitted from fingerprints and the stored policy.
+    admission_floor_usd: Money | None = None
 
     @model_validator(mode="after")
     def valid_caps(self):
-        if self.max_pending_tasks > self.max_total_tasks:
+        if (
+            self.max_pending_tasks is not None
+            and self.max_total_tasks is not None
+            and self.max_pending_tasks > self.max_total_tasks
+        ):
             raise ValueError("max_pending_tasks cannot exceed max_total_tasks")
         if 0 < self.synthesis_interval_posts < 4:
             raise ValueError("synthesis_interval_posts must be zero or at least four")

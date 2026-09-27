@@ -1,8 +1,9 @@
 """Atomic research recruitment with central task admission and opt-in discovery."""
 
 import copy
+from decimal import Decimal
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from .commons_review import REFEREE_HAT
 from .domain import Principal, make_record, new_id, utcnow
@@ -20,6 +21,27 @@ from .workforce_models import (
 
 DEFAULT_MAX_TOTAL_TASKS = 10_000
 DEFAULT_MAX_PENDING_TASKS = 10_000
+
+
+def _micro(value):
+    return int(Decimal(str(value)) * 1_000_000)
+
+
+def _usd(units):
+    return format(Decimal(units) / 1_000_000, "f")
+
+
+def _task_caps(experiment, policy):
+    """The count caps admission enforces. A society's are the operator's optional guard
+    (None: no cap); a legacy experiment's default to 10,000 each."""
+    stored = policy.payload if policy else {}
+    total, pending = stored.get("max_total_tasks"), stored.get("max_pending_tasks")
+    if experiment.payload.get("society"):
+        return total, pending
+    return (
+        DEFAULT_MAX_TOTAL_TASKS if total is None else total,
+        DEFAULT_MAX_PENDING_TASKS if pending is None else pending,
+    )
 
 
 def _cap_reached(code, what, limit, used):
@@ -289,34 +311,55 @@ class WorkforceMixin:
         # use BEGIN IMMEDIATE; PostgreSQL uses this FOR UPDATE lock.
         return self._active(session, experiment_id, actor)
 
-    def _admit_research_tasks(self, session, experiment_id, actor, count=1):
-        self._workforce_lock(session, experiment_id, actor)
+    def _admit_by_budget(self, session, experiment_id, policy, count):
+        """Society work is admitted while the remaining dollars cover the floor. There is no
+        floor by default (admission_floor_usd is None, read as 0); an operator who sets one
+        gets an early, budget-not-input refusal on top of the ledger's own hard stop (S1 #16)."""
+        budget = session.get(BudgetRow, experiment_id)
+        floor = _micro((policy.payload.get("admission_floor_usd") if policy else None) or "0")
+        remaining = max(0, budget.max_cost - budget.spent - budget.reserved)
+        if remaining < count * floor:
+            raise HarnessError(
+                "ADMISSION_BUDGET",
+                f"Budget, not input: ${_usd(remaining)} remains and new work needs "
+                f"${_usd(count * floor)}.",
+                details={
+                    "remaining_usd": _usd(remaining),
+                    "floor_usd": _usd(floor),
+                    "count": count,
+                },
+                remediation="Do not retry; continue with work already running, or finish.",
+            )
+
+    def _admit_research_tasks(self, session, experiment_id, actor, count=1, *, referee=False):
+        experiment = self._workforce_lock(session, experiment_id, actor)
         policy = self._workforce_policy(session, experiment_id, actor)
-        total_limit = policy.payload["max_total_tasks"] if policy else DEFAULT_MAX_TOTAL_TASKS
-        pending_limit = policy.payload["max_pending_tasks"] if policy else DEFAULT_MAX_PENDING_TASKS
-        total = session.scalar(
-            select(func.count())
-            .select_from(RecordRow)
-            .where(
-                RecordRow.project_id == actor.project_id,
-                RecordRow.kind == "task",
-                record_json_text("experiment_id") == experiment_id,
+        society = bool(experiment.payload.get("society"))
+        if society:
+            self._admit_by_budget(session, experiment_id, policy, count)
+            if referee:
+                return  # Referees fill no count cap.
+        total_limit, pending_limit = _task_caps(experiment, policy)
+        tasks = [
+            RecordRow.project_id == actor.project_id,
+            RecordRow.kind == "task",
+            record_json_text("experiment_id") == experiment_id,
+        ]
+        if society:
+            hat = record_json_text("hat")
+            tasks.append(or_(hat.is_(None), hat != REFEREE_HAT))
+        if total_limit is not None:
+            total = session.scalar(select(func.count()).select_from(RecordRow).where(*tasks))
+            if total + count > total_limit:
+                raise _cap_reached("TASK_TOTAL_CAP", "task total", total_limit, total)
+        if pending_limit is not None:
+            pending = session.scalar(
+                select(func.count())
+                .select_from(RecordRow)
+                .where(*tasks, record_json_text("status").in_(["queued", "running"]))
             )
-        )
-        pending = session.scalar(
-            select(func.count())
-            .select_from(RecordRow)
-            .where(
-                RecordRow.project_id == actor.project_id,
-                RecordRow.kind == "task",
-                record_json_text("experiment_id") == experiment_id,
-                record_json_text("status").in_(["queued", "running"]),
-            )
-        )
-        if total + count > total_limit:
-            raise _cap_reached("TASK_TOTAL_CAP", "task total", total_limit, total)
-        if pending + count > pending_limit:
-            raise _cap_reached("TASK_PENDING_CAP", "pending task", pending_limit, pending)
+            if pending + count > pending_limit:
+                raise _cap_reached("TASK_PENDING_CAP", "pending task", pending_limit, pending)
 
     def configure_workforce(
         self, experiment_id: str, request: ConfigureWorkforceRequest, actor: Principal, key: str
@@ -325,21 +368,30 @@ class WorkforceMixin:
             raise HarnessError(
                 "FORBIDDEN", "Only an operator can set admission policy.", status=403
             )
-        data = request.model_dump(mode="json")
+        # Fingerprints that predate the admission floor stay valid while it is unset.
+        floor = request.admission_floor_usd
+        data = request.model_dump(
+            mode="json", exclude={"admission_floor_usd"} if floor is None else None
+        )
 
         def action(session, op):
             self._workforce_lock(session, experiment_id, actor)
             budget = session.get(BudgetRow, experiment_id)
             if budget is None:
                 raise HarnessError("NOT_FOUND", "Experiment ledger is missing.", status=404)
-            # This policy contains only task queue caps; the immutable experiment
-            # envelope and BudgetRow still authorize money, time and concurrency.
+            # This policy contains only task queue caps and a society's admission floor; the
+            # immutable experiment envelope and BudgetRow still authorize money, time and
+            # concurrency.
             existing = self._workforce_policy(session, experiment_id, actor)
             values = {
                 "max_total_tasks": request.max_total_tasks,
                 "max_pending_tasks": request.max_pending_tasks,
                 "synthesis_interval_posts": request.synthesis_interval_posts,
             }
+            if floor is not None:
+                values["admission_floor_usd"] = format(floor, "f")
+            elif existing and existing.payload.get("admission_floor_usd") is not None:
+                values["admission_floor_usd"] = None  # An update without a floor clears it.
             if existing:
                 if request.expected_revision is None:
                     raise HarnessError("REVISION_REQUIRED", "Supply current policy revision.")
@@ -851,9 +903,10 @@ class WorkforceMixin:
     def research_capacity(self, experiment_id: str, actor: Principal) -> dict:
         self._research_role(actor)
         with self.db.sessions() as session:
-            self._get(session, "experiment", experiment_id, actor)
+            experiment = self._get(session, "experiment", experiment_id, actor)
             budget = session.get(BudgetRow, experiment_id)
             policy = self._workforce_policy(session, experiment_id, actor)
+            total_limit, pending_limit = _task_caps(experiment, policy)
             statuses = dict(
                 session.execute(
                     select(
@@ -887,12 +940,8 @@ class WorkforceMixin:
                 "queued_tasks": queued,
                 "running_tasks": running,
                 "total_tasks": sum(statuses.values()),
-                "max_total_tasks": policy.payload["max_total_tasks"]
-                if policy
-                else DEFAULT_MAX_TOTAL_TASKS,
-                "max_pending_tasks": policy.payload["max_pending_tasks"]
-                if policy
-                else DEFAULT_MAX_PENDING_TASKS,
+                "max_total_tasks": total_limit,
+                "max_pending_tasks": pending_limit,
                 "synthesis_interval_posts": policy.payload.get("synthesis_interval_posts", 0)
                 if policy
                 else 0,

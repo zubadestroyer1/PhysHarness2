@@ -145,6 +145,9 @@ class SocietyPolicy(StrictModel):
     claim_ttl_seconds: int = Field(default=900, ge=60, le=86400)
     messages_per_minute: int = Field(default=12, ge=1, le=600)
     referee_quorum: int = Field(default=1, ge=1, le=5)
+    # Runner slots reserved for referee tasks inside max_concurrency (S1 #16). Stored S1
+    # policies without it read as 0: one shared pool.
+    referee_slots: int = Field(default=2, ge=0, le=32)
     literature: LiteraturePolicy = Field(default_factory=LiteraturePolicy)
     scaffolding: ScaffoldingPolicy = Field(default_factory=ScaffoldingPolicy)
 

@@ -2322,6 +2322,13 @@ class ResearchTeamRunner:
             f"team-manifest:{manifest.run_id}",
         )
         outcomes, active, attempted = {}, {}, set()
+        # Referees run in their own slots inside max_concurrency, per runner process; with no
+        # slots (none set, or concurrency 1) every task shares one pool. max_tasks counts
+        # research tasks only (S1 #16).
+        slots = min(
+            (experiment.get("society") or {}).get("referee_slots", 0), manifest.max_concurrency - 1
+        )
+        active_referees, research_attempted = set(), set()
         checks, checked_ids, verification_errors = {}, set(), []
         stop_reason = None
         deadline = asyncio.get_running_loop().time() + manifest.timeout_seconds
@@ -2413,6 +2420,7 @@ class ResearchTeamRunner:
             later, this run may adopt it again."""
             scheduled_synthesis_ids.discard(task_id)
             attempted.discard(task_id)
+            research_attempted.discard(task_id)
 
         async def cancel_active():
             for future in active:
@@ -2583,9 +2591,22 @@ class ResearchTeamRunner:
                             "ready"
                         ]:
                             continue
-                    if len(active) >= manifest.max_concurrency:
-                        break
-                    if task_id not in attempted and len(attempted) >= manifest.max_tasks:
+                    is_referee = task.get("hat") == REFEREE_HAT
+                    if not slots:
+                        if len(active) >= manifest.max_concurrency:
+                            break
+                    elif is_referee and len(active_referees) >= slots:
+                        continue
+                    elif (
+                        not is_referee
+                        and len(active) - len(active_referees) >= manifest.max_concurrency - slots
+                    ):
+                        continue
+                    if (
+                        not is_referee
+                        and task_id not in research_attempted
+                        and len(research_attempted) >= manifest.max_tasks
+                    ):
                         continue
                     if any(task_states.get(dep) != "completed" for dep in task["dependency_ids"]):
                         continue
@@ -2600,6 +2621,10 @@ class ResearchTeamRunner:
                         selected = [item for item in selected if item["id"] != task_id]
                         continue
                     attempted.add(task_id)
+                    if is_referee:
+                        active_referees.add(task_id)
+                    else:
+                        research_attempted.add(task_id)
                     if manifest.stop_on_verified_target:
                         future = asyncio.create_task(
                             self.executor.execute(task_id, actor.project_id)
@@ -2626,7 +2651,7 @@ class ResearchTeamRunner:
                     if pending:
                         stop_reason = (
                             "TEAM_TASK_LIMIT"
-                            if len(attempted) >= manifest.max_tasks
+                            if len(research_attempted) >= manifest.max_tasks
                             else "DEPENDENCIES_PENDING"
                         )
                     break
@@ -2650,6 +2675,7 @@ class ResearchTeamRunner:
                             )
                         continue
                     task_id = active.pop(future)
+                    active_referees.discard(task_id)
                     try:
                         task_result = future.result()
                         if task_result["status"] not in {"continuation", "waiting"}:

@@ -77,8 +77,9 @@ single and independent arms:
 
 Design B has two limits:
 - S1 has no switch that removes `recruit` from the society profile. In arms 1 and I, set
-  the workforce admission cap (`max_total_tasks` = 1 + referee allowance) and report any
-  recruit as a protocol deviation.
+  the workforce admission cap (S1 only: `max_total_tasks` = 1 + referee allowance) and
+  report any recruit as a protocol deviation. After the S1 remediation, society count caps
+  ignore referee tasks, so the cap is `max_total_tasks` = 1.
 - `prepare-run` creates one campaign, problem and experiment per plan. Eight independent
   experiments therefore need either eight plans (eight target reviews and eight verifier
   registry entries of identical content) or an operator script that creates eight
@@ -90,12 +91,16 @@ paid from the arm's ceiling B.
 ### Operator configuration of arm S
 
 - Prepare it from `run-plan.example.json` once every placeholder is filled.
-- Before starting, call `configure_workforce(max_total_tasks=40, max_pending_tasks=20,
-  synthesis_interval_posts=0)`. That allows 16 research agents plus up to 24 referee
-  tasks.
-- S1 cannot cap research agents separately from referee tasks. Both count toward
-  `max_total_tasks`, so report the split from the export (`branches.agents`,
-  `branches.referees`).
+- S1 only: before starting, call `configure_workforce(max_total_tasks=40,
+  max_pending_tasks=20, synthesis_interval_posts=0)`. That allows 16 research agents plus
+  up to 24 referee tasks. S1 cannot cap research agents separately from referee tasks.
+  Both count toward `max_total_tasks`, so report the split from the export
+  (`branches.agents`, `branches.referees`).
+- After the S1 remediation, society work is admitted by dollars: count caps are optional,
+  ignore referee tasks and bound research agents alone (`max_total_tasks=16` for the
+  arm above), and an optional `admission_floor_usd` refuses new work early. Referees run
+  in the policy's `referee_slots` (2 in the example) of the run's concurrency, and
+  `--max-tasks` counts research tasks only.
 - Launch with `phys run-team <experiment> --max-tasks 40 --concurrency 12
   --timeout-seconds <W>`. `run-team` runs the preflight first. The preflight now also
   blocks benchmark mode without a readable `masked_reference` artifact

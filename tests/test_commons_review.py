@@ -302,19 +302,25 @@ def test_request_review_deduplicates_open_request(lab):
 def test_request_review_is_admitted_like_recruitment(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     operator = Principal(id="operator", project_id="lab", role="operator")
-    service.configure_workforce(
-        exp["id"],
-        ConfigureWorkforceRequest(max_total_tasks=1, max_pending_tasks=1),
-        operator,
-        "configure",
+    caps = ConfigureWorkforceRequest(max_total_tasks=1, max_pending_tasks=1)
+    service.configure_workforce(exp["id"], caps, operator, "configure")
+    helper = RecruitResearcherRequest(
+        parent_branch_id=alpha.branch_id, title="Helper", objective="Help.", detached=True
     )
+    service.recruit_researcher(exp["id"], helper, alpha, "recruit")
     node = service.create_node(exp["id"], lemma(), alpha, "node")
+    # The task cap is full, but it ignores referees.
     first = service.request_review(node["id"], "informal", beta, "first")
+    assert first["deduplicated"] is False
     # Deduplication returns the open request without admitting another task.
     assert service.request_review(node["id"], "informal", alpha, "dup")["deduplicated"] is True
     submit(service, first, exp, "gaps")
+    floor = ConfigureWorkforceRequest(
+        max_total_tasks=1, max_pending_tasks=1, admission_floor_usd="1000000", expected_revision=1
+    )
+    service.configure_workforce(exp["id"], floor, operator, "floor")
     error = rejected(lambda: service.request_review(node["id"], "informal", alpha, "second"))
-    assert error.code == "TASK_TOTAL_CAP"
+    assert error.code == "ADMISSION_BUDGET"
 
 
 def test_referee_branch_is_isolated_from_other_branches(lab):

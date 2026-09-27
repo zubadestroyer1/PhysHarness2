@@ -33,24 +33,24 @@ def _page(path, after=None, limit=20):
 @mcp.tool()
 def configure_workforce(
     experiment_id: str,
-    max_total_tasks: int,
-    max_pending_tasks: int,
     operation_id: str,
+    max_total_tasks: int | None = None,
+    max_pending_tasks: int | None = None,
     expected_revision: int | None = None,
     synthesis_interval_posts: int = 0,
+    admission_floor_usd: str | None = None,
 ) -> dict:
-    """Set operator task caps and optional synthesis cadence within the experiment envelope."""
-    return call(
-        "POST",
-        f"/v1/experiments/{experiment_id}/workforce",
-        {
-            "max_total_tasks": max_total_tasks,
-            "max_pending_tasks": max_pending_tasks,
-            "expected_revision": expected_revision,
-            "synthesis_interval_posts": synthesis_interval_posts,
-        },
-        operation_id,
-    )
+    """Set optional operator task caps, a society's optional admission floor in USD and the
+    synthesis cadence within the experiment envelope."""
+    body = {
+        "max_total_tasks": max_total_tasks,
+        "max_pending_tasks": max_pending_tasks,
+        "expected_revision": expected_revision,
+        "synthesis_interval_posts": synthesis_interval_posts,
+    }
+    if admission_floor_usd is not None:
+        body["admission_floor_usd"] = admission_floor_usd
+    return call("POST", f"/v1/experiments/{experiment_id}/workforce", body, operation_id)
 
 
 @mcp.tool()

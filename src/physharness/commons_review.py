@@ -675,9 +675,10 @@ class CommonsReviewMixin:
             model_index, cross_model = self._referee_model(
                 models, author_index, avoided, author, used
             )
-            # The requester's admission; the platform owns the branch, so the requester gets
-            # no delegation or parent/child messaging into it.
-            self._admit_research_tasks(session, experiment.id, actor)
+            # The requester's admission, by dollars and outside the count caps; the platform
+            # owns the branch, so the requester gets no delegation or parent/child messaging
+            # into it.
+            self._admit_research_tasks(session, experiment.id, actor, referee=True)
             created = self._new_branch_task(
                 session,
                 op,

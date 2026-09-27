@@ -37,9 +37,11 @@ task_ids = [root["task"]["id"] for root in portfolio["roots"]]
 
 Use the returned task IDs in the existing `TeamRunManifest` and `ResearchTeamRunner`,
 with the configured executor. Seeding creates queued work; it does not start model
-calls. Admission caps bound tasks, while the original resource ledger controls
-spending, tokens, runtime and concurrency. Reusing an operation key with different
-inputs fails. Updating an existing workforce policy requires its current revision.
+calls. Admission caps bound tasks (each is optional and defaults to 10,000; a society
+experiment admits by dollars instead, see **Workforce** below), while the original
+resource ledger controls spending, tokens, runtime and concurrency. Reusing an operation
+key with different inputs fails. Updating an existing workforce policy requires its
+current revision.
 
 ## Tools available to researchers
 
@@ -230,7 +232,14 @@ tools, the prompts and the delivery shapes.
     statement). The first referee is cross-model whenever a family allows it, and a
     quorum spans distinct families when several are configured, the author's included
     once the others are used; `cross_model` reports whether each referee avoided them;
-  - unreachable by direct message or delegation from other branches.
+  - unreachable by direct message or delegation from other branches;
+  - run in their own pool of `referee_slots` (default 2) inside the run's
+    `max_concurrency`, capped at `max_concurrency - 1` so research always keeps a slot.
+    The finite supervisor starts at most that many referees at once and at most the rest
+    of `max_concurrency` in research tasks, so a review never queues behind busy roots.
+    The pool is per runner process; the ledger still bounds the experiment's total at
+    `max_concurrency`. A stored S1 policy without the field, or a concurrency of 1, keeps
+    one shared pool. The runner's `max_tasks` counts research tasks only.
 
   A node cannot shop for verdicts:
   - Each text version gets at most the positive verdicts it needs plus two referees
@@ -257,6 +266,15 @@ tools, the prompts and the delivery shapes.
   `recruit`, `message`, `wait` or `submit_for_verification`. Its
   `lean_check` records no local compiles, and it posts questions, findings and
   objections only on the assigned node's thread.
+- **Workforce.** Society work is admitted by dollars, not task counts. A new task (a
+  seeded root, a recruit, a delegated task, a synthesis or a referee) is admitted while the
+  remaining dollars (`max_cost − spent − reserved`) cover the operator's
+  `admission_floor_usd` for each new task. There is no floor by default: `None` reads as
+  `0`, so only an operator who sets a floor gets an early "budget, not input"
+  `ADMISSION_BUDGET` refusal, on top of the ledger's own hard stop at `max_cost`.
+  `max_total_tasks` and `max_pending_tasks` are an optional operator guard that ignores
+  referee tasks: unset, they cap nothing. Legacy experiments keep their count caps and
+  ignore the floor.
 - **Messages.** There are no labs (S1 audit #15). `message` reaches one branch, or, given
   a node id, whoever works on that node: its author and live claimants, never the sender,
   at most 8 (`NO_RECIPIENTS` when nobody else does). Each delivered copy counts against
