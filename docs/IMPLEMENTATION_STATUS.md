@@ -1,3 +1,10 @@
+## History rewrite — 2026-09-26
+
+**Status:** the public history was rewritten to remove a local username, machine hostnames and a personal author identity from every commit.
+- **Changed:** file contents changed only by those replacements, and every commit author is now the noreply identity.
+- **Commit IDs:** every commit ID changed. Older documents and evidence cite the old IDs; [`work/history-rewrite-2026-09-26.json`](../work/history-rewrite-2026-09-26.json) maps each one to its new ID.
+- **Evidence:** the JUnit XML files parse again, and every digest that one committed file records for another matches the current bytes. The redaction manifest note records the change.
+
 ## S1 live comparison — 2026-09-26
 
 **Status:** run on the local Colima workbench with `gpt-6-sol`; the evidence is in the [results report](../work/society-s1/results-2026-09-26/REPORT.md).

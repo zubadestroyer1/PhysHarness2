@@ -1,5 +1,5 @@
 {
- "note": "On 2026-09-25, absolute local paths in these evidence files were replaced with placeholders before merging to the public main branch: <repo> (the worktree root), <repo-root> (the main checkout), ~ (the home directory), $TMPDIR (the macOS temporary directory) and pytest-of-<user>. No other content changed. Digests that other evidence files record for these files were updated to the redacted bytes; original_sha256 identifies the unredacted originals, which are retained privately.",
+ "note": "On 2026-09-25, absolute local paths in these evidence files were replaced with placeholders before merging to the public main branch: <repo> (the worktree root), <repo-root> (the main checkout), ~ (the home directory), $TMPDIR (the macOS temporary directory) and pytest-of-<user>. No other content changed. Digests that other evidence files record for these files were updated to the redacted bytes; original_sha256 identifies the unredacted originals, which are retained privately. On 2026-09-26 the repository history was rewritten, which also replaced the test hosts' names in the JUnit XML files with host; the <repo> placeholders in those XML files were then escaped as &lt;repo&gt; so they parse, and redacted_sha256 records those bytes.",
  "files": {
   "docs/superpowers/plans/2026-09-15-pr-1-corrections.md": {
    "original_sha256": "4fdad34fd48f5457e8cd000b3260707831497268955ca92536d94c54c134f136",
@@ -211,7 +211,7 @@
   },
   "work/pilot-qualification-2026-09-23/attempt-01/regressions.xml": {
    "original_sha256": "018cd090336fe36b1620e0dcd92ab73d3032f855d728475520a4293d234eefd2",
-   "redacted_sha256": "03ecb51bc30a1d6d75bb76a7262fe63490eda296fb2604e525dd023716d8a143"
+   "redacted_sha256": "b63be8c7952e3fcc517ded405035a529dd6faaa38323dfcdcb5d30d668867e95"
   },
   "work/pilot-qualification-2026-09-23/attempt-effectiveness-01/core-kernel.json": {
    "original_sha256": "eeb3452e4c2c494c8919b674c01123eb8b2e2d37ac2cfda0f2de1165e4cee086",
@@ -223,27 +223,27 @@
   },
   "work/pilot-qualification-2026-09-23/attempt-effectiveness-01/regressions.xml": {
    "original_sha256": "5c78e2d5ce601e8de6b0ac1570ea6795ab1008366928bc1ba6f8739235670566",
-   "redacted_sha256": "4629ebcaa1686ea7bdb46836b6f49d57fa8cab1f4884034cbd5dc62181f57bc5"
+   "redacted_sha256": "9d18e5b65df0ad4e3ed6a031c2a5f9752c87f84b608c76c262f36c83ce7d3da7"
   },
   "work/pilot-qualification-2026-09-23/attempt-effectiveness-02/regressions.xml": {
    "original_sha256": "22974c12146ce4d5c0f6f217614873af2473428d0a335dd3deb2e4a7631f8de0",
-   "redacted_sha256": "8ee9921dd69914de65a96b655294ec11ac701a312847d31b04680bc24b21cca7"
+   "redacted_sha256": "a8bb720d85b311fd02d80c9f2158eb80648063a13d44eeb87a77823039dd2928"
   },
   "work/pilot-qualification-2026-09-23/attempt-effectiveness-03/regressions.xml": {
    "original_sha256": "624d89f8ea0cd93f70f8fae17d2637c9caeaeaae0c60d32d634d54c5d67cfcf8",
-   "redacted_sha256": "c1a190a288f21ad32bf3bdd67bf4d695c11386b179c0ed1fd212e463aef62359"
+   "redacted_sha256": "956bd8f92c0247723e2a5c68ebe9f98cf9cc1025ebe05379f255a9b0827c1606"
   },
   "work/pilot-qualification-2026-09-23/attempt-exponential-20260924-02/regressions.xml": {
    "original_sha256": "491b852d1f5977e468b9a664767f573be4b3760c709eefac3cac6c2701015253",
-   "redacted_sha256": "b811d6f7b6a8deef202548393d9d9b2d4f85a87d5dec00736df539d936323ef1"
+   "redacted_sha256": "cb7800cc5dd930397ef7d07651f7f8571a8b8ace3775820a09471bf7c6925025"
   },
   "work/pilot-qualification-2026-09-23/attempt-exponential-20260924-03/regressions.xml": {
    "original_sha256": "1308447c701e1686452cae9f5062ccbd7eb300e1c77029f11ccae6db24288e89",
-   "redacted_sha256": "92cbc807110102aa642c0aaa4722e525b0731ffb23aecb45a68c245b03f15418"
+   "redacted_sha256": "d833709ceb31cdab763519d51feda3d0745b9d5ad10aafe18ca61a4112939de6"
   },
   "work/pilot-qualification-2026-09-23/attempt-exponential-20260924-04/regressions.xml": {
    "original_sha256": "42b9210da57b23371e7de95e79326811ce81a87a65af79722c20313f8c439fcf",
-   "redacted_sha256": "426f5353174839c11929a1c8e030c10f18e8998ba27fe869d9731c3fa7822375"
+   "redacted_sha256": "b8cf0993c59698f508d5f6a202e4822fcd757954902a97252bbd99ad011d76a4"
   },
   "work/pilot-qualification-2026-09-23/attempt-exponential-20260924/core-kernel.json": {
    "original_sha256": "57168e42309245e26dfd8d24d1e9f98a370362d2a762d5133e2d91a1e0e31057",
@@ -255,11 +255,11 @@
   },
   "work/pilot-qualification-2026-09-23/attempt-exponential-20260924/regressions.xml": {
    "original_sha256": "96bc671ccf89b0d7df6352452974061ba6d1a05dda347edcda9e4877d297d0a4",
-   "redacted_sha256": "bbbeba749f831b93f221e7522b1337b925d74bf727e61a1608a2311b6a9307ac"
+   "redacted_sha256": "5f3accf5b3ccf2caf471e9ff5305c814dca8487e305b7a2af5311992d2da41b5"
   },
   "work/pilot-qualification-2026-09-23/attempt-hardening-20260924-01/regressions.xml": {
    "original_sha256": "9897f7119c6082d328eead31d83f7b70e95f93d667879868e09b3a0767d980c7",
-   "redacted_sha256": "b66d5aa181858be1859b7131295fea9ef72e4d1f9d7d7169c5326e08fff4b502"
+   "redacted_sha256": "1f7d1d229a6ad3170b7c3e43be70aa73f634369dfa25cec17d59a0660ee08383"
   },
   "work/pilot-qualification-2026-09-23/attempt-long-horizon-01/core-kernel.json": {
    "original_sha256": "8d3daf97cebcaf1975d913763c0862ae849c411cc976944e9344bc414862c663",
@@ -271,23 +271,23 @@
   },
   "work/pilot-qualification-2026-09-23/attempt-long-horizon-01/regressions.xml": {
    "original_sha256": "8052e7d349017d78239915afe2421c1f8830e398fffcb34210a8c6484d11e651",
-   "redacted_sha256": "dd0653d126fe7a612f460c5bfa3ee705815e372aa3e7af8718c7b429f0011d5f"
+   "redacted_sha256": "0ed761ee8583abf4c69cec7b722030150dfd293257d42ad511ec7b2abd2de7bf"
   },
   "work/pilot-qualification-2026-09-23/attempt-long-horizon-02/regressions.xml": {
    "original_sha256": "0b20729a38eb4baa4a8c8b310bfce14f59a6d16674437c35f5f7ccb6b50b737d",
-   "redacted_sha256": "9f6cd750b9faa2a97476fbd076b69f2d8eccca27dfaeb56ce1bdcedb98f7814f"
+   "redacted_sha256": "0740bc6cfd2dc8e7010c1e9ba090ab8b2fad22cb056b12cc31222f3b6b48aed4"
   },
   "work/pilot-qualification-2026-09-23/attempt-long-horizon-03/regressions.xml": {
    "original_sha256": "100fb98ce8569530305c4b77a6664253bce1dc23f26f1beef77580f06f1c955b",
-   "redacted_sha256": "23730c514e3ea627102034e3bfb3ff608ea4297064f2f78f5e9a9a65c9d0f3fb"
+   "redacted_sha256": "c3524b4b215151c9240733e3bf0a64c2048defbfc213f7f03f8e3bdd94aa394c"
   },
   "work/pilot-qualification-2026-09-23/attempt-network-01/regressions.xml": {
    "original_sha256": "1149e13c1a530f801372b9d2cf8d227e741a812de2f161d4b23379da4efff574",
-   "redacted_sha256": "900f6689925fc3fbf63bc3b63f9000b5fea7bce0fe53bcf74f0d9178166dd2c0"
+   "redacted_sha256": "dff11ce59f9fcab190fa46be44166df1f46054a8dcd354a19edcc1eb7f0241e2"
   },
   "work/pilot-qualification-2026-09-23/attempt-parallel-20260924/regressions.xml": {
    "original_sha256": "6255fb9c49edaf36d233cbbfefe4e394dd7799017d6292ccfbc571775164c544",
-   "redacted_sha256": "0104f0a0c3eb46237cb0d16babd69db66441580b94995990a1901269cbe71584"
+   "redacted_sha256": "ed3e8763cef49e84380a06d3355329152cb78b99a5567a42cfb948cdf63288a7"
   },
   "work/pr-1-independent-review.md": {
    "original_sha256": "1661aaa5916644f803f591288687bd9fe4e0998a16ef2d2e6967ebd804fa29ff",
@@ -379,11 +379,11 @@
   },
   "work/wave01/evidence-8g/regressions-final.xml": {
    "original_sha256": "869eebdb7d8cb3ad0e4965725464277f3a25732e5c031d58da717cdac5185ed6",
-   "redacted_sha256": "4540b04b6b77b25d9806124b487827e222b5a2c6d445ad4144c8a8901bd4dbe8"
+   "redacted_sha256": "94f99a72da7fca1c653a1dfdac490404da19a195c71cdabb54d0f6dacb8f26cb"
   },
   "work/wave01/evidence-8g/regressions.xml": {
    "original_sha256": "0b15ec49572834b63a5f57f51f73e16bbad5fd92100a1a856b9252dd988f2169",
-   "redacted_sha256": "3d42283e712d657b169ff9e2ee429fba847e3973bffc4a2cfde8fb1e070cd5e4"
+   "redacted_sha256": "0d2d9b1cbaf4d50c99e6d285dca08918401e4432ff5eb75b1b0c42ea471f5a1d"
   },
   "work/wave01/evidence-audit-brief.md": {
    "original_sha256": "25f14c28ed5ae823eb4dc0a2cebab3f15d303b52389d321f5f4f75e56fd87da3",
@@ -391,7 +391,7 @@
   },
   "work/wave01/evidence/regressions.xml": {
    "original_sha256": "5a3d2b14e3b7f1fb40f8b625304f8fbdc1516262ed44737fd23f937661219707",
-   "redacted_sha256": "5e4736bb90ae9862565fb50da8133914044914d7ea7f827ff5b42f61607588aa"
+   "redacted_sha256": "14d1f22f952ab1770592fb8e0a48b15390aeee9c7dad6d2348aee3fdc77592da"
   },
   "work/wave01/final-audit-brief.md": {
    "original_sha256": "7c57e76f5ad433b8fdb681b06e795eabec006a7cdfc8eb42cf31f280c252a203",
