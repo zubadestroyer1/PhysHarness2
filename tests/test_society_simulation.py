@@ -318,7 +318,9 @@ async def simulate(society, export_directory):
     # 6. A records the Lean statement (elaborated by the platform through the fake session).
     stated = await call(A, "commons_node", {"action": "set_lean_statement", "node_id": L, **LEMMA})
     assert stated["lean_elaborated"] is True and stated["elaboration"]["ok"] is True
-    assert society.lean["A"].calls[-1] == ("elaborate", *LEMMA.values())
+    header, name, signature = LEMMA.values()
+    elaborated = ("elaborate", f"{header}\nset_option autoImplicit false", name, signature)
+    assert society.lean["A"].calls[-1] == elaborated
     assert society.node(L)["lean_statement_sha256"] == _lean_digest(*LEMMA.values())
 
     # 7. A checks a complete proof of L: L's module is published verified, but L is not

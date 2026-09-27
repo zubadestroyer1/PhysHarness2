@@ -17,7 +17,8 @@ from ..domain import Digest, StrictModel, digest_json
 from ..errors import HarnessError
 from ..execution import CommandRequest
 from ..execution.types import GUEST_PYTHON
-from .lean_session import LeanSession
+from ..formal_tools.declaration_index import MAX_RESULTS, MAX_ROW
+from .lean_session import LeanSession, _clip
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +62,12 @@ def _checker_unavailable(template_id):
 # find_declaration: the guest header-index script and a host cache of its query answers.
 DECLARATION_SCRIPT = ".physharness/declaration_index.py"
 MAX_DECLARATION_QUERIES = 512
-_DECLARATION_QUERIES: dict[tuple[str, str, str], dict] = {}  # (digest, mode, query), oldest first
+MAX_SUGGESTIONS = 5
+# (workspace, digest, mode, query), oldest first. A VM's answer is agent-controlled (its
+# shell can plant the index or overwrite the script), so no other workspace ever reads it.
+_DECLARATION_QUERIES: dict[tuple[str, str, str, str], dict] = {}
+# A declaration or module name as the guest's header scan captures one, bounded.
+_DECLARATION_NAME = re.compile(rf"[^\s\x00-\x1f\x7f\ud800-\udfff:({{\[⦃]{{1,{MAX_ROW}}}")
 _LIBRARY_ROOTS = ("--root", "/opt/sources/physlib", "--root", "/opt/sources/mathlib")
 _RG_FALLBACK = "use `shell` with `rg <query> /opt/sources/mathlib /opt/sources/physlib` instead."
 
@@ -96,6 +102,31 @@ def _json_object(result):
     except ValueError:
         return None
     return observed if isinstance(observed, dict) else None
+
+
+def _declaration_name(value):
+    return value if isinstance(value, str) and _DECLARATION_NAME.fullmatch(value) else None
+
+
+def _declaration_answer(observed):
+    """A guest query answer re-typed to the script's schema: at most MAX_RESULTS rows of at
+    most MAX_ROW characters, a top row naming a declaration and its module (or None), and
+    nothing else. An answer without a well-formed top row is not exact."""
+    rows = observed.get("rows") if isinstance(observed.get("rows"), list) else []
+    rows = [row for row in (_clip(row, MAX_ROW) for row in rows[:MAX_RESULTS]) if row]
+    top = observed.get("top") if isinstance(observed.get("top"), dict) else {}
+    top = {key: _declaration_name(top.get(key)) for key in ("name", "module")}
+    top = top if all(top.values()) else None
+    names = observed.get("did_you_mean")
+    names = names[:MAX_SUGGESTIONS] if isinstance(names, list) else []
+    indexed = observed.get("indexed")
+    return {
+        "rows": rows,
+        "exact": observed.get("exact") is True and top is not None,
+        "top": top,
+        "did_you_mean": [name for name in names if _declaration_name(name)],
+        "indexed": indexed if type(indexed) is int and indexed >= 0 else 0,
+    }
 
 
 class WorkspacePolicy(StrictModel):
@@ -456,7 +487,8 @@ print(json.dumps({
         """Ranked pinned Mathlib and Physlib declarations, or a bounded read around one.
 
         The guest script keeps a header index per environment digest under ``/work/.cache``,
-        which checkpoints never archive; this host caches the answers to repeated queries.
+        which checkpoints never archive; this host caches the answers to repeated queries,
+        re-typed, per workspace.
         """
         query, path, line = arguments.get("query"), arguments.get("path"), arguments.get("line")
         mode = arguments.get("mode", "name")
@@ -488,8 +520,7 @@ print(json.dumps({
                     **shown,
                 }
             return {**observed, **shown}
-        key = (digest, mode, query)
-        found = _DECLARATION_QUERIES.get(key)
+        found = _DECLARATION_QUERIES.get(((self.workspace or {}).get("id"), digest, mode, query))
         if found is None:
             index = f".cache/physharness/decls-{digest[:16]}.tsv"
             argv = ["query", "--index", index, *_LIBRARY_ROOTS, "--mode", mode, "--", query]
@@ -507,7 +538,8 @@ print(json.dumps({
                     "remediation": remediation,
                     **shown,
                 }
-            found = _DECLARATION_QUERIES[key] = {**observed, **shown}
+            key = (self.workspace["id"], digest, mode, query)  # the VM that answered
+            found = _DECLARATION_QUERIES[key] = {**_declaration_answer(observed), **shown}
             while len(_DECLARATION_QUERIES) > MAX_DECLARATION_QUERIES:
                 del _DECLARATION_QUERIES[next(iter(_DECLARATION_QUERIES))]
         found = copy.deepcopy(found)

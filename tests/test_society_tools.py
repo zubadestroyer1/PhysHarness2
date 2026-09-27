@@ -25,6 +25,7 @@ from physharness.api import VerifyInput
 from physharness.commons import _lean_digest
 from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.commons_review import NODE_DATA_BEGIN, NODE_DATA_END
+from physharness.commons_sources import source_state
 from physharness.domain import (
     ArtifactCreate,
     LiteraturePolicy,
@@ -1189,7 +1190,9 @@ async def test_commons_node_actions_dispatch(lab):
     )
     assert formal["lean_elaborated"] is True and formal["elaboration"]["ok"] is True
     assert formal["dependents"] == 1  # other depends_on it
-    assert workspace.lean.calls[-1] == ("elaborate", *LEAN.values())
+    header, name, signature = LEAN.values()
+    elaborated = ("elaborate", f"{header}\nset_option autoImplicit false", name, signature)
+    assert workspace.lean.calls[-1] == elaborated
     stored = service.get_record("commons_node", created["id"], alpha)
     assert stored["lean_statement_sha256"] == _lean_digest(*LEAN.values())
     review = await call(
@@ -1863,7 +1866,7 @@ async def test_a_stub_that_needs_a_skeleton_definition_is_not_created(lab):
         "node_id": None,
         "module": None,
         "created": False,
-        "reason": "stub_needs_definition_node",
+        "reason": "stub_needs_skeleton_definition",
     }
     skeleton = checked["skeleton_source"]
     assert "theorem step_one" not in skeleton and skeleton.count("import Commons.N") == 1
@@ -1961,6 +1964,40 @@ async def test_stub_requests_need_a_node_and_a_plain_skeleton(lab):
     assert checked["skeleton_source"].startswith("import Mathlib\nimport Commons.N")
 
 
+async def test_set_lean_statement_elaborates_without_auto_bound_names(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    # As in Lean: an unknown spectralGap elaborates only as an auto-bound variable.
+    lean = FakeLean(
+        elaborates=lambda h, n, s: "spectralGap" not in s or not h.endswith("autoImplicit false")
+    )
+    tools = profile(service, agent, context, workspace=FakeWorkspace(lean))
+    node = await call(tools, "commons_node", lemma_args())
+    gap = {
+        "lean_header": "import Mathlib\nset_option autoImplicit true",
+        "lean_name": "gap",
+        "lean_statement": "(n : Nat) : n + spectralGap ≤ n + 1",
+    }
+    stated = await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **gap}
+    )
+    # The platform's option comes after the header's own and wins; the stored header is
+    # the agent's.
+    assert stated["lean_elaborated"] is False, stated
+    header = "import Mathlib\nset_option autoImplicit true\nset_option autoImplicit false"
+    assert lean.calls[-1] == ("elaborate", header, "gap", gap["lean_statement"])
+    stored = service.get_record("commons_node", node["id"], agent)
+    assert stored["lean_header"] == gap["lean_header"]
+    assert stored["lean_statement_sha256"] == _lean_digest(*gap.values())
+    bound = {**gap, "lean_header": None, "lean_statement": "(n g : Nat) : n + g ≤ n + g"}
+    stated = await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **bound}
+    )
+    assert stated["lean_elaborated"] is True, stated
+    assert lean.calls[-1][1] == "set_option autoImplicit false"
+    assert service.get_record("commons_node", node["id"], agent)["lean_header"] is None
+
+
 def node_count(service, exp, agent):
     return len(service.query_nodes(exp["id"], agent, limit=20)["items"])
 
@@ -1988,7 +2025,7 @@ async def test_stub_headers_turn_auto_bound_names_off(lab):
         tools, "lean_check", {"source": skeleton, "node_id": parent["id"], "stubs": True}
     )
     assert [(s["lean_name"], s["created"], s["reason"]) for s in checked["stubs"]] == [
-        ("f0", False, "stub_needs_definition_node")
+        ("f0", False, "stub_needs_skeleton_definition")
     ]
     assert checked["skeleton_source"] == skeleton
     # A skeleton's own autoImplicit line stays in its header; the elaboration turns
@@ -1997,7 +2034,7 @@ async def test_stub_headers_turn_auto_bound_names_off(lab):
     checked = await call(
         tools, "lean_check", {"source": permissive, "node_id": parent["id"], "stubs": True}
     )
-    assert checked["stubs"][0]["reason"] == "stub_needs_definition_node"
+    assert checked["stubs"][0]["reason"] == "stub_needs_skeleton_definition"
     batch = [entry for entry in lean.calls if entry[0] == "elaborate_batch"]
     loose = "import Mathlib\nset_option autoImplicit true"
     assert [entry[1] for entry in batch] == [
@@ -2108,6 +2145,36 @@ async def test_an_abandoned_stub_is_replaced_and_an_accepted_one_reused(lab):
     # call elaborates the same file.
     batch = [entry for entry in workspace.lean.calls if entry[0] == "elaborate_batch"]
     assert batch[0] == batch[1]
+
+
+async def test_a_dependency_with_a_stale_source_is_not_reused_as_a_stub(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    parent = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": parent["id"], **LEAN}
+    )
+    arguments = {"source": SKELETON, "node_id": parent["id"], "stubs": True}
+    first = await call(tools, "lean_check", arguments)
+    one = first["stubs"][0]["node_id"]
+    # step_one gets a source of an older statement, then the stub's statement back: its
+    # module would inline a proof of the older one.
+    restate = {"action": "set_lean_statement", "node_id": one, "lean_header": "import Mathlib"}
+    older = {"lean_name": "step_one", "lean_statement": ": (0 : Nat) + 1 = 1"}
+    await call(tools, "commons_node", {**restate, **older})
+    proof = "import Mathlib\n\ntheorem step_one : (0 : Nat) + 1 = 1 := rfl\n"
+    assert (await call(tools, "lean_check", {"source": proof, "node_id": one}))["published"][
+        "recorded"
+    ]
+    current = {**older, "lean_statement": ": (1 : Nat) + 1 = 2"}
+    await call(tools, "commons_node", {**restate, **current})
+    assert source_state(service.get_record("commons_node", one, agent)) == "stale"
+    again = await call(tools, "lean_check", arguments)
+    fresh, reused = again["stubs"]
+    assert fresh["created"] is True and fresh["node_id"] != one
+    assert reused == {**first["stubs"][1], "created": False}
+    assert f"import {fresh['module']}" in again["skeleton_source"]
 
 
 async def test_a_replayed_skeleton_call_links_the_stub_a_crash_left_unlinked(lab, monkeypatch):

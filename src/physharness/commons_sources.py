@@ -5,8 +5,8 @@ clean ``lean_check`` against the node publishes the checked file as the node's s
 ranked ``verified`` (the statement check passed on standard axioms), ``complete`` (no
 ``sorry``, but the check could not judge) or ``partial``. A higher rank replaces a lower
 one; a verified source of the node's current statement is replaced only by its publisher or
-the node's author (S1 audit #12). A node's first complete source tells its other claimants
-to consider stopping their routes (S1 audit #22).
+the node's author (S1 audit #12). A node's first complete source of an elaborated Lean
+statement tells its other claimants to consider stopping their routes (S1 audit #22).
 
 A file imports node modules with ``import Commons.N…``. The platform inlines them: each
 module's published source, or a ``sorry`` stub of an elaborated statement, goes into one
@@ -142,6 +142,12 @@ def blocking_rank(node: dict, rank: str, branch_id: str | None) -> str | None:
     return None
 
 
+def has_elaborated_statement(node: dict) -> bool:
+    """Whether the node has an elaborated Lean statement: only then does a clean file prove
+    something the verifier could check."""
+    return node.get("lean_statement") is not None and bool(node.get("lean_elaborated"))
+
+
 def source_state(node: dict) -> str:
     """What the node's source proves of its current statement: its rank, or ``stale`` when
     it was checked against another statement (so it is never complete); ``stub`` for an
@@ -150,7 +156,7 @@ def source_state(node: dict) -> str:
     source = node.get("lean_source")
     if source:
         return "stale" if _stale(source, _statement_digest(node)) else source["rank"]
-    if node.get("lean_statement") is not None and node.get("lean_elaborated"):
+    if has_elaborated_statement(node):
         return "stub"
     return "none"
 
@@ -508,7 +514,11 @@ class CommonsSourceMixin:
                     if error.code not in SKIPPED_IMPORT_EDGES:
                         raise
             self._touch_node(session, row, actor, op)
-            if rank in COMPLETE_RANKS and not _complete_for(current, digest):
+            if (
+                rank in COMPLETE_RANKS
+                and has_elaborated_statement(node)
+                and not _complete_for(current, digest)
+            ):
                 # First reach only: a re-publication at a complete rank never re-posts.
                 route = next(
                     (

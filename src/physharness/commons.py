@@ -718,9 +718,11 @@ class CommonsMixin:
                 "score": round(sum(components.values()), 4),
                 "score_components": components,
             }
-            if node.get("in_verified_proof"):
-                # Provenance only: independently verified proofs that imported this node.
-                item["in_verified_proof"] = len(node["in_verified_proof"])
+            current = (node.get("lean_source") or {}).get("sha256")
+            proofs = [p for p in node.get("in_verified_proof") or [] if p["sha256"] == current]
+            if proofs:
+                # Provenance only: independently verified proofs that imported this source.
+                item["in_verified_proof"] = len(proofs)
             items.append(item)
         items.sort(key=lambda item: (-item["score"], item["id"]))
         return items[:limit]

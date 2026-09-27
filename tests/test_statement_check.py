@@ -236,8 +236,8 @@ async def test_stub_headers_refuse_auto_bound_definition_names(lab, real_lean):
     )
     checked = await call(tools, "lean_check", {"source": skeleton, "node_id": node, "stubs": True})
     assert [(s["lean_name"], s["created"], s["reason"]) for s in checked["stubs"]] == [
-        ("two_eq", False, "stub_needs_definition_node"),
-        ("f0", False, "stub_needs_definition_node"),
+        ("two_eq", False, "stub_needs_skeleton_definition"),
+        ("f0", False, "stub_needs_skeleton_definition"),
     ], checked
     assert checked["skeleton_source"] == skeleton and checked["published"]["rank"] == "partial"
     # The skeleton's own autoImplicit true does not reach the stub elaboration.
@@ -245,7 +245,46 @@ async def test_stub_headers_refuse_auto_bound_definition_names(lab, real_lean):
     checked = await call(
         tools, "lean_check", {"source": permissive, "node_id": node, "stubs": True}
     )
-    assert [s["reason"] for s in checked["stubs"]] == ["stub_needs_definition_node"] * 2, checked
+    reasons = [s["reason"] for s in checked["stubs"]]
+    assert reasons == ["stub_needs_skeleton_definition"] * 2, checked
+
+
+@pytest.mark.lean
+async def test_node_statements_elaborate_without_auto_bound_names(lab, real_lean):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    session = LeanSession(_tools(real_lean, "one_shot"))
+    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean=session))
+    node = (await call(tools, "commons_node", lemma_args()))["id"]
+
+    async def state(header, signature):
+        fields = {"lean_header": header, "lean_name": "gap", "lean_statement": signature}
+        return await call(
+            tools, "commons_node", {"action": "set_lean_statement", "node_id": node, **fields}
+        )
+
+    # Lean's default binds the unknown spectralGap as a variable: the statement elaborates.
+    permissive = "import Lean\nset_option autoImplicit true"
+    unbound = "(n : Nat) : n + spectralGap ≤ n + 1"
+    auto = await session.elaborate_statement(permissive, "gap", unbound, operation_id="auto")
+    assert auto["ok"] is True, auto
+    # A node statement elaborates with it off, whatever the header sets: Lean refuses it.
+    refused = await state(permissive, unbound)
+    assert refused["lean_elaborated"] is False, refused
+    assert any("spectralGap" in m["text"] for m in refused["elaboration"]["messages"])
+    # So is an undeclared universe; a header universe line declares it.
+    assert (await state("import Lean", "{α : Type u} (a : α) : a = a"))["lean_elaborated"] is False
+    # Explicitly bound, the same text means the same to the statement check, whose
+    # reference keeps Lean's default: a proof of it publishes verified.
+    for header, signature, proof in (
+        ("import Lean", "(n g : Nat) (h : g ≤ 1) : n + g ≤ n + 1", "by omega"),
+        ("import Lean\nuniverse u", "{α : Type u} (a : α) : a = a", "rfl"),
+    ):
+        stated = await state(header, signature)
+        assert stated["lean_elaborated"] is True, stated
+        source = f"{header}\n\ntheorem gap {signature} := {proof}\n"
+        checked = await call(tools, "lean_check", {"source": source, "node_id": node})
+        assert checked["published"]["rank"] == "verified", checked
 
 
 @pytest.mark.lean

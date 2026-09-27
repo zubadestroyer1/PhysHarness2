@@ -83,6 +83,15 @@ def set_status(service, node_id, *statuses, reason="platform test"):
 
 
 PASSED_CHECK = {"ok": True, "reason": None, "axioms": ["propext"]}
+ELABORATED = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
+
+
+def state_lean(service, node_id, agent, key="lean", statement=": (1 : Nat) + 1 = 2"):
+    """Give the node an elaborated Lean statement; returns the digest a source of it records."""
+    stated = service.set_lean_statement(
+        node_id, "import Mathlib", "trace_add", statement, ELABORATED, agent, key
+    )
+    return stated["lean_statement_sha256"]
 
 
 def publish(service, node_id, agent, rank, key, content="theorem x : True := trivial", **record):

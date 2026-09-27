@@ -475,11 +475,26 @@ def test_referees_review_open_plans_and_arguments_only(lab):
     assert service.request_review(plan["id"], beta, "plan")["deduplicated"] is False
     for rank in ("complete", "verified"):
         compiled = service.create_node(exp["id"], lemma(f"Compiled {rank}"), alpha, rank)
-        publish(service, compiled["id"], alpha, rank, f"{rank}-src")
+        digest = formalize(service, compiled, alpha, key=f"lean-{rank}")["lean_statement_sha256"]
+        publish(service, compiled["id"], alpha, rank, f"{rank}-src", lean_statement_sha256=digest)
         error = rejected(
             lambda n=compiled, r=rank: service.request_review(n["id"], beta, f"{r}-review")
         )
         assert (error.code, error.status) == ("REVIEW_UNNEEDED", 409)
+    # Without an elaborated Lean statement a clean file compiled nothing the verifier checks:
+    # the node still gets a referee.
+    for elaborated in (None, False):
+        key = f"u-{elaborated}"
+        bare = service.create_node(exp["id"], lemma(f"Unstated {elaborated}"), alpha, key)
+        digest = None
+        if elaborated is not None:
+            stated = formalize(service, bare, alpha, ok=elaborated, key=f"{key}-lean")
+            digest = stated["lean_statement_sha256"]
+        publish(service, bare["id"], alpha, "complete", f"{key}-src", lean_statement_sha256=digest)
+        source = service.read_node(bare["id"], alpha)["node"]["lean_source"]
+        assert source["rank"] == "complete"
+        requested = service.request_review(bare["id"], beta, f"{key}-review")
+        assert requested["deduplicated"] is False
     # Only open approaches, conjectures and lemmas; an S1 ladder value reads as open.
     legacy = service.create_node(exp["id"], lemma("Legacy"), alpha, "legacy")
     with service.db.transaction() as session:
@@ -622,7 +637,8 @@ def test_a_review_records_its_verdict_and_moves_nothing(lab):
     assert service.get_record("commons_node", node["id"], alpha)["status"] == "open"
     # A wrong verdict is no veto: the author may ask again.
     assert service.request_review(node["id"], alpha, "after")["deduplicated"] is False
-    publish(service, node["id"], alpha, "complete", "src")
+    digest = formalize(service, node, alpha)["lean_statement_sha256"]
+    publish(service, node["id"], alpha, "complete", "src", lean_statement_sha256=digest)
     with pytest.raises(HarnessError) as unneeded:
         service.request_review(node["id"], beta, "again")
     assert unneeded.value.code == "REVIEW_UNNEEDED"
@@ -1367,6 +1383,7 @@ def test_a_verified_proof_records_provenance_on_the_nodes_it_imports(lab, monkey
     used = service.create_node(exp["id"], lemma(), alpha, "used")
     stale = service.create_node(exp["id"], lemma("Stale"), beta, "stale")
     changed = service.create_node(exp["id"], lemma("Changed"), beta, "changed")
+    late = service.create_node(exp["id"], lemma("Late"), beta, "late")
     _, _, elsewhere, _, (gamma, _) = society_lab(lab, prefix="elsewhere")
     outsider = service.create_node(elsewhere["id"], lemma("Outsider"), gamma, "outsider")
     commons = [
@@ -1375,12 +1392,16 @@ def test_a_verified_proof_records_provenance_on_the_nodes_it_imports(lab, monkey
         {**imported(service, changed, beta, "changed-src"), "sha256": "0" * 64},
         imported(service, outsider, gamma, "outsider-src"),
         {"module": "Commons.Nffffffff", "node_id": "missing", "sha256": "0" * 64, "stale": False},
+        imported(service, late, beta, "late-src"),
     ]
+    # Late's statement changes while the verifier runs: its source is stale at acceptance.
+    formalize(service, late, beta)
     receipt = flattened_receipt(service, exp, beta, commons_modules=commons)
     assert service.get_record("commons_node", goal["id"], author)["status"] == "accepted"
     node = service.read_node(used["id"], alpha)["node"]
-    assert node["status"] == "open" and node["in_verified_proof"] == [receipt["id"]]
-    for skipped, reader in ((stale, alpha), (changed, alpha), (outsider, gamma)):
+    proof = {"receipt_id": receipt["id"], "sha256": commons[0]["sha256"]}
+    assert node["status"] == "open" and node["in_verified_proof"] == [proof]
+    for skipped, reader in ((stale, alpha), (changed, alpha), (outsider, gamma), (late, alpha)):
         assert "in_verified_proof" not in service.read_node(skipped["id"], reader)["node"]
     # Provenance is neither a status move nor an announcement.
     moved = [e["aggregate_id"] for e in events(service, author, "commons.node_status")]
@@ -1391,11 +1412,18 @@ def test_a_verified_proof_records_provenance_on_the_nodes_it_imports(lab, monkey
     # A later proof of the accepted goal adds its receipt, up to the bound.
     later = flattened_receipt(service, exp, alpha, commons_modules=commons[:1], key="later")
     node = service.read_node(used["id"], alpha)["node"]
-    assert node["in_verified_proof"] == [receipt["id"], later["id"]]
+    proofs = [proof, {**proof, "receipt_id": later["id"]}]
+    assert node["in_verified_proof"] == proofs
     monkeypatch.setattr(commons_review, "MAX_PROOF_RECEIPTS", 2)
     flattened_receipt(service, exp, alpha, commons_modules=commons[:1], key="third")
     node = service.read_node(used["id"], alpha)["node"]
-    assert node["in_verified_proof"] == [receipt["id"], later["id"]]
+    assert node["in_verified_proof"] == proofs
+    # The count describes the node's current source: a replaced source was in no proof.
+    replacement = "theorem y : True := trivial"
+    publish(service, used["id"], alpha, "complete", "used-again", content=replacement)
+    frontier = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
+    assert "in_verified_proof" not in next(item for item in frontier if item["id"] == used["id"])
+    assert service.read_node(used["id"], alpha)["node"]["in_verified_proof"] == proofs
 
 
 def test_forged_artifact_provenance_does_not_accept_unused_nodes(lab):

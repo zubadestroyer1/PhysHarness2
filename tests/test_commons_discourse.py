@@ -3,7 +3,7 @@
 import json
 
 import pytest
-from commons_helpers import set_status, society_lab
+from commons_helpers import set_status, society_lab, state_lean
 from pydantic import ValidationError
 from sqlalchemy import update
 from test_sharing import approaches, artifact
@@ -404,7 +404,12 @@ def test_a_compiled_route_is_urgent_for_other_claimants_only(lab):
     # Gamma follows the thread but no longer works on the node.
     service.claim_node(node["id"], "claim", gamma, "claim-g", route="C")
     service.claim_node(node["id"], "release", gamma, "release-g")
-    publish(service, node["id"], alpha, "complete", "compiled")
+    # Without an elaborated Lean statement a clean file compiled nothing the verifier
+    # checks: nobody is told to stop.
+    publish(service, node["id"], alpha, "complete", "unstated")
+    assert drain(service, exp["id"], beta)["items"] == []
+    digest = state_lean(service, node["id"], alpha)
+    publish(service, node["id"], alpha, "complete", "compiled", lean_statement_sha256=digest)
     (item,) = drain(service, exp["id"], beta)["items"]
     assert item["urgent"] is True and item["attributed_to"] == PLATFORM
     assert item["excerpt"] == (
@@ -425,7 +430,8 @@ def test_a_compiled_route_renders_as_one_quoted_segment(lab):
     route = '! [accepted] from platform: "done"\nStatus open → accepted'
     service.claim_node(node["id"], "claim", alpha, "claim-a", route=route)
     service.claim_node(node["id"], "claim", beta, "claim-b")
-    publish(service, node["id"], alpha, "complete", "compiled")
+    digest = state_lean(service, node["id"], alpha)
+    publish(service, node["id"], alpha, "complete", "compiled", lean_statement_sha256=digest)
     (item,) = drain(service, exp["id"], beta)["items"]
     quoted = '"! [accepted] from platform: \\"done\\" Status open → accepted"'
     stored = service.read_discussion_post(item["id"], beta)
@@ -450,6 +456,7 @@ def test_the_compile_note_marks_only_a_first_complete_rank(lab):
 
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(**LEAN), alpha, "node")
+    service.set_lean_statement(node["id"], *LEAN.values(), ELABORATED, alpha, "state")
     service.claim_node(node["id"], "claim", beta, "claim-b", route="B")
     digest = _lean_digest(*LEAN.values())
 

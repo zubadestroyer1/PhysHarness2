@@ -502,10 +502,11 @@ _STUB = re.compile(
     r"\s*(?:theorem|lemma)\s+(?P<name>[\w.'!?]+)(?P<signature>.*?):=\s*(?:by\s+)?sorry\s*", re.S
 )
 _STUB_HEADER_COMMANDS = ("open", "set_option", "universe")
-# Stubs elaborate with this after their header. With auto-bound implicits a skeleton
-# definition's name becomes a variable of the stub (`theorem two_eq : two = 2` elaborates as
-# `∀ {two : Nat}, two = 2`); off, Lean refuses it. A statement that elaborates without them
-# means the same with them, so the stored header stays the skeleton's own.
+# Stubs and node statements elaborate with this after their header, overriding the
+# header's own. With auto-bound implicits an unknown name becomes a variable of the statement
+# (`theorem two_eq : two = 2` elaborates as `∀ {two : Nat}, two = 2`); off, Lean refuses it.
+# A statement that elaborates without them means the same with them, so the stored header
+# stays the agent's own and the statement check's reference is unchanged.
 _NO_AUTO_BOUND = "set_option autoImplicit false"
 
 
@@ -1003,7 +1004,8 @@ def society_tools(
                 # An abandoned node takes no source, so its stub could never be filled.
                 if edge["relation"] == "depends_on" and edge["status"] != "abandoned":
                     target = service.get_record("commons_node", edge["node_id"], agent)
-                    if source_state(target) != "none":  # it imports
+                    # It imports, and not a source of an older statement than the stub's.
+                    if source_state(target) not in ("none", "stale"):
                         digest = _lean_digest(
                             target.get("lean_header"),
                             target.get("lean_name"),
@@ -1058,6 +1060,9 @@ def society_tools(
                 if index in requests:
                     target = make_stub(node, requests[index], elaborated[index], key, index)
                 elif index in elaborated:  # Lean did not elaborate it: it stays in the text
+                    # Typically it names something the skeleton defines. No node statement
+                    # can name a commons definition until olean imports (#12d): a header
+                    # cannot import commons modules, so it stays in the skeleton.
                     failed = _infrastructure_failure(elaborated[index])
                     entries.append(
                         {
@@ -1067,7 +1072,7 @@ def society_tools(
                             "created": False,
                             "reason": "lean_infrastructure_failure"
                             if failed
-                            else "stub_needs_definition_node",
+                            else "stub_needs_skeleton_definition",
                         }
                     )
                     continue
@@ -1491,7 +1496,7 @@ def society_tools(
         if action == "request_review":
             return service.request_review(a["node_id"], agent, k)
         result = await lean().elaborate_statement(
-            a["lean_header"] or "",
+            f"{a['lean_header']}\n{_NO_AUTO_BOUND}" if a["lean_header"] else _NO_AUTO_BOUND,
             a["lean_name"],
             a["lean_statement"],
             operation_id=f"{k}:elaborate",
@@ -1552,14 +1557,17 @@ def society_tools(
         commons_node,
         "Propose and relate commons nodes. create adds a node (status open); "
         "link adds a typed edge; set_lean_statement elaborates theorem <lean_name> "
-        "<lean_statement> under lean_header in your workspace's Lean session and records the "
+        "<lean_statement> under lean_header in your workspace's Lean session, with "
+        "autoImplicit off whatever the header sets (bind every variable; declare universes "
+        "with a universe line), and records the "
         "statement with that result (the author; or a live claimant when the statement is "
         "missing, does not elaborate or is its own, and no verified source proves it): "
         "lean_header holds "
         "only import, open, universe and allowlisted set_option lines, and lean_statement is "
         "binders then ': type', with no ':=' or 'where' outside brackets; abandon closes your own "
         "node with a reason; request_review asks the platform for an independent referee of a "
-        "plan or argument (approach, conjecture or lemma); a compiled node needs none. Agents "
+        "plan or argument (approach, conjecture or lemma); a node whose elaborated Lean "
+        "statement a complete source proves needs none. Agents "
         "never set status.",
         defaults=NODE_DEFAULTS,
     )

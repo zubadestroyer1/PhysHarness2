@@ -22,7 +22,12 @@ from sqlalchemy.orm import aliased
 
 from .commons import DEPENDS_ON, PLATFORM, _lean_digest, _platform, _writer, statement_key
 from .commons_models import ALLOWED_TRANSITIONS, LEAN_NAME, is_open, public_status
-from .commons_sources import COMPLETE_RANKS, MAX_COMMONS_MODULES, source_state
+from .commons_sources import (
+    COMPLETE_RANKS,
+    MAX_COMMONS_MODULES,
+    has_elaborated_statement,
+    source_state,
+)
 from .domain import StrictModel, digest_json, new_id
 from .errors import HarnessError
 from .orchestration.lean_session import HEADER_RULES, header_problem, signature_problem
@@ -45,7 +50,7 @@ VERSION_KEYS = ("node_id", "scope", "statement_sha256")
 # referees.
 REVIEW_RETRIES = 2
 MAX_INTERFACE = 20  # Imported Lean statements a plan review lists.
-MAX_PROOF_RECEIPTS = 20  # Receipt ids one node's in_verified_proof keeps.
+MAX_PROOF_RECEIPTS = 20  # Entries one node's in_verified_proof keeps.
 MAX_THREAD_EVIDENCE_POSTS = 5000  # Node-thread posts searched for evidence a referee opens.
 MAX_SAME_TEXT_NODES = 20  # Earlier same-statement nodes searched for the one holding reviews.
 MAX_OBJECTIVE = 20_000  # The task objective bound shared with recruitment and task creation.
@@ -273,7 +278,8 @@ class CommonsReviewMixin:
     @staticmethod
     def _review_precondition(node):
         """A referee checks a plan or argument: an open approach, conjecture or lemma without
-        a complete source (the verifier checks compiled Lean)."""
+        a complete source of an elaborated Lean statement (the verifier checks compiled Lean;
+        without such a statement a clean file proves nothing it checks)."""
         status, node_type = public_status(node["status"]), node["node_type"]
         if not is_open(status) or node_type not in REVIEWABLE_TYPES:
             raise HarnessError(
@@ -282,7 +288,7 @@ class CommonsReviewMixin:
                 f"is {status}.",
                 details={"status": status, "node_type": node_type},
             )
-        if source_state(node) in COMPLETE_RANKS:
+        if has_elaborated_statement(node) and source_state(node) in COMPLETE_RANKS:
             raise HarnessError(
                 "REVIEW_UNNEEDED",
                 "A compiled node needs no referee; the verifier checks it.",
@@ -956,13 +962,16 @@ class CommonsReviewMixin:
         return accepted
 
     def _record_proof_imports(self, session, experiment, receipt):
-        """Append the receipt to ``in_verified_proof`` on each node whose current source the
-        verified proof imported: provenance only, with no status move and no announcement.
+        """Append ``{receipt_id, sha256}`` to ``in_verified_proof`` on each node whose current
+        source the verified proof imported: provenance only, with no status move and no
+        announcement.
 
         Only ``commons_modules`` counts, which the platform's flattened submission alone
         writes; the candidate artifact's provenance is caller-written and never read. An
-        entry is skipped when it is stale, when its node is outside the experiment, or when
-        the node's source has changed since. A node keeps its first MAX_PROOF_RECEIPTS ids.
+        entry is skipped when it is stale, when its node is outside the experiment, when the
+        node's source has changed since, or when that source is stale now (the node's
+        statement changed while the verifier ran). A node keeps its first MAX_PROOF_RECEIPTS
+        entries.
         """
         for entry in (receipt.payload.get("commons_modules") or [])[:MAX_COMMONS_MODULES]:
             if entry.get("stale") or not entry.get("sha256"):
@@ -976,8 +985,13 @@ class CommonsReviewMixin:
             ):
                 continue
             session.refresh(row)
-            if (row.payload.get("lean_source") or {}).get("sha256") != entry["sha256"]:
+            source = row.payload.get("lean_source") or {}
+            if source.get("sha256") != entry["sha256"] or source_state(row.payload) == "stale":
                 continue
-            receipts = list(row.payload.get("in_verified_proof") or [])
-            if receipt.id not in receipts and len(receipts) < MAX_PROOF_RECEIPTS:
-                self._replace(session, row, {"in_verified_proof": [*receipts, receipt.id]})
+            proofs = list(row.payload.get("in_verified_proof") or [])
+            if (
+                all(proof["receipt_id"] != receipt.id for proof in proofs)
+                and len(proofs) < MAX_PROOF_RECEIPTS
+            ):
+                proof = {"receipt_id": receipt.id, "sha256": entry["sha256"]}
+                self._replace(session, row, {"in_verified_proof": [*proofs, proof]})

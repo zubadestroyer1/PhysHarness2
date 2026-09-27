@@ -135,12 +135,14 @@ tools, the prompts and the delivery shapes.
   the platform accepts or refutes it (`accepted`, `refuted`); nothing else moves a node
   (S1 audit #17). The independent verifier is the only arbiter: its receipt on the exact
   target accepts the goal. A node imported by an independently verified proof records
-  that proof's receipt in `in_verified_proof` (shown by `commons_read`, and as a count on
-  the frontier); its status stays open. Source ranks are advisory and only verifier
-  receipts are authority: the verifier certifies the target's axioms, not each imported
-  lemma's. Only the receipt's platform-written `commons_modules` count, never the
-  candidate artifact's provenance, and stale entries, nodes outside the experiment and
-  sources replaced since are skipped. S1's ladder values (`informal`, `refereed`,
+  that proof's receipt and the imported source's digest (`{receipt_id, sha256}`) in
+  `in_verified_proof` (shown by `commons_read`; the frontier counts only the entries for
+  the node's current source); its status stays open. Source ranks are advisory and only
+  verifier receipts are authority: the verifier certifies the target's axioms, not each
+  imported lemma's. Only the receipt's platform-written `commons_modules` count, never
+  the candidate artifact's provenance. Stale entries, nodes outside the experiment,
+  sources replaced since and sources gone stale by acceptance (the node's statement
+  changed while the verifier ran) are skipped. S1's ladder values (`informal`, `refereed`,
   `formally_stated`, `compiles_locally`) stay in stored records and exports and read as
   open everywhere else.
   - A node's Lean header may hold only import, open, set_option and universe lines, one
@@ -183,6 +185,14 @@ tools, the prompts and the delivery shapes.
     checks), but a file or command that tampers with the VM can still reach a `verified`
     rank. It is VM-attested evidence, never acceptance. Only independent acceptance is
     trusted: the independent receipt on the exact target accepts the goal.
+  - `set_lean_statement` elaborates the statement with `set_option autoImplicit false`
+    after the header, overriding the header's own `autoImplicit`. An unknown name or an
+    undeclared universe is then refused (`Unknown identifier`) instead of silently
+    becoming a variable (`(n : Nat) : n + spectralGap ≤ n + 1` would elaborate as
+    `∀ {spectralGap : Nat}, …`); declare universes with a header `universe` line. The
+    stored header stays the agent's, and the statement check's reference keeps Lean's
+    default: a statement that elaborates without auto-bound names means the same with
+    them.
   - Changing a Lean statement moves no status; `set_lean_statement` reports how many
     nodes depend on the node (`dependents`). The statement digest encodes the header,
     name and statement unambiguously (a canonical JSON array).
@@ -281,9 +291,12 @@ tools, the prompts and the delivery shapes.
       becomes a `lemma` node (title its name, statement "Stub in <node title>: <name>")
       with that elaborated Lean statement, and the node `depends_on` it. A dependency of
       the node with the same Lean statement that imports and is not abandoned is reused
-      instead (`created: false`); an accepted one is the best reuse. One Lean rejects stays
-      in the text (`stub_needs_definition_node`, or `lean_infrastructure_failure` when Lean
-      could not judge it); the node's own theorem is never a stub.
+      instead (`created: false`); an accepted one is the best reuse, and one whose source
+      is stale (it proves an older statement) never is. One Lean rejects stays in the text
+      (`stub_needs_skeleton_definition`, or `lean_infrastructure_failure` when Lean could
+      not judge it); the node's own theorem is never a stub. Such a stub typically names
+      a definition of the skeleton, and no node statement can name a commons definition
+      until olean-based imports (#12d): a header cannot import commons modules.
     - The platform deletes each stub's lines, imports its module right after the file's
       imports, and checks and publishes that text as the node's module; while a stub
       imports as `sorry` it ranks partial. The result adds `stubs` (`lean_name`, `node_id`,
@@ -293,6 +306,19 @@ tools, the prompts and the delivery shapes.
       `commons_read` lists the stubs a node still rests on
       (`rests_on.stubs`: not abandoned, nearest first, at most 50; `counts` counts every
       stub). Submit the skeleton once none remain.
+  - Flattening has limits until olean-based imports (#12d):
+    - `lean_check` checks the flattened file, so a file whose import closure flattens past
+      the Lean session's 30,000 bytes cannot be checked or published
+      (`COMMONS_EXPANSION_TOO_LARGE`). Only the goal escapes this, through
+      `submit_for_verification` (2,000,000 bytes). This bounds how deeply the lemma store
+      composes.
+    - An import line naming a plain lowercase snake_case module (`import my_lemmas`, no
+      dot) reads as a command word, so the imports end there: the line stays below the
+      inlined modules, where Lean rejects it. Pinned Mathlib and Physlib modules are
+      dotted and capitalised.
+    - Every module lands in one file, so two modules that declare the same top-level
+      name, `private` ones included, collide (separate module imports would keep the
+      private ones apart). Rename one of them.
   - An opt-in real-image test (`tests/test_real_commons_flattening.py`) compiles a
     flattened two-module file in the workbench and passes the statement check on it. The
     independent verifier's first run on a flattened candidate is the first A/B smoke run.
@@ -307,12 +333,12 @@ tools, the prompts and the delivery shapes.
   - The frontier's claimants term is −1 per live claim that names no route, or a route
     another live claim of the node names (compared case-folded, whitespace collapsed).
     Distinct routes cost nothing.
-  - When a node first reaches a complete rank, the platform posts "Node … compiled by …
-    (route: "…"); consider stopping your route." on its thread. The route is agent text,
-    so it is rendered like a node title: one line, as a quoted JSON string. A replaced
-    source counts only if it was of the current Lean statement, and re-publishing at a
-    complete rank posts nothing. The note is urgent for the node's other live claimants
-    and pushed to no one else.
+  - When a node with an elaborated Lean statement first reaches a complete rank of it,
+    the platform posts "Node … compiled by … (route: "…"); consider stopping your
+    route." on its thread. The route is agent text, so it is rendered like a node title:
+    one line, as a quoted JSON string. A replaced source counts only if it was of the
+    current Lean statement, and re-publishing at a complete rank posts nothing. The note
+    is urgent for the node's other live claimants and pushed to no one else.
   - Declared alternative routes at genuine choice points, with time boxes and this note,
     replace labs as the diversity mechanism.
 - **Threads and digests.**
@@ -332,8 +358,9 @@ tools, the prompts and the delivery shapes.
   - Status moves are posted by the platform.
 - **Referees.** Referees check plans, not compiled Lean. `request_review(node_id)` asks
   for a referee of an open approach, conjecture or lemma (else `REVIEW_PRECONDITION`); a
-  node with a complete or verified source needs none (`REVIEW_UNNEEDED`), since the
-  verifier checks it. The referee's packet holds the node's text and, for a skeleton, the
+  node with an elaborated Lean statement and a complete or verified source of it needs
+  none (`REVIEW_UNNEEDED`), since the verifier checks it. Without such a statement a clean
+  file proves nothing the verifier checks, so the node can still draw a referee. The referee's packet holds the node's text and, for a skeleton, the
   Lean interface its source imports (at most 20 statements, no proofs). A verdict (`sound`,
   `gaps` or `wrong`) is recorded, and a negative one is posted as an objection on the
   node's thread; no verdict moves a status, vetoes further referees or reviews a Lean
@@ -522,7 +549,11 @@ index of the pinned Mathlib and Physlib sources. The workspace builds the index 
 environment digest under `/work/.cache` (never archived), up to 64 MiB; past that cap it
 reports `declaration_index_failed` and points to `rg` in `shell`. With `path` and `line`
 it reads ±40 lines (at most 4,000 bytes) around a declaration, never a whole file, and
-`verify=true` also `#check`s an exact top row in Lean. `inbox`, `lean_sketch` and
+`verify=true` also `#check`s an exact top row in Lean. The host caches each workspace's
+answers to repeated queries, re-typed to that schema (at most 20 rows of at most 400
+characters, a top row naming a declaration and its module, at most 5 did-you-mean names
+and the indexed count; any other key is dropped). A VM's answer is agent-controlled, so
+no other workspace, a referee's included, ever reads it. `inbox`, `lean_sketch` and
 `load_skill` were removed after S1: peer updates arrive automatically at settled
 boundaries, and the technique skills were never loaded.
 
@@ -582,7 +613,8 @@ Large logical queues are not evidence of that many active models or VMs. Promoti
 communication policies needs matched-budget live research comparisons under the same
 proof-acceptance policy.
 
-Apply database migration `0003_discussion_indexes` before deployment. The new partial
-record indexes keep discussion lookups separate from unrelated receipt-query plans.
+Apply database migrations `0003_discussion_indexes` and `0004_library_notes` before
+deployment. The new partial record indexes keep discussion lookups separate from
+unrelated receipt-query plans, and 0004 adds the library notes table.
 See the [implementation plan](superpowers/plans/2026-09-23-research-network.md) for
 ownership, tests and integration gates.
