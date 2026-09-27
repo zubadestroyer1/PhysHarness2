@@ -399,7 +399,8 @@ tools, the prompts and the delivery shapes.
   (never the parts of an abandoned or proved route) that wait on no other open node,
   oldest first (at most 3, with their age and claimants). Without such parts it is the
   open nodes that most open nodes depend on; failing that, a hint to link the goal's
-  parts. The wait result and the frontier (`commons_query(frontier=true)`) both return it.
+  parts. The wait result, the frontier (`commons_query(frontier=true)`) and a builder's
+  prompt and compaction anchor (`long_pole` lines, or `long_pole_hint`) all show it.
   `for="tasks"` still waits for recruits.
 - **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
   least 8 hex characters of a record the agent can see; an ambiguous prefix returns

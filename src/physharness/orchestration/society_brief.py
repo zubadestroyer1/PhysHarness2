@@ -80,6 +80,9 @@ def society_prompt_view(
     ]
     optional = {
         "frontier": [_line(i["id"], i["node_type"], i["title"]) for i in frontier["items"]],
+        # Where help counts most (S1 audit #14), or how to make it visible.
+        "long_pole": [_line(i["id"], i["node_type"], i["title"]) for i in frontier["long_pole"]],
+        "long_pole_hint": frontier.get("long_pole_hint"),
         "focus_nodes": [_line(i["node_id"], i["node_type"], i["title"]) for i in focus],
         "strategy": task.get("strategy"),
         "models": [{"index": index, "model": model["model"]} for index, model in enumerate(models)]
