@@ -50,6 +50,9 @@ READ_TOOLS = frozenset(
         "load_skill",
         # Re-reading an elided or truncated output (context budget).
         "recall_output",
+        # S1 remediation: the declaration finder and the lemma-store fetch read, too.
+        "find_declaration",
+        "commons_fetch",
     }
 )
 TERMINAL_READS = frozenset({"tail", "cat", "head", "sed", "rg", "grep", "awk"})

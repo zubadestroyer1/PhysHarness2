@@ -2,9 +2,10 @@
 
 Every step calls a society tool through ``ToolDispatcher.dispatch``, the path the Responses
 runtime takes: schema validation, defaults, the worker's fenced effect binding, the handler's
-caps and recoverable error envelopes all run. Each agent holds a real task lease, as the
-worker does. Lean is a scripted fake ``LeanSession`` behind a fake workspace, and the
-literature broker uses a fake transport, so there is no model, network, VM or Lean.
+caps and recoverable error envelopes all run. Peer updates arrive through the worker's
+fenced delivery hooks. Each agent holds a real task lease, as the worker does. Lean is a
+scripted fake ``LeanSession`` behind a fake workspace, and the literature broker uses a
+fake transport, so there is no model, network, VM or Lean.
 """
 
 import hashlib
@@ -22,6 +23,7 @@ from physharness.commons import _lean_digest
 from physharness.domain import BranchCreate, LiteraturePolicy
 from physharness.knowledge.literature import LiteratureBroker
 from physharness.orchestration.lean_session import LeanSession
+from physharness.orchestration.research_network import discussion_delivery_hooks
 from physharness.orchestration.society_tools import society_tools
 
 TOOL = Path(__file__).resolve().parents[1] / "tools/society_metrics.py"
@@ -39,8 +41,7 @@ PROOF = (
     f"{HEADER}\n\ntheorem {LEMMA['lean_name']} {LEMMA['lean_statement']} := by\n"
     "  exact antitone_of_deriv_nonpos hd h\n"
 )
-GOAL_SKETCH = f"{HEADER}\n\ntheorem target : True := by\n  have h1 := sorry\n  have h2 := sorry\n"
-HOLES = [
+GOAL_STEPS = [
     ("E : ℝ → ℝ\n⊢ Antitone E", "(E : ℝ → ℝ) : Antitone E"),
     ("m k : ℝ\nhm : 0 < m\n⊢ 0 < m * k ^ 2 + 1", "(m k : ℝ) (hm : 0 < m) : 0 < m * k ^ 2 + 1"),
 ]
@@ -56,7 +57,7 @@ class ScriptedLean:
     """A LeanSession stand-in with the real result shapes.
 
     Statements elaborate; a source without ``sorry`` compiles completely and reports the
-    axioms of each theorem it declares; a sketch's holes are extracted as scripted.
+    axioms of each theorem it declares.
     """
 
     def __init__(self):
@@ -75,27 +76,6 @@ class ScriptedLean:
             "source_sha256": sha(source),
             "proof_status": "not_accepted",
             "automation_available": True,
-            "reason_code": None,
-        }
-
-    async def sketch_goals(self, source, *, operation_id):
-        self.calls.append(("sketch", source))
-        assert source.count("sorry") == len(HOLES)
-        return {
-            "backend": "repl",
-            "ok": True,
-            "header": HEADER,
-            "holes": [
-                {
-                    "index": index,
-                    "goal": goal,
-                    "lean_name": f"hole_{index}",
-                    "lean_statement": statement,
-                    "universes": [],
-                }
-                for index, (goal, statement) in enumerate(HOLES)
-            ],
-            "closed": [],
             "reason_code": None,
         }
 
@@ -149,11 +129,15 @@ class Society:
             }
         )
         self.brokers = []
-        self.tools, self.lean = {}, {}
+        self.tools, self.lean, self.updates = {}, {}, {}
         for name, branch in self.branches.items():
             agent, context = running(self.service, self.author, self.exp, branch["id"])
             self.lean[name] = ScriptedLean()
             self.tools[name] = self.profile(agent, context, self.lean[name])
+            # The worker's automatic update delivery: (source, acknowledge).
+            self.updates[name] = discussion_delivery_hooks(
+                self.service, agent, context["task_id"], context["holder"], context["fence"]
+            )
 
     def profile(self, agent, context, lean):
         # One broker per execution, as the worker builds it. The reference text is passed
@@ -299,7 +283,8 @@ async def simulate(society, export_directory):
     assert isolated["error"]["code"] == "REFEREE_ISOLATED"
 
     # 4. The referee submits sound: L becomes refereed. The status post is on L's thread, but
-    # neither it (not urgent) nor A's own finding is pushed to A (S1 audit #13).
+    # neither it (not urgent) nor A's own finding is pushed to A's update delivery (S1 audit
+    # #13).
     referee = society.referee(informal)
     # The referee reads the node as fenced, untrusted author data.
     read = await call(referee, "commons_read", {"node_id": L})
@@ -311,8 +296,9 @@ async def simulate(society, export_directory):
         {"verdict": "sound", "summary": "The mean value theorem step is valid.", "objections": []},
     )
     assert verdict["node_status"] == "refereed" and verdict["cross_model"] is True
-    inbox = await call(A, "inbox", {})
-    assert inbox["items"] == [] and inbox["delivery_id"] is None
+    source, _ = society.updates["A"]
+    delivered = await source(None)
+    assert delivered["items"] == [] and delivered["delivery_id"] is None
     thread = (await call(A, "commons_read", {"node_id": L}))["recent_posts"]
     (status,) = [line for line in thread if "Status informal → refereed" in line]
     # A digest line's 8-hex id reads the full post.
@@ -364,24 +350,44 @@ async def simulate(society, export_directory):
     assert checked["claimed"] is True
     assert society.node(L)["status"] == "compiles_locally"
 
-    # 8. A sketches the goal's proof with two holes: two linked lemma nodes appear.
-    sketch = await call(A, "lean_sketch", {"source": GOAL_SKETCH, "parent_node_id": goal["id"]})
-    assert sketch["failed"] == [] and len(sketch["hole_nodes"]) == 2
-    holes = [society.node(node_id) for node_id in sketch["hole_nodes"].values()]
-    assert [hole["lean_statement"] for hole in holes] == [statement for _, statement in HOLES]
-    assert all(hole["lean_elaborated"] and hole["node_type"] == "lemma" for hole in holes)
-    lean_calls = society.lean["A"].calls
-    after_sketch = lean_calls[lean_calls.index(("sketch", GOAL_SKETCH)) + 1 :]
-    assert [name for name, *_ in after_sketch] == ["check"]  # one Lean run for both holes
+    # 8. A splits the rest of the goal into two stated lemma nodes the goal depends_on.
+    steps = []
+    for index, (goal_text, statement) in enumerate(GOAL_STEPS):
+        step = await call(
+            A,
+            "commons_node",
+            {
+                "action": "create",
+                "node_type": "lemma",
+                "title": f"Goal step {index}",
+                "statement": goal_text,
+            },
+        )
+        await call(
+            A,
+            "commons_node",
+            {
+                "action": "link",
+                "node_id": goal["id"],
+                "relation": "depends_on",
+                "target_id": step["id"],
+            },
+        )
+        lean = {"lean_header": HEADER, "lean_name": f"step_{index}", "lean_statement": statement}
+        stated = await call(
+            A, "commons_node", {"action": "set_lean_statement", "node_id": step["id"], **lean}
+        )
+        assert stated["lean_elaborated"] is True
+        steps.append(step["id"])
     edges = (await call(B, "commons_read", {"node_id": goal["id"]}))["edges_out"]
     assert {edge["node_id"] for edge in edges if edge["relation"] == "depends_on"} == {
         L,
         M,
-        *sketch["hole_nodes"].values(),
+        *steps,
     }
 
-    # 9. A referee objection on B's node arrives urgent in B's inbox; the earlier status posts
-    # on L, which B follows since citing it, are not urgent and were not pushed.
+    # 9. A referee objection on B's node arrives urgent in B's update delivery; the earlier
+    # status posts on L, which B follows since citing it, are not urgent and were not pushed.
     gaps = await call(
         B, "commons_node", {"action": "request_review", "node_id": M, "scope": "informal"}
     )
@@ -396,12 +402,13 @@ async def simulate(society, export_directory):
         },
     )
     assert objection["node_status"] == "informal" and objection["objection_post_id"]
-    inbox = await call(B, "inbox", {})
-    (first,) = inbox["items"]
+    source, acknowledge = society.updates["B"]
+    delivered = await source(None)
+    (first,) = delivered["items"]
     assert (first["node_id"], first["urgent"], first["post_kind"]) == (M, True, "objection")
     assert first["id"] == objection["objection_post_id"]
-    acked = await call(B, "inbox", {"ack_delivery_id": inbox["delivery_id"]})
-    assert acked["acknowledged_delivery_id"] == inbox["delivery_id"]
+    await acknowledge(delivered["delivery_id"])
+    acked = await source(None)
     assert acked["items"] == [] and acked["delivery_id"] is None  # nothing redelivered
     await call(C, "commons_claim", {"node_id": L, "action": "release"})
 

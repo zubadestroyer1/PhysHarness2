@@ -382,11 +382,13 @@ def test_every_catalog_tool_has_a_documented_bucket():
     }
     catalog = set(SOCIETY_TOOL_NAMES) | legacy_tool_names()
     assert len(legacy_tool_names()) == 63
-    for name in catalog:
+    for name in catalog | metrics_tool.RETIRED_SOCIETY_TOOLS:
         homes = [bucket for bucket, names in buckets.items() if name in names]
         assert len(homes) == 1, (name, homes)
-    # No bucket names a tool that no catalog has.
-    assert set().union(*buckets.values()) == catalog
+    # No bucket names a tool that no catalog has, except the retired society tools that
+    # S1 exports still carry.
+    assert not metrics_tool.RETIRED_SOCIETY_TOOLS & catalog
+    assert set().union(*buckets.values()) == catalog | metrics_tool.RETIRED_SOCIETY_TOOLS
     plan = (ROOT / "work/society-s1/RUN_PLAN.md").read_text()
     section = plan.split("## 7.", 1)[1].split("## 8.", 1)[0]
     assert all(f"`{name}`" in section for name in metrics_tool.OTHER)
@@ -395,5 +397,8 @@ def test_every_catalog_tool_has_a_documented_bucket():
 def test_lean_formalization_is_catalogued_mathematics():
     lean = metrics_tool.LEAN_FORMALIZATION
     assert lean < metrics_tool.MATH_LEAN_COMPUTATION
-    assert lean <= set(SOCIETY_TOOL_NAMES) | legacy_tool_names()
+    assert (
+        lean <= set(SOCIETY_TOOL_NAMES) | legacy_tool_names() | metrics_tool.RETIRED_SOCIETY_TOOLS
+    )
+    assert {"find_declaration", "lean_check"} <= lean
     assert metrics_tool.LEAN_CHECKS <= lean

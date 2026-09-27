@@ -102,7 +102,7 @@ Addressed messages, discussions, the component registry, research profiles, team
 
 ### 3.1 Reasoning and rhythm
 
-- **Light guidance, no imposed method.** The agent reasons natively and chooses its own method. The optional playbook, skills and nudges (§3.7) point the way without prescribing steps.
+- **Light guidance, no imposed method.** The agent reasons natively and chooses its own method. The optional playbook (§3.7) points the way without prescribing steps.
 - **The society runs on a short "constitution" in the prompt:** the norms of the community, not instructions for doing mathematics. The norms are:
   - Informal work is welcome.
   - State evidence status honestly.
@@ -131,14 +131,14 @@ Addressed messages, discussions, the component registry, research profiles, team
 | Group | Tools |
 |---|---|
 | Workspace and computation | `shell`, `file` (read/write), `run_computation` (bounded background numerical job with recorded inputs, seed, precision and environment) |
-| Lean | `lean_check` (persistent Lean session; goal states, errors, `#print axioms`), `lean_sketch` (compile a proof skeleton with holes; holes become blueprint nodes, §3.7), `lean_automate` (try automation and premise suggestions on one goal) |
-| Library and literature | `search_library` (pinned Mathlib/Physlib; lexical, type-directed and semantic), `read_source`, `search_literature`, `fetch_source` (brokered online access, §3.6) |
-| Commons | `commons_query`, `commons_read`, `commons_post`, `commons_claim`, `inbox` |
+| Lean | `lean_check` (persistent Lean session; goal states, errors, `#print axioms`) |
+| Library and literature | `find_declaration` (pinned Mathlib/Physlib declarations as ranked `Name signature — path:line` rows, by name or by type, with did-you-mean names; reads at most ±40 lines around one), `search_literature`, `fetch_source` (brokered online access, §3.6) |
+| Commons | `commons_query`, `commons_read`, `commons_post`, `commons_claim` |
 | Society | `recruit` (brief, focus node, hat, model tier), `message` (lab/direct), `wait` |
 | Evidence | `submit_for_verification` (workspace file → candidate → independent check), `verification_status` |
-| Memory and skills | `notebook` (read/write checkpointed notes), `load_skill` (technique library and tool recipes, §3.7) |
+| Memory | `notebook` (read/write checkpointed notes) |
 
-Existing tools map onto these. For example, `run_command`, `run_lean_scratch`, `check_lean_type`, `search_library_source`, `submit_workspace_candidate`, and the polynomial and matrix certificate checkers become `shell`, `lean_check`, `search_library`, `submit_for_verification` and computation recipes. Old names remain adapters during migration.
+Existing tools map onto these. For example, `run_command`, `run_lean_scratch`, `check_lean_type`, `search_library_source`, `submit_workspace_candidate`, and the polynomial and matrix certificate checkers become `shell`, `lean_check`, `find_declaration`, `submit_for_verification` and computation recipes. Old names remain adapters during migration.
 
 ### 3.4 Roles are optional "hats", not assignments
 
@@ -198,7 +198,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
   5. Sketch the Lean proof with holes.
   6. Fill the holes.
   7. Submit.
-- **Technique skills** (`load_skill`): short, curated notes on methods common in mathematical physics, each with when it applies, typical pitfalls, and pointers into Mathlib/Physlib. Examples: energy and Lyapunov methods, Grönwall and comparison arguments, variational methods, spectral and perturbation arguments, fixed-point and compactness arguments, convexity and operator inequalities for quantum information, symmetry arguments. Tool recipes (interval arithmetic, SOS certificates, the Lean sketch workflow) are skills too.
+- **Technique skills** were removed after S1 (never loaded).
 - Check-ins and stagnation nudges were removed after S1 (acted on 20% of the time; nudges never fired). The stagnation detector remains the loop guard.
 - **Sketch-then-fill formalization** (the draft–sketch–prove pattern):
   1. From an informal proof, `lean_sketch` compiles a Lean skeleton with `sorry` holes to confirm the structure type-checks.

@@ -254,7 +254,7 @@ tools, the prompts and the delivery shapes.
 
   The referee submits one verdict. Negative verdicts stay on the thread as objections.
   Its tool profile only reads and checks: no `commons_node`, `commons_claim`,
-  `lean_sketch`, `recruit`, `message`, `wait` or `submit_for_verification`. Its
+  `recruit`, `message`, `wait` or `submit_for_verification`. Its
   `lean_check` records no local compiles, and it posts questions, findings and
   objections only on the assigned node's thread.
 - **Labs.** Society roots found a lab. Recruits join the parent's lab or found one
@@ -279,21 +279,31 @@ widest catalog has 25 (all but `submit_review`), and a referee's has 18:
 | Group | Tools |
 |---|---|
 | Workspace and computation | `shell`, `read_file`, `write_file`, `run_computation` |
-| Lean | `lean_check`, `lean_sketch` |
-| Library and literature | `search_library`, `read_source`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
-| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim`, `inbox` |
+| Lean | `lean_check` |
+| Library and literature | `find_declaration`, `search_literature`, `fetch_source` (literature only when the policy enables it) |
+| Commons | `commons_query`, `commons_read`, `commons_node`, `commons_post`, `commons_claim` |
 | Society | `recruit`, `message`, `wait` |
 | Evidence | `read_artifact`, `submit_for_verification`, `verification_status` |
-| Memory and skills | `notebook`, `load_skill` |
+| Memory | `notebook` |
 | Task-specific | `return_result` (joined children), `submit_review` (referee tasks) |
+
+`find_declaration` returns ranked `Name signature — path:line` rows (at most 20) for a
+name or a type query, with did-you-mean names when nothing matches exactly, from a header
+index of the pinned Mathlib and Physlib sources. The workspace builds the index once per
+environment digest under `/work/.cache` (never archived), up to 64 MiB; past that cap it
+reports `declaration_index_failed` and points to `rg` in `shell`. With `path` and `line`
+it reads ±40 lines (at most 4,000 bytes) around a declaration, never a whole file, and
+`verify=true` also `#check`s an exact top row in Lean. `inbox`, `lean_sketch` and
+`load_skill` were removed after S1: peer updates arrive automatically at settled
+boundaries, and the technique skills were never loaded.
 
 The prompt carries the constitution (community norms and an optional playbook), the
 frontier, the lab roster and the agent's claimed nodes. A referee gets a referee
 constitution instead, with no playbook, and its notes name only referee-profile tools.
 Its frontier's node titles and statements arrive fenced as untrusted author data, like
 its review packet, since they may come from the author of the node it reviews. So does
-everything its `commons_read`, `commons_query`, `inbox` and `read_artifact` return,
-except platform-written cursors, offsets and delivery ids. `read_artifact` opens the
+everything its `commons_read`, `commons_query` and `read_artifact` return,
+except platform-written cursors and offsets. `read_artifact` opens the
 referee's own artifacts, the node's published source, and those that the node, or
 another branch's post on its thread, cites: the referee's own posts never widen that
 scope, and the thread search reads the earliest posts first and fails closed past its

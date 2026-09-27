@@ -1,9 +1,8 @@
-"""Optional society scaffolding: skills, constitution and the stagnation loop detector."""
+"""Optional society scaffolding: constitution and the stagnation loop detector."""
 
 import itertools
 import json
 import uuid
-from importlib import resources
 
 import httpx
 import pytest
@@ -12,7 +11,6 @@ from pydantic import ValidationError
 from test_execution_responses import message, response
 
 from physharness.domain import ScaffoldingPolicy, canonical_json
-from physharness.errors import HarnessError
 from physharness.execution import (
     ExecutionError,
     ModelConfig,
@@ -24,22 +22,7 @@ from physharness.execution import (
 from physharness.execution import types as execution_types
 from physharness.execution.stagnation import signal_message
 from physharness.orchestration.society_prompt import constitution, referee_constitution
-from physharness.skills import list_skills, load_skill
 
-SKILLS = sorted(
-    [
-        "energy-lyapunov",
-        "gronwall-comparison",
-        "variational-methods",
-        "spectral-perturbation",
-        "fixed-point-compactness",
-        "operator-inequalities-quantum",
-        "symmetry-invariants",
-        "interval-arithmetic-certificates",
-        "sos-certificates",
-        "lean-sketch-then-fill",
-    ]
-)
 NORMS = [
     "Informal work is welcome.",
     "State evidence status honestly.",
@@ -56,7 +39,7 @@ WARNING = (
 RECOVERY = "Bounded recovery is required before more repeated reads."
 
 
-def _policy(*, playbook: bool, skills: bool) -> dict:
+def _policy(*, playbook: bool) -> dict:
     return {
         "tool_profile": "society",
         "claim_ttl_seconds": 900,
@@ -64,11 +47,11 @@ def _policy(*, playbook: bool, skills: bool) -> dict:
         "cross_lab_direct_messages": False,
         "referee_quorum": 1,
         "literature": {"mode": "off", "blocked_sources": []},
-        "scaffolding": {"playbook": playbook, "skills": skills},
+        "scaffolding": {"playbook": playbook},
     }
 
 
-@pytest.mark.parametrize("field", ["checkin_every_turns", "stagnation_nudges"])
+@pytest.mark.parametrize("field", ["checkin_every_turns", "stagnation_nudges", "skills"])
 def test_scaffolding_policy_names_removed_fields(field):
     with pytest.raises(ValidationError) as error:
         ScaffoldingPolicy.model_validate({field: None})
@@ -77,57 +60,9 @@ def test_scaffolding_policy_names_removed_fields(field):
     assert "Delete it from the plan." in message
 
 
-def test_skills_listed_and_loadable_and_bounded():
-    listed = list_skills()
-    assert [entry["name"] for entry in listed] == SKILLS
-    packaged = {
-        item.name
-        for item in resources.files("physharness.skills").iterdir()
-        if item.name.endswith(".md")
-    }
-    assert packaged == {name + ".md" for name in SKILLS}
-    for entry in listed:
-        assert set(entry) == {"name", "summary", "applies_when"}
-        assert 0 < len(entry["summary"]) <= 200
-        assert 0 < len(entry["applies_when"]) <= 300
-        loaded = load_skill(entry["name"])
-        assert set(loaded) == {"name", "text"}
-        assert loaded["name"] == entry["name"]
-        text = loaded["text"]
-        assert len(text) <= 6_000
-        front, body = text.split("\n---\n", 1)
-        assert front.splitlines() == [
-            "---",
-            f"name: {entry['name']}",
-            f"summary: {entry['summary']}",
-            f"applies_when: {entry['applies_when']}",
-        ]
-        assert len(body.strip("\n").splitlines()) <= 80
-        for heading in (
-            "## When it applies",
-            "## Core steps",
-            "## Pitfalls",
-            "## In Lean/Mathlib",
-            "## Numerical sanity check",
-        ):
-            assert heading in body, (entry["name"], heading)
-    # Callers receive copies; mutating a result cannot change the catalog.
-    listed[0]["summary"] = "mutated"
-    assert list_skills()[0]["summary"] != "mutated"
-
-
-@pytest.mark.parametrize(
-    "name", ["no-such-skill", "", "../__init__", "energy-lyapunov.md", "ENERGY-LYAPUNOV"]
-)
-def test_unknown_skill(name):
-    with pytest.raises(HarnessError) as failure:
-        load_skill(name)
-    assert failure.value.code == "SKILL_NOT_FOUND"
-
-
 def test_constitution_respects_policy_flags_and_length():
-    full = constitution(_policy(playbook=True, skills=True), literature_enabled=True)
-    bare = constitution(_policy(playbook=False, skills=False), literature_enabled=False)
+    full = constitution(_policy(playbook=True), literature_enabled=True)
+    bare = constitution(_policy(playbook=False), literature_enabled=False)
     assert len(full) <= 4_000
     assert len(bare) < len(full)
     for text in (full, bare):
@@ -140,20 +75,14 @@ def test_constitution_respects_policy_flags_and_length():
     assert "1. Orient:" in full and "7. Submit." in full
     assert "Explore: special cases, numerical experiments, literature." in full
     assert "Orient" not in bare
-    no_literature = constitution(_policy(playbook=True, skills=False), literature_enabled=False)
+    no_literature = constitution(_policy(playbook=True), literature_enabled=False)
     assert "Explore: special cases, numerical experiments." in no_literature
     assert "literature." not in no_literature.split("Optional playbook", 1)[1]
-    # Skills: a single line listing every packaged skill name.
-    skill_lines = [line for line in full.splitlines() if "load_skill" in line]
-    assert len(skill_lines) == 1
-    assert all(name in skill_lines[0] for name in SKILLS)
-    assert "load_skill" not in bare
-    assert not any(name in bare for name in SKILLS)
 
 
 def test_referee_constitution_keeps_the_boundaries_without_a_playbook():
-    full = referee_constitution(_policy(playbook=True, skills=True), literature_enabled=True)
-    bare = referee_constitution(_policy(playbook=False, skills=False), literature_enabled=False)
+    full = referee_constitution(_policy(playbook=True), literature_enabled=True)
+    bare = referee_constitution(_policy(playbook=False), literature_enabled=False)
     assert len(full) <= 4_000
     for text in (full, bare):
         assert "referee" in text and "one node" in text
@@ -165,12 +94,6 @@ def test_referee_constitution_keeps_the_boundaries_without_a_playbook():
         assert "playbook" not in text and "Submit." not in text
         for builder_norm in ("Claim before", "Recruit when", "Ask for a referee"):
             assert builder_norm not in text
-    skill_lines = [line for line in full.splitlines() if "load_skill" in line]
-    assert len(skill_lines) == 1
-    assert all(name in skill_lines[0] for name in SKILLS if name != "lean-sketch-then-fill")
-    assert "lean-sketch-then-fill" not in full
-    assert "load_skill" not in bare
-    assert not any(name in bare for name in SKILLS)
 
 
 def test_signal_message_unchanged_without_suggestions():

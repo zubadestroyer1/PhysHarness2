@@ -47,7 +47,6 @@ from ..execution import ToolDispatcher
 from ..execution.e2b import FILE_LIMIT as E2B_FILE_BYTES
 from ..knowledge.literature import run_blocking as run_literature
 from ..memory import PortableMemory
-from ..skills import list_skills, load_skill
 from ..worker_authority import current_worker_effects
 from ..workforce_models import RecruitResearcherRequest
 from .computation import MAX_ARG_CHARS, MAX_ARGS, MAX_TIMEOUT_SECONDS, ComputationRunner
@@ -60,7 +59,6 @@ from .lean_session import (
     top_level_declarations,
 )
 from .research_worker import FATAL_TOOL_CODES, tool_registrar, worker_check
-from .society_prompt import REFEREE_EXCLUDED_SKILLS
 
 log = logging.getLogger(__name__)
 
@@ -72,9 +70,7 @@ SOCIETY_TOOL_NAMES = (
     "write_file",
     "run_computation",
     "lean_check",
-    "lean_sketch",
-    "search_library",
-    "read_source",
+    "find_declaration",
     "search_literature",
     "fetch_source",
     "commons_query",
@@ -83,14 +79,12 @@ SOCIETY_TOOL_NAMES = (
     "commons_node",
     "commons_post",
     "commons_claim",
-    "inbox",
     "recruit",
     "message",
     "wait",
     "submit_for_verification",
     "verification_status",
     "notebook",
-    "load_skill",
     "return_result",
     "submit_review",
 )
@@ -102,18 +96,15 @@ REFEREE_TOOL_NAMES = (
     "write_file",
     "run_computation",
     "lean_check",
-    "search_library",
-    "read_source",
+    "find_declaration",
     "search_literature",
     "fetch_source",
     "commons_query",
     "commons_read",
     "read_artifact",
     "commons_post",
-    "inbox",
     "verification_status",
     "notebook",
-    "load_skill",
     "submit_review",
 )
 REFEREE_POST_KINDS = ("question", "finding", "objection")
@@ -130,7 +121,6 @@ HATS = {
 ID = 36  # Record ids are UUID strings.
 PATH = 1024
 MAX_SOURCE = 30_000  # LeanSession accepts at most 30,000 bytes of source.
-MAX_HEADER = 2000  # NodeCreate.lean_header
 MAX_FILE = 1_000_000
 MAX_ARGUMENT = 32_768
 MAX_BRIEF = 12_000
@@ -894,168 +884,34 @@ def society_tools(
                 defaults={"node_id": None, "automate": False},
             )
 
-        async def lean_sketch(a, k):
-            # Readable by this agent (same experiment, ideas sharing) and open, so every hole
-            # node can be linked from it; checked before Lean runs or any node exists.
-            parent = service.read_node(a["parent_node_id"], agent)["node"]
-            if a["create_nodes"] and parent["status"] in CLOSED_STATUSES:
-                raise HarnessError(
-                    "NODE_CLOSED",
-                    f"The parent node is {parent['status']}; hole nodes need an open parent.",
-                    remediation="Sketch against an open node, or use create_nodes=false.",
-                )
-            sketch = await lean().sketch_goals(a["source"], operation_id=k)
-            header = sketch["header"]
-            holes, failed, hole_nodes, created = [], [], {}, []
-            for hole in sketch["holes"]:
-                if hole.get("extract_failed"):
-                    failed.append(
-                        {"index": hole["index"], "goal": hole["goal"], "reason": hole["reason"]}
-                    )
-                    continue
-                entry = {
-                    "index": hole["index"],
-                    "goal": hole["goal"],
-                    "lean_statement": hole["lean_statement"],
-                    "universes": hole.get("universes", []),
-                }
-                if a["create_nodes"]:
-                    outcome = hole_node(parent, header, hole, k)
-                    if "error" in outcome:
-                        failed.append({"index": hole["index"], **outcome})
-                        continue
-                    node_header = outcome.pop("node_header")
-                    entry.update(outcome)
-                    hole_nodes[str(hole["index"])] = outcome["node_id"]
-                    created.append((entry, node_header))
-                holes.append(entry)
-            if created:
-                await elaborate_holes(header, created, k)
-            return {
-                "backend": sketch["backend"],
-                "ok": sketch["ok"],
-                "reason_code": sketch["reason_code"],
-                "parent_node_id": parent["id"],
-                "holes": holes,
-                "hole_nodes": hole_nodes,
-                "failed": failed,
-                "closed": sketch["closed"],
-            }
-
-        def hole_node(parent, header, hole, key):
-            """Create and link one hole's lemma node; failures are reported."""
-            index, statement = hole["index"], hole["lean_statement"]
-            key = f"{key}:hole-{index}"
-            node_header = header
-            if hole.get("universes"):
-                # Placed after the imports, since Lean rejects an import after a command.
-                universe = "universe " + " ".join(hole["universes"])
-                node_header = f"{header}\n{universe}" if header else universe
-            if node_header is not None and len(node_header) > MAX_HEADER:
-                return {"error": "header_too_long"}
-            suffix = f"_hole_{index}"
-            name = (parent.get("lean_name") or "node")[: 200 - len(suffix)] + suffix
-            try:
-                request = NodeCreate(
-                    node_type="lemma",
-                    title=f"Hole {index} of {parent['title']}"[:200],
-                    statement="Lean hole goal: " + (hole["goal"] or statement)[:7000],
-                    lean_header=node_header,
-                    lean_name=name,
-                    lean_statement=statement,
-                )
-            except ValidationError as error:
-                return {"error": _validation_error(error).message}
-            try:
-                created = service.create_node(experiment_id, request, agent, key)
-                service.link_nodes(
-                    experiment_id, parent["id"], "depends_on", created["id"], agent, f"{key}:link"
-                )
-            except HarnessError as error:
-                if error.code in FATAL_TOOL_CODES:
-                    raise
-                return {"error": error.code, "message": error.message}
-            return {
-                "node_id": created["id"],
-                "lean_name": name,
-                "lean_elaborated": False,
-                "node_header": node_header,
-            }
-
-        async def elaborate_holes(header, created, key):
-            """Elaborate every new hole node's statement in one Lean run; record each result.
-
-            One run imports the header once, instead of once per hole on repl_inline and
-            one_shot. An infrastructure failure is reported and records nothing.
-            """
-            try:
-                results = await lean().elaborate_statements(
-                    header or "",
-                    [
-                        (entry["lean_name"], entry["lean_statement"], tuple(entry["universes"]))
-                        for entry, _ in created
-                    ],
-                    operation_id=f"{key}:elaborate-holes",
-                )
-            except HarnessError as error:
-                if error.code in FATAL_TOOL_CODES:
-                    raise
-                for entry, _ in created:
-                    entry["elaboration"] = error.envelope()["error"]
-                return
-            for (entry, node_header), result in zip(created, results, strict=True):
-                if _infrastructure_failure(result):
-                    entry["elaboration"] = _elaboration_view(result)
-                    continue
-                record = _soft(
-                    lambda entry=entry, node_header=node_header, result=result: (
-                        service.set_lean_statement(
-                            entry["node_id"],
-                            node_header,
-                            entry["lean_name"],
-                            entry["lean_statement"],
-                            _elaboration(result),
-                            agent,
-                            f"{key}:hole-{entry['index']}:lean",
-                        )
-                    )
-                )
-                if "error" in record:
-                    entry["elaboration"] = record["error"]
-                    continue
-                entry["lean_elaborated"] = record["lean_elaborated"]
-                entry["elaboration"] = _elaboration_view(result)
-
         add(
-            "lean_sketch",
+            "find_declaration",
             {
-                "source": text(MAX_SOURCE, "Proof skeleton with sorry gaps; 30,000 UTF-8 bytes."),
-                "parent_node_id": ident("The commons node the skeleton proves.", ("commons_node",)),
-                "create_nodes": BOOLEAN,
+                "query": text(
+                    200,
+                    "A declaration name or fragment (mode name), or words of its type (mode type).",
+                    nullable=True,
+                ),
+                "mode": choice(("name", "type"), "name: match names; type: match signatures."),
+                "path": text(
+                    PATH,
+                    "Read mode: a path from a result row (mathlib/… or physlib/…).",
+                    nullable=True,
+                ),
+                "line": integer(
+                    1, 10_000_000, "Read mode: the line to read around.", nullable=True
+                ),
+                "verify": {
+                    "type": "boolean",
+                    "description": "Also #check the top row's exact signature in Lean (slower).",
+                },
             },
-            lean_sketch,
-            "Compile a proof skeleton with sorry holes. Automation tries each hole; each open "
-            "hole's goal becomes a standalone Lean statement and, with create_nodes, a lemma "
-            "node that the parent depends_on. Hole statements are elaborated together, in one "
-            "Lean run, against the file header (imports and opens) only: a hole that "
-            "mentions a definition made in the "
-            "skeleton's body fails elaboration, and its node is still created with "
-            "lean_elaborated false and the diagnostics. Holes whose goal could not be "
-            "extracted are reported but get no node.",
-            defaults={"create_nodes": True},
-        )
-        add(
-            "search_library",
-            {"query": text(200, "Case-insensitive text to find in library source.")},
-            lambda a, k: workspace_tools.search_library(a, k),
-            "Lexically search pinned Mathlib and Physlib Lean source. Each hits[].path is "
-            "accepted unchanged by read_source.",
-        )
-        add(
-            "read_source",
-            {"path": text(PATH, "An unchanged search_library hits[].path (mathlib/...).")},
-            lambda a, k: workspace_tools.lookup_library_source(a, k),
-            "Read a pinned Mathlib or Physlib source file with its hash and bounded text.",
+            lambda a, k: workspace_tools.find_declaration(a, k),
+            "Find pinned Mathlib and Physlib declarations: ranked rows "
+            "'Name signature — path:line' (at most 20) with did-you-mean names when nothing "
+            "matches exactly. With path and line, read ±40 lines (at most 4,000 bytes) around a "
+            "declaration; never a whole file.",
+            defaults={"query": None, "mode": "name", "path": None, "line": None, "verify": False},
         )
 
     # Literature ----------------------------------------------------------------------
@@ -1381,28 +1237,6 @@ def society_tools(
         "co-claimants. A claim is attention, never authority.",
     )
 
-    def inbox(a, k):
-        acknowledged = a["ack_delivery_id"]
-        if acknowledged is not None:
-            service.acknowledge_discussion_updates(experiment_id, acknowledged, agent, k)
-        delivery = {
-            "acknowledged_delivery_id": acknowledged,
-            **service.discussion_updates(experiment_id, agent, limit=10),
-        }
-        if referee:
-            platform = ("acknowledged_delivery_id", "delivery_id", "next_cursor", "redelivered")
-            return _referee_view(delivery, platform, items=True)
-        return delivery
-
-    add(
-        "inbox",
-        {"ack_delivery_id": text(200, "A delivery you have read, or null.", nullable=True)},
-        inbox,
-        "Acknowledge a read delivery (optional), then read your next bounded delivery of "
-        "subscribed thread posts, status changes and messages; urgent items come first.",
-        defaults={"ack_delivery_id": None},
-    )
-
     # Society ---------------------------------------------------------------------------
 
     def recruit(a, k):
@@ -1597,7 +1431,7 @@ def society_tools(
         defaults={"wait_seconds": 0},
     )
 
-    # Memory and skills ------------------------------------------------------------------
+    # Memory ----------------------------------------------------------------------------
 
     def notebook(a, k):
         if a["action"] == "read":
@@ -1646,16 +1480,6 @@ def society_tools(
             "evidence_ids": [],
         },
     )
-    if policy["scaffolding"]["skills"]:
-        excluded = REFEREE_EXCLUDED_SKILLS if referee else ()
-        skills = [entry["name"] for entry in list_skills() if entry["name"] not in excluded]
-        add(
-            "load_skill",
-            {"name": choice(skills, "The technique note.")},
-            lambda a, k: load_skill(a["name"]),
-            "Load an optional technique note (method, pitfalls, Lean hints).",
-        )
-
     # Task-specific ----------------------------------------------------------------------
     if task_context and tool_task and tool_task.get("reply_to_parent_task_id"):
         add(

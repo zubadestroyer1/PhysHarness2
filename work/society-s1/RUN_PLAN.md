@@ -128,7 +128,8 @@ Criteria:
 6. **Clean provenance.** Agents can read the problem record, so `target.source`, the
    title and the informal statement must not name or paraphrase the known-solution
    source. Keep the provenance in the operator's private notes.
-7. **Skill overlap recorded.** The technique skills were written before any target was
+7. **Skill overlap recorded** (S1 only; technique skills were removed in the S1
+   remediation). The technique skills were written before any target was
    chosen, so none is derived from a reference. If a skill spells out the reference
    route, record it: `energy-lyapunov` already describes the xᵀPx Lyapunov-equation
    method, and `sos-certificates` describes sum-of-squares decompositions.

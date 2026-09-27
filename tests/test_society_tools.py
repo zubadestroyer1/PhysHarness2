@@ -15,6 +15,7 @@ from test_execution_responses import message
 from test_literature import REFERENCE, REFERENCE_WORDS, FakeTransport, ok, page
 from test_research_loop_integration import PRICES, response, tool_call
 from test_sharing import approaches, artifact
+from test_society_metrics import metrics_tool
 from test_workspace_service import FakeVM
 
 from physharness import commons_discourse
@@ -25,7 +26,6 @@ from physharness.domain import (
     ArtifactCreate,
     LiteraturePolicy,
     Principal,
-    ScaffoldingPolicy,
     SocietyPolicy,
     TaskCreate,
     digest_json,
@@ -55,7 +55,6 @@ from physharness.orchestration.society_tools import (
 )
 from physharness.orchestration.workspace_tools import WorkspacePolicy, WorkspaceTools
 from physharness.orchestration.workspaces import WorkspaceBroker
-from physharness.skills import list_skills, load_skill
 from physharness.storage import RecordRow
 from physharness.workforce_models import ConfigureWorkforceRequest
 
@@ -320,11 +319,9 @@ class FakeWorkspace:
     async def write(self, arguments, operation_id):
         return await self._record("write", arguments)
 
-    async def search_library(self, arguments, operation_id):
-        return await self._record("search_library", arguments)
-
-    async def lookup_library_source(self, arguments, operation_id):
-        return await self._record("lookup_library_source", arguments)
+    async def find_declaration(self, arguments, operation_id):
+        self.calls.append(("find_declaration", arguments))
+        return {"rows": [], "exact": False}
 
     async def submit_workspace_candidate(self, arguments, operation_id, agent):
         self.calls.append(("submit", arguments))
@@ -383,18 +380,15 @@ REFEREE_TOOLS = (
     "write_file",
     "run_computation",
     "lean_check",
-    "search_library",
-    "read_source",
+    "find_declaration",
     "search_literature",
     "fetch_source",
     "commons_query",
     "commons_read",
     "read_artifact",
     "commons_post",
-    "inbox",
     "verification_status",
     "notebook",
-    "load_skill",
     "submit_review",
 )
 
@@ -446,8 +440,8 @@ def test_society_catalog_widest():
     assert tuple(names(dispatcher)) == tuple(n for n in SOCIETY_TOOL_NAMES if n != "submit_review")
     assert tuple(names(referee)) == REFEREE_TOOLS
     assert set(names(dispatcher)) | set(names(referee)) == set(SOCIETY_TOOL_NAMES)
-    # 26 tools in all: 25 for a worker at most, and 18 for a referee.
-    assert (len(SOCIETY_TOOL_NAMES), len(names(dispatcher)), len(REFEREE_TOOLS)) == (26, 25, 18)
+    # 22 tools in all: 21 for a worker at most, and 15 for a referee.
+    assert (len(SOCIETY_TOOL_NAMES), len(names(dispatcher)), len(REFEREE_TOOLS)) == (22, 21, 15)
     for item in dispatcher.definitions + referee.definitions:
         schema = item["parameters"]
         assert item["strict"] is True and schema["additionalProperties"] is False
@@ -464,6 +458,30 @@ def test_society_catalog_widest():
     # Platform evidence is never a model argument.
     assert "compile_result" not in definition(dispatcher, "lean_check")["parameters"]["properties"]
     assert "elaboration" not in definition(dispatcher, "commons_node")["parameters"]["properties"]
+
+
+async def test_catalog_has_find_declaration_and_no_retired_tools():
+    retired = metrics_tool.RETIRED_SOCIETY_TOOLS
+    assert retired == {"inbox", "lean_sketch", "load_skill", "search_library", "read_source"}
+    for dispatcher in (widest(), referee_catalog()):
+        assert "find_declaration" in names(dispatcher)
+        assert not retired & set(names(dispatcher))
+    assert not retired & set(SOCIETY_TOOL_NAMES)
+    workspace = FakeWorkspace()
+    dispatcher = society_tools(  # unleased: no worker fence check against a real service
+        CatalogService(policy_dict()),
+        SimpleNamespace(experiment_id="e", project_id="lab"),
+        "b",
+        task_context=None,
+        workspace_tools=workspace,
+    )
+    found = await call(dispatcher, "find_declaration", {"query": "Matrix.dotProduct"})
+    assert found == {"rows": [], "exact": False}
+    arguments = {"query": "Matrix.dotProduct", "mode": "name", "path": None, "line": None}
+    assert workspace.calls == [("find_declaration", {**arguments, "verify": False})]
+    schema = definition(dispatcher, "find_declaration")
+    assert list(schema["parameters"]["properties"]) == ["query", "mode", "path", "line", "verify"]
+    assert "never a whole file" in schema["description"]
 
 
 def test_society_schemas_bound_arrays_without_string_length_keywords():
@@ -489,8 +507,6 @@ def test_society_schemas_bound_arrays_without_string_length_keywords():
     message_ids = definition(dispatcher, "message")["parameters"]["properties"]["artifact_ids"]
     assert message_ids["maxItems"] == 12
     assert "lab='new'" in definition(dispatcher, "recruit")["description"]
-    sketch = definition(dispatcher, "lean_sketch")["description"]
-    assert "header" in sketch and "lean_elaborated false" in sketch
 
 
 def test_society_catalog_without_literature_or_review():
@@ -507,9 +523,9 @@ def test_society_catalog_without_literature_or_review():
     )
     missing = {"search_literature", "fetch_source", "submit_review", "return_result"}
     assert names(dispatcher) == [name for name in SOCIETY_TOOL_NAMES if name not in missing]
-    # Without a workspace, lease or skills: only the commons, society and memory tools.
+    # Without a workspace or lease: only the commons, society and memory tools.
     bare = society_tools(
-        CatalogService(policy_dict(scaffolding=ScaffoldingPolicy(skills=False))),
+        CatalogService(policy_dict()),
         agent,
         "b",
         task_context=None,
@@ -522,7 +538,6 @@ def test_society_catalog_without_literature_or_review():
         "commons_node",
         "commons_post",
         "commons_claim",
-        "inbox",
         "recruit",
         "message",
         "verification_status",
@@ -591,25 +606,20 @@ def mentioned_tools(texts):
 def test_note_and_prompt_tool_names_exist_in_catalog():
     required = {
         "commons_post",
-        "lean_sketch",
         "lean_check",
         "commons_claim",
         "commons_query",
-        "load_skill",
         "run_computation",
         "search_literature",
         "recruit",
-        "search_library",
-        "read_source",
+        "find_declaration",
         "submit_for_verification",
     }
     assert required <= set(SOCIETY_TOOL_NAMES)
-    texts = [constitution(policy_dict(), literature_enabled=True)]
-    for entry in list_skills():
-        body = load_skill(entry["name"])["text"].split("---", 2)[2]
-        texts.append(re.sub(r"`[^`]*`", "", body))  # Lean names sit in backticks
-    mentioned = mentioned_tools(texts)
-    assert mentioned and mentioned <= set(SOCIETY_TOOL_NAMES), mentioned - set(SOCIETY_TOOL_NAMES)
+    # The constitution names no tool today (skills, check-ins and nudges are gone); any it
+    # names must exist.
+    mentioned = mentioned_tools([constitution(policy_dict(), literature_enabled=True)])
+    assert mentioned <= set(SOCIETY_TOOL_NAMES), mentioned - set(SOCIETY_TOOL_NAMES)
 
 
 # Tools every referee profile has; workspace tools need a workspace, literature its policy.
@@ -617,10 +627,8 @@ REFEREE_TEXT_TOOLS = {
     "commons_query",
     "commons_read",
     "commons_post",
-    "inbox",
     "verification_status",
     "notebook",
-    "load_skill",
     "submit_review",
 }
 
@@ -631,35 +639,9 @@ def test_referee_texts_name_only_referee_tools(literature_enabled):
     allowed = REFEREE_TEXT_TOOLS | (
         {"search_literature", "fetch_source"} if literature_enabled else set()
     )
-    policy = policy_dict()
-    constitution_text = referee_constitution(policy, literature_enabled=literature_enabled)
+    constitution_text = referee_constitution(policy_dict(), literature_enabled=literature_enabled)
     mentioned = mentioned_tools([constitution_text])
     assert "submit_review" in mentioned and mentioned <= allowed, mentioned - allowed
-    # Every technique note offered to a referee names only tools a referee profile can have.
-    [skills] = [line for line in constitution_text.splitlines() if "load_skill" in line]
-    listed = skills.split(": ", 1)[1].split(", ")
-    assert listed == [
-        entry["name"] for entry in list_skills() if entry["name"] != "lean-sketch-then-fill"
-    ]
-    for name in listed:
-        body = load_skill(name)["text"].split("---", 2)[2]
-        named = mentioned_tools([re.sub(r"`[^`]*`", "", body)])  # Lean names sit in backticks
-        assert named <= set(REFEREE_TOOLS), (name, named - set(REFEREE_TOOLS))
-
-
-def test_referee_load_skill_offers_only_the_listed_notes():
-    [skills] = [
-        line
-        for line in referee_constitution(policy_dict(), literature_enabled=True).splitlines()
-        if "load_skill" in line
-    ]
-    listed = skills.split(": ", 1)[1].split(", ")
-
-    def offered(dispatcher):
-        return definition(dispatcher, "load_skill")["parameters"]["properties"]["name"]["enum"]
-
-    assert offered(referee_catalog()) == listed
-    assert offered(widest()) == [entry["name"] for entry in list_skills()]
 
 
 def test_society_reads_count_toward_stagnation():
@@ -672,6 +654,10 @@ def test_society_reads_count_toward_stagnation():
     shell = {"argv": ["cat", "notes.txt"], "cwd": ".", "timeout_seconds": 5}
     signals = [observe(state, "shell", shell, {"exit_code": 0, "stdout": "x"}) for _ in range(4)]
     assert signals[-1] == "stagnation_warning"
+    for name in ("find_declaration", "commons_fetch"):
+        state = {}
+        signals = [observe(state, name, {"query": "q"}, {"rows": []}) for _ in range(4)]
+        assert signals[-1] == "stagnation_warning", name
 
 
 async def test_repeated_unknown_tool_calls_trip_the_stagnation_detector():
@@ -775,10 +761,8 @@ async def test_referee_task_gets_submit_review(lab):
         "commons_read",
         "read_artifact",
         "commons_post",
-        "inbox",
         "verification_status",
         "notebook",
-        "load_skill",
         "submit_review",
     ]
     verdict = definition(dispatcher, "submit_review")["parameters"]["properties"]["verdict"]
@@ -950,10 +934,10 @@ async def test_society_profiles_answer_unknown_tool_names_with_an_envelope(caplo
         SimpleNamespace(experiment_id="e", project_id="lab"),
         "b",
         task_context=None,
-        workspace_tools=None,
+        workspace_tools=FakeWorkspace(),
     )
-    known = await call(unleased, "load_skill", {"name": "sos-certificates"})
-    assert known["name"] == "sos-certificates"
+    known = await call(unleased, "find_declaration", {"query": "Nat.add_comm"})
+    assert known == {"rows": [], "exact": False}
     # The legacy profile keeps the fatal error.
     legacy = research_tools(CatalogOnlyService("none"), SimpleNamespace(experiment_id="e"), "b")
     with pytest.raises(ExecutionError) as failure:
@@ -1267,114 +1251,6 @@ def test_publication_refusals_and_source_ranks():
     unjudged = {"ok": False, "reason": "statement_check_unavailable", "axioms": None}
     assert _source_rank(node, clean, unjudged) == "complete"
     assert _source_rank(node, {**clean, "axioms": {}}, unjudged) == "partial"
-
-
-async def test_lean_sketch_creates_linked_hole_nodes(lab):
-    service, author, exp, branches, _ = society_lab(lab)
-    alpha, context = running(service, author, exp, branches[0]["id"])
-    header = "import Mathlib\nopen Real"
-    sketch = {
-        "backend": "repl",
-        "ok": True,
-        "header": header,
-        "reason_code": None,
-        "closed": [{"index": 1, "closed_by": "simp", "suggestion": None}],
-        "holes": [
-            {
-                "index": 0,
-                "goal": "x : ℝ\n⊢ 0 ≤ x ^ 2",
-                "lean_name": "hole_0",
-                "lean_statement": "(x : ℝ) : 0 ≤ x ^ 2",
-                "universes": [],
-            },
-            {
-                "index": 2,
-                "goal": "α : Type u_1\n⊢ f α = f α",
-                "lean_name": "hole_2",
-                "lean_statement": "{α : Type u_1} : f α = f α",
-                "universes": ["u_1"],
-            },
-            {"index": 3, "goal": "⊢ P", "extract_failed": True, "reason": "extract_goal_failed"},
-        ],
-    }
-    # The second hole mentions f, a definition from the skeleton's body: it fails elaboration.
-    lean = FakeLean(sketch=sketch, elaborates=lambda h, name, signature: "f α" not in signature)
-    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean))
-    parent = await call(
-        tools,
-        "commons_node",
-        lemma_args(lean_header="import Mathlib", lean_name="sq_pos", lean_statement=": True"),
-    )
-    result = await call(tools, "lean_sketch", {"source": "sketch", "parent_node_id": parent["id"]})
-    assert set(result["hole_nodes"]) == {"0", "2"}
-    assert result["failed"] == [{"index": 3, "goal": "⊢ P", "reason": "extract_goal_failed"}]
-    assert result["closed"] == sketch["closed"]
-    first = service.get_record("commons_node", result["hole_nodes"]["0"], alpha)
-    assert first["title"] == "Hole 0 of Trace lemma"
-    assert first["statement"] == "Lean hole goal: x : ℝ\n⊢ 0 ≤ x ^ 2"
-    assert (first["lean_header"], first["lean_name"], first["lean_statement"]) == (
-        header,
-        "sq_pos_hole_0",
-        "(x : ℝ) : 0 ≤ x ^ 2",
-    )
-    assert first["lean_elaborated"] is True
-    second = service.get_record("commons_node", result["hole_nodes"]["2"], alpha)
-    assert second["lean_header"] == header + "\nuniverse u_1"
-    assert second["lean_elaborated"] is False
-    entry = next(item for item in result["holes"] if item["index"] == 2)
-    assert entry["lean_elaborated"] is False and entry["elaboration"]["messages"]
-    # Every hole's statement is elaborated in one batch against the sketch header.
-    assert [call for call in lean.calls if call[0].startswith("elaborate")] == [
-        (
-            "elaborate_batch",
-            header,
-            [
-                ("sq_pos_hole_0", "(x : ℝ) : 0 ≤ x ^ 2", ()),
-                ("sq_pos_hole_2", "{α : Type u_1} : f α = f α", ("u_1",)),
-            ],
-        )
-    ]
-    edges = service.read_node(parent["id"], alpha)["edges_out"]
-    assert sorted((edge["relation"], edge["node_id"]) for edge in edges) == sorted(
-        ("depends_on", node_id) for node_id in result["hole_nodes"].values()
-    )
-    before = len(service.query_nodes(exp["id"], alpha)["items"])
-    listed = await call(
-        tools,
-        "lean_sketch",
-        {"source": "sketch", "parent_node_id": parent["id"], "create_nodes": False},
-    )
-    assert listed["hole_nodes"] == {} and [hole["index"] for hole in listed["holes"]] == [0, 2]
-    assert len(service.query_nodes(exp["id"], alpha)["items"]) == before
-
-
-async def test_inbox_acks_then_reads(lab):
-    service, author, exp, branches, _ = society_lab(lab)
-    alpha, alpha_context = running(service, author, exp, branches[0]["id"])
-    beta, beta_context = running(service, author, exp, branches[1]["id"])
-    alpha_tools = profile(service, alpha, alpha_context)
-    beta_tools = profile(service, beta, beta_context)
-    node = await call(alpha_tools, "commons_node", lemma_args())
-    await call(
-        beta_tools,
-        "commons_post",
-        {"node_id": node["id"], "kind": "objection", "abstract": "Step 2 fails.", "body": "Why."},
-    )
-    first = await call(alpha_tools, "inbox", {})
-    assert first["acknowledged_delivery_id"] is None and first["delivery_id"]
-    item = first["items"][0]
-    assert item["node_id"] == node["id"] and item["urgent"] is True
-    again = await call(alpha_tools, "inbox", {})
-    assert again["delivery_id"] == first["delivery_id"]  # unacknowledged: redelivered
-    acked = await call(alpha_tools, "inbox", {"ack_delivery_id": first["delivery_id"]})
-    assert acked["acknowledged_delivery_id"] == first["delivery_id"]
-    assert acked["items"] == []
-    post = await call(alpha_tools, "commons_read", {"post_id": item["retrieval_id"]})
-    assert post["content"] == "Why."
-    both = await call(
-        alpha_tools, "commons_read", {"node_id": node["id"], "post_id": item["retrieval_id"]}
-    )
-    assert both["error"]["code"] == "INVALID_ARGUMENTS"
 
 
 async def test_message_lab_routing(lab):
@@ -1981,21 +1857,6 @@ async def test_write_file_respects_e2b_file_limit(lab):
     assert "At most 1,000,000 characters" in generic["description"]
 
 
-async def test_lean_sketch_refuses_closed_parent_before_creating_nodes(lab):
-    service, author, exp, branches, _ = society_lab(lab)
-    alpha, context = running(service, author, exp, branches[0]["id"])
-    lean = FakeLean(sketch={"backend": "repl", "ok": True, "header": "", "holes": []})
-    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean))
-    parent = await call(tools, "commons_node", lemma_args())
-    await call(
-        tools, "commons_node", {"action": "abandon", "node_id": parent["id"], "reason": "Moot."}
-    )
-    before = service.query_nodes(exp["id"], alpha)["items"]
-    refused = await call(tools, "lean_sketch", {"source": "s", "parent_node_id": parent["id"]})
-    assert refused["error"]["code"] == "NODE_CLOSED"
-    assert lean.calls == [] and service.query_nodes(exp["id"], alpha)["items"] == before
-
-
 async def test_local_compile_requires_standard_axioms(lab):
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
@@ -2111,7 +1972,6 @@ async def test_every_society_tool_dispatches_without_tool_failure(lab):
         (tools, "notebook", {"action": "read"}),
         (tools, "verification_status", {"receipt_id": receipt["id"], "wait_seconds": 0}),
         (tools, "submit_for_verification", {"path": "Proof.lean", "sha256": "e" * 64}),
-        (tools, "load_skill", {"name": "sos-certificates"}),
         (
             tools,
             "run_computation",
@@ -2119,8 +1979,8 @@ async def test_every_society_tool_dispatches_without_tool_failure(lab):
         ),
         (tools, "read_file", {"path": "calc.py", "offset": 0, "length": 100}),
         (tools, "write_file", {"path": "calc.py", "content": "print(3)"}),
-        (tools, "search_library", {"query": "trace"}),
-        (tools, "read_source", {"path": "mathlib/Mathlib/Order/Basic.lean"}),
+        (tools, "find_declaration", {"query": "trace"}),
+        (tools, "find_declaration", {"path": "mathlib/Mathlib/Order/Basic.lean", "line": 7}),
         (tools, "read_artifact", {"artifact_id": source["id"]}),
         (
             child_tools,
@@ -2142,12 +2002,11 @@ async def test_every_society_tool_dispatches_without_tool_failure(lab):
         results[name] = result
     assert results["verification_status"]["status"] == "queued"
     assert results["run_computation"]["evidence_status"] == "numerical_evidence_not_proof"
-    assert results["load_skill"]["name"] == "sos-certificates"
     assert results["return_result"]["summary"] == "Holds."
     assert results["wait"]["intent"]["wait_task_ids"] == [recruited["task_id"]]
     submitted = next(args for name, args in workspace.calls if name == "submit")
     assert submitted["target_digest"] == exp["target_digest"]
-    assert set(results) | {"shell", "lean_check", "lean_sketch"} >= {
+    assert set(results) | {"shell", "lean_check"} >= {
         name
         for name in names(tools)
         if name
@@ -2157,7 +2016,6 @@ async def test_every_society_tool_dispatches_without_tool_failure(lab):
             "commons_node",
             "commons_post",
             "commons_claim",
-            "inbox",
             "recruit",
             "message",
         }
@@ -2534,12 +2392,7 @@ async def test_referee_tool_outputs_fence_author_text(lab):
     task = service.get_record("task", requested["review_task_id"], author)
     referee, context = running(service, author, exp, requested["branch_id"], task=task)
     tools = profile(service, referee, context)
-    # The referee follows its node's thread (a cited node) and the author posts on it.
-    await call(
-        tools,
-        "commons_post",
-        {"node_id": node["id"], "kind": "question", "abstract": "Why?", "cites": [node["id"]]},
-    )
+    # The author posts on the node's thread.
     post = service.post_on_node(
         node["id"], NodePostCreate(kind="finding", abstract=evil, body=breakout), alpha, "post"
     )
@@ -2548,7 +2401,6 @@ async def test_referee_tool_outputs_fence_author_text(lab):
         "post": await call(tools, "commons_read", {"post_id": post["id"]}),
         "query": await call(tools, "commons_query", {"text": "referee"}),
         "frontier": await call(tools, "commons_query", {"frontier": True}),
-        "inbox": await call(tools, "inbox", {}),
         "artifact": await call(tools, "read_artifact", {"artifact_id": evidence["id"]}),
     }
     for name, output in outputs.items():
@@ -2565,7 +2417,6 @@ async def test_referee_tool_outputs_fence_author_text(lab):
     assert artifact_view["content_utf8"] == breakout
     # Platform fields a referee acts on stay outside the fence.
     assert outputs["artifact"]["complete"] is True
-    assert outputs["inbox"]["delivery_id"] and len(outputs["inbox"]["items"]) >= 1
     assert "next_cursor" in outputs["query"]
     # A worker's outputs are unchanged.
     worker, worker_context = running(service, author, exp, branches[1]["id"])
@@ -2781,33 +2632,6 @@ async def test_infrastructure_failure_never_demotes_a_formal_node(lab, reason_co
     failed = await call(tools, "commons_node", arguments)
     assert failed["lean_elaborated"] is False and failed["elaboration"]["ok"] is False
     assert service.get_record("commons_node", node["id"], alpha)["status"] == "informal"
-
-
-async def test_lean_sketch_records_no_hole_elaboration_on_infrastructure_failure(lab, monkeypatch):
-    service, author, exp, branches, _ = society_lab(lab)
-    alpha, context = running(service, author, exp, branches[0]["id"])
-    sketch = {
-        "backend": "repl",
-        "ok": True,
-        "header": "import Mathlib",
-        "reason_code": None,
-        "closed": [],
-        "holes": [
-            {"index": 0, "goal": "⊢ True", "lean_name": "hole_0", "lean_statement": ": True"},
-        ],
-    }
-    lean = InfrastructureFailingLean("lean_timeout", "Lean did not finish.")
-    lean.sketch = sketch
-    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean))
-    parent = await call(tools, "commons_node", lemma_args())
-    recorded = []
-    monkeypatch.setattr(service, "set_lean_statement", lambda *args: recorded.append(args))
-    result = await call(tools, "lean_sketch", {"source": "s", "parent_node_id": parent["id"]})
-    (hole,) = result["holes"]
-    assert hole["lean_elaborated"] is False
-    assert hole["elaboration"]["reason_code"] == "lean_timeout"
-    assert recorded == []  # an infrastructure failure is no elaboration evidence
-    assert service.get_record("commons_node", hole["node_id"], alpha)["lean_elaborated"] is False
 
 
 async def test_local_compile_accepts_a_hole_node_universe_header_line(lab):

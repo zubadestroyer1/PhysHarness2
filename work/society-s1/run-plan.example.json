@@ -93,8 +93,7 @@
       "overlap_threshold": 0.02
     },
     "scaffolding": {
-      "playbook": true,
-      "skills": true
+      "playbook": true
     }
   }
 }

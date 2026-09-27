@@ -99,6 +99,7 @@ MATH_LEAN_COMPUTATION = frozenset(
         "run_computation",
         "lean_check",
         "lean_sketch",
+        "find_declaration",
         "search_library",
         "read_source",
         "submit_for_verification",
@@ -149,6 +150,11 @@ OTHER = frozenset(
         "working_context",
     }
 )
+# Society tools retired after S1: gone from the catalog, still bucketed, since S1 exports
+# record calls to them.
+RETIRED_SOCIETY_TOOLS = frozenset(
+    {"inbox", "lean_sketch", "load_skill", "search_library", "read_source"}
+)
 BUCKETS = {
     "commons_society": COMMONS_SOCIETY,
     "math_lean_computation": MATH_LEAN_COMPUTATION,
@@ -162,6 +168,7 @@ LEAN_FORMALIZATION = frozenset(
         # Society profile.
         "lean_check",
         "lean_sketch",
+        "find_declaration",
         "search_library",
         "read_source",
         # Legacy profile.
