@@ -1810,15 +1810,33 @@ class ResearchTaskExecutor:
                 dispatcher=dispatcher,
                 event_sink=accounting,
             )
-            if stop_on_verified_target and (
+            # A society builder asks _society_completion once, before its task's first model
+            # request: a recruit whose work was delivered while it was queued makes none. A
+            # continuation resumes to read its joined results, so it is not asked.
+            delivered = {} if society and not referee and not prior_sessions else None
+            if (stop_on_verified_target or delivered is not None) and (
                 "pre_generation_guard" in parameters
                 or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
             ):
 
-                async def verified_guard():
-                    return self.service.verified_target_receipt(experiment["id"], actor) is not None
+                async def pre_generation_guard():
+                    if (
+                        stop_on_verified_target
+                        and self.service.verified_target_receipt(experiment["id"], actor)
+                        is not None
+                    ):
+                        return True
+                    if delivered is None or "reason" in delivered:
+                        return False
+                    delivered["reason"] = self._society_completion(
+                        self.service.get_record("task", task_id, actor),
+                        agent,
+                        holder,
+                        lease["fence"],
+                    )
+                    return delivered["reason"] is not None
 
-                runtime_kwargs["pre_generation_guard"] = verified_guard
+                runtime_kwargs["pre_generation_guard"] = pre_generation_guard
             if "boundary_hook" in parameters or any(
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
             ):
@@ -1985,6 +2003,9 @@ class ResearchTaskExecutor:
             if renewal in done:
                 await renewal
             result = await running
+            if (delivered or {}).get("reason") and result.completion_reason == "target_verified":
+                # The runtime names every guard completion target_verified.
+                result = result.model_copy(update={"completion_reason": delivered["reason"]})
             if result.continuation:
                 continuation = result.continuation
                 if any(op not in settled for op in reservations):

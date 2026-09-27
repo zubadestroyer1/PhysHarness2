@@ -358,6 +358,8 @@ async def test_find_declaration_refuses_unsafe_read_paths(declarations, path):
     with pytest.raises(HarnessError) as error:
         await find(tools, path=path, line=1)
     assert error.value.code == "UNSAFE_PATH" and broker.runs == []
+    # Society agents have no search_library_source: the remediation names their own tool.
+    assert error.value.remediation.startswith("Use a path from a find_declaration row")
 
 
 async def test_find_declaration_verifies_only_an_exact_top_row(declarations, monkeypatch):

@@ -66,8 +66,9 @@ _LIBRARY_ROOTS = ("--root", "/opt/sources/physlib", "--root", "/opt/sources/math
 _RG_FALLBACK = "use `shell` with `rg <query> /opt/sources/mathlib /opt/sources/physlib` instead."
 
 
-def _library_path(path) -> str:
-    """The guest path of a canonical ``mathlib/…`` or ``physlib/…`` Lean source path."""
+def _library_path(path, remediation) -> str:
+    """The guest path of a canonical ``mathlib/…`` or ``physlib/…`` Lean source path;
+    ``remediation`` names where the calling tool's paths come from."""
     if (
         not isinstance(path, str)
         or "\x00" in path
@@ -78,9 +79,8 @@ def _library_path(path) -> str:
         raise HarnessError(
             "UNSAFE_PATH",
             "Library path must name a Mathlib or Physlib Lean source.",
-            remediation="Use an unchanged search_library_source hits[].path, such as "
-            "mathlib/Mathlib/Analysis/Example.lean; absolute and bare module paths "
-            "are invalid.",
+            remediation=remediation + ", such as mathlib/Mathlib/Analysis/Example.lean; "
+            "absolute and bare module paths are invalid.",
         )
     return "/opt/sources/" + path
 
@@ -413,7 +413,7 @@ print(json.dumps({'hits': hits, 'available_roots': available}, ensure_ascii=Fals
 
     async def lookup_library_source(self, arguments, operation_id):
         path = arguments["path"]
-        guest = _library_path(path)
+        guest = _library_path(path, "Use an unchanged search_library_source hits[].path")
         code = """
 import hashlib, json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -468,7 +468,7 @@ print(json.dumps({
             if mode not in ("name", "type"):
                 raise _invalid_query("mode must be name or type.")
         elif query is None and path is not None and line is not None:
-            _library_path(path)
+            _library_path(path, "Use a path from a find_declaration row")
             if isinstance(line, bool) or not isinstance(line, int) or line < 1:
                 raise _invalid_query("line must be a positive line number.")
         else:

@@ -168,7 +168,8 @@ class CommonsDiscourseMixin:
         return Counter(node for node, route in claims if route is None or held[node, route] > 1)
 
     def branch_claims(self, experiment_id, actor, *, limit=MAX_PAGE):
-        """The actor branch's live work claims (its focus nodes), with each node's summary."""
+        """The actor branch's live work claims (its focus nodes), with each node's summary
+        and the claim's route and time box."""
         self._research_role(actor)
         if type(limit) is not int or not 1 <= limit <= MAX_PAGE:
             raise HarnessError(
@@ -192,6 +193,9 @@ class CommonsDiscourseMixin:
                     "node_id": row.payload["node_id"],
                     **summaries[row.payload["node_id"]],
                     "expires_at": row.payload["expires_at"],
+                    # Stored S1 claims have neither.
+                    "route": row.payload.get("route"),
+                    "time_box_until": row.payload.get("time_box_until"),
                 }
                 for row in rows
                 if row.payload["node_id"] in summaries
@@ -223,10 +227,14 @@ class CommonsDiscourseMixin:
             },
         )
 
-    def claim_node(self, node_id, action, actor, key, *, route=None, time_box_minutes=None):
+    def claim_node(
+        self, node_id, action, actor, key, *, route=None, time_box_minutes=None, keep_route=False
+    ):
         """Claim, renew or release this branch's expiring work claim on a node.
 
-        ``claim`` records the claim's ``route`` and time box; ``renew`` keeps them.
+        ``claim`` records the claim's ``route`` and time box; ``renew`` keeps them. With
+        ``keep_route``, a claim naming no route takes the route of the branch's prior claim
+        on the node, lapsed or released (publishing claims this way).
         """
         self._research_role(actor)
         if action not in CLAIM_ACTIONS:
@@ -289,7 +297,8 @@ class CommonsDiscourseMixin:
                 }
                 if action == "claim":
                     box = None if time_box_minutes is None else now + 60 * time_box_minutes
-                    values |= {"route": route, "claimed_at": now, "time_box_until": box}
+                    kept = prior.payload.get("route") if keep_route and prior is not None else None
+                    values |= {"route": route or kept, "claimed_at": now, "time_box_until": box}
                 else:
                     box = prior.payload.get("time_box_until")
                 ttl = experiment.payload["society"]["claim_ttl_seconds"]
@@ -330,6 +339,8 @@ class CommonsDiscourseMixin:
             "route": route,
             "time_box_minutes": time_box_minutes,
         }
+        if keep_route:  # Only then: every other claim keeps its idempotency fingerprint.
+            inputs["keep_route"] = True
         return self._execute(actor, key, "commons.claim", inputs, apply)
 
     def _touch_node(self, session, row, actor, op):

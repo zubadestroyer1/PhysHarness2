@@ -4,6 +4,7 @@ built in research_worker and never come here."""
 
 import copy
 import json
+from datetime import UTC, datetime
 
 from ..commons_discourse import _one_line
 from ..domain import canonical_json
@@ -26,6 +27,18 @@ def _line(node_id, node_type, title):
     """A platform-format node line. The title is agent text: collapsed to one line and
     JSON-quoted, as in compact updates, so it cannot forge another line."""
     return f"{node_id[:8]} [{node_type}] {json.dumps(_one_line(title)[:120], ensure_ascii=False)}"
+
+
+def _focus_line(claim):
+    """A focus node's line, then the branch's own claim: its route, agent text quoted like
+    a title, and when its time box ends."""
+    line = _line(claim["node_id"], claim["node_type"], claim["title"])
+    if claim.get("route"):
+        line += f" route {json.dumps(_one_line(claim['route']), ensure_ascii=False)}"
+    if claim.get("time_box_until"):
+        until = datetime.fromtimestamp(claim["time_box_until"], UTC)
+        line += f" box until {until:%Y-%m-%dT%H:%MZ}"
+    return line
 
 
 def _checked_target(service, experiment, agent):
@@ -83,7 +96,7 @@ def society_prompt_view(
         # Where help counts most (S1 audit #14), or how to make it visible.
         "long_pole": [_line(i["id"], i["node_type"], i["title"]) for i in frontier["long_pole"]],
         "long_pole_hint": frontier.get("long_pole_hint"),
-        "focus_nodes": [_line(i["node_id"], i["node_type"], i["title"]) for i in focus],
+        "focus_nodes": [_focus_line(claim) for claim in focus],
         "strategy": task.get("strategy"),
         "models": [{"index": index, "model": model["model"]} for index, model in enumerate(models)]
         if len({canonical_json(model) for model in models}) > 1
