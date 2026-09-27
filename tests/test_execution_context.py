@@ -19,6 +19,7 @@ from physharness.execution import (
     SQLiteRuntimeStore,
     ToolDispatcher,
 )
+from physharness.execution.admission import TokenRateGovernor
 from physharness.execution.parameters import validate_responses_parameters
 
 
@@ -1293,6 +1294,74 @@ async def test_the_alarm_precedes_usage_so_a_halt_on_settlement_still_names_the_
         "bound_reservation_compacted",
         "usage",
     ]
+    await client.close()
+
+
+async def test_the_alarm_follows_the_durable_save_of_its_response(tmp_path):
+    seen = []
+    store = LastSavedStore(tmp_path / "sessions.db")
+
+    async def emit(event):
+        if event.kind == "bound_reservation_compacted":
+            state = store.last.native_state
+            seen.append(
+                (
+                    state["pending_operation"] == event.operation_id,
+                    [stored["id"] for stored in state["responses"]],
+                )
+            )
+
+    client = sdk_client(
+        [
+            response([compaction_item("one"), call_item("a")], "r1"),
+            response([text_item("done")], "r2"),
+        ],
+        [],
+    )
+    runtime = ResponsesRuntime(
+        store=store, client=client, dispatcher=observe_dispatcher(), event_sink=emit
+    )
+    await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
+    # Save B already holds the response, under the generation marker.
+    assert seen == [(True, ["r1"])]
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    ("threshold", "window", "admitted"),
+    [
+        (None, 256_000, 10),  # without compaction, the exact count
+        (183_808, 256_000, 10 + 2_048),  # the count plus the margin, as reserved
+        (8_200, 10_000, 10 + 2_048),  # the window is reserved; admission keeps the bound
+    ],
+)
+async def test_a_counted_request_is_admitted_on_its_margin_inclusive_input(
+    tmp_path, threshold, window, admitted
+):
+    tokens = []
+
+    class Recording(TokenRateGovernor):
+        async def admit(self, **kwargs):
+            tokens.append(kwargs["tokens"])
+            return await super().admit(**kwargs)
+
+    client = sdk_client([response([text_item("done")], "r1")], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        token_governor=Recording(tokens_per_minute=1_000_000),
+    )
+    params = (
+        {"context_management": [{"type": "compaction", "compact_threshold": threshold}]}
+        if threshold
+        else {}
+    )
+    await runtime.start(
+        "work",
+        ModelConfig(model="exact-model", parameters=params),
+        RuntimeLimits(max_context_tokens=window, max_output_tokens=1_000, max_total_tokens=None),
+    )
+    assert tokens == [admitted + 1_000]  # plus the output estimate's 1,000-token seed
     await client.close()
 
 

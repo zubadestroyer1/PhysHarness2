@@ -223,6 +223,37 @@ async def test_synchronous_event_persistence_cannot_outlive_generation_deadline(
     await client.close()
 
 
+async def test_a_failed_timeout_abort_leaves_the_generation_uncertain(tmp_path):
+    requests, events = [], []
+    client = client_for([response([message("late")])], requests)
+    await client.responses.input_tokens.count(model="exact-model", input="warm SDK transport")
+
+    async def persist(event):
+        events.append(event.kind)
+        if event.kind == "generation_started":
+            time.sleep(0.2)
+        if event.kind == "generation_aborted":
+            raise RuntimeError("ledger unavailable")
+
+    store = SQLiteRuntimeStore(tmp_path / "deadline.db")
+    runtime = ResponsesRuntime(store=store, client=client, event_sink=persist)
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start(
+            "x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=0.1)
+        )
+    (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
+    checkpoint = await runtime.checkpoint(session_id)
+    # Nothing was sent, but the release failed, so the reservation may still be held: the marker
+    # stays and the session is uncertain, not failed.
+    assert events == ["generation_started", "generation_aborted"]
+    assert (checkpoint.session.status, checkpoint.native_state["pending_operation"]) == (
+        "uncertain",
+        error.value.operation_id,
+    )
+    assert [url for url, _ in requests if url.endswith("/responses")] == []
+    await client.close()
+
+
 async def test_tool_error_never_becomes_success(tmp_path):
     requests = []
     call = {
@@ -825,6 +856,47 @@ async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
     await client.close()
 
 
+@pytest.mark.parametrize("governed", [False, True])
+async def test_a_400_after_a_rate_limit_wait_aborts_once_as_request_invalid(tmp_path, governed):
+    events = []
+
+    async def emit(event):
+        events.append((event.kind, event.payload.get("reason")))
+
+    invalid = {
+        "error": {
+            "message": "bad",
+            "type": "invalid_request_error",
+            "param": "reasoning.effort",
+            "code": "unsupported_parameter",
+        }
+    }
+    client = rate_limited_client(
+        [(429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"}), (400, invalid, {})], []
+    )
+    # A slow bucket that holds the whole estimate: within the test only a release refills it.
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=2_000) if governed else None
+    store = SQLiteRuntimeStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, client=client, event_sink=emit, token_governor=governor)
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
+    checkpoint = await runtime.checkpoint(session_id)
+    state = checkpoint.native_state
+    # The resend's 400 is not a rate limit, so the wait does not abandon; the 400 abandons once.
+    assert error.value.code == "MODEL_REQUEST_INVALID"
+    assert events == [
+        ("generation_started", None),
+        ("provider_throttled", None),
+        ("generation_aborted", "request_invalid"),
+    ]
+    assert (checkpoint.session.status, state["pending_operation"]) == ("failed", None)
+    assert state["preflight_error"]["stage"] == "create"
+    if governed:
+        assert governor.snapshot()["level"] == 2_000  # the re-admitted estimate came back
+    await client.close()
+
+
 @pytest.mark.parametrize("refused", ["create", "count"])
 async def test_immediate_rate_limit_give_up_still_pauses_the_governor(tmp_path, refused):
     order = []
@@ -970,6 +1042,39 @@ async def test_tool_turn_save_sequence_is_pinned(tmp_path):
     ).output_text == "4"
     assert store.shapes == COALESCED_SAVE_SHAPES
     assert [u.rsplit("/", 1)[-1] for u, _ in requests] == ["input_tokens", "responses", "responses"]
+    await client.close()
+
+
+async def test_a_requeued_create_keeps_the_coalesced_save_sequence(tmp_path):
+    requests, settled = [], []
+
+    class Settling(TokenRateGovernor):
+        def settle(self, admission, actual_tokens):
+            settled.append(actual_tokens)
+            super().settle(admission, actual_tokens)
+
+    client = rate_limited_client(
+        [
+            (429, refusal("rate_limit_exceeded"), {"retry-after-ms": "5"}),
+            (200, response([double_call()]), {}),
+            (200, response([message("4")], response_id="resp_2"), {}),
+        ],
+        requests,
+    )
+    store = RecordingStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(
+        store=store,
+        dispatcher=double_dispatcher(),
+        client=client,
+        token_governor=Settling(tokens_per_minute=1_000_000),
+    )
+    result = await runtime.start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert result.output_text == "4"
+    # The re-queue saves nothing: the resend goes out under A's durable marker.
+    assert store.shapes == COALESCED_SAVE_SHAPES
+    assert settled == [15, 15]  # one settlement per turn
+    creates = [ident for url, ident in requests if url.endswith("/responses")]
+    assert len(creates) == 3 and creates[0] == creates[1] != creates[2]
     await client.close()
 
 
@@ -1341,6 +1446,62 @@ async def test_fatal_tool_error_mid_batch_stops_later_calls(tmp_path):
         "uncertain",
         dispatched[0],
     )
+    await client.close()
+
+
+async def test_the_create_sends_the_tools_its_bound_describes(tmp_path):
+    requests, checks = [], []
+    dispatcher = double_dispatcher()
+
+    async def guard():
+        checks.append(True)
+        if len(checks) == 2:  # the send's check, after the request was prepared
+            dispatcher.register("late", DOUBLE_SCHEMA, dispatcher._tools["double"][1])
+        return False
+
+    client = client_for([response([message("done")])], requests)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        dispatcher=dispatcher,
+        client=client,
+        pre_generation_guard=guard,
+    )
+    await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    # The P1 digests describe the prepared tools, so the create sends exactly those.
+    assert [[tool["name"] for tool in payload["tools"]] for _, payload in requests] == [
+        ["double"],
+        ["double"],
+    ]
+    await client.close()
+
+
+async def test_per_session_caches_are_dropped_when_a_run_ends(tmp_path):
+    client = client_for(
+        [response([double_call()]), response([message("4")], response_id="resp_2")], []
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"),
+        dispatcher=double_dispatcher(),
+        client=client,
+        token_governor=TokenRateGovernor(tokens_per_minute=1_000_000),
+    )
+
+    def caches():
+        return [
+            runtime._active,
+            runtime._saved,
+            runtime._output_ema,
+            runtime._last_request,
+            runtime._unannounced,
+            runtime._elided,
+        ]
+
+    first = await runtime.start("compute", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert caches() == [{}] * 6
+    with pytest.raises(ExecutionError):  # the provider has no reply left
+        await runtime.continue_session(first.session.id, "again")
+    assert caches() == [{}] * 6
+    await client.close()
 
 
 @pytest.mark.parametrize("reported,expected", [(8, 8), (-1, 0), (11, 0)])

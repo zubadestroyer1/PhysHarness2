@@ -356,9 +356,14 @@ class _Prepared:
     """A counted or bounded request with its reservation, not yet sent."""
 
     params: dict[str, Any]
+    # The tools array the digests describe, sent as prepared.
+    tools: list[dict[str, Any]]
     input_tokens: int
     counted: bool
     digests: tuple[str, ...]
+    # A sound bound on the input: the count, the P1 bound, or under context_management the count
+    # plus the P1 margin. Admission uses it, and so does the reservation below the window (G4).
+    input_bound: int
     input_reservation: int
     output_reservation: int
     remaining: int | None
@@ -547,10 +552,11 @@ class ResponsesRuntime:
             raise ExecutionError("INVALID_CONFIG", "Admission priority must be 0-3")
         self.token_governor = token_governor
         self.admission_priority = admission_priority
-        # Each session's moving-average output, for the TPM admission estimate.
+        # Each running session's moving-average output, for the TPM admission estimate.
         self._output_ema: dict[str, float] = {}
         self.context_budget = context_budget
         self._active: dict[str, asyncio.Task[Any]] = {}
+        # Each running session's last saved checkpoint, handed to its hooks.
         self._saved: dict[str, RuntimeCheckpoint] = {}
         # Each running session's previous request, for the P1 input bound; never persisted.
         self._last_request: dict[str, dict[str, Any]] = {}
@@ -653,7 +659,8 @@ class ResponsesRuntime:
     async def _save(self, session: RuntimeSession, state: dict[str, Any]) -> RuntimeCheckpoint:
         checkpoint = RuntimeCheckpoint.build(session, state)
         await self.store.save(checkpoint)
-        self._saved[session.id] = checkpoint
+        if session.id in self._active:  # only a run reads it, and `_run` drops it on exit
+            self._saved[session.id] = checkpoint
         return checkpoint
 
     async def _abandon_refused(
@@ -664,7 +671,8 @@ class ResponsesRuntime:
         *,
         reason: str = "rate_limited",
     ) -> None:
-        """Every send was refused and none is in flight: release the reservation at zero.
+        """No send is in flight (each was refused, or none was made): release the reservation at
+        zero.
 
         As with usage, the operation is cleared only after its accounting succeeds, so a
         failed or interrupted release leaves the session uncertain rather than definite.
@@ -1182,6 +1190,8 @@ class ResponsesRuntime:
             ) from exc
         finally:
             self._active.pop(session.id, None)
+            self._saved.pop(session.id, None)
+            self._output_ema.pop(session.id, None)
             self._last_request.pop(session.id, None)
             self._unannounced.pop(session.id, None)
             self._elided.pop(session.id, None)
@@ -1524,18 +1534,21 @@ class ResponsesRuntime:
                     return handoff
             raise ExecutionError("CONTEXT_LIMIT", "Active request exceeds context token limit")
         context = params.get("context_management")
+        # The count is taken without context_management, which the count endpoint does not
+        # accept, so under it a counted request carries the bound's margin too.
+        input_bound = (
+            input_tokens + _bound_margin(input_tokens) if context and counted else input_tokens
+        )
         if context:
-            # The count is taken without context_management, which the count endpoint does not
-            # accept, so a counted reservation carries the bound's margin too. A compaction pass
-            # may bill more than either, so they are reserved only while compaction cannot fire.
-            reserved = input_tokens + _bound_margin(input_tokens) if counted else input_tokens
+            # A compaction pass may bill more than the bound, so the bound is reserved only while
+            # compaction cannot fire.
             input_reservation = (
-                reserved
-                if reserved + CONTEXT_MARGIN <= context[0]["compact_threshold"]
+                input_bound
+                if input_bound + CONTEXT_MARGIN <= context[0]["compact_threshold"]
                 else session.limits.max_context_tokens
             )
         else:
-            input_reservation = input_tokens
+            input_reservation = input_bound
         output_reservation = (
             min(session.limits.max_output_tokens, remaining)
             if remaining is not None
@@ -1543,9 +1556,11 @@ class ResponsesRuntime:
         )
         return _Prepared(
             params=params,
+            tools=tools,
             input_tokens=input_tokens,
             counted=counted,
             digests=tuple(sha for sha, _ in elements),
+            input_bound=input_bound,
             input_reservation=input_reservation,
             output_reservation=output_reservation,
             remaining=remaining,
@@ -1581,10 +1596,11 @@ class ResponsesRuntime:
         deadline: float,
     ) -> _Sent | RuntimeResult:
         """Mark the generation pending, announce its reservation and send it."""
-        admission, estimate = None, prepared.input_tokens + self._expected_output(session)
+        admission, estimate = None, prepared.input_bound + self._expected_output(session)
         if self.token_governor is not None:
-            # Admission precedes the dollar reservation: a queued request holds no money, and a
-            # target verified while queued sends nothing.
+            # Admission precedes the dollar reservation: a request waiting for its first admission
+            # holds no dollar reservation, and a target verified while queued sends nothing. A
+            # re-queued create keeps its reservation, as a rate-limit wait always did.
             admission = await self.token_governor.admit(
                 key=session.id, tokens=estimate, priority=self.admission_priority
             )
@@ -1625,9 +1641,8 @@ class ResponsesRuntime:
         if asyncio.get_running_loop().time() >= deadline:
             # asyncio.timeout cannot interrupt synchronous event persistence.
             # The request has not been sent, so release its reservation at zero.
-            state["pending_operation"] = None
             self._release(admission)
-            await self._emit("generation_aborted", session, operation_id, reason="timeout")
+            await self._abandon_refused(session, state, operation_id, reason="timeout")
             raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
         # A rate-limit refusal did no work, so the same operation and reservation
         # are resent; giving up releases the reservation at zero instead.
@@ -1663,7 +1678,7 @@ class ResponsesRuntime:
                     client.responses.create,
                     model=session.model.model,
                     input=state["input"],
-                    tools=request_tools(self.dispatcher.definitions, state.get("context_budget")),
+                    tools=prepared.tools,
                     parallel_tool_calls=prepared.parallel_tool_calls,
                     max_output_tokens=prepared.output_reservation,
                     store=False,
