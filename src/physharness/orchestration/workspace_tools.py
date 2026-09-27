@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -15,6 +16,8 @@ from ..errors import HarnessError
 from ..execution import CommandRequest
 from ..execution.types import GUEST_PYTHON
 from .lean_session import LeanSession
+
+log = logging.getLogger(__name__)
 
 
 def validated_lean_imports(imports: list[str]) -> list[str]:
@@ -31,6 +34,28 @@ def validated_lean_imports(imports: list[str]) -> list[str]:
     return imports
 
 
+# A theorem the statement checker must accept. A society task that publishes Lean runs it
+# once per process and workbench image at provision (S1: the checker never ran, silently).
+CHECKER_SELF_TEST = (
+    "import Lean\n\ntheorem physharness_checker_self_test : True := trivial\n",
+    "import Lean",
+    "physharness_checker_self_test",
+    ": True",
+)
+_CHECKER_SELF_TESTS: dict[str, bool] = {}  # template id -> the checker ran and judged
+
+
+def _checker_unavailable(template_id):
+    return HarnessError(
+        "STATEMENT_CHECK_UNAVAILABLE",
+        f"The workbench statement checker failed its self-test on {template_id}; local "
+        "compiles cannot be judged.",
+        status=503,
+        remediation="Stop the run and inspect the workbench (ERROR log "
+        "statement_check_self_test_failed); do not run a society without the checker.",
+    )
+
+
 class WorkspacePolicy(StrictModel):
     template_id: str = Field(min_length=1)
     environment_digest: Digest
@@ -41,6 +66,8 @@ class WorkspacePolicy(StrictModel):
 
 
 class WorkspaceTools:
+    checker_self_test = False  # society_tools() enables it for tasks that publish Lean
+
     def __init__(self, broker, policy: WorkspacePolicy):
         self.broker, self.policy, self.workspace = broker, policy, None
         self._lean_session = None
@@ -61,7 +88,32 @@ class WorkspaceTools:
                 cost_bound_usd=str(self.policy.cost_bound_usd),
                 operation_id=f"workspace:{self.broker.task_id}:{self.broker.holder}",
             )
+            if self.checker_self_test:
+                await self._self_test_checker()
+        elif self.checker_self_test and _CHECKER_SELF_TESTS.get(self.policy.template_id) is False:
+            raise _checker_unavailable(self.policy.template_id)
         return self.workspace
+
+    async def _self_test_checker(self):
+        image = self.policy.template_id
+        passed = _CHECKER_SELF_TESTS.get(image)
+        if passed is None:
+            source, header, name, signature = CHECKER_SELF_TEST
+            operation = f"checker-self-test:{self.broker.task_id}:{self.broker.holder}"
+            verdict = await self.lean_session().verify_statement(
+                source, header, name, signature, operation_id=operation
+            )
+            if verdict.get("reason") == "check_timeout":
+                log.warning("statement_check_self_test_timeout", extra={"operation_id": operation})
+                return  # judged nothing; the next provision tries again
+            passed = _CHECKER_SELF_TESTS[image] = verdict.get("ok") is True
+            if not passed:
+                log.error(
+                    "statement_check_self_test_failed",
+                    extra={"operation_id": operation, "error_code": "STATEMENT_CHECK_UNAVAILABLE"},
+                )
+        if not passed:
+            raise _checker_unavailable(image)
 
     async def run(self, arguments, operation_id):
         workspace = await self._ensure()

@@ -176,6 +176,15 @@ overrides, skipped kernel checks). But compiling the file runs its compile-time 
 like any shell command, it can alter the checker, the reference or the imported `.olean`
 files the checker trusts. So the result is VM-attested evidence, not an acceptance receipt.
 
+The checker runs from its upload in the workspace (`.physharness/`); the workbench root,
+`/tmp` included, is read-only. A society task self-tests it once per process and image
+when it first provisions a workspace, and a failed self-test stops the task with
+`STATEMENT_CHECK_UNAVAILABLE`. The uploaded checker now lives under `/work/.physharness`,
+so (unlike its old `/tmp` staging) it persists into checkpoints and handoff archives. A
+workspace a handoff restores is already provisioned before `society_tools()` sets
+`checker_self_test`, so its self-test is skipped for that workspace's lifetime; this is
+accepted (rare, and the checker it inherited was already self-tested once).
+
 | Component | Route | Pin status |
 | --- | --- | --- |
 | numpy, scipy, sympy, mpmath, ripgrep | Debian snapshot (unchanged) | Snapshot; the 2026-09-23 build observed 1.24.2, 1.10.1, 1.11.1, 1.2.1 |

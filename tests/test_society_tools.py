@@ -37,6 +37,7 @@ from physharness.execution.stagnation import observe, successor_state
 from physharness.execution.types import GUEST_PYTHON
 from physharness.knowledge.literature import LiteratureBroker
 from physharness.orchestration import research_worker
+from physharness.orchestration import workspace_tools as workspace_tools_module
 from physharness.orchestration.research_worker import (
     ResearchTaskExecutor,
     ResearchTeamRunner,
@@ -526,6 +527,23 @@ def test_society_catalog_without_literature_or_review():
         "verification_status",
         "notebook",
     ]
+
+
+def test_society_catalog_self_tests_the_checker_for_builders_only():
+    context = {"task_id": "t", "holder": "h", "fence": 1}
+    agent = SimpleNamespace(experiment_id="e", project_id="lab")
+    builder, judge = FakeWorkspace(), FakeWorkspace()
+    society_tools(
+        CatalogService(policy_dict()), agent, "b", task_context=context, workspace_tools=builder
+    )
+    assignment = {"scope": "informal", "node_id": "n", "requested_by": "b0"}
+    task = {"reply_to_parent_task_id": None, "hat": "referee", "review_assignment": assignment}
+    society_tools(
+        CatalogService(policy_dict(), task), agent, "b", task_context=context, workspace_tools=judge
+    )
+    assert builder.checker_self_test is True
+    assert getattr(judge, "checker_self_test", False) is False
+    assert "STATEMENT_CHECK_UNAVAILABLE" in research_worker.FATAL_TOOL_CODES
 
 
 async def test_overlong_and_invalid_arguments_are_recoverable_rejections():
@@ -1445,6 +1463,9 @@ async def test_worker_builds_one_broker_with_masked_reference(lab, monkeypatch, 
 
 
 async def test_worker_society_profile_drives_real_workspace_tools(lab):
+    # This task publishes no Lean, but society_tools() still enables the checker self-test
+    # for a real (non-referee) builder; pre-seed it so the FakeVM below need not run one.
+    workspace_tools_module._CHECKER_SELF_TESTS["qualified-template"] = True
     service, author, exp, branches, _ = society_lab(lab)
     task = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Compute"), author, "task"

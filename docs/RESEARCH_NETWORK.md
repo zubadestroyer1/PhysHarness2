@@ -153,7 +153,9 @@ tools, the prompts and the delivery shapes.
     Only `propext`, `Classical.choice` and `Quot.sound` count. The commons service
     enforces that rule, and that the compile names the node's current statement,
     whoever calls it. Every backend (REPL daemon, inline REPL, one-shot) runs the same
-    check, and any failure to run it records nothing.
+    check, and any failure to run it records nothing. A society task self-tests it once
+    per process and image when it first provisions a workspace, and a failed self-test
+    stops the task with `STATEMENT_CHECK_UNAVAILABLE`.
   - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
     compiling the file there runs the file's compile-time code (`#eval`, `run_cmd`, and
     any elaborator, macro or tactic it defines). That code can read and write VM files

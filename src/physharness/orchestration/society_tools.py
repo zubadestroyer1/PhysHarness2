@@ -542,6 +542,9 @@ def society_tools(
             )
         return workspace_tools.lean_session()
 
+    if workspace_tools is not None and not referee:
+        workspace_tools.checker_self_test = True  # publishing Lean needs the checker (S1 #1)
+
     # Workspace and computation ----------------------------------------------------------
     if workspace_tools is not None:
         write_bytes = _write_limit_bytes(workspace_tools)
