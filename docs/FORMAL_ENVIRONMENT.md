@@ -280,7 +280,9 @@ silently enable physics imports in the smaller core image.
 Only the selected import closure is built, not every declaration in the upstream monorepo.
 If a challenge imports another module, extend the builder's explicit roots, rebuild, audit
 that closure, and separately qualify the changed image. Never allow Lake to retrieve a
-missing dependency during checking.
+missing dependency during checking. A society submission that imports commons node
+modules (`import Commons.N…`) is flattened by the platform into one self-contained
+candidate before verification, so the verifier never resolves a `Commons` import.
 
 ## Declaration audit
 

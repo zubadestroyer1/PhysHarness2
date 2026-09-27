@@ -9,6 +9,7 @@ import httpx
 import pytest
 from commons_helpers import set_status, society_lab
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 from test_commons_discourse import Clock
 from test_core import setup_experiment
 from test_execution_responses import message
@@ -19,6 +20,7 @@ from test_society_metrics import metrics_tool
 from test_workspace_service import FakeVM
 
 from physharness import commons_discourse
+from physharness.api import VerifyInput
 from physharness.commons import _lean_digest
 from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.commons_review import NODE_DATA_BEGIN, NODE_DATA_END
@@ -1227,12 +1229,197 @@ async def test_refused_publications_store_no_artifact(lab):
     assert len(modules()) == 1
 
 
+async def published_lemma(service, author, exp, branch_id):
+    """A node whose module holds a verified trace_add, published through lean_check."""
+    agent, context = running(service, author, exp, branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    checked = await call(tools, "lean_check", {"source": PROOF, "node_id": node["id"]})
+    assert checked["published"]["rank"] == "verified"
+    return tools, node["id"], checked["published"]["module"]
+
+
+class CapturingWorkspace(FakeWorkspace):
+    """Serves one workspace file and captures it as a real lean_source artifact."""
+
+    def __init__(self, service, text):
+        super().__init__()
+        self.service, self.text = service, text
+
+    async def read(self, arguments, operation_id):
+        await self._record("read", arguments)
+        return {"text": self.text}
+
+    async def store_workspace_artifact(self, arguments, operation_id, agent):
+        self.calls.append(("capture", arguments))
+        stored = self.service.create_artifact(
+            ArtifactCreate(
+                experiment_id=agent.experiment_id,
+                branch_id=agent.branch_id,
+                kind="lean_source",
+                content=self.text,
+            ),
+            agent,
+            operation_id,
+        )
+        return {"artifact_id": stored["id"], "sha256": stored["sha256"]}
+
+
+async def test_peer_import_expands_and_records_a_depends_on_edge(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    alpha_tools, lemma_id, module = await published_lemma(service, author, exp, alpha.branch_id)
+    agent, context = running(service, author, exp, beta.branch_id)
+    workspace = FakeWorkspace()
+    statement_checked = []
+    verify_statement = workspace.lean.verify_statement
+
+    async def recording(source, *args, **kwargs):
+        statement_checked.append(source)
+        return await verify_statement(source, *args, **kwargs)
+
+    workspace.lean.verify_statement = recording
+    tools = profile(service, agent, context, workspace=workspace)
+    statement = {**LEAN, "lean_name": "uses"}
+    uses = await call(tools, "commons_node", lemma_args(title="Uses", **statement))
+    source = f"import Mathlib\nimport {module}\n\ntheorem uses : (1 : Nat) + 1 = 2 := trace_add\n"
+    checked = await call(tools, "lean_check", {"source": source, "node_id": uses["id"]})
+    flat = workspace.lean.sources[-1]
+    assert "theorem trace_add" in flat and "import Commons" not in flat
+    assert statement_checked == [flat]  # the statement check reads the flattened file too
+    assert checked["commons"] == {
+        "modules": [module],
+        "closure_complete": True,
+        "stubs": [],
+        "stale": [],
+    }
+    assert checked["published"]["rank"] == "verified"
+    read = service.read_node(uses["id"], agent)
+    stored = read["node"]["lean_source"]
+    used = service.read_node(lemma_id, agent)["node"]["lean_source"]
+    assert stored["imports"] == [{"module": module, "node_id": lemma_id, "sha256": used["sha256"]}]
+    assert service.artifact_content(stored["artifact_id"], agent) == source.encode()
+    assert [(e["relation"], e["node_id"]) for e in read["edges_out"]] == [("depends_on", lemma_id)]
+    # Once the lemma is restated, its source proves an older statement: flagged stale.
+    restated = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    await call(
+        alpha_tools,
+        "commons_node",
+        {"action": "set_lean_statement", "node_id": lemma_id, **restated},
+    )
+    rechecked = await call(tools, "lean_check", {"source": source})
+    assert rechecked["commons"]["stale"] == [lemma_id]
+
+
+async def test_a_referee_check_expands_commons_imports(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    alpha_tools, _, module = await published_lemma(service, author, exp, alpha.branch_id)
+    plan = await call(
+        alpha_tools, "commons_node", lemma_args(title="Plan", statement="Use the trace lemma.")
+    )
+    requested = service.request_review(plan["id"], "informal", beta, "review")
+    task = service.get_record("task", requested["review_task_id"], author)
+    judge, judge_context = running(service, author, exp, requested["branch_id"], task=task)
+    judge_space = FakeWorkspace()
+    judge_tools = profile(service, judge, judge_context, workspace=judge_space)
+    source = f"import {module}\n\ntheorem uses : (1 : Nat) + 1 = 2 := trace_add\n"
+    judged = await call(judge_tools, "lean_check", {"source": source})
+    assert judged["commons"]["modules"] == [module]
+    assert "theorem trace_add" in judge_space.lean.sources[-1]
+
+
+async def test_submit_with_commons_imports_verifies_one_flattened_artifact(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    _, lemma_id, module = await published_lemma(service, author, exp, alpha.branch_id)
+    agent, context = running(service, author, exp, beta.branch_id)
+    used = service.read_node(lemma_id, agent)["node"]["lean_source"]
+    text = f"import {module}\n\ntheorem target : (1 : Nat) + 1 = 2 := trace_add\n"
+    workspace = CapturingWorkspace(service, text)
+    tools = profile(service, agent, context, workspace=workspace)
+    submitted = await call(
+        tools, "submit_for_verification", {"path": "Proof.lean", "sha256": sha(text)}
+    )
+    assert [name for name, _ in workspace.calls] == ["read", "capture"]
+    flat = service.get_record("artifact", submitted["expanded_artifact_id"], agent)
+    content = service.artifact_content(flat["id"], agent).decode()
+    assert "theorem trace_add" in content and "import Commons" not in content
+    assert flat["provenance"] == {
+        "expanded_from": submitted["artifact_id"],
+        "commons": [
+            {
+                "module": module,
+                "node_id": lemma_id,
+                "artifact_id": used["artifact_id"],
+                "sha256": used["sha256"],
+                "branch_id": alpha.branch_id,
+                "chars": len(PROOF),
+                "stale": False,
+            }
+        ],
+    }
+    entry = {
+        "module": module,
+        "node_id": lemma_id,
+        "sha256": used["sha256"],
+        "branch_id": alpha.branch_id,
+        "stale": False,
+    }
+    receipt = service.get_record("verification", submitted["receipt_id"], agent)
+    assert (receipt["status"], receipt["artifact_id"], receipt["candidate_sha256"]) == (
+        "queued",
+        flat["id"],
+        submitted["candidate_sha256"],
+    )
+    assert receipt["commons_modules"] == submitted["commons_modules"] == [entry]
+    # Only the platform's flattening writes commons_modules (F8): the API's verify body has
+    # no such field, and verifying the same artifact without it records none.
+    with pytest.raises(ValidationError):
+        VerifyInput(artifact_id=flat["id"], publication=True, commons_modules=[entry])
+    direct = service.verify_candidate(exp["id"], flat["id"], True, agent, "direct")
+    assert "commons_modules" not in direct
+    # A file without commons imports (a module named only in a comment) takes today's path.
+    plain = CapturingWorkspace(service, f"-- after {module}\nimport Mathlib\n")
+    legacy = await call(
+        profile(service, agent, context, workspace=plain),
+        "submit_for_verification",
+        {"path": "P.lean", "sha256": "e" * 64},
+    )
+    assert legacy == {"receipt_id": "receipt", "status": "queued"}
+    target = {"path": "P.lean", "sha256": "e" * 64, "target_digest": exp["target_digest"]}
+    assert [name for name, _ in plain.calls] == ["read", "submit"]
+    assert plain.calls[-1] == ("submit", target)
+
+
+async def test_submit_refuses_an_incomplete_closure(lab):
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    stub = await call(
+        profile(service, agent, context, workspace=FakeWorkspace()), "commons_node", lemma_args()
+    )
+    module = service.read_node(stub["id"], agent)["node"]["lean_module"]
+    text = f"import {module}\n\ntheorem target : (1 : Nat) + 1 = 2 := trace_add\n"
+    workspace = CapturingWorkspace(service, text)
+    tools = profile(service, agent, context, workspace=workspace)
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": stub["id"], **LEAN}
+    )
+    refused = await call(
+        tools, "submit_for_verification", {"path": "Proof.lean", "sha256": sha(text)}
+    )
+    assert refused["error"]["code"] == "COMMONS_CLOSURE_INCOMPLETE"
+    assert refused["error"]["details"] == {"modules": [{"module": module, "rank": "stub"}]}
+    assert service.list_records("verification", author, exp["id"]) == []
+
+
 def test_publication_refusals_and_source_ranks():
     node, clean = {"node_type": "lemma", **LEAN}, {"ok": True, "complete": True}
     clean["axioms"] = {"trace_add": ["propext"]}
     assert _publication_refusal(PROOF, {"node_type": "goal"}, clean) == "goal_node"
     assert _publication_refusal(PROOF, node, {**clean, "ok": False}) == "lean_errors"
     assert _publication_refusal(PROOF, node, clean) is None
+    assert _publication_refusal(PROOF + "end Foo\n", node, clean) == "unbalanced_scopes"
     assert _source_rank(node, {**clean, "complete": False}, None) == "partial"
     passed = {"ok": True, "reason": None, "axioms": ["propext"]}
     assert _source_rank(node, clean, passed) == "verified"

@@ -7,7 +7,18 @@ from test_commons_review import referee
 from physharness import commons
 from physharness.commons import _lean_digest
 from physharness.commons_models import NodeCreate
-from physharness.commons_sources import module_prefix, node_module, source_state
+from physharness.commons_sources import (
+    MAX_COMMONS_MODULES,
+    Expansion,
+    Module,
+    inline_commons,
+    module_prefix,
+    node_module,
+    remap,
+    scope_closers,
+    source_state,
+    split_imports,
+)
 from physharness.domain import ArtifactCreate, BranchCreate, Principal
 from physharness.errors import HarnessError
 
@@ -293,3 +304,193 @@ def test_a_referee_may_read_the_nodes_published_source(lab):
     ref = referee(service.request_review(node["id"], "informal", alpha, "review"), exp)
     assert service.referee_may_read_artifact(node["id"], source["artifact_id"], ref) is True
     assert service.referee_may_read_artifact(node["id"], scratch["id"], ref) is False
+
+
+# Commons imports: the inliner (S1 audit #12) ---------------------------------------------
+
+A, B = "Commons.Naaaaaaaa", "Commons.Nbbbbbbbb"
+PROOF = "import Mathlib\n\ntheorem trace_add : (1 : Nat) + 1 = 2 := rfl\n"
+
+
+def module(name, source, rank="verified"):
+    stub = rank == "stub"
+    return Module(
+        name,
+        name[-8:] + "-node",
+        source,
+        rank,
+        None if stub else "s" * 64,
+        None if stub else "art",
+        "b",
+    )
+
+
+def resolver(*modules):
+    table = {m.name: m for m in modules}
+
+    def resolve(name):
+        if name not in table:
+            raise HarnessError("COMMONS_MODULE_NOT_FOUND", name, status=404)
+        return table[name]
+
+    return resolve
+
+
+def test_source_without_commons_imports_is_returned_unchanged():
+    text = "import Mathlib\n\ntheorem t : True := trivial\n"
+    assert inline_commons(text, resolver(), max_bytes=30_000) == Expansion(text)
+    # A module name outside an import line is not an import.
+    mentioned = f"import Mathlib\n-- see {A}\ntheorem t : True := trivial\n"
+    assert inline_commons(mentioned, resolver(), max_bytes=30_000) == Expansion(mentioned)
+
+
+def test_imports_are_hoisted_and_modules_ordered_by_dependency():
+    a = module(A, "import Mathlib.Data.Nat.Basic\n\ntheorem a : 1 = 1 := rfl\n")
+    b = module(B, f"import Mathlib\nimport {A}\n\ntheorem b : 1 = 1 := a\n")
+    flat = inline_commons(
+        f"import {B}\nimport Mathlib\nopen Nat\n\ntheorem c : 1 = 1 := b\n",
+        resolver(a, b),
+        max_bytes=30_000,
+    )
+    lines = flat.source.split("\n")
+    assert lines[:2] == ["import Mathlib", "import Mathlib.Data.Nat.Basic"]
+    assert [m.name for m in flat.modules] == [A, B] and "import Commons" not in flat.source
+    assert (
+        flat.source.index("theorem a")
+        < flat.source.index("theorem b")
+        < flat.source.index("theorem c")
+    )
+    caller = remap(
+        {"messages": [{"line": lines.index("theorem c : 1 = 1 := b") + 1}], "holes": []}, flat
+    )
+    assert caller["messages"][0]["line"] == 5
+
+
+def test_remap_names_the_module_or_the_hoisted_imports():
+    a = module(A, "import Mathlib\n\ntheorem a : 1 = 1 := sorry\n")
+    flat = inline_commons(f"import {A}\n\ntheorem c : 1 = 1 := a\n", resolver(a), max_bytes=30_000)
+    lines = flat.source.split("\n")
+    inside = lines.index("theorem a : 1 = 1 := sorry") + 1
+    result = {
+        "ok": True,
+        "messages": [{"line": 1, "col": 0, "text": "import"}, {"line": None, "text": "note"}],
+        "holes": [{"index": 0, "line": inside, "col": 21}],
+    }
+    mapped = remap(result, flat)
+    assert mapped["holes"] == [
+        {"index": 0, "line": None, "col": 21, "module": A, "expanded_line": inside}
+    ]
+    assert mapped["messages"] == [
+        {"line": None, "col": 0, "text": "import", "expanded_line": 1},
+        {"line": None, "text": "note"},
+    ]
+    assert mapped["ok"] is True and remap(result, Expansion("x")) is result
+
+
+def test_each_module_is_sectioned_and_its_open_namespace_closed():
+    a = module(A, "import Mathlib\nopen Nat\nnamespace Foo\n\ntheorem a : 1 = 1 := rfl\n")
+    lines = inline_commons(
+        f"import {A}\n\ntheorem c : 1 = 1 := Foo.a\n", resolver(a), max_bytes=30_000
+    ).source.split("\n")
+    start = lines.index("section")
+    assert lines[start + 2] == "open Nat" and lines[lines.index("end Foo") + 1] == "end"
+
+
+def test_cycles_exit_unbalanced_scopes_stubs_and_size_are_handled():
+    loop = resolver(module(A, f"import {B}\n"), module(B, f"import {A}\n"))
+    with pytest.raises(HarnessError, match="imports itself"):
+        inline_commons(f"import {A}\n", loop, max_bytes=30_000)
+    for text in ("theorem a : True := trivial\n#exit\n", "theorem a : True := trivial\nend Foo\n"):
+        with pytest.raises(HarnessError) as refused:
+            inline_commons(f"import {A}\n", resolver(module(A, text)), max_bytes=30_000)
+        assert refused.value.code == "COMMONS_MODULE_REFUSED"
+    stub = module(A, "import Mathlib\n\ntheorem a : 1 = 1 := sorry\n", rank="stub")
+    flat = inline_commons(f"import {A}\n", resolver(stub), max_bytes=30_000)
+    assert flat.closure_complete is False and flat.stubs == (stub.node_id,)
+    with pytest.raises(HarnessError) as big:
+        inline_commons(f"import {A}\n", resolver(stub), max_bytes=10)
+    assert big.value.code == "COMMONS_EXPANSION_TOO_LARGE"
+
+
+def test_shared_and_repeated_imports_are_inlined_once():
+    c = "Commons.Ncccccccc"
+    shared = module(c, "import Mathlib\n\ntheorem shared : 1 = 1 := rfl\n")
+    a = module(A, f"import {c}\n\ntheorem a : 1 = 1 := shared\n")
+    b = module(B, f"import {c} {c}\n\ntheorem b : 1 = 1 := shared\n")
+    flat = inline_commons(f"import {A} {B}\nimport {A}\n", resolver(shared, a, b), max_bytes=30_000)
+    assert [m.name for m in flat.modules] == [c, A, B]
+    assert flat.source.count("theorem shared") == 1
+
+
+def test_expansion_is_bounded_in_modules_and_unresolved_names_fail():
+    def chain(name):
+        index = int(name[-8:], 16)
+        return module(name, f"import Commons.N{index + 1:08x}\n")
+
+    with pytest.raises(HarnessError) as limit:
+        inline_commons("import Commons.N00000000\n", chain, max_bytes=10**7)
+    assert limit.value.code == "COMMONS_EXPANSION_LIMIT"
+    assert str(MAX_COMMONS_MODULES) in limit.value.message
+    with pytest.raises(HarnessError) as missing:
+        inline_commons(f"import {A}\n", resolver(), max_bytes=30_000)
+    assert missing.value.code == "COMMONS_MODULE_NOT_FOUND"
+
+
+def test_split_imports_reads_past_comments_and_scope_closers_track_nesting():
+    text = f"/- Copyright\n   header -/\n-- note\nimport Mathlib {A} -- trailing\n\nopen Nat\n"
+    assert split_imports(text) == ([A], ["import Mathlib"], ["open Nat", ""], 5)
+    nested = (
+        "namespace Foo\nsection Bar\nmutual\ntheorem a : True := trivial\nend\n"
+        'noncomputable section\n-- end\ndef s := "end"\n'
+    )
+    assert scope_closers(A, nested) == ["end", "end Bar", "end Foo"]
+
+
+def test_expand_commons_reads_live_sources_stubs_and_flags_stale_ones(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    used = lemma(service, exp, alpha, "Trace", "used", **LEAN)
+    digest = _lean_digest(*LEAN.values())
+    publish(service, used["id"], beta, "verified", "src", PROOF, lean_statement_sha256=digest)
+    source = service.read_node(used["id"], alpha)["node"]["lean_source"]
+    stub = lemma(service, exp, alpha, "Stub", "stub")
+    service.set_lean_statement(
+        stub["id"], "import Mathlib", "stub_lemma", ": 2 = 2", ELABORATED, alpha, "stated"
+    )
+    caller = f"import {used['lean_module']}\nimport {stub['lean_module']}\n"
+    flat = service.expand_commons(exp["id"], caller, alpha, max_bytes=30_000)
+    assert flat.modules == (
+        Module(
+            used["lean_module"],
+            used["id"],
+            PROOF,
+            "verified",
+            source["sha256"],
+            source["artifact_id"],
+            beta.branch_id,
+        ),
+        Module(
+            stub["lean_module"],
+            stub["id"],
+            "import Mathlib\n\ntheorem stub_lemma : 2 = 2 := sorry\n",
+            "stub",
+        ),
+    )
+    assert flat.closure_complete is False and flat.stubs == (stub["id"],)
+    # A restated node's source proves an older statement: it imports flagged stale.
+    changed = {**LEAN, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    service.set_lean_statement(used["id"], *changed.values(), ELABORATED, alpha, "restate")
+    (stale,) = service.expand_commons(
+        exp["id"], f"import {used['lean_module']}\n", alpha, max_bytes=30_000
+    ).modules
+    assert (stale.rank, stale.stale, stale.source) == ("complete", True, PROOF)
+    # No published source and no elaborated statement: nothing to import.
+    bare = lemma(service, exp, alpha, "Bare", "bare")
+    with pytest.raises(HarnessError) as missing:
+        service.expand_commons(exp["id"], f"import {bare['lean_module']}\n", alpha, max_bytes=99)
+    assert (missing.value.code, missing.value.status) == ("COMMONS_MODULE_NOT_FOUND", 404)
+    assert "no published source" in missing.value.message
+    # Another experiment's agent cannot import this experiment's module.
+    _, _, other, _, (outsider, _) = society_lab(lab, prefix="other")
+    with pytest.raises(HarnessError) as foreign:
+        service.expand_commons(other["id"], caller, outsider, max_bytes=30_000)
+    assert foreign.value.code == "COMMONS_MODULE_NOT_FOUND"

@@ -39,7 +39,17 @@ class AcceptanceMixin:
                     }
             return None
 
-    def verify_candidate(self, experiment_id, artifact_id, publication, actor, key):
+    def verify_candidate(
+        self, experiment_id, artifact_id, publication, actor, key, *, commons_modules=None
+    ):
+        """Queue independent checking of a ``lean_source`` candidate.
+
+        ``commons_modules`` is internal: only the society's flattened submission passes it,
+        from live node lookups, and the receipt stores it verbatim. No API or MCP request
+        body carries it, so a receipt has it only when the platform inlined those modules.
+        """
+        # Absent, not empty, when not given: receipts outside that path keep today's shape.
+        internal = {} if commons_modules is None else {"commons_modules": commons_modules}
         self._research_role(actor)
 
         def action(session, op):
@@ -87,6 +97,7 @@ class AcceptanceMixin:
                     "submitted_by": actor.id,
                     "checker_versions": {},
                     "axioms": [],
+                    **internal,
                 },
             )
             self._event(
@@ -108,6 +119,7 @@ class AcceptanceMixin:
                 "experiment_id": experiment_id,
                 "artifact_id": artifact_id,
                 "publication": publication,
+                **internal,
             },
             action,
         )

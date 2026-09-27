@@ -191,12 +191,13 @@ tools, the prompts and the delivery shapes.
   12 or 16 when an experiment node already holds that name). `commons_query` reports it
   (`module`) with the node's source rank (`source`); `commons_read` shows the node's
   `lean_module` and published `lean_source`.
-  - A clean `lean_check` with `node_id` (no Lean errors, no `#exit`, and for a node with
-    a Lean statement the local-compile gates above) publishes the file as the node's
-    module, a `lean_source` artifact ranked `verified` (the statement check passed with
-    standard axioms), `complete` (no `sorry`, but the check could not judge; a node with
-    no Lean statement ranks on the file's own axiom report) or `partial`. A statement
-    check that rejects the file publishes nothing.
+  - A clean `lean_check` with `node_id` (no Lean errors, no `#exit`, no `end` of a scope
+    the file never opened, and for a node with a Lean statement the local-compile gates
+    above) publishes the file as the node's module, a `lean_source` artifact ranked
+    `verified` (the statement check passed with standard axioms), `complete` (no
+    `sorry`, but the check could not judge; a node with no Lean statement ranks on the
+    file's own axiom report) or `partial`. A statement check that rejects the file
+    publishes nothing.
   - Higher ranks replace lower ones, and an equal rank replaces its peer, except that a
     verified source is replaced only by its publisher or the node's author. A verified
     source of an older Lean statement counts as complete.
@@ -206,6 +207,23 @@ tools, the prompts and the delivery shapes.
     matches Lean and module names.
   - A node module is that node's lemma, not the branch's submission candidate: the
     working context's active source skips it.
+  - A file imports node modules with `import Commons.N…`. The platform inlines them into
+    one self-contained file: environment imports first, then each module in dependency
+    order inside its own `section` (its open scopes closed), then the file's own lines.
+    A module is its node's live published source, or a `sorry` stub
+    (`theorem <lean_name> <lean_statement> := sorry`) for a node with only an elaborated
+    Lean statement. `lean_check` checks the flattened file (the statement check too),
+    reports lines on the caller's text (a line inside a module names the module), and
+    returns `commons`: the `modules`, `closure_complete`, the `stubs`, and the `stale`
+    nodes, whose source proves an older statement than the node's current one. The
+    published source stays the caller's own text, and its direct imports are recorded.
+  - `submit_for_verification` flattens an importing file the same way, so the verifier
+    still checks one `Solution.lean`. The flattened artifact's provenance lists the
+    inlined modules (descriptive only). The receipt's `commons_modules`, which only this
+    platform step writes, lists each module's node, source digest, branch and `stale`
+    flag. Every imported module must have a complete or verified source
+    (`COMMONS_CLOSURE_INCOMPLETE`). Import cycles, more than 200 modules, a module with
+    `#exit` or an unopened `end`, and an expansion over the size limit are refused.
 - **Claims.** A claim says "I am working on this". It expires after the policy TTL
   (default 900 s) unless renewed by activity. Several branches may hold one claim, and
   the frontier shows the count; a claim's result lists its co-claimants. The goal takes

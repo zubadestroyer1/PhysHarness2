@@ -40,13 +40,23 @@ from ..commons_review import (
     fence_author_data,
     is_referee_task,
 )
-from ..commons_sources import SOURCE_STATES, blocking_rank, node_module, node_refusal
+from ..commons_sources import (
+    COMPLETE_RANKS,
+    SOURCE_STATES,
+    blocking_rank,
+    node_module,
+    node_refusal,
+    remap,
+    scope_closers,
+    split_imports,
+)
 from ..domain import ArtifactCreate, Principal
 from ..errors import HarnessError
 from ..execution import ToolDispatcher
 from ..execution.e2b import FILE_LIMIT as E2B_FILE_BYTES
 from ..knowledge.literature import run_blocking as run_literature
 from ..memory import PortableMemory
+from ..verification.boundary import MAX_CANDIDATE_CHARACTERS
 from ..worker_authority import current_worker_effects
 from ..workforce_models import RecruitResearcherRequest
 from .computation import MAX_ARG_CHARS, MAX_ARGS, MAX_TIMEOUT_SECONDS, ComputationRunner
@@ -423,6 +433,10 @@ def _publication_refusal(source, node, result):
         return "lean_errors"
     if "#exit" in source:
         return "exit_command"
+    try:
+        scope_closers("source", source)  # an importer inlines it inside a section
+    except HarnessError:
+        return "unbalanced_scopes"
     name, statement = node.get("lean_name"), node.get("lean_statement")
     if name and statement:
         refusal = _compile_refusal(source, node)
@@ -702,14 +716,29 @@ def society_tools(
             defaults={"args": [], "seed": None},
         )
 
+        async def expanded_check(source, automate, key):
+            """Check ``source`` with its commons imports inlined, reported on its own lines;
+            returns the result and the expansion."""
+            expansion = service.expand_commons(experiment_id, source, agent, max_bytes=MAX_SOURCE)
+            checked = await lean().check(expansion.source, automate=automate, operation_id=key)
+            result = remap(checked, expansion)
+            if expansion.modules:
+                result["commons"] = {
+                    "modules": [module.name for module in expansion.modules],
+                    "closure_complete": expansion.closure_complete,
+                    "stubs": list(expansion.stubs),
+                    "stale": [module.node_id for module in expansion.modules if module.stale],
+                }
+            return result, expansion
+
         async def lean_check(a, k):
             node = None
             if a["node_id"] is not None:
                 node = service.read_node(a["node_id"], agent)["node"]
-            result = await lean().check(a["source"], automate=a["automate"], operation_id=k)
+            result, expansion = await expanded_check(a["source"], a["automate"], k)
             if node is None:
                 return result
-            published, verdict = await publish(node, a["source"], result, k)
+            published, verdict = await publish(node, a["source"], expansion, result, k)
             return {
                 **result,
                 "published": published,
@@ -717,9 +746,10 @@ def society_tools(
                 "claimed": claim(node["id"], k),
             }
 
-        async def publish(node, source, result, key):
+        async def publish(node, source, expansion, result, key):
             """Publish a clean check as the node's ranked module; returns the publication and
-            the statement check's verdict (None when it did not run)."""
+            the statement check's verdict (None when it did not run). The statement check
+            reads the flattened file; the published source is the caller's own text."""
             module = node_module(node)
             refusal = _publication_refusal(source, node, result)
             if refusal is not None:
@@ -733,7 +763,7 @@ def society_tools(
             if result["complete"] and name and statement:
                 try:
                     verdict = await lean().verify_statement(
-                        source,
+                        expansion.source,
                         header or "",
                         name,
                         statement,
@@ -754,6 +784,8 @@ def society_tools(
             if held is not None:
                 refused = {"recorded": False, "module": module, "reason": "lower_rank"}
                 return {**refused, "rank": held}, verdict
+            modules = {imported.name: imported for imported in expansion.modules}
+            direct = [modules[imported] for imported in split_imports(source)[0]]
             record = {
                 "rank": rank,
                 "bytes": len(source.encode("utf-8")),
@@ -761,7 +793,9 @@ def society_tools(
                 if verdict is None
                 else {field: verdict[field] for field in ("ok", "reason", "axioms")},
                 "lean_statement_sha256": _lean_digest(header, name, statement),
-                "imports": [],
+                "imports": [
+                    {"module": m.name, "node_id": m.node_id, "sha256": m.sha256} for m in direct
+                ],
             }
 
             def store():
@@ -839,11 +873,16 @@ def society_tools(
 
         source_property = text(MAX_SOURCE, "Complete Lean file, imports first; 30,000 UTF-8 bytes.")
         if referee:
+
+            async def referee_check(a, k):
+                result, _ = await expanded_check(a["source"], a["automate"], k)
+                return result
+
             # A referee checks Lean but never records local compiles.
             add(
                 "lean_check",
                 {"source": source_property, "automate": BOOLEAN},
-                lambda a, k: lean().check(a["source"], automate=a["automate"], operation_id=k),
+                referee_check,
                 "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
                 "automation on holes (automate=true; off by default, since automation can "
                 "exhaust the workbench's memory) and #print axioms. Evidence for your review "
@@ -866,6 +905,8 @@ def society_tools(
                 "Check Lean source in the persistent Lean session: errors, goals at each sorry, "
                 "automation on holes (automate=true; off by default, since automation can "
                 "exhaust the workbench's memory) and the file's own #print axioms output. "
+                "`import Commons.N…` pulls in published node modules (a node with only a Lean "
+                "statement imports as a sorry stub). "
                 "With node_id, a clean check publishes the file as the node's module "
                 "Commons.N<8 hex>, ranked verified (the statement check passed on standard "
                 "axioms), complete (no sorry; the check could not judge) or partial; a higher "
@@ -1372,9 +1413,88 @@ def society_tools(
 
         async def submit_for_verification(a, k):
             target = service.get_record("experiment", experiment_id, agent)["target_digest"]
-            return await workspace_tools.submit_workspace_candidate(
-                {"path": a["path"], "sha256": a["sha256"], "target_digest": target}, k, agent
+            request = {"path": a["path"], "sha256": a["sha256"], "target_digest": target}
+            peek = await workspace_tools.read(
+                {"path": a["path"], "offset": 0, "length": 65536}, f"{k}:peek"
             )
+            if not split_imports(peek.get("text", ""))[0]:
+                return await workspace_tools.submit_workspace_candidate(request, k, agent)
+            return await submit_flattened(request, k)
+
+        async def submit_flattened(request, key):
+            """Verify one self-contained file: the captured source with its commons imports
+            inlined (S1 audit #12). Only this call sets the receipt's ``commons_modules``,
+            from live node lookups, never from the artifact's own provenance (ruling F8)."""
+            promoted = await workspace_tools.store_workspace_artifact(
+                request, key + ":capture", agent
+            )
+            source = service.artifact_content(promoted["artifact_id"], agent).decode("utf-8")
+            expansion = service.expand_commons(
+                experiment_id, source, agent, max_bytes=MAX_CANDIDATE_CHARACTERS
+            )
+            if not expansion.closure_complete:
+                missing = [m for m in expansion.modules if m.rank not in COMPLETE_RANKS]
+                raise HarnessError(
+                    "COMMONS_CLOSURE_INCOMPLETE",
+                    "These imported modules have no complete source: "
+                    + ", ".join(m.name for m in missing[:10])
+                    + ".",
+                    status=422,
+                    details={"modules": [{"module": m.name, "rank": m.rank} for m in missing]},
+                    remediation="Publish complete sources for these modules first; the verifier "
+                    "rejects sorry.",
+                )
+            flat = service.create_artifact(
+                ArtifactCreate(
+                    experiment_id=experiment_id,
+                    branch_id=agent.branch_id,
+                    kind="lean_source",
+                    content=expansion.source,
+                    provenance={
+                        "expanded_from": promoted["artifact_id"],
+                        "commons": [
+                            {
+                                "module": m.name,
+                                "node_id": m.node_id,
+                                "artifact_id": m.artifact_id,
+                                "sha256": m.sha256,
+                                "branch_id": m.branch_id,
+                                "chars": len(m.source),
+                                "stale": m.stale,
+                            }
+                            for m in expansion.modules
+                        ],
+                    },
+                ),
+                agent,
+                f"{key}:flatten",
+            )
+            modules = [
+                {
+                    "module": m.name,
+                    "node_id": m.node_id,
+                    "sha256": m.sha256,
+                    "branch_id": m.branch_id,
+                    "stale": m.stale,
+                }
+                for m in expansion.modules
+            ]
+            receipt = service.verify_candidate(
+                experiment_id,
+                flat["id"],
+                True,
+                agent,
+                f"{key}:verification",
+                commons_modules=modules,
+            )
+            return {
+                "artifact_id": promoted["artifact_id"],
+                "expanded_artifact_id": flat["id"],
+                "candidate_sha256": flat["sha256"],
+                "commons_modules": modules,
+                "receipt_id": receipt["id"],
+                "status": receipt["status"],
+            }
 
         add(
             "submit_for_verification",
@@ -1384,7 +1504,9 @@ def society_tools(
             },
             submit_for_verification,
             "Capture an exact workspace Lean file (give its SHA-256) and queue the independent "
-            "verifier against the current target. Local compilation is not acceptance.",
+            "verifier against the current target. Local compilation is not acceptance. A file "
+            "that imports Commons.N… modules is flattened into one file first, and each "
+            "imported module needs a complete source.",
         )
 
     async def verification_status(a, k):
