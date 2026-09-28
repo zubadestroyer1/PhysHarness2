@@ -335,8 +335,21 @@ def _tool_output_text(
     return text.encode("utf-8", "backslashreplace").decode()
 
 
-def _elision_stub(tool: str, call_id: str, output: str) -> str:
-    """What an elided output leaves in context: its size, digest, head and a recall handle."""
+def _recall_page(text: str, offset: int) -> str:
+    """The page of ``text`` at ``offset``: as many characters as fit RECALL_PAGE_CHARS once
+    escaped in the JSON tool output, which is the form the model reads."""
+    page = text[offset : offset + RECALL_PAGE_CHARS]
+    while (size := len(json.dumps(page, ensure_ascii=False)) - 2) > RECALL_PAGE_CHARS:
+        page = page[: len(page) * RECALL_PAGE_CHARS // size]
+    return page
+
+
+def _elision_stub(tool: str, call_id: str, output: str, offset: int | None = None) -> str:
+    """What an elided output leaves in context: its size, digest, head and a recall handle. A
+    recalled page's handle names the stored output and the page's offset."""
+    recall = {"tool": "recall_output", "call_id": call_id}
+    if offset is not None:
+        recall["offset"] = offset
     return json.dumps(
         {
             "elided": True,
@@ -344,7 +357,7 @@ def _elision_stub(tool: str, call_id: str, output: str) -> str:
             "chars": len(output),
             "sha256": hashlib.sha256(output.encode("utf-8")).hexdigest()[:16],
             "head": output[:160],
-            "recall": {"tool": "recall_output", "call_id": call_id},
+            "recall": recall,
         },
         separators=(",", ":"),
         ensure_ascii=False,
@@ -799,6 +812,11 @@ class ResponsesRuntime:
         entries = {
             key.split(":", 1)[1]: entry for key, entry in state.get("tool_results", {}).items()
         }
+        # A recalled page is never stored, but it goes stale like any output; its stub can
+        # rebuild it from the stored output's call ID and the page's offset.
+        pages = state.get("recall_pages", {})
+        for call_id, page in pages.items():
+            entries.setdefault(call_id, {"seq": page["seq"], "name": "recall_output"})
         count = removed = 0
         first = None
         for index, item in enumerate(state["input"]):
@@ -813,7 +831,12 @@ class ResponsesRuntime:
                 or _is_elision_stub(output)
             ):
                 continue
-            stub = _elision_stub(entry.get("name", "unknown"), item["call_id"], output)
+            page = pages.get(item["call_id"])
+            stub = (
+                _elision_stub(entry.get("name", "unknown"), item["call_id"], output)
+                if page is None
+                else _elision_stub("recall_output", page["call_id"], output, page["offset"])
+            )
             if len(stub) >= len(output):  # elision never lengthens an output
                 continue
             item["output"] = stub
@@ -1777,6 +1800,12 @@ class ResponsesRuntime:
             else:
                 if recall:
                     result = await self._recall(session, state, arguments)
+                    if isinstance(state.get("elision"), dict) and "text" in result:
+                        state.setdefault("recall_pages", {})[call["call_id"]] = {
+                            "seq": state["elision"]["seq"],
+                            "call_id": result["call_id"],
+                            "offset": result["offset"],
+                        }
                 else:
                     state["pending_operation"] = tool_operation
                     await self._save(session, state)
@@ -1902,7 +1931,7 @@ class ResponsesRuntime:
             ensure_ascii=False,
             sort_keys=True,
         )
-        page = text[offset : offset + RECALL_PAGE_CHARS]
+        page = _recall_page(text, offset)
         end = offset + len(page)
         return {
             "call_id": call_id,

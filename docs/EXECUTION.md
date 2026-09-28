@@ -315,12 +315,13 @@ without one. Under a budget:
   in `tool_results`, and replay is unchanged. This one per-output cap also covers whole-file
   reads (R7).
 - **`recall_output(call_id, offset)`.** This built-in tool is appended to the tools array that is
-  sent. It returns up to 16,000 characters of a stored output's text from `offset`, with
-  `next_offset` (null at the end) and `total_chars`. It searches the active `tool_results`, then
+  sent. It returns a page of a stored output's text from `offset`, with `next_offset` (null at
+  the end) and `total_chars`. A page holds as many characters as fit 16,000 once escaped in the
+  tool output, which is the form the model reads, so a quote-heavy page holds fewer. It searches the active `tool_results`, then
   the session's own archives, then the inherited ones, and matches the call ID from any session
   in the lineage; the latest match wins. An unknown ID returns a `RECALL_NOT_FOUND` error
   envelope. A recall is a pure read. It sets no pending marker, never reaches the dispatcher, is
-  never stored in `tool_results` and is never capped. Like any call, it emits `tool_completed`
+  never stored in `tool_results` and is never capped; its page is bounded instead. Like any call, it emits `tool_completed`
   (and any stagnation signal, since stagnation counts it as a read) after the save that holds its
   output, so tool-call metrics count recalls. It is not part of the society tool catalog, and a
   dispatcher that registers its own `recall_output` under a budget fails with `INVALID_CONFIG`.
@@ -330,9 +331,11 @@ without one. Under a budget:
   `{"elided":true,"tool","chars","sha256","head","recall":{"tool":"recall_output","call_id"}}`.
   `chars` is the replaced text's length, `sha256` the first 16 hex digits of its digest and
   `head` its first 160 characters. The full result stays in `tool_results`, so `recall_output`
-  on the stub's call ID pages it back. An output is replaced only when its stub is strictly
-  shorter, so elision never lengthens an output and `chars_removed` is always positive. Never
-  elided are recall pages, stubs, outputs stored without a `seq` (before this feature), and
+  on the stub's call ID pages it back. A recall page goes stale like any output. Its stub's
+  `recall` names the stored output's call ID and the page's `offset`, so the page can be read
+  again, and recalls cannot grow the context for good. An output is replaced only when its stub
+  is strictly shorter, so elision never lengthens an output and `chars_removed` is always
+  positive. Never elided are stubs, outputs stored without a `seq` (before this feature), and
   outputs whose `tool_results` entries a compaction archived. Between blocks the input only
   grows, so its prefix is byte-stable and provider prefix caching holds; a block breaks the
   prefix once, at its first newly elided item. A block that elides anything emits

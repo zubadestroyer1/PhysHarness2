@@ -5,6 +5,7 @@
 > - **Tasks 11 and 12 carry review fixes.** Budget-mode tool output escapes lone surrogates, so later requests stay encodable. An output is elided only when its stub is shorter. `context_elided` is announced only after the save that holds its stubs.
 > - **Task 13 also fixed the integration audits' minor findings.** Admission uses the reservation's margin-inclusive input, the create sends the tools the P1 digests describe, the deadline abort emits before it clears the marker, and per-session caches end with their run.
 >
+> - **The merge audit (2026-09-27) bounded recall.** A recall page is sized by its escaped length, which is what the model reads; quote-heavy pages had reached about 32,000 characters. Stale recall pages are elided like any output, with a stub that names the stored call ID and offset, so recalls no longer grow the context for good.
 > - **The merge audit (2026-09-27) added a cache-write rate.** A price with `cached_input_usd_per_million` must also give `cache_write_usd_per_million`. Reported cache writes settle at it, and reservations charge input at the higher of the input and cache-write rates. Without it, list prices ($2/M input, $2.50/M writes) would have left cache writes under-settled once cached reads stopped over-counting.
 >
 > `docs/EXECUTION.md` describes the shipped behaviour.
