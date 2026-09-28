@@ -275,6 +275,21 @@ async def test_wait_tool_parks_on_events_and_shows_the_long_pole(lab):
     assert rejected["error"]["code"] == "INVALID_ARGUMENTS"
 
 
+async def test_an_s1_peer_wait_resumed_mid_call_is_answered_not_fatal(lab):
+    """Merge audit: an S1 checkpoint saved during wait(for="peer") re-dispatches that call on
+    resume. The current schema has no such wait, so it is answered with a recoverable
+    rejection, as a removed tool is, instead of a fatal INVALID_TOOL_ARGUMENTS."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context)
+    legacy = {"for": "peer", "ids": [beta.branch_id], "timeout_seconds": 60}
+    rejected = await call(tools, "wait", legacy)
+    assert set(rejected) == {"error"} and rejected["error"]["code"] == "TOOL_UNAVAILABLE"
+    assert rejected["error"]["details"] == {"available_waits": ["tasks", "events"]}
+    assert "for='events'" in rejected["error"]["remediation"]
+    assert service.get_record("task", context["task_id"], author).get("handoff_intent") is None
+
+
 def test_the_waiters_own_moves_do_not_wake_it_and_a_peers_do(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]

@@ -628,7 +628,9 @@ module's output is its publisher's text. With modules inlined, its axiom report 
 the declarations of the referee's own text and counts the rest (`axioms_withheld`), since a
 «guillemet» declaration name can hold near-arbitrary text.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
-that lists the available tools. Rejections count per native session whatever the name,
+that lists the available tools. So does S1's removed `wait(for="peer")`, which an S1
+checkpoint saved mid-call re-dispatches on resume; its rejection says to message the peer
+and wait for events. Rejections count per native session whatever the name,
 so a model that keeps inventing names reaches the stagnation warning after four and the
 stagnation handoff after eight. That warning is separate from the repeated-read warning,
 so neither silences the other. The finite supervisor runs the referee tasks its own
