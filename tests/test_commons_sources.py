@@ -25,7 +25,7 @@ from physharness.commons_sources import (
     scope_closers,
     split_imports,
 )
-from physharness.domain import ArtifactCreate, BranchCreate, Principal
+from physharness.domain import ArtifactCreate, BranchCreate, Principal, TaskCreate
 from physharness.errors import HarnessError
 from physharness.orchestration.lean_session import parse_lean_output
 from physharness.storage import RecordRow
@@ -462,19 +462,36 @@ def test_an_importer_goes_stale_once_its_import_is_replaced(lab):
     assert publish(service, b["id"], alpha, "complete", "a-b", lean_statement_sha256=db)["replaced"]
 
 
-def test_any_branch_replaces_a_complete_source_of_a_node_without_a_statement(lab):
-    """PR 37 re-audit: nothing outranks a complete source on a node with no elaborated Lean
-    statement (a definition), so the equal-rank lock let an unrelated first file hold the
-    node for good. Only a node another branch can outrank keeps the lock."""
+def test_a_statementless_complete_source_is_locked_while_its_holders_work(lab):
+    """PR 37 re-audits: nothing outranks a complete source on a node with no elaborated Lean
+    statement (a definition). Locked for good, an unrelated first file held the node once
+    its publisher and author had gone; unlocked, any branch could swap a real definition
+    for junk at will, staling every importer. So it answers only to its publisher and the
+    node's author while either branch has a live task, and to anyone once both ended."""
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     gamma = third_branch(service, author, exp)
     node = service.create_node(
         exp["id"], NodeCreate(node_type="definition", title="D", statement="D."), alpha, "d"
     )
-    junk = "theorem unrelated : True := trivial\n"
-    assert publish(service, node["id"], beta, "complete", "junk", junk)["recorded"] is True
+
+    def task(agent, key):
+        return service.create_task(
+            TaskCreate(branch_id=agent.branch_id, objective="Work"), author, key
+        )
+
+    publisher = task(beta, "beta-task")
     real = "import Mathlib\nnoncomputable def D : ℝ := 1\n"
-    replaced = publish(service, node["id"], gamma, "complete", "real", real)
+    assert publish(service, node["id"], beta, "complete", "real", real)["recorded"] is True
+    junk = "theorem unrelated : True := trivial\n"
+    swap = publish(service, node["id"], gamma, "complete", "junk-1", junk)
+    assert (swap["recorded"], swap["reason"], swap["rank"]) == (False, "lower_rank", "complete")
+    # The author's live branch alone holds it too.
+    written = task(alpha, "alpha-task")
+    plant(service, publisher["id"], status="completed")
+    assert publish(service, node["id"], gamma, "complete", "junk-2", junk)["recorded"] is False
+    # Once both have ended, another branch replaces it at its rank; a lower rank cannot.
+    plant(service, written["id"], status="failed")
+    replaced = publish(service, node["id"], gamma, "complete", "junk-3", junk)
     assert (replaced["recorded"], replaced["replaced"]) == (True, True)
     assert publish(service, node["id"], beta, "partial", "lower")["reason"] == "lower_rank"
 

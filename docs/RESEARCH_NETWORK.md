@@ -312,10 +312,10 @@ tools, the prompts and the delivery shapes.
     nodes' sources may import it and go stale when it is replaced, so no other branch can
     churn equal-rank sources under them (it can outrank a complete one with a verified
     source). Nothing outranks a complete source of a node with no elaborated statement (a
-    definition, say), so there any branch replaces it at its rank: a lock would let the
-    first file, however unrelated, hold the node for good once its publisher and author
-    were gone. The trade-off is churn: each such replacement stales the importers' sources
-    until they republish.
+    definition, say): it answers only to its publisher and the node's author while either
+    branch is live (has a task that is not completed, failed or blocked), so no other
+    branch can swap a real definition for junk and stale its importers, and to any branch
+    once both have ended, so no first file, however unrelated, holds the node for good.
   - Publishing claims the node: a check renews the branch's live claim, and only a
     publication claims afresh (on the branch's prior route), so a refused check never
     re-creates a lapsed or released claim. The source's imports become `depends_on` edges
