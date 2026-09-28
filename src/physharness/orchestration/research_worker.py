@@ -1893,8 +1893,10 @@ class ResearchTaskExecutor:
                 runtime_kwargs["stagnation_state"] = (
                     ready.get("stagnation_state", {}) if ready else task.get("stagnation_state")
                 )
-            if ("update_source" in parameters and "update_ack" in parameters) or any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+            # A referee follows no thread and no other branch messages it: nothing is pushed.
+            if not referee and (
+                ("update_source" in parameters and "update_ack" in parameters)
+                or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
             ):
                 update_source, update_ack = discussion_delivery_hooks(
                     self.service,
@@ -1902,8 +1904,7 @@ class ResearchTaskExecutor:
                     task_id,
                     holder,
                     lease["fence"],
-                    # Referees keep the fenced JSON envelope.
-                    render=compact_update_lines if society and not referee else None,
+                    render=compact_update_lines if society else None,
                 )
                 runtime_kwargs["update_source"] = update_source
                 runtime_kwargs["update_ack"] = update_ack

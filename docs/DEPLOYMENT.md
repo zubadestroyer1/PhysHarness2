@@ -81,6 +81,9 @@ remain unavailable. Starting the worker is not evidence of accepted research or 
 Without `PHYSHARNESS_DATABASE_URL`, a process uses the SQLite file `.state/harness.db`. SQLite
 databases open in WAL mode with `synchronous=FULL`, so keep the file on a local filesystem and
 back it up as `docs/OPERATIONS.md` describes, never by copying `harness.db` alone.
+A database that `phys init` made (never stamped by Alembic) gains any table added since,
+such as `library_notes`, when the API, a worker or a CLI command next starts. A SQLite
+database managed by Alembic is left alone: run `alembic upgrade head` on it.
 
 ## Managed AWS control plane
 

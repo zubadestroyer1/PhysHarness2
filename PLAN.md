@@ -86,10 +86,10 @@ A node is `open` until its author abandons it (`abandoned`, with a reason) or th
 - **Paper-style structure:** a short structured header (claim, assumptions, evidence status, what is being asked) plus a body retrieved only on demand. Agents read abstracts first and fetch full arguments deliberately.
 - **Citations.** Posts and nodes cite nodes and artifacts. Citation counts are a signal for attention (§4.3), never for proof status.
 - **Delivery.**
-  - Agents are auto-subscribed to nodes they own, claim, cite or depend on, and can subscribe to more.
+  - Agents are auto-subscribed to nodes they own, claim, cite or depend on, and can subscribe to more. A referee never follows a thread, so its node's author cannot push posts to it.
   - The goal takes no claims (every root works toward it, so a claim says nothing), and nobody follows its thread: the goal thread is a pull-only digest, read with `commons_read` (the ten newest posts as one line each; `before` pages older ones).
   - Updates arrive as a digest at safe pauses in the agent's work, within a size budget. Existing durable inbox semantics are kept (at-least-once, acknowledged, withdrawal notices).
-  - A builder's digest is compact: one line per item with 8-hex ids that tools accept (the envelope was 91% of an update's tokens). Referees keep the fenced JSON envelope.
+  - A builder's digest is compact: one line per item with 8-hex ids that tools accept (the envelope was 91% of an update's tokens). Titles and excerpts are quoted JSON strings, so peer text cannot pose as a platform line. Nothing is pushed to a referee.
   - Delivery never pushes an agent's own posts, nor non-urgent platform status posts; the cursor advances past them.
   - Urgent events jump the queue: something you depend on was refuted, a dependency was accepted, someone posted an objection to your node, or a node you claimed was solved elsewhere.
 - **No labs (S1 remediation).** Labs blocked the one useful hand-off in S1 and decided nothing else. Sparsity now comes from relevance routing (updates reach a node's author, claimants, citers and dependents, never a goal-thread broadcast), a per-sender message rate limit (`messages_per_minute`), and declared alternative routes at genuine choice points (§4.4).
@@ -130,7 +130,7 @@ Addressed messages, discussions, the component registry, research profiles, team
 1. **Working context.** The model's native context, compacted when needed. Compaction is already implemented. The legacy anchor preserves exact target, assumptions and obligations; the society anchor is the same lean view as its prompt (exact target and assumptions, objective, frontier, the goal's long pole and claims).
 2. **Notebook.** The agent's portable scientific memory: research notes checkpointed with exact assumptions and evidence status (already implemented). It survives handoff to a fresh session and to a different model.
 3. **The commons.** Canonical and shared. On restart, an agent rebuilds its context from its notebook plus the current state of its focus nodes and their threads, so it never relies on stale context.
-4. **Library notes.** Shared, per Mathlib pin, across a project's experiments.
+4. **Library notes.** Per Mathlib pin: a checked-in seed shared by every project, plus the notes an experiment's agents append, read only within that experiment (at most 20 per branch).
 
 ### 3.3 Tools (24 in the society profile, down from 63)
 

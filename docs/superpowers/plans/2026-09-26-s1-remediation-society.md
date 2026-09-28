@@ -10,6 +10,14 @@
 
 **Spec:** `work/society-s1/audit-2026-09-26/AUDIT.md` (merged in #33), with its reports `society.md`, `scaffolding.md`, `proofpath.md` and `tools.md` in the same directory. The binding rulings are summarised in this plan's Global Constraints.
 
+> **Merge audit (2026-09-27).** Fixes from the society PR's final review:
+> - Nothing is pushed to a referee: no auto-subscription (citing its own node included) and no self-subscription (`REFEREE_ISOLATED`) reaches a referee branch, and a referee's worker gets no update source.
+> - A compact update line renders its excerpt, like its node title, as a quoted JSON string, so a peer cannot forge a platform-looking segment inside its own line.
+> - `commons_read`'s thread digest quotes each post's text, and the platform's note for an author's abandonment names the author and quotes its reason.
+> - Library notes an agent appends are read only within its experiment (migration `0004`'s index now leads with `experiment_id`); the checked-in seed stays shared. A branch appends at most 20 notes and an experiment holds at most 200; `find_declaration` surfaces a note only when it shares two of the query's words; the `library_notes` read result carries `notes_are`.
+> - The library-note seed keeps only facts about the Mathlib pin, with no S1 search history (arm counts, failed uses), and `work/society-s1/RUN_PLAN.md` records that only society agents read library notes.
+> - A SQLite database that `phys init` made before migration `0004` gains the `library_notes` table at the next start (`Database.complete_development_schema`, from `build_service`); Alembic-managed and PostgreSQL databases keep to their migrations.
+
 ## Global Constraints
 
 - **G1.** Society changes REPLACE the S1 society behaviour; there is no dual "S1 vs lean" mode. Legacy experiments stay byte-identical: `test_legacy_catalog_unchanged`, `test_worker_legacy_prompt_unchanged` (`tests/test_society_tools.py`) and `test_legacy_discussion_delivery_shape_unchanged` (`tests/test_commons_discourse.py`) must pass unmodified after every task. The A/B baseline is the recorded S-r2 run, or `d9a9179` run from a separate worktree.

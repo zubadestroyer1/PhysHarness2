@@ -6,6 +6,7 @@ import json
 from sqlalchemy import and_, func, or_, select
 
 from .commons import PLATFORM
+from .commons_review import is_referee_branch
 from .discussion_models import DiscussionCreate, DiscussionPostCreate
 from .domain import Principal, new_id, utcnow
 from .errors import HarnessError
@@ -595,8 +596,17 @@ class DiscussionMixin:
         """Set one reader's topic subscription under that reader's lock.
 
         ``branch_id`` names a branch reader (``branch:<id>``); None is the actor's own reader.
-        Raises SUBSCRIPTION_LIMIT rather than exceed 100 active subscriptions.
+        Raises SUBSCRIPTION_LIMIT rather than exceed 100 active subscriptions, and
+        REFEREE_ISOLATED rather than subscribe a referee branch, which its node's author could
+        otherwise push posts to.
         """
+        if subscribed and is_referee_branch(session, branch_id or actor.branch_id):
+            raise HarnessError(
+                "REFEREE_ISOLATED",
+                "A referee branch follows no discussion thread.",
+                status=403,
+                remediation="Read the assigned node's thread with commons_read.",
+            )
         experiment_id = topic_row.payload["experiment_id"]
         reader_key = (
             f"branch:{branch_id}"

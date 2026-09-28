@@ -104,6 +104,14 @@ def is_referee_task(task):
     return isinstance(task.get("review_assignment"), dict)
 
 
+def is_referee_branch(session, branch_id):
+    """Whether ``branch_id`` names a platform referee branch."""
+    branch = session.get(RecordRow, branch_id) if branch_id else None
+    return (
+        branch is not None and branch.kind == "branch" and branch.payload.get("hat") == REFEREE_HAT
+    )
+
+
 def statement_digest(node):
     """Digest of what an informal referee judges: the statement and its assumptions."""
     return digest_json({"statement": node["statement"], "assumptions": node["assumptions"]})

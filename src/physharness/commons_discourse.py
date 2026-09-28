@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from .commons import MAX_PAGE, PLATFORM, _platform
 from .commons_models import NodePostCreate, is_open
+from .commons_review import is_referee_branch
 from .domain import utcnow
 from .errors import HarnessError
 from .storage import RecordRow, record_json_text
@@ -65,32 +66,38 @@ def _one_line(text):
     return " ".join(str(text or "").split())
 
 
+def _quoted(text, limit=None):
+    """Agent text as one JSON string on one line. ``_one_line`` folds every line break,
+    U+0085, U+2028 and U+2029 included (``str.split`` counts them as whitespace), and JSON
+    escapes quotes and control characters, so the text cannot end the string or its line."""
+    return json.dumps(_one_line(text)[:limit], ensure_ascii=False)
+
+
 def compact_update_lines(items):
     """One line per delivered item with 8-hex ids (S1 audit #13: 91% of an update's tokens
     were envelope).
 
-    Only the platform writes a line's urgent mark, kind and attribution. Peer text is
-    collapsed to one line, the node title is a quoted JSON string, and an excerpt's leading
-    ``!`` or ``[`` is escaped, so no title or excerpt can forge a platform or urgent line.
+    Only the platform writes a line's urgent mark, kind and attribution. The node title and
+    the excerpt are quoted JSON strings, so no title or excerpt can forge a platform or
+    urgent line, nor a platform-looking segment inside its own line. A withdrawal's text
+    is the platform's notice.
     """
     lines = [COMPACT_HEADER]
     for item in items:
+        if item.get("source_kind") == "withdrawal":
+            lines.append(f"[withdrawn] {_one_line(item.get('excerpt'))}")
+            continue
         excerpt = _one_line(item.get("excerpt"))
-        if len(excerpt) > LINE_EXCERPT or item.get("truncated"):
-            excerpt = excerpt[:LINE_EXCERPT].rstrip() + "…"
-        if excerpt.startswith(("!", "[")):
-            excerpt = "\\" + excerpt
+        more = len(excerpt) > LINE_EXCERPT or item.get("truncated")
+        excerpt = _quoted(excerpt[:LINE_EXCERPT].rstrip()) + ("…" if more else "")
         who = (item.get("branch_id") or "platform")[:8]
         if item.get("source_kind") == "message":
             lines.append(f"[message] from {who}: {excerpt} (message_id {item['id'][:8]})")
-        elif item.get("source_kind") == "withdrawal":
-            lines.append(f"[withdrawn] {excerpt}")
         else:
             mark = "! " if item.get("urgent") else ""
             where = ""
             if item.get("node_id"):
-                title = json.dumps(_one_line(item.get("node_title"))[:80], ensure_ascii=False)
-                where = f" on {item['node_id'][:8]} {title}"
+                where = f" on {item['node_id'][:8]} {_quoted(item.get('node_title'), 80)}"
             lines.append(
                 f"{mark}[{item['post_kind']}]{where} from {who}: {excerpt} "
                 f"(post_id {item['id'][:8]})"
@@ -409,9 +416,10 @@ class CommonsDiscourseMixin:
         Never pushes the reader past its 100-subscription cap. At the cap it frees one slot
         (see ``_release_evictable_thread``); failing that it returns False instead of
         raising, so the reader's inbox keeps working. Another branch's reader is written by
-        the platform.
+        the platform. A referee branch is never subscribed: its node's author posts on the
+        thread, and nothing the author writes may be pushed to its referee.
         """
-        if not topic_id or not branch_id:
+        if not topic_id or not branch_id or is_referee_branch(session, branch_id):
             return False
         topic = session.get(RecordRow, topic_id)
         if topic is None or topic.kind != "discussion_topic":
@@ -571,12 +579,21 @@ class CommonsDiscourseMixin:
         return self._execute(actor, key, "commons.node_post", {"node_id": node_id, **data}, apply)
 
     def _post_status_update(self, session, row, old, new, op):
-        """Announce a ladder move on the node thread; subscribers get it as a delivery."""
+        """Announce a ladder move on the node thread; subscribers get it as a delivery.
+
+        An author's abandonment reason is agent text inside a platform note, so the note
+        names the author and quotes the reason, like a route.
+        """
         topic = session.get(RecordRow, row.payload.get("topic_id") or "")
         if topic is None or topic.kind != "discussion_topic":
             return
         reason = row.payload["status_reason"]
-        abstract = f"Status {old} → {new}: {reason}"[:600]
+        if (row.payload.get("status_evidence") or {}).get("abandoned_by"):
+            author = row.payload.get("branch_id")
+            by = f" by its author {author[:8]}" if author else " by its author"
+            abstract = f"Status {old} → {new}{by}: {_quoted(reason, 400)}"[:600]
+        else:
+            abstract = f"Status {old} → {new}: {reason}"[:600]
         self._insert_post(
             session,
             op,
@@ -607,7 +624,7 @@ class CommonsDiscourseMixin:
         if topic is None or topic.kind != "discussion_topic":
             return
         by = f" by {branch_id[:8]}" if branch_id else ""
-        quoted = json.dumps(_one_line(route), ensure_ascii=False) if route else None
+        quoted = _quoted(route) if route else None
         abstract = (
             f"Node {row.id[:8]} compiled{by}"
             + (f" (route: {quoted})" if quoted else "")

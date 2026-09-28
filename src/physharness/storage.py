@@ -13,11 +13,13 @@ from sqlalchemy import (
     String,
     create_engine,
     event,
+    inspect,
     literal,
     text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
+from sqlalchemy.schema import CreateIndex, CreateTable
 
 
 class Base(DeclarativeBase):
@@ -180,8 +182,8 @@ class EdgeRow(Base):
 
 
 class LibraryNoteRow(Base):
-    """Agent-written facts about one pinned Lean/Mathlib environment, shared by a project's
-    experiments (S1 audit #24): the one table the S1 remediation adds."""
+    """Agent-written facts about one pinned Lean/Mathlib environment, read within the
+    experiment that wrote them (S1 audit #24): the one table the S1 remediation adds."""
 
     __tablename__ = "library_notes"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -193,7 +195,11 @@ class LibraryNoteRow(Base):
     created_at: Mapped[str] = mapped_column(String(40))
     __table_args__ = (
         Index(
-            "library_notes_project_environment", "project_id", "environment_digest", "created_at"
+            "library_notes_experiment_environment",
+            "project_id",
+            "experiment_id",
+            "environment_digest",
+            "created_at",
         ),
     )
 
@@ -223,6 +229,28 @@ class Database:
     def create_schema(self) -> None:
         """Development/bootstrap only; deployed installations use Alembic migrations."""
         Base.metadata.create_all(self.engine)
+
+    def complete_development_schema(self) -> list[str]:
+        """Create the tables a ``phys init`` database lacks because they were added after
+        it was made, and return their names.
+
+        Only a SQLite database that ``phys init`` made is touched: it holds the canonical
+        tables and no Alembic version. PostgreSQL and Alembic-managed databases keep to their
+        migrations, since a table created here would break ``alembic upgrade``. ``IF NOT
+        EXISTS`` lets processes that start together race safely.
+        """
+        if self.engine.dialect.name != "sqlite":
+            return []
+        present = set(inspect(self.engine).get_table_names())
+        if "alembic_version" in present or RecordRow.__tablename__ not in present:
+            return []
+        missing = [table for table in Base.metadata.sorted_tables if table.name not in present]
+        with self.engine.begin() as connection:
+            for table in missing:
+                connection.execute(CreateTable(table, if_not_exists=True))
+                for index in table.indexes:
+                    connection.execute(CreateIndex(index, if_not_exists=True))
+        return [table.name for table in missing]
 
     @contextmanager
     def transaction(self) -> Iterator[Session]:
