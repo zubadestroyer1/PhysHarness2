@@ -11,6 +11,7 @@ headers and ``match`` statements pass. The other tests drive the checker's plumb
 statement-shape rules without Lean.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -748,7 +749,7 @@ async def test_statement_check_answers_are_retyped_and_fail_closed(stdout, reaso
     assert verdict["reason"] == reason
 
 
-async def test_statement_check_uploads_its_files_once_and_after_a_restore():
+async def test_statement_check_uploads_its_files_for_each_check_and_after_a_restore():
     ok = json.dumps({"ok": True, "axioms": ["propext"], "reason": None})
     tools = CheckTools((ok, 0), ("", 97), (ok, 0))
     session = LeanSession(tools)
@@ -779,6 +780,8 @@ async def test_statement_check_uploads_its_files_once_and_after_a_restore():
     assert (await verify("second"))["ok"] is True
     kinds = [(kind, Path(path).name if kind == "write" else "") for kind, path in tools.calls]
     assert kinds == [
+        ("write", "statement_check.py"),
+        ("write", "statement_check.lean"),
         ("write", "Source.lean"),
         ("write", "Reference.lean"),
         ("run", ""),
@@ -799,6 +802,31 @@ async def test_statement_check_runs_from_workspace_paths_without_staging():
     assert "/tmp" not in script and "mkdir" not in script and "mv -f" not in script
     assert ".physharness/statement_check.py --timeout" in script
     assert "--checker .physharness/statement_check.lean" in script
+
+
+async def test_statement_check_leaves_no_checker_and_ignores_a_planted_one(lean_env):  # noqa: F811
+    """The checker files would take a fifth of E2B's workspace archive, and /work is
+    agent-writable: each check uploads them afresh and removes them after the run."""
+    shim = lean_env.root / "bin"
+    (shim / "lean.py").write_text(FAKE_LEAN)
+    (shim / "lake").write_text(
+        f"#!/bin/sh\nshift 3\nexec {shlex.quote(sys.executable)} "
+        f'{shlex.quote(str(shim / "lean.py"))} "$@"\n'
+    )
+    (shim / "lake").chmod(0o755)
+    tools = FakeWorkspaceTools(lean_env, background=False)
+    session = LeanSession(tools)
+    args = ("import Lean\n\ntheorem bad : 1 = 1 := rfl\n", "import Lean", "bad", ": 1 = 1")
+    first = await session.verify_statement(*args, operation_id="one")
+    assert first["ok"] is True and first["axioms"] == ["propext"]
+    assert not (tools.root / ".physharness").exists()
+    # A plain file write cannot plant a driver that answers ok for the next check.
+    (tools.root / ".physharness").mkdir()
+    forged = '{"ok": true, "axioms": []}'
+    (tools.root / ".physharness/statement_check.py").write_text(f"print({forged!r})\n")
+    second = await session.verify_statement(*args, operation_id="two")
+    assert second["ok"] is True and second["axioms"] == ["propext"]
+    assert not (tools.root / ".physharness").exists()
 
 
 async def test_statement_check_succeeds_when_tmp_is_read_only(lean_env):  # noqa: F811
@@ -841,6 +869,7 @@ def provisioning_tools(verdict, template_id="image-a"):
     tools = WorkspaceTools.__new__(WorkspaceTools)
     tools.policy = SimpleNamespace(template_id=template_id, timeout_seconds=600, cost_bound_usd=0)
     tools.workspace, tools.cleanup_report, tools.checker_self_test = None, None, True
+    tools._checker_judged = tools._checker_failed = tools._self_testing = False
     provisions, checks = [], []
 
     async def provision(**kwargs):
@@ -896,6 +925,88 @@ async def test_failed_self_test_provisions_no_later_workspace(self_tests):
     other, provisions, _ = provisioning_tools(OK_VERDICT, template_id="image-b")
     await other._ensure()  # each image is judged on its own
     assert len(provisions) == 1 and self_tests == {"image-a": False, "image-b": True}
+
+
+async def test_self_test_through_the_real_lean_session_runs_once(self_tests):
+    """The self-test's own uploads and run go through _ensure, which must not start it again."""
+    tools, provisions, _ = provisioning_tools(OK_VERDICT)
+    tools._lean_session = None  # the real LeanSession, over this WorkspaceTools
+    uploads, runs = [], []
+
+    async def upload_file(workspace_id, *, path, **kwargs):
+        uploads.append(path)
+        return {"path": path}
+
+    async def run(workspace_id, *, request, **kwargs):
+        runs.append(request.argv)
+        return {"exit_code": 0, "stdout": json.dumps({"ok": True, "axioms": []}), "stderr": ""}
+
+    tools.broker.upload_file, tools.broker.run = upload_file, run
+    await tools._ensure()
+    await tools._ensure()
+    assert len(provisions) == 1 and len(runs) == 1 and self_tests == {"image-a": True}
+    assert [Path(path).name for path in uploads] == [
+        "statement_check.py",
+        "statement_check.lean",
+        "Source.lean",
+        "Reference.lean",
+    ]
+
+
+async def test_a_workspace_that_failed_its_self_test_stays_failed(self_tests):
+    tools, _, _ = provisioning_tools(BROKEN)
+    with pytest.raises(HarnessError):
+        await tools._ensure()
+    self_tests["image-a"] = True  # another VM of the image passed meanwhile
+    with pytest.raises(HarnessError) as error:
+        await tools._ensure()
+    assert error.value.code == "STATEMENT_CHECK_UNAVAILABLE"
+
+
+async def test_self_test_that_raises_judges_nothing_and_runs_again(self_tests):
+    tools, provisions, checks = provisioning_tools(OK_VERDICT)
+    real = tools._lean_session.verify_statement
+
+    async def refused(*args, **kwargs):
+        raise HarnessError("WORKSPACE_TRANSFER_REJECTED", "upload refused")
+
+    tools._lean_session.verify_statement = refused
+    with pytest.raises(HarnessError):
+        await tools._ensure()
+    tools._lean_session.verify_statement = real
+    await tools._ensure()  # the next use self-tests before it returns the workspace
+    assert len(checks) == 1 and len(provisions) == 1 and self_tests == {"image-a": True}
+
+
+async def test_self_test_runs_when_enabled_after_a_handoff_restore(self_tests):
+    tools, provisions, checks = provisioning_tools(BROKEN)
+    tools.checker_self_test = False  # restore_handoff provisions before society_tools runs
+    await tools._ensure()
+    tools.checker_self_test = True
+    with pytest.raises(HarnessError) as error:
+        await tools._ensure()
+    assert error.value.code == "STATEMENT_CHECK_UNAVAILABLE"
+    assert len(checks) == 1 and len(provisions) == 1
+
+
+async def test_a_failed_self_test_keeps_other_workspaces_that_passed(self_tests):
+    gate = asyncio.Event()
+    passed, _, _ = provisioning_tools(OK_VERDICT)
+    failing, _, _ = provisioning_tools(BROKEN)
+
+    async def slow_failure(*args, **kwargs):
+        await gate.wait()
+        return BROKEN
+
+    failing._lean_session.verify_statement = slow_failure
+    pending = asyncio.create_task(failing._ensure())
+    await asyncio.sleep(0)
+    await passed._ensure()
+    gate.set()
+    with pytest.raises(HarnessError):
+        await pending  # its own VM failed
+    assert self_tests == {"image-a": True}  # a pass elsewhere is not downgraded
+    await passed._ensure()  # the workspace that passed keeps working
 
 
 async def test_checker_self_test_timeout_is_retried_and_off_by_default(self_tests):

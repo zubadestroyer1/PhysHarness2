@@ -184,8 +184,8 @@ tools, the prompts and the delivery shapes.
     Only `propext`, `Classical.choice` and `Quot.sound` count. A publication must name
     the node's current statement, whoever calls it. Every backend (REPL daemon, inline
     REPL, one-shot) runs the same check, and a check that cannot run leaves the source
-    `partial`. A society task self-tests it once per process and image when it
-    first provisions a workspace, and a failed self-test stops the task with
+    `partial`. A society task self-tests it once per process and image before it first
+    uses a workspace, and a failed self-test stops the task with
     `STATEMENT_CHECK_UNAVAILABLE`.
   - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
     compiling the file there runs the file's compile-time code (`#eval`, `run_cmd`, and

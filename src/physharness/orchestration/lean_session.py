@@ -68,8 +68,8 @@ MAX_NAME = 200
 # The daemon answers this long before the provider's own timeout, which quarantines the VM.
 RUN_MARGIN_SECONDS = 30
 # The local-compile statement check: a stdlib driver and a Lean checker, uploaded to
-# .physharness/ in the workspace and run from there (the workbench root, /tmp included,
-# is read-only).
+# .physharness/ in the workspace for each check, run from there (the workbench root, /tmp
+# included, is read-only) and removed afterwards.
 CHECK_FILES = ("statement_check.py", "statement_check.lean")
 CHECK_TIMEOUT_SECONDS = 240
 CHECK_BACKEND = "lean_statement_check"
@@ -797,7 +797,6 @@ class LeanSession:
         self._backend = None
         self._repl = None
         self._note = None
-        self._checker_placed = False
 
     async def check(
         self, source: str, *, automate: bool, operation_id: str, timeout: float = 120
@@ -1009,8 +1008,9 @@ class LeanSession:
             return _verdict("statement_check_too_large")
         digest = hashlib.sha256(f"{operation_id}\n{source}\n{reference}".encode()).hexdigest()
         workdir = f".physharness/check-{digest}"
-        if not self._checker_placed:
-            await self._upload_checker(f"{operation_id}:check-upload")
+        # Uploaded for every check and removed after it: /work is agent-writable, and the
+        # files would otherwise take a fifth of E2B's workspace archive.
+        await self._upload_checker(f"{operation_id}:check-upload")
         for label, text in (("Source", source), ("Reference", reference)):
             await self._tools.write(
                 {"path": f"{workdir}/{label}.lean", "content": text},
@@ -1020,12 +1020,13 @@ class LeanSession:
         uploaded = [f".physharness/{file}" for file in CHECK_FILES]
         argv = [*GUEST_PYTHON, uploaded[0], "--timeout", f"{check_timeout:g}"]
         argv += ["--cwd", LAKE_PROJECT, "--checker", uploaded[1], workdir, name]
+        tidy = f"rm -f {shlex.join(uploaded)}; rmdir .physharness 2>/dev/null"
         for attempt in range(2):
-            tidy = f"rm -rf {workdir}; " if attempt else ""  # the driver removes it otherwise
+            drop = f"rm -rf {workdir}; " if attempt else ""  # the driver removes it otherwise
             script = (
                 f"if ! {{ test -f {uploaded[0]} && test -f {uploaded[1]}; }}; then "
-                f"{tidy}rmdir .physharness 2>/dev/null; exit {_DAEMON_MISSING}; fi; "
-                f"{shlex.join(argv)}"
+                f"{drop}{tidy}; exit {_DAEMON_MISSING}; fi; "
+                f"{shlex.join(argv)}; status=$?; {tidy}; exit $status"
             )
             result = await self._tools.run(
                 {"argv": ["sh", "-c", script], "cwd": ".", "timeout_seconds": run_timeout},
@@ -1048,7 +1049,6 @@ class LeanSession:
             await self._tools.write(
                 {"path": f".physharness/{file}", "content": content}, f"{operation_id}:{file}"
             )
-        self._checker_placed = True
 
     async def _check(self, source, automate, extract, operation_id, timeout):
         try:

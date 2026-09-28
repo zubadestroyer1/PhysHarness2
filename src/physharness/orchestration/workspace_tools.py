@@ -145,6 +145,9 @@ class WorkspaceTools:
     def __init__(self, broker, policy: WorkspacePolicy):
         self.broker, self.policy, self.workspace = broker, policy, None
         self._lean_session = None
+        self._checker_judged = False  # this workspace's self-test passed, or timed out
+        self._checker_failed = False  # this workspace's own self-test failed
+        self._self_testing = False  # the self-test's own writes and runs come through _ensure
         # Set by close(): the VM's resulting status and any final checkpoint or refusal.
         self.cleanup_report: dict | None = None
         task = broker.service.get_record("task", broker.task_id, broker.actor)
@@ -157,38 +160,53 @@ class WorkspaceTools:
             )
 
     async def _ensure(self):
-        if self.checker_self_test and _CHECKER_SELF_TESTS.get(self.policy.template_id) is False:
-            # The image's checker already failed: provision no VM whose compiles can't be judged.
-            raise _checker_unavailable(self.policy.template_id)
         if self.workspace is None:
+            if self.checker_self_test and _CHECKER_SELF_TESTS.get(self.policy.template_id) is False:
+                # The image's checker already failed: provision no VM whose compiles can't be
+                # judged.
+                raise _checker_unavailable(self.policy.template_id)
             self.workspace = await self.broker.provision(
                 cost_bound_usd=str(self.policy.cost_bound_usd),
                 operation_id=f"workspace:{self.broker.task_id}:{self.broker.holder}",
             )
-            if self.checker_self_test:
-                await self._self_test_checker()
+        # Checked on every use, not only at provision: the flag can be set after a handoff
+        # restore provisioned the VM, and a self-test that raised has judged nothing.
+        if self.checker_self_test and not self._checker_judged and not self._self_testing:
+            await self._self_test_checker()
         return self.workspace
 
     async def _self_test_checker(self):
         image = self.policy.template_id
-        passed = _CHECKER_SELF_TESTS.get(image)
+        # A pass on another VM of this image never clears this workspace's own failure.
+        passed = False if self._checker_failed else _CHECKER_SELF_TESTS.get(image)
         if passed is None:
             source, header, name, signature = CHECKER_SELF_TEST
             operation = f"checker-self-test:{self.broker.task_id}:{self.broker.holder}"
-            verdict = await self.lean_session().verify_statement(
-                source, header, name, signature, operation_id=operation
-            )
+            self._self_testing = True
+            try:
+                verdict = await self.lean_session().verify_statement(
+                    source, header, name, signature, operation_id=operation
+                )
+            finally:
+                self._self_testing = False
             if verdict.get("reason") == "check_timeout":
                 log.warning("statement_check_self_test_timeout", extra={"operation_id": operation})
+                self._checker_judged = True
                 return  # judged nothing; the next provision tries again
-            passed = _CHECKER_SELF_TESTS[image] = verdict.get("ok") is True
-            if not passed:
+            passed = verdict.get("ok") is True
+            if passed:
+                _CHECKER_SELF_TESTS[image] = True
+            else:
+                # A pass on another VM of this image stands: only this workspace fails.
+                self._checker_failed = True
+                _CHECKER_SELF_TESTS.setdefault(image, False)
                 log.error(
                     "statement_check_self_test_failed",
                     extra={"operation_id": operation, "error_code": "STATEMENT_CHECK_UNAVAILABLE"},
                 )
         if not passed:
             raise _checker_unavailable(image)
+        self._checker_judged = True
 
     async def run(self, arguments, operation_id):
         workspace = await self._ensure()
