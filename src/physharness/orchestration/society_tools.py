@@ -50,6 +50,7 @@ from ..commons_sources import (
     COMPLETE_RANKS,
     SOURCE_STATES,
     blocking_rank,
+    gate_remedy,
     node_module,
     node_refusal,
     refused_command,
@@ -495,10 +496,12 @@ def _checked_refusal(source, node, expansion, result):
 
 
 def _refused(module, reason, source):
-    """A refused publication; a refused command is named (``refused_command``)."""
+    """A refused publication; a refused command is named (``refused_command``), with what
+    to write instead."""
     refused = {"recorded": False, "module": module, "reason": reason}
     if reason == "refused_command":
         refused["command"] = refused_command(source)
+        refused["remediation"] = gate_remedy(refused["command"])
     return refused
 
 
@@ -1305,10 +1308,10 @@ def society_tools(
                 "that could not judge, named in statement_check: check again); a higher "
                 "rank replaces a lower one, and publishing claims the node. A complete check "
                 "runs the platform's statement check. A published module runs no code where "
-                "it is imported: no #-command but #check, #print, #reduce or #synth, no "
-                "run_cmd, elab, macro, syntax, initialize, unsafe or code attribute, notation "
-                "only as local notation, set_option only as in a lean_header, and no Lean or "
-                "IO names. The file "
+                "it is imported: no #eval-like command (#check, #print and terms such as #s "
+                "are fine), no run_cmd, elab, macro, syntax, initialize, unsafe def or code "
+                "attribute, notation only as local notation, no trace.* option, and no name "
+                "rooted in Lean or IO; a refusal names the command and the workaround. The file "
                 "header must hold the node's lean_header lines, the file must have no variable "
                 "or #exit command, and "
                 "it must declare theorem <lean_name> <lean_statement> := ... once, outside "

@@ -30,7 +30,7 @@ from physharness.commons_review import (
     REFEREE_DATA_NOTE,
     fence_author_data,
 )
-from physharness.commons_sources import Expansion, Module, remap
+from physharness.commons_sources import Expansion, Module, gate_remedy, remap
 from physharness.domain import (
     ArtifactCreate,
     LiteraturePolicy,
@@ -2523,6 +2523,7 @@ async def test_lean_check_never_publishes_a_module_whose_code_would_run_in_impor
         "module": "Commons.N" + plain["id"][:8],
         "reason": "refused_command",
         "command": "run_cmd",
+        "remediation": gate_remedy("run_cmd"),
     }
     assert len(service.list_records("artifact", agent)) == before
     assert service.read_node(plain["id"], agent)["node"]["lean_source"] is None

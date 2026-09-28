@@ -59,11 +59,12 @@ _RUNS_CODE = frozenset(
     "declare_syntax_cat binder_predicate initialize builtin_initialize simproc dsimproc "
     "simproc_decl dsimproc_decl".split()
 )
+_REGISTERS = ("builtin_", "declare_", "register_")
 # `unsafe` only outside brackets, as a declaration modifier: inside them it is aesop's rule
 # phase (`aesop (add unsafe 50% apply foo)`, `@[aesop unsafe …]`).
 _OPEN_BRACKETS, _CLOSE_BRACKETS = "([{⟨⦃", ")]}⟩⦄"
-_REGISTERS = ("builtin_", "declare_", "register_")
-# Notation only as `local`, which ends with the section the inliner wraps the module in.
+# Notation only as `local`, which ends with the section the inliner wraps the module in;
+# global or `scoped` notation reaches the importer's own lines.
 _NOTATION = frozenset("notation notation3 infix infixl infixr prefix postfix".split())
 # Attributes (`@[…]`, `attribute […]`) that hand the elaborator code to run.
 _CODE_ATTRIBUTES = frozenset(
@@ -79,16 +80,52 @@ _CODE_ATTRIBUTE_SUFFIXES = (
     "_formatter",
     "_parenthesizer",
 )
-# The `#` commands that only report; `#eval` and the others run code or write files.
-_REPORTS = frozenset(("#check", "#check_failure", "#print", "#reduce", "#synth"))
-# A metaprogram or IO action is written with these namespaces' names, so a module that names
-# none defines no code for a tactic's configuration or an `evalConst` to run.
+# A denylist: the `#` commands that evaluate or run a term or another command (`#reduce`
+# for its cost), wherever they appear; any other `#ident` is a term, such as Mathlib's `#s`
+# for a finset's card. Lean reads the longest token, so `#evalx` is `#eval x`: a word that
+# starts with one of these is that command.
+_RUNS_TERMS = (
+    "#eval",
+    "#exit",
+    "#exec",
+    "#guard",
+    "#html",
+    "#widget",
+    "#test",
+    "#sample",
+    "#time",
+    "#count_heartbeats",
+    "#help",
+    "#find",
+    "#norm_num",
+    "#simp",
+    "#conv",
+    "#whnf",
+    "#reduce",
+    "#check_tactic",
+    "#check_simp",
+    "#lint",
+    "#list_linters",
+    "#leansearch",
+    "#loogle",
+    "#moogle",
+    "#min_imports",
+    "#unfold",
+)
+# Options a module may set besides a node header's: they only steer elaboration. `trace.*`
+# stays out: `trace.profiler.output` writes files.
+_MODULE_OPTIONS = (*HEADER_OPTIONS, "push_neg.use_distrib", "simprocs", "tactic.hygienic")
+_MODULE_OPTION_PREFIXES = (*HEADER_OPTION_PREFIXES, "backward.")
+# A metaprogram or IO action is written with names rooted in these namespaces, so a module
+# that names none defines no code for a tactic's configuration or an `evalConst` to run (the
+# backstop behind the denylists).
 _META_NAMESPACES = frozenset(("Lean", "IO", "EIO", "BaseIO"))
 _WORD = rf"[{_ID_FIRST}][{_ID_REST}!?]*"
 _TOKEN = re.compile(rf"#{_WORD}|@\[|(?<![{_ID_REST}.!?]){_WORD}(?:\.{_WORD})*")
 _OPTION = re.compile(rf"\s+({_WORD}(?:\.{_WORD})*)")
 _BRACKET = re.compile(r"\s*\[")
 _LOCAL = re.compile(rf"(?<![{_ID_REST}.!?])local\s+$")
+_SCOPED = re.compile(rf"(?<![{_ID_REST}.!?])scoped(?:\s*\[[^\]]*\])?\s+$")
 _ESCAPED_META = re.compile("«(?:" + "|".join(sorted(_META_NAMESPACES)) + ")»")
 
 
@@ -353,17 +390,24 @@ def _bracketed(code, start):
     return None
 
 
+def _meta_root(name):
+    """Whether a dotted name is rooted in ``_META_NAMESPACES`` (``_root_.`` aside)."""
+    parts = name.split(".")
+    return parts[parts[0] == "_root_" and len(parts) > 1] in _META_NAMESPACES
+
+
 def refused_command(source):
     """The first command, attribute, option or name in ``source`` after its imports that no
     published module may hold, or None (PR 37 review): a command or modifier that runs code
     or extends syntax (``_RUNS_CODE``, ``_REGISTERS``, and ``unsafe`` outside brackets, where
-    it modifies a declaration), notation that is not ``local``, a
-    ``#`` command other than ``_REPORTS``, a code attribute, a ``set_option`` of an option a
-    node header may not set, or a name in ``_META_NAMESPACES``.
+    it modifies a declaration), notation that is not ``local`` (``scoped notation`` is named
+    so), a ``#`` command of ``_RUNS_TERMS``, a code attribute, a ``set_option`` outside the
+    module options, or a name rooted in ``_META_NAMESPACES``. ``gate_remedy`` says what to
+    write instead.
 
-    It reads ``lean_code``, so comments and literals count for nothing; a source too nested
-    to scan is refused. ``#v[`` (a vector literal) is no command; Mathlib's ``#s`` for a
-    finset's card is refused with the commands (write ``#(s)`` or ``s.card``).
+    These are denylists, so the last check is the backstop: no side effect is written
+    without a Lean or IO name. It reads ``lean_code``, so comments and literals count for
+    nothing; a source too nested to scan is refused.
     """
     body = "\n".join(split_imports(source)[2])
     code = lean_code(body)
@@ -372,7 +416,7 @@ def refused_command(source):
     for match in _TOKEN.finditer(code):
         word, end = match.group(), match.end()
         if word.startswith("#"):
-            if word not in _REPORTS and not (word == "#v" and code.startswith("[", end)):
+            if word.startswith(_RUNS_TERMS):
                 return word
         elif word in ("@[", "attribute"):
             bracket = _BRACKET.match(code, end) if word == "attribute" else None
@@ -391,22 +435,57 @@ def refused_command(source):
         elif word == "set_option":
             option = _OPTION.match(code, end)
             name = option.group(1) if option else ""
-            if name not in HEADER_OPTIONS and not name.startswith(HEADER_OPTION_PREFIXES):
+            if name not in _MODULE_OPTIONS and not name.startswith(_MODULE_OPTION_PREFIXES):
                 return f"set_option {name}".rstrip()
         elif word in _NOTATION:
-            if not _LOCAL.search(code, max(0, match.start() - 64), match.start()):
+            before = max(0, match.start() - 64), match.start()
+            if _SCOPED.search(code, *before):
+                return f"scoped {word}"
+            if not _LOCAL.search(code, *before):
                 return word
         elif word == "unsafe":
             if _nesting(code, match.start()) <= 0:
                 return word
-        elif (
-            word in _RUNS_CODE
-            or word.startswith(_REGISTERS)
-            or not _META_NAMESPACES.isdisjoint(word.split("."))
-        ):
+        elif word in _RUNS_CODE or word.startswith(_REGISTERS) or _meta_root(word):
             return word
-    escaped = _ESCAPED_META.search(body)
-    return escaped.group() if escaped else None
+    for escaped in _ESCAPED_META.finditer(body):
+        prefix = body[: escaped.start()]
+        if not prefix.endswith(".") or prefix.endswith("_root_."):
+            return escaped.group()
+    return None
+
+
+def gate_remedy(command):
+    """What to write instead of a command ``refused_command`` named."""
+    if command.startswith("scoped ") or command in _NOTATION:
+        kind = command.removeprefix("scoped ")
+        return (
+            f"Write it as local {kind}: local notation ends with the module's section, so "
+            "no importer sees it; global and scoped notation reach the importer's own lines."
+        )
+    if command.startswith("set_option"):
+        return (
+            "Drop it: a module sets only the options a node header may, push_neg.use_distrib, "
+            "simprocs, tactic.hygienic and backward.*; trace.* options can write files."
+        )
+    if command.startswith("#"):
+        return (
+            f"Drop {command}: it evaluates or runs code wherever the module is imported. "
+            "#check, #print and #synth are fine, and so are terms such as a finset's #s."
+        )
+    if command.startswith(("@[", "attribute")):
+        return "Drop the attribute: it would hand every importer's elaborator code to run."
+    if command.startswith("("):
+        return "Simplify the nesting of its interpolated strings and syntax quotations."
+    if _meta_root(command.strip("«»")) or _ESCAPED_META.fullmatch(command):
+        return (
+            f"Drop {command}: a published module names nothing in the Lean, IO, EIO or BaseIO "
+            "namespaces, so it holds no metaprogram or IO action."
+        )
+    return (
+        f"Drop {command}: a published module runs no code and extends no syntax where it is "
+        "imported. Write tactics inline in the proof, and notation as local notation."
+    )
 
 
 def _refused_module(module, command):
@@ -415,15 +494,14 @@ def _refused_module(module, command):
         f"{module} holds {command}, which no published module may hold.",
         status=422,
         details={"module": module, "command": command},
-        remediation=_REPUBLISH,
+        remediation=f"Republish the module. {gate_remedy(command)} Or do not import it.",
     )
 
 
 _REPUBLISH = (
-    "Republish the module without #exit, without commands or attributes that run code or "
-    "extend syntax (only local notation, and set_option only for the options a node header "
-    "may set), and with every end matching a namespace or section it opened; or do not "
-    "import it."
+    "Republish the module without #exit and with every end matching a namespace or section "
+    "it opened (and with notation only local, no #eval-like command and no trace.* option); "
+    "or do not import it."
 )
 
 
@@ -710,7 +788,7 @@ class CommonsSourceMixin:
             if command is not None:
                 # Every importer would run it (the publication gate, whoever calls).
                 refused = {"recorded": False, "module": module, "reason": "refused_command"}
-                return {**refused, "command": command}
+                return {**refused, "command": command, "remediation": gate_remedy(command)}
             digest = _statement_digest(node)
             if digest is not None and record["lean_statement_sha256"] != digest:
                 return {"recorded": False, "module": module, "reason": "statement_changed"}

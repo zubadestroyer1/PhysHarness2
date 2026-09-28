@@ -15,6 +15,7 @@ from physharness.commons_sources import (
     MAX_COMMONS_MODULES,
     Expansion,
     Module,
+    gate_remedy,
     inline_commons,
     module_prefix,
     node_module,
@@ -751,7 +752,10 @@ REFUSED = {
     'run_cmd do\n  IO.FS.writeFile "/work/Checker.lean" ""\n': "run_cmd",
     'theorem a : True := trivial #eval IO.getEnv "HOME"\n': "#eval",
     "#guard 1 = 1\n": "#guard",
-    "theorem a (s : Finset Nat) : #s = s.card := rfl\n": "#s",
+    "#guard_msgs in\n#check 1\n": "#guard_msgs",
+    "#reduce (2 : Nat) ^ 64\n": "#reduce",
+    # Lean reads the longest token, so this is `#eval IO.getEnv "HOME"`.
+    '#evalIO.getEnv "HOME"\n': "#evalIO",
     "theorem a : True := by\n  run_tac pure ()\n": "run_tac",
     "example : True := by_elab do return default\n": "by_elab",
     'elab "x" : term => return default\n': "elab",
@@ -768,12 +772,15 @@ REFUSED = {
     '@[extern "c_fn"] opaque g : Nat\n': "@[extern]",
     "attribute [tactic foo] bar\n": "attribute [tactic]",
     'notation "⟪" x "⟫" => x + 1\n': "notation",
-    'scoped notation "⟪" x "⟫" => x + 1\n': "notation",
-    'scoped[Foo] infixl:65 " +++ " => Nat.add\n': "infixl",
+    'scoped notation "⟪" x "⟫" => x + 1\n': "scoped notation",
+    'scoped[Foo] infixl:65 " +++ " => Nat.add\n': "scoped infixl",
     'set_option trace.profiler.output "x" in\ntheorem a : True := trivial\n': (
         "set_option trace.profiler.output"
     ),
     "set_option debug.skipKernelTC true\n": "set_option debug.skipKernelTC",
+    "theorem t : True := by\n  set_option trace.Meta.Tactic.simp true in\n  trivial\n": (
+        "set_option trace.Meta.Tactic.simp"
+    ),
     "open Lean in\ntheorem a : True := trivial\n": "Lean",
     "def t := _root_.IO.FS.writeFile\n": "_root_.IO.FS.writeFile",
     "def t := «IO».FS.writeFile\n": "«IO»",
@@ -786,6 +793,13 @@ ALLOWED = (
     "set_option synthInstance.maxHeartbeats 100 in\nset_option linter.unusedVariables false\n",
     "attribute [local simp] Nat.add_comm\n@[simp, macro_inline, elab_as_elim] def g := 1\n",
     "#check Nat.add_comm\n#print axioms Nat.add_comm\ntheorem a : #v[1, 2].size = 2 := rfl\n",
+    # Mathlib's card notation is a term: only commands that evaluate are refused.
+    "open Finset in\ntheorem card_le (s : Finset ℕ) : #s ≤ #(s) := le_rfl\n",
+    "set_option push_neg.use_distrib true in\nset_option simprocs false in\n"
+    "set_option tactic.hygienic false in\nset_option backward.isDefEq.lazyWhnfCore false in\n"
+    "theorem t : True := trivial\n",
+    # Only a name rooted in a metaprogramming or IO namespace is refused.
+    "theorem Foo.IO : True := trivial\ndef EIOx : ℕ := 1\ntheorem h : Foo.IO := Foo.«IO»\n",
     '-- run_cmd, #eval\n/- macro_rules -/ theorem a : "run_cmd".length = 7 := rfl\n',
     "theorem x (init : Nat) : List.foldl (· + ·) init [] = init := rfl\n",
     "noncomputable section\nnamespace Foo\nopen Real\n"
@@ -813,6 +827,16 @@ def test_the_gate_refuses_unsafe_only_as_a_declaration_modifier():
         assert refused_command(f"import Mathlib\n{body}") == "unsafe", body
 
 
+def test_each_refusal_names_its_workaround():
+    """PR 37 re-audit: a refusal says what to write instead."""
+    assert "local notation" in gate_remedy("scoped notation")
+    assert "local infixl" in gate_remedy("infixl")
+    assert "Drop" in gate_remedy("set_option trace.Meta.Tactic.simp")
+    assert "trace.*" in gate_remedy("set_option trace.Meta.Tactic.simp")
+    assert "#s" in gate_remedy("#eval")
+    assert "IO" in gate_remedy("IO.println")
+
+
 def plant(service, node_id, **fields):
     """Write fields straight into a node's row, as a record from before the gate reads."""
     with service.db.transaction() as session:
@@ -835,6 +859,7 @@ def test_a_module_that_runs_code_is_neither_published_nor_inlined(lab):
         "module": node["lean_module"],
         "reason": "refused_command",
         "command": "run_cmd",
+        "remediation": gate_remedy("run_cmd"),
     }
     assert service.read_node(node["id"], alpha)["node"]["lean_source"] is None
     # A source stored before the gate is refused when imported or fetched, too.

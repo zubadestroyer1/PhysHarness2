@@ -245,24 +245,39 @@ tools, the prompts and the delivery shapes.
     syntax extension would change how their own lines read (a `sorry` that is none, a
     redefined `#print axioms`). `lean_check` and `record_lean_source` (whoever calls it)
     refuse a source that holds, outside comments and literals (`refused_command`, naming
-    the `command`): a `#` command other than `#check`, `#check_failure`, `#print`,
-    `#reduce` and `#synth` (so Mathlib's `#s` card notation too: write `#(s)`);
-    `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
-    `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
-    `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), `unsafe` outside
-    brackets (a declaration modifier; aesop's `unsafe` rule phase in `aesop (add unsafe …)`
-    or `@[aesop unsafe …]` is fine), or any
-    `builtin_…`, `declare_…` or `register_…` command; `notation`, `notation3`, `infix`,
-    `infixl`, `infixr`, `prefix` or `postfix` unless `local` (Lean drops local notation
-    at the `end` of the section around the module; `scoped` is refused); a code attribute
-    in `@[…]` or `attribute […]` (`command_elab`, `term_elab`, `tactic`, `macro`, `init`,
-    `implemented_by`, `extern`, `env_linter`, `delab`, `app_unexpander`, `norm_num`,
-    `positivity`, `simproc`, `dsimproc`, `widget_module`, and any `builtin_…`, `…_elab`,
-    `…_parser`, `…_delab`, `…_unexpander`, `…_code_action`, `…_formatter` or
-    `…_parenthesizer` one); `set_option` of an option a node header may not set (so
-    `set_option maxHeartbeats N in` stays); and a name in the `Lean`, `IO`, `EIO` or
-    `BaseIO` namespaces, so no metaprogram or IO action is written for a tactic's
-    configuration to run. `set_lean_statement` refuses a header or statement the gate
+    the `command` and a `remediation`, what to write instead). The lists are denylists:
+    - a `#` command that evaluates or runs a term or another command, wherever it
+      appears: `#eval`, `#exit`, `#exec`, `#guard` (and `#guard_expr`, `#guard_msgs`),
+      `#html`, `#widget`, `#test`, `#sample`, `#time`, `#count_heartbeats`, `#help`,
+      `#find`, `#norm_num`, `#simp`, `#conv`, `#whnf`, `#reduce` (for its cost),
+      `#check_tactic`, `#check_simp`, `#lint`, `#list_linters`, `#leansearch`, `#loogle`,
+      `#moogle`, `#min_imports`, `#unfold?`, and any word that starts with one (Lean
+      reads `#evalx` as `#eval x`). Any other `#ident` is a term, such as Mathlib's `#s`
+      for a finset's card, and `#check`, `#print` and `#synth` are fine;
+    - `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
+      `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
+      `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), any `builtin_…`,
+      `declare_…` or `register_…` command, and `unsafe` outside brackets (a declaration
+      modifier; aesop's `unsafe` rule phase in `aesop (add unsafe …)` or
+      `@[aesop unsafe …]` is fine);
+    - `notation`, `notation3`, `infix`, `infixl`, `infixr`, `prefix` or `postfix` unless
+      `local`: Lean drops local notation at the `end` of the section around the module,
+      while global or `scoped` notation reaches the importer's lines (the remediation:
+      write it `local`);
+    - a code attribute in `@[…]` or `attribute […]` (`command_elab`, `term_elab`,
+      `tactic`, `macro`, `init`, `implemented_by`, `extern`, `env_linter`, `delab`,
+      `app_unexpander`, `norm_num`, `positivity`, `simproc`, `dsimproc`, `widget_module`,
+      and any `builtin_…`, `…_elab`, `…_parser`, `…_delab`, `…_unexpander`,
+      `…_code_action`, `…_formatter` or `…_parenthesizer` one);
+    - `set_option` of an option other than a node header's, `push_neg.use_distrib`,
+      `simprocs`, `tactic.hygienic` and `backward.*` (so `set_option maxHeartbeats N in`
+      stays, and `trace.*`, which can write files, goes: drop it);
+    - a name rooted in the `Lean`, `IO`, `EIO` or `BaseIO` namespaces (`_root_.IO…` too;
+      `Foo.IO` is fine). This is the backstop behind the denylists: no metaprogram or IO
+      action, for a tactic's configuration or an `evalConst` to run, is written without
+      such a name.
+
+    `set_lean_statement` refuses a header or statement the gate
     refuses: an importer's `sorry` stub and every publisher's statement check elaborate
     them. A source or statement stored before the gate that it refuses is refused when
     imported or fetched (`COMMONS_MODULE_REFUSED`), and publication against such a
