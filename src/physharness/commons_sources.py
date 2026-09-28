@@ -3,7 +3,8 @@
 A node's Lean module is ``Commons.N<hex>`` (8 hex of its id, lengthened on a collision). A
 clean ``lean_check`` against the node publishes the checked file as the node's source,
 ranked ``verified`` (the statement check passed on standard axioms), ``complete`` (no
-``sorry``, but the check could not judge) or ``partial``. A higher rank replaces a lower
+``sorry`` on standard axioms, for a node with no Lean statement to check) or ``partial``
+(also when the statement check could not judge). A higher rank replaces a lower
 one; a verified source of the node's current statement is replaced only by its publisher or
 the node's author (S1 audit #12). A node's first complete source of an elaborated Lean
 statement tells its other claimants to consider stopping their routes (S1 audit #22).

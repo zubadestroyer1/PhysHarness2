@@ -178,8 +178,8 @@ tools, the prompts and the delivery shapes.
 
     Only `propext`, `Classical.choice` and `Quot.sound` count. A publication must name
     the node's current statement, whoever calls it. Every backend (REPL daemon, inline
-    REPL, one-shot) runs the same check, and a check that cannot run leaves the source at
-    most `complete`. A society task self-tests it once per process and image when it
+    REPL, one-shot) runs the same check, and a check that cannot run leaves the source
+    `partial`. A society task self-tests it once per process and image when it
     first provisions a workspace, and a failed self-test stops the task with
     `STATEMENT_CHECK_UNAVAILABLE`.
   - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
@@ -225,9 +225,15 @@ tools, the prompts and the delivery shapes.
     the file never opened, and for a node with a Lean statement the textual gates of the
     statement check above) publishes the file as the node's module, a `lean_source`
     artifact ranked `verified` (the statement check passed with standard axioms),
-    `complete` (no `sorry`, but the check could not judge; a node with no Lean statement
-    ranks on the file's own axiom report) or `partial`. A statement check that rejects the
-    file publishes nothing. `record_lean_source` refuses a `verified` rank whose record
+    `complete` or `partial`. A rank that proves a node (it leaves the frontier and the
+    long pole, needs no referee and ends scoped recruits) rests on a statement check that
+    judged the statement: a check that could not judge (a timeout, a failed or missing
+    checker) leaves the file `partial` whatever its own report says, and the result names
+    it (`statement_check`), so the agent checks again. Only a node with no Lean statement,
+    which has nothing to check, ranks `complete` on the file's own axiom report (no
+    `sorry`, standard axioms only); the publication gate keeps a module from redefining
+    that report, and such a source proves only a definition. A statement check that
+    rejects the file publishes nothing. `record_lean_source` refuses a `verified` rank whose record
     lacks a passing statement check on standard axioms, whoever calls it.
   - The publication gate. Every importer inlines a module, and so may a referee's
     `lean_check`, so a module's compile-time code would run in their VMs, and a global

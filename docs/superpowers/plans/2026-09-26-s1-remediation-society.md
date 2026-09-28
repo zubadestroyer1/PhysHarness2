@@ -804,6 +804,7 @@ Before opening the Tier-0 PR: run the full suite and ruff (Task 21, Steps 4–5)
 
 > **Merge audit (2026-09-27): the lemma store's trust boundary.** The PR 37 review found these, fixed before merge:
 > - **Publication gate.** A published module's compile-time code ran in every importer's and referee's VM. `refused_command` now refuses code-running and syntax-extending commands and attributes, non-`local` notation, `#` commands but `#check`/`#check_failure`/`#print`/`#reduce`/`#synth`, options a header may not set, and `Lean`/`IO` names, in `lean_check`, `record_lean_source`, `set_lean_statement` (a statement becomes a stub) and at inline and fetch time for records stored before the gate.
+> - **Ranks rest on a judging check.** A statement check that could not judge (timeout, failed or missing checker) ranked a stated node `complete` on the file's own `#print axioms` report, which took it off the frontier and made it review-immune. Such a check now leaves the file `partial` (the result names `statement_check`); only a node with no Lean statement ranks `complete` on its own report.
 
 ### Task 5: Remove check-ins and stagnation nudges; the removed-field refusal (#20)
 

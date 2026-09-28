@@ -500,17 +500,26 @@ def _refused(module, reason, source):
 
 def _source_rank(node, result, verdict):
     """verified, complete or partial; None when the statement check rejected the file.
-    Without a working checker (S1: it never ran) a source stops at complete."""
+
+    A rank that proves a node (complete or verified: it leaves the frontier, needs no
+    referee and ends scoped recruits) rests on a statement check that judged the
+    statement: a pass on standard axioms is verified. A check that could not judge (a
+    timeout, a failed or missing checker; S1's never ran) leaves the file partial, however
+    clean its own report: that report is the file's own output, not the check's judgement.
+    Only a node with no Lean statement, which has nothing to check, ranks on the file's own
+    axiom report; the publication gate keeps a module from redefining that report.
+    """
     if not result["complete"]:
         return "partial"
-    name, reported = node.get("lean_name"), result.get("axioms") or {}
+    name = node.get("lean_name")
     if verdict is None:  # no Lean statement: the file's own axiom report is all there is
+        reported = result.get("axioms") or {}
         return "complete" if set().union(*reported.values()) <= STANDARD_AXIOMS else "partial"
     if verdict.get("ok"):
         return "verified" if axiom_refusal({name: verdict["axioms"]}, name) is None else "partial"
     if verdict.get("reason") in STATEMENT_REJECTIONS:
         return None
-    return "complete" if axiom_refusal(reported, name) is None else "partial"
+    return "partial"
 
 
 # Skeletons (S1 audit #21) ------------------------------------------------------------------
@@ -1159,6 +1168,10 @@ def society_tools(
                 if verdict.get("detail"):
                     refused["detail"] = verdict["detail"]
                 return refused
+            # A check that could not judge leaves the file partial: say why, so it is rerun.
+            unjudged = (
+                {} if verdict is None or verdict["ok"] else {"statement_check": verdict["reason"]}
+            )
             # Refused before any artifact is stored, so a refusal leaves none behind;
             # record_lean_source repeats these checks under the node's lock.
             refusal, held = node_refusal(node), blocking_rank(node, rank, agent.branch_id)
@@ -1166,7 +1179,7 @@ def society_tools(
                 return {"recorded": False, "module": module, "reason": refusal}
             if held is not None:
                 refused = {"recorded": False, "module": module, "reason": "lower_rank"}
-                return {**refused, "rank": held}
+                return {**refused, "rank": held, **unjudged}
             modules = {imported.name: imported for imported in expansion.modules}
             direct = [modules[imported] for imported in split_imports(source)[0]]
             record = {
@@ -1197,7 +1210,7 @@ def society_tools(
                     node["id"], artifact["id"], record, agent, f"{key}:publish"
                 )
 
-            return _soft(store)
+            return {**_soft(store), **unjudged}
 
         def claim(node_id, published, key):
             """Renew the branch's live claim, so its route and box stand. Only publishing
@@ -1261,7 +1274,9 @@ def society_tools(
                 "statement imports as a sorry stub). "
                 "With node_id, a clean check publishes the file as the node's module "
                 "Commons.N<8 hex>, ranked verified (the statement check passed on standard "
-                "axioms), complete (no sorry; the check could not judge) or partial; a higher "
+                "axioms), complete (no sorry on standard axioms, for a node with no Lean "
+                "statement to check) or partial (a sorry, other axioms, or a statement check "
+                "that could not judge, named in statement_check: check again); a higher "
                 "rank replaces a lower one, and publishing claims the node. A complete check "
                 "runs the platform's statement check. A published module runs no code where "
                 "it is imported: no #-command but #check, #print, #reduce or #synth, no "

@@ -1406,7 +1406,9 @@ async def test_lean_check_publishes_a_verified_module_for_its_node(lab):
     assert service.artifact_content(artifact["id"], agent) == PROOF.encode()
 
 
-async def test_without_a_working_checker_a_source_stops_at_complete(lab):
+async def test_without_a_judging_statement_check_a_source_stays_partial(lab):
+    """PR 37 review: a check that could not judge ranked the file complete on its own
+    #print axioms report, which took the node off the frontier and made it review-immune."""
     service, author, exp, _, (alpha, _) = society_lab(lab)
     agent, context = running(service, author, exp, alpha.branch_id)
     workspace = FakeWorkspace()
@@ -1423,9 +1425,17 @@ async def test_without_a_working_checker_a_source_stops_at_complete(lab):
         tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **LEAN}
     )
     checked = await call(tools, "lean_check", {"source": PROOF, "node_id": created["id"]})
-    assert checked["published"]["rank"] == "complete"
+    assert checked["published"] == {
+        "recorded": True,
+        "module": "Commons.N" + created["id"][:8],
+        "rank": "partial",
+        "replaced": False,
+        "statement_check": "statement_check_unavailable",
+    }
     node = service.read_node(created["id"], agent)["node"]
-    assert node["lean_source"]["rank"] == "complete"
+    assert node["lean_source"]["rank"] == "partial"
+    listed = service.query_nodes(exp["id"], agent, frontier=True)["items"]
+    assert created["id"] in [item["id"] for item in listed]  # still open work
     assert node["lean_source"]["statement_check"] == {
         "ok": False,
         "reason": "statement_check_unavailable",
@@ -2437,10 +2447,13 @@ def test_publication_refusals_and_source_ranks():
     assert _source_rank(node, clean, {**passed, "axioms": ["sorryAx"]}) == "partial"
     for reason in STATEMENT_REJECTIONS:
         assert _source_rank(node, clean, {"ok": False, "reason": reason, "axioms": None}) is None
-    # A check that could not judge leaves the file's own report for the node's theorem.
-    unjudged = {"ok": False, "reason": "statement_check_unavailable", "axioms": None}
-    assert _source_rank(node, clean, unjudged) == "complete"
-    assert _source_rank(node, {**clean, "axioms": {}}, unjudged) == "partial"
+    # A check that could not judge proves nothing, whatever the file's own report says.
+    for reason in ("statement_check_unavailable", "check_timeout", "source_compile_failed"):
+        unjudged = {"ok": False, "reason": reason, "axioms": None}
+        assert _source_rank(node, clean, unjudged) == "partial"
+    # Only a node with no Lean statement ranks on the file's own report.
+    assert _source_rank({"node_type": "definition"}, clean, None) == "complete"
+    assert _source_rank({}, {**clean, "axioms": {"x": ["sorryAx"]}}, None) == "partial"
 
 
 async def test_lean_check_never_publishes_a_module_whose_code_would_run_in_importers(lab):
