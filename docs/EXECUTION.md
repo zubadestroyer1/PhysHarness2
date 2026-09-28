@@ -184,9 +184,12 @@ callback failed, reconcile from the saved native response. The adapter does not 
 transactional outbox or monetary pricing; those belong to the controller/ledger. `usage` also
 carries `cached_input_tokens`, the provider's reported cache hits (0 when absent or inconsistent).
 The ledger settles them at the price's optional `cached_input_usd_per_million`, which may not
-exceed the input rate, and at the full input rate without one. Every reservation stays at the full
-input rate, since a cache hit is never guaranteed in advance, so a reservation still bounds its
-settlement (`docs/FIRST_LIVE_RUN.md`).
+exceed the input rate, and at the full input rate without one. It also carries
+`cache_write_input_tokens`, the reported cache writes (0 when absent or inconsistent), which
+settle at `cache_write_usd_per_million`; a price with a cached rate must give that rate. Every
+reservation charges each input token at the higher of the input and cache-write rates, since
+neither a hit nor a write is known in advance, so a reservation still bounds its settlement
+(`docs/FIRST_LIVE_RUN.md`).
 
 The session is checkpointed before each external request and host tool. A turn saves at:
 - **A**, the generation marker, which also carries any turn note;
@@ -373,7 +376,9 @@ experiments too.
   `create`; its `generation_aborted` has `reason="request_invalid"`.
 - `usage.cached_input_tokens`: the provider's reported cache hit (0 when absent or inconsistent).
   The controller/ledger settles those tokens at an optional cached rate, while every reservation
-  stays at the full input rate, since a cache hit is never guaranteed in advance.
+  stays at the full input rate or above, since a cache hit is never guaranteed in advance.
+- `usage.cache_write_input_tokens`: the provider's reported cache writes (0 when absent or
+  inconsistent), settled at `cache_write_usd_per_million`.
 - A checkpoint chunk has no `artifact.created` event and no command row of its own; each save is
   one `runtime.save` transaction.
 - The `native_checkpoint` manifest row has no `artifact.created` event and no

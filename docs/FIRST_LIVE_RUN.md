@@ -111,7 +111,10 @@ mapping from the exact configured model IDs to `input_usd_per_million`,
 prices are operator inputs, not guesses in the repository. An optional
 `cached_input_usd_per_million` bills a provider-reported cache hit at a discount; it must not
 exceed `input_usd_per_million`, and omitting it bills every input token at the full rate, as
-before. Do not change prices while an experiment runs; a replayed settlement with a new amount
+before. A price with a cached rate must also give `cache_write_usd_per_million`, the provider's
+rate for cache writes, which can exceed the input rate (it was $2.50/M against $2/M input in
+S1). Reported cache writes settle at it, and every reservation charges each input token at the
+higher of the input and cache-write rates. Do not change prices while an experiment runs; a replayed settlement with a new amount
 fails with `IDEMPOTENCY_CONFLICT`. Do not put credentials in plans, model parameters, source
 artifacts or version control.
 

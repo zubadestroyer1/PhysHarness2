@@ -257,6 +257,14 @@ def _cached_input_tokens(usage: Any) -> int:
     return cached if type(cached) is int and 0 <= cached <= usage.input_tokens else 0
 
 
+def _cache_write_input_tokens(usage: Any) -> int:
+    """Provider-reported cache writes, or 0 if absent or inconsistent with the cache hits."""
+    written = getattr(getattr(usage, "input_tokens_details", None), "cache_write_tokens", None)
+    if type(written) is not int or written < 0:
+        return 0
+    return written if written + _cached_input_tokens(usage) <= usage.input_tokens else 0
+
+
 def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
     """Input and output tokens used by a session and every predecessor in its lineage."""
     state = checkpoint.native_state
@@ -1290,6 +1298,7 @@ class ResponsesRuntime:
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 cached_input_tokens=_cached_input_tokens(response.usage),
+                cache_write_input_tokens=_cache_write_input_tokens(response.usage),
                 native_usage=response.usage.model_dump(mode="json"),
                 rate_limit_waits=sent.rate_limit_waits,
                 rate_limit_wait_seconds=sent.rate_limit_wait_seconds,

@@ -1341,7 +1341,7 @@ class ResearchTaskExecutor:
                     reservation = await _reserve_model_with_wait(
                         self.service,
                         experiment["id"],
-                        price.cost(inp, out),
+                        price.reservation_cost(inp, out),
                         inp + out,
                         actor,
                         event.operation_id,
@@ -1366,7 +1366,12 @@ class ResearchTaskExecutor:
                 inp, out = event.payload["input_tokens"], event.payload["output_tokens"]
                 settlement = self.service.settle_resources(
                     reservations[event.operation_id],
-                    price.cost(inp, out, event.payload.get("cached_input_tokens", 0)),
+                    price.cost(
+                        inp,
+                        out,
+                        event.payload.get("cached_input_tokens", 0),
+                        event.payload.get("cache_write_input_tokens", 0),
+                    ),
                     False,
                     actor,
                     f"model-settle:{event.operation_id}",
