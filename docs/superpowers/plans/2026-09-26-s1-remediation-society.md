@@ -818,6 +818,14 @@ Before opening the Tier-0 PR: run the full suite and ruff (Task 21, Steps 4–5)
 
 ## Society lane (one PR, stacked on Tier 0)
 
+> **Merge audit (2026-09-27): the lemma store's trust boundary.** The PR 37 review found these, fixed before merge:
+> - **Publication gate.** A published module's compile-time code ran in every importer's and referee's VM. `refused_command` now refuses code-running and syntax-extending commands and attributes, non-`local` notation, `#` commands but `#check`/`#check_failure`/`#print`/`#reduce`/`#synth`, options a header may not set, and `Lean`/`IO` names, in `lean_check`, `record_lean_source`, `set_lean_statement` (a statement becomes a stub) and at inline and fetch time for records stored before the gate.
+> - **Ranks rest on a judging check.** A statement check that could not judge (timeout, failed or missing checker) ranked a stated node `complete` on the file's own `#print axioms` report, which took it off the frontier and made it review-immune. Such a check now leaves the file `partial` (the result names `statement_check`); only a node with no Lean statement ranks `complete` on its own report.
+> - **Ranks are transitive.** A verified importer stayed verified and off the frontier after a dependency was replaced. Publication now records the check's `closure` (each inlined module's digest), and a source whose closure no longer matches reads `stale` (`Closures`, memoized per call; direct imports recursively for records without one). A restated import stales only its own source. A complete source, like a verified one, now answers at its rank only to its publisher and the node's author, so no branch churns importers stale.
+> - **`in_verified_proof` means imported, not used.** It credits every module the verified proof inlined, and so do the accepted-proof metrics; the field keeps its name (stored records stay readable), and the docs and the A/B metric "cross-branch imports in the accepted proof" now say it is an upper bound on reuse.
+> - **Referee withholding.** With modules inlined, a message or goal with no line on the referee's own text now reaches it fenced as author data (it may be a module's output), and axiom names other than the standard three and `sorryAx` are replaced by a placeholder in the referee's own declarations' axiom lists.
+> - **The goal has no module.** `commons_fetch` refused the goal, but an `import` of its module inlined a `sorry` stub of the target once it had an elaborated statement; `_module` now refuses it for both.
+
 ### Task 5: Remove check-ins and stagnation nudges; the removed-field refusal (#20)
 
 **Files:**
@@ -2778,7 +2786,7 @@ git add PLAN.md docs/RESEARCH_NETWORK.md docs/IMPLEMENTATION_STATUS.md src/physh
 git -c user.name=Kieran -c user.email=88352982+zubadestroyer1@users.noreply.github.com commit -m "docs: bring the plan and research-network docs in line with the remediated society" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 7: PR notes (for the society PR body; not a committed file).** List the G6 next steps (#25 harder target; the paid A/B run, which needs a budget; #12d olean imports; warm-REPL reuse; the org TPM limit). List what the A/B must measure against S-r2: first-two-minute division of labour (the goal broadcast is gone), post-contribution spend, wake counts and reasons, messages refused by the rate limit, parallel routes opened at the long pole, recruit lifetime, cross-branch imports in the accepted proof. Note that the audit extractor (`work/society-s1/audit-2026-09-26/scripts/extract.py`, `scripts/scaffold/composition.py`) must learn the compact update lines and the new prompt keys before comparing arms.
+- [ ] **Step 7: PR notes (for the society PR body; not a committed file).** List the G6 next steps (#25 harder target; the paid A/B run, which needs a budget; #12d olean imports; warm-REPL reuse; the org TPM limit). List what the A/B must measure against S-r2: first-two-minute division of labour (the goal broadcast is gone), post-contribution spend, wake counts and reasons, messages refused by the rate limit, parallel routes opened at the long pole, recruit lifetime, cross-branch imports in the accepted proof (the modules it inlined, used or not: an upper bound on reuse, since nothing checks which constants the proof uses). Note that the audit extractor (`work/society-s1/audit-2026-09-26/scripts/extract.py`, `scripts/scaffold/composition.py`) must learn the compact update lines and the new prompt keys before comparing arms.
 
 ---
 

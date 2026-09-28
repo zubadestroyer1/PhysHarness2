@@ -134,7 +134,7 @@ tools, the prompts and the delivery shapes.
     claims. A proved node is not open work, as for the long pole: it leaves the frontier
     and waits on nothing. A node is proved by a complete or verified source of its
     current, elaborated Lean statement; a definition, which states nothing to prove, by
-    any complete or verified source. A clean file on any other node without an elaborated
+    any complete or verified source. A stale source (below) proves nothing. A clean file on any other node without an elaborated
     statement proves nothing the verifier checks, so that node stays open work. The score
     is attention, never proof.
 - **Status.** A node is `open` until its author abandons it (`abandoned`, with a reason) or
@@ -144,7 +144,11 @@ tools, the prompts and the delivery shapes.
   that proof's receipt and the imported source's digest (`{receipt_id, sha256}`) in
   `in_verified_proof` (shown by `commons_read`; a proved node is not open work and leaves
   the frontier, which otherwise counts only the entries for the node's current source);
-  its status stays open. Source ranks are advisory and only
+  its status stays open. Imported means inlined, directly or through another module, not
+  used: nothing checks which constants the proof uses, so an unused import counts, as it
+  does in the accepted-proof provenance metrics (`accepted_proof_modules`,
+  `accepted_proof_cross_branch_modules`, the char share), an upper bound on reuse.
+  Source ranks are advisory and only
   verifier receipts are authority: the verifier certifies the target's axioms, not each
   imported lemma's. Only the receipt's platform-written `commons_modules` count, never
   the candidate artifact's provenance. Stale entries, nodes outside the experiment,
@@ -179,8 +183,8 @@ tools, the prompts and the delivery shapes.
 
     Only `propext`, `Classical.choice` and `Quot.sound` count. A publication must name
     the node's current statement, whoever calls it. Every backend (REPL daemon, inline
-    REPL, one-shot) runs the same check, and a check that cannot run leaves the source at
-    most `complete`. A society task self-tests it once per process and image when it
+    REPL, one-shot) runs the same check, and a check that cannot run leaves the source
+    `partial`. A society task self-tests it once per process and image when it
     first provisions a workspace, and a failed self-test stops the task with
     `STATEMENT_CHECK_UNAVAILABLE`.
   - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
@@ -191,7 +195,10 @@ tools, the prompts and the delivery shapes.
     elaboration-level tricks (instances, macros, `#print axioms` overrides, skipped kernel
     checks), but a file or command that tampers with the VM can still reach a `verified`
     rank. It is VM-attested evidence, never acceptance. Only independent acceptance is
-    trusted: the independent receipt on the exact target accepts the goal.
+    trusted: the independent receipt on the exact target accepts the goal. That code is
+    the publisher's own, in its own VM: no published module or node statement holds any
+    (the publication gate below), so an importer, a referee or another publisher runs
+    none of a peer's.
   - `set_lean_statement` elaborates the statement with `set_option autoImplicit false`
     after the header, overriding the header's own `autoImplicit`. An unknown name or an
     undeclared universe is then refused (`Unknown identifier`) instead of silently
@@ -212,8 +219,9 @@ tools, the prompts and the delivery shapes.
 - **Lemma store.** Every node is a Lean module, `Commons.N<8 hex>` (8 hex of its id, or
   12 or 16 when an experiment node already holds that name). `commons_query` reports it
   (`module`) with the node's source rank (`source`); `commons_read` shows the node's
-  `lean_module` and published `lean_source`. Nothing imports the goal, so it lists no
-  module.
+  `lean_module`, published `lean_source` and `source`. Nothing imports the goal, so it
+  lists no module, and neither an import nor a fetch of its module resolves
+  (`COMMONS_MODULE_NOT_FOUND`).
   - Published modules are experiment-public commons content for every role, referees
     included. Only private workspaces and unpublished artifacts are private: no other
     agent can read an agent's workspace. An agent shares Lean by publishing it on its
@@ -223,19 +231,60 @@ tools, the prompts and the delivery shapes.
     the file never opened, and for a node with a Lean statement the textual gates of the
     statement check above) publishes the file as the node's module, a `lean_source`
     artifact ranked `verified` (the statement check passed with standard axioms),
-    `complete` (no `sorry`, but the check could not judge; a node with no Lean statement
-    ranks on the file's own axiom report) or `partial`. A statement check that rejects the
-    file publishes nothing. `record_lean_source` refuses a `verified` rank whose record
+    `complete` or `partial`. A rank that proves a node (it leaves the frontier and the
+    long pole, needs no referee and ends scoped recruits) rests on a statement check that
+    judged the statement: a check that could not judge (a timeout, a failed or missing
+    checker) leaves the file `partial` whatever its own report says, and the result names
+    it (`statement_check`), so the agent checks again. Only a node with no Lean statement,
+    which has nothing to check, ranks `complete` on the file's own axiom report (no
+    `sorry`, standard axioms only); the publication gate keeps a module from redefining
+    that report, and such a source proves only a definition. A statement check that
+    rejects the file publishes nothing. `record_lean_source` refuses a `verified` rank whose record
     lacks a passing statement check on standard axioms, whoever calls it.
+  - The publication gate. Every importer inlines a module, and so may a referee's
+    `lean_check`, so a module's compile-time code would run in their VMs, and a global
+    syntax extension would change how their own lines read (a `sorry` that is none, a
+    redefined `#print axioms`). `lean_check` and `record_lean_source` (whoever calls it)
+    refuse a source that holds, outside comments and literals (`refused_command`, naming
+    the `command`): a `#` command other than `#check`, `#check_failure`, `#print`,
+    `#reduce` and `#synth` (so Mathlib's `#s` card notation too: write `#(s)`);
+    `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
+    `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
+    `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), `unsafe`, or any
+    `builtin_…`, `declare_…` or `register_…` command; `notation`, `notation3`, `infix`,
+    `infixl`, `infixr`, `prefix` or `postfix` unless `local` (Lean drops local notation
+    at the `end` of the section around the module; `scoped` is refused); a code attribute
+    in `@[…]` or `attribute […]` (`command_elab`, `term_elab`, `tactic`, `macro`, `init`,
+    `implemented_by`, `extern`, `env_linter`, `delab`, `app_unexpander`, `norm_num`,
+    `positivity`, `simproc`, `dsimproc`, `widget_module`, and any `builtin_…`, `…_elab`,
+    `…_parser`, `…_delab`, `…_unexpander`, `…_code_action`, `…_formatter` or
+    `…_parenthesizer` one); `set_option` of an option a node header may not set (so
+    `set_option maxHeartbeats N in` stays); and a name in the `Lean`, `IO`, `EIO` or
+    `BaseIO` namespaces, so no metaprogram or IO action is written for a tactic's
+    configuration to run. `set_lean_statement` refuses a header or statement the gate
+    refuses: an importer's `sorry` stub and every publisher's statement check elaborate
+    them. A source or statement stored before the gate that it refuses is refused when
+    imported or fetched (`COMMONS_MODULE_REFUSED`), and publication against such a
+    statement is `invalid_lean_statement`.
   - A source proves a node only for the statement it was checked against. Once the
     node's Lean statement changes (or a node published without one gets one), its source
     reports `stale`: it is never complete, so the node can draw a referee again and a node
     resting on it is conditional. For replacement it counts as no source: any source of
     the current statement, of any rank, replaces it, and a stale verified source keeps no
     publisher lock. An importer still inlines it, flagged stale.
+  - A source also proves nothing once a module its check inlined is no longer that node's
+    source. Publication records each inlined module's digest (`closure`); while one of
+    them has been replaced, the source reports `stale` and counts as above, so a verified
+    importer returns to the frontier and the long pole once a dependency is replaced
+    further down (a source recorded without `closure` reads its direct imports, and
+    theirs). A restated import changes no Lean the importer checked: only its own source
+    goes stale, and the importer does once that source is replaced. The check is memoized
+    per call over the graph. An importer inlines the live source either way, and its own
+    check judges the file it gets.
   - Higher ranks replace lower ones, and an equal rank replaces its peer, except that a
-    verified source of the current statement is replaced only by its publisher or the
-    node's author.
+    complete or verified source of the current statement is replaced at its rank only by
+    its publisher or the node's author: other nodes' sources may import it and go stale
+    when it is replaced, so no other branch can churn equal-rank sources under them.
   - Publishing claims the node: a check renews the branch's live claim, and only a
     publication claims afresh (on the branch's prior route), so a refused check never
     re-creates a lapsed or released claim. The source's imports become `depends_on` edges
@@ -272,7 +321,8 @@ tools, the prompts and the delivery shapes.
     platform step writes, lists each module's node, source digest, branch and `stale`
     flag. Every imported module must have a complete or verified source
     (`COMMONS_CLOSURE_INCOMPLETE`). Import cycles, more than 200 modules, a module with
-    `#exit` or an unopened `end`, and an expansion over the size limit are refused.
+    `#exit`, an unopened `end` or anything the publication gate refuses, and an expansion
+    over the size limit are refused.
   - A skeleton is any node whose published source imports stub nodes; `lean_check(stubs=true)`
     creates them. It is optional. With `node_id`, each top-level
     `theorem X <signature> := sorry` (or `:= by sorry`) whose lines hold nothing else
@@ -415,7 +465,10 @@ tools, the prompts and the delivery shapes.
   assigned node's thread. A referee's `lean_check` may inline published modules; text
   from them in Lean output (messages on the referee's own lines, `#print` output, axiom
   names) is untrusted author data. Messages, goals and axiom keys located inside inlined
-  modules are withheld.
+  modules are withheld; a message or goal with no line on the referee's own text is
+  fenced, and axiom names other than Lean's standard ones and `sorryAx` are replaced by a
+  placeholder. The publication gate keeps a module from printing onto the referee's
+  own lines.
 - **Recruits.** `recruit` takes one narrow deliverable (a named lemma with its Lean
   signature, or a specific lookup), since in S1 broad recruits drifted into attempting the
   whole target (S1 audit #23). The librarian hat looks up library names, signatures and
@@ -528,8 +581,8 @@ tools, the prompts and the delivery shapes.
   where help counts most. Here a node counts as open while no status closed it and it is
   not proved, as on the frontier (only the goal is ever accepted): a complete or verified
   source of its current, elaborated Lean statement, or of a definition, proves it. So
-  publishing such a source moves the pole, and a restatement that makes the source stale
-  moves it back. The pole is the open nodes the goal reaches through open
+  publishing such a source moves the pole, and a restatement or a replaced import that
+  makes the source stale moves it back. The pole is the open nodes the goal reaches through open
   `depends_on` paths (never the parts of an abandoned or proved route) that wait on no
   other open node, oldest first (at most 3, with their age and claimants). Without such
   parts it is the open nodes that most open nodes depend on; failing that, a hint to link
@@ -633,9 +686,15 @@ scope, and the thread search reads the earliest posts first and fails closed pas
 bound. A referee's `find_declaration` surfaces no library notes, and its `lean_check`
 withholds the text of every message, and the goal of every `sorry`, inside an inlined
 module, keeping only their place (severity or hole index, module and expanded line): a
-module's output is its publisher's text. With modules inlined, its axiom report keeps only
-the declarations of the referee's own text and counts the rest (`axioms_withheld`), since a
-«guillemet» declaration name can hold near-arbitrary text.
+module's output is its publisher's text. With modules inlined, a message or goal with no
+line on the referee's own text (unlocated, or on a hoisted import) keeps its text only
+fenced as untrusted author data, since a module may have printed it, and the axiom report
+keeps only the declarations of the referee's own text and counts the rest
+(`axioms_withheld`), since a «guillemet» declaration name can hold near-arbitrary text. In
+those declarations' axiom lists only `propext`, `Classical.choice`, `Quot.sound` and
+`sorryAx`, which no module can declare, are named; any other name reads "(another axiom;
+name withheld from referees)". What is left verbatim is located on the referee's own
+lines, where the publication gate leaves a module no code to print with.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
 that lists the available tools. So does S1's removed `wait(for="peer")`, which an S1
 checkpoint saved mid-call re-dispatches on resume; its rejection says to message the peer

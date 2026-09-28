@@ -486,7 +486,8 @@ def _progress(nodes, receipts):
 
 def _source_provenance(nodes, artifacts, receipt):
     """Reuse by provenance (S1 audit #12): nodes by source state, cross-branch imports and
-    the modules inlined into the accepted proof.
+    the modules inlined into the accepted proof, used by it or not (nothing checks which
+    constants a proof uses, so an unused import counts).
 
     An import is cross-branch when different branches published the importing source and
     the imported node's source. The accepted proof's modules are the receipt's

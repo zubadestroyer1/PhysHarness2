@@ -52,10 +52,11 @@ from ..commons_sources import (
     blocking_rank,
     node_module,
     node_refusal,
+    refused_command,
     remap,
     scope_closers,
-    source_state,
     split_imports,
+    statement_state,
 )
 from ..continuation import EVENT_WAIT_DEFAULT_SECONDS
 from ..domain import ArtifactCreate, Principal
@@ -168,6 +169,10 @@ SHARE_LEAN = (
 POST_KINDS = ("question", "finding", "objection", "attempt_failed", "synthesis", "update")
 # Statement-check verdicts that the file does not prove the node's statement: no publication.
 STATEMENT_REJECTIONS = frozenset({"statement_mismatch", "kernel_rejected", "theorem_missing"})
+# The axiom names a referee's lean_check shows once modules are inlined: Lean's own, which no
+# module can declare. Any other name may be a module author's text.
+REFEREE_AXIOMS = STANDARD_AXIOMS | {"sorryAx"}
+WITHHELD_AXIOM = "(another axiom; name withheld from referees)"
 NODE_ACTIONS = ("create", "link", "set_lean_statement", "abandon", "request_review")
 # Fields each commons_node action reads; any other field must stay at its default.
 ACTION_FIELDS = {
@@ -430,8 +435,13 @@ def _compile_refusal(source, node):
     statement check's judgement (``LeanSession.verify_statement``), which compares elaborated
     types: text-level checks cannot see instances, macros or options that change it.
     """
-    if header_problem(node.get("lean_header")) or signature_problem(node.get("lean_statement")):
-        return "invalid_lean_statement"  # recorded before statements were checked for shape
+    header, statement = node.get("lean_header"), node.get("lean_statement")
+    if (
+        header_problem(header)
+        or signature_problem(statement)
+        or refused_command(f"{header or ''}\n{statement}")  # the check elaborates it here
+    ):
+        return "invalid_lean_statement"  # recorded before these checks
     if "#exit" in source:  # Lean stops there: later declarations and reports never run.
         return "exit_command"
     code = lean_code(source)
@@ -448,13 +458,16 @@ def _compile_refusal(source, node):
 
 
 def _publication_refusal(source, node, result):
-    """Why a checked file cannot be the node's module, or None (S1 audit #12)."""
+    """Why a checked file cannot be the node's module, or None (S1 audit #12). A module
+    whose compile-time code would run in every importer's VM is ``refused_command``."""
     if node.get("node_type") == "goal":
         return "goal_node"
     if not result["ok"]:
         return "lean_errors"
     if "#exit" in source:
         return "exit_command"
+    if refused_command(source) is not None:
+        return "refused_command"
     try:
         scope_closers("source", source)  # an importer inlines it inside a section
     except HarnessError:
@@ -479,19 +492,36 @@ def _checked_refusal(source, node, expansion, result):
     return refusal
 
 
+def _refused(module, reason, source):
+    """A refused publication; a refused command is named (``refused_command``)."""
+    refused = {"recorded": False, "module": module, "reason": reason}
+    if reason == "refused_command":
+        refused["command"] = refused_command(source)
+    return refused
+
+
 def _source_rank(node, result, verdict):
     """verified, complete or partial; None when the statement check rejected the file.
-    Without a working checker (S1: it never ran) a source stops at complete."""
+
+    A rank that proves a node (complete or verified: it leaves the frontier, needs no
+    referee and ends scoped recruits) rests on a statement check that judged the
+    statement: a pass on standard axioms is verified. A check that could not judge (a
+    timeout, a failed or missing checker; S1's never ran) leaves the file partial, however
+    clean its own report: that report is the file's own output, not the check's judgement.
+    Only a node with no Lean statement, which has nothing to check, ranks on the file's own
+    axiom report; the publication gate keeps a module from redefining that report.
+    """
     if not result["complete"]:
         return "partial"
-    name, reported = node.get("lean_name"), result.get("axioms") or {}
+    name = node.get("lean_name")
     if verdict is None:  # no Lean statement: the file's own axiom report is all there is
+        reported = result.get("axioms") or {}
         return "complete" if set().union(*reported.values()) <= STANDARD_AXIOMS else "partial"
     if verdict.get("ok"):
         return "verified" if axiom_refusal({name: verdict["axioms"]}, name) is None else "partial"
     if verdict.get("reason") in STATEMENT_REJECTIONS:
         return None
-    return "complete" if axiom_refusal(reported, name) is None else "partial"
+    return "partial"
 
 
 # Skeletons (S1 audit #21) ------------------------------------------------------------------
@@ -694,34 +724,49 @@ def _referee_view(result, keep=(), *, items=False):
 
 
 def _referee_lean_result(result, source, expansion):
-    """A referee's ``lean_check`` result. A message or hole inside an inlined commons module
-    keeps its place but not its text: a module's ``#print`` or ``#eval`` output, or the goal
-    of its ``sorry``, is its publisher's text, maybe the reviewed author's, and would reach
-    the referee unfenced. For the same reason the axiom report keeps only the declarations
-    of the referee's own ``source`` (a «guillemet» name holds near-arbitrary text) and counts
-    the rest as ``axioms_withheld``."""
+    """A referee's ``lean_check`` result. With modules inlined, only text located on the
+    referee's own lines reaches it as Lean wrote it. A message or hole inside an inlined
+    commons module keeps its place but not its text: a module's ``#print`` output, or the
+    goal of its ``sorry``, is its publisher's text, maybe the reviewed author's. One with no
+    line on the referee's own text (unlocated, or on a hoisted import) keeps its text
+    fenced as untrusted author data, since a module may have printed it (PR 37 review). For
+    the same reason the axiom report keeps only the declarations of the referee's own
+    ``source`` (a «guillemet» name holds near-arbitrary text), counting the rest as
+    ``axioms_withheld``, and in their axiom lists shows only Lean's standard axioms and
+    ``sorryAx`` (no module can declare either name), each other name replaced by a
+    placeholder."""
+    if not expansion.modules:
+        return result
 
-    def withheld(item, kept, field, what):
-        if item.get("module") is None:
-            return item
-        text = f"({what} inside inlined module {item['module']}; {field} withheld from referees)"
-        return {**{key: item[key] for key in kept}, field: text}
+    def shown(item, kept, field, what):
+        if item.get("module") is not None:
+            text = (
+                f"({what} inside inlined module {item['module']}; {field} withheld from referees)"
+            )
+            return {**{key: item[key] for key in kept}, field: text}
+        if item.get("line") is None and item.get(field) is not None:
+            return {**item, field: fence_author_data(item[field])}
+        return item
 
     view = {
         **result,
         "messages": [
-            withheld(item, ("severity", "module", "expanded_line"), "text", "message")
+            shown(item, ("severity", "module", "expanded_line"), "text", "message")
             for item in result["messages"]
         ],
         "holes": [
-            withheld(item, ("index", "module", "expanded_line"), "goal", "hole")
+            shown(item, ("index", "module", "expanded_line"), "goal", "hole")
             for item in result["holes"]
         ],
+        "note": REFEREE_DATA_NOTE,
     }
-    if expansion.modules:
-        axioms, own = result.get("axioms") or {}, set(top_level_names(source))
-        view["axioms"] = {name: found for name, found in axioms.items() if name in own}
-        view["axioms_withheld"] = len(axioms) - len(view["axioms"])
+    axioms, own = result.get("axioms") or {}, set(top_level_names(source))
+    view["axioms"] = {
+        name: [axiom if axiom in REFEREE_AXIOMS else WITHHELD_AXIOM for axiom in found]
+        for name, found in axioms.items()
+        if name in own
+    }
+    view["axioms_withheld"] = len(axioms) - len(view["axioms"])
     return view
 
 
@@ -1015,7 +1060,7 @@ def society_tools(
                 if edge["relation"] == "depends_on" and edge["status"] != "abandoned":
                     target = service.get_record("commons_node", edge["node_id"], agent)
                     # It imports, and not a source of an older statement than the stub's.
-                    if source_state(target) not in ("none", "stale"):
+                    if statement_state(target) not in ("none", "stale"):
                         digest = _lean_digest(
                             target.get("lean_header"),
                             target.get("lean_name"),
@@ -1034,13 +1079,13 @@ def society_tools(
                     reason, held = (None if checked["ok"] else "lean_errors"), None
                 else:
                     reason = _checked_refusal(source, node, expansion, checked)
-                    held = None if reason else blocking_rank(node, "partial", agent.branch_id)
+                    held = (
+                        None
+                        if reason
+                        else blocking_rank(node, "partial", agent.branch_id, node["source"])
+                    )
                 if reason or held:
-                    refused = {
-                        "recorded": False,
-                        "module": node_module(node),
-                        "reason": reason or "lower_rank",
-                    }
+                    refused = _refused(node_module(node), reason or "lower_rank", source)
                     if held:
                         refused["rank"] = held
                     return source, [], (checked, refused)
@@ -1130,7 +1175,7 @@ def society_tools(
             module = node_module(node)
             refusal = _checked_refusal(source, node, expansion, result)
             if refusal is not None:
-                return {"recorded": False, "module": module, "reason": refusal}
+                return _refused(module, refusal, source)
             header, name, statement = (
                 node.get("lean_header"),
                 node.get("lean_name"),
@@ -1156,14 +1201,19 @@ def society_tools(
                 if verdict.get("detail"):
                     refused["detail"] = verdict["detail"]
                 return refused
+            # A check that could not judge leaves the file partial: say why, so it is rerun.
+            unjudged = (
+                {} if verdict is None or verdict["ok"] else {"statement_check": verdict["reason"]}
+            )
             # Refused before any artifact is stored, so a refusal leaves none behind;
             # record_lean_source repeats these checks under the node's lock.
-            refusal, held = node_refusal(node), blocking_rank(node, rank, agent.branch_id)
+            refusal = node_refusal(node)
+            held = blocking_rank(node, rank, agent.branch_id, node["source"])
             if refusal is not None:
                 return {"recorded": False, "module": module, "reason": refusal}
             if held is not None:
                 refused = {"recorded": False, "module": module, "reason": "lower_rank"}
-                return {**refused, "rank": held}
+                return {**refused, "rank": held, **unjudged}
             modules = {imported.name: imported for imported in expansion.modules}
             direct = [modules[imported] for imported in split_imports(source)[0]]
             record = {
@@ -1176,6 +1226,8 @@ def society_tools(
                 "imports": [
                     {"module": m.name, "node_id": m.node_id, "sha256": m.sha256} for m in direct
                 ],
+                # What the check inlined: while each is its node's source, this one stands.
+                "closure": [{"node_id": m.node_id, "sha256": m.sha256} for m in expansion.modules],
             }
 
             def store():
@@ -1194,7 +1246,7 @@ def society_tools(
                     node["id"], artifact["id"], record, agent, f"{key}:publish"
                 )
 
-            return _soft(store)
+            return {**_soft(store), **unjudged}
 
         def claim(node_id, published, key):
             """Renew the branch's live claim, so its route and box stand. Only publishing
@@ -1258,9 +1310,15 @@ def society_tools(
                 "statement imports as a sorry stub). "
                 "With node_id, a clean check publishes the file as the node's module "
                 "Commons.N<8 hex>, ranked verified (the statement check passed on standard "
-                "axioms), complete (no sorry; the check could not judge) or partial; a higher "
+                "axioms), complete (no sorry on standard axioms, for a node with no Lean "
+                "statement to check) or partial (a sorry, other axioms, or a statement check "
+                "that could not judge, named in statement_check: check again); a higher "
                 "rank replaces a lower one, and publishing claims the node. A complete check "
-                "runs the platform's statement check. The file "
+                "runs the platform's statement check. A published module runs no code where "
+                "it is imported: no #-command but #check, #print, #reduce or #synth, no "
+                "run_cmd, elab, macro, syntax, initialize, unsafe or code attribute, notation "
+                "only as local notation, set_option only as in a lean_header, and no Lean or "
+                "IO names. The file "
                 "header must hold the node's lean_header lines, the file must have no variable "
                 "or #exit command, and "
                 "it must declare theorem <lean_name> <lean_statement> := ... once, outside "

@@ -67,10 +67,10 @@ Every unit of research is a **node** in one graph rooted at the target. Nodes ex
 
 A node is `open` until its author abandons it (`abandoned`, with a reason) or the platform accepts or refutes it (`accepted`, `refuted`). The S1 remediation removed the status ladder (audit #17): S1's agents spent much of their effort climbing a referee-driven ladder. S1's ladder values read as open.
 
-- **The verifier is the only arbiter.** An independent kernel receipt on the exact target accepts the goal. A node imported by an independently verified proof records that proof in `in_verified_proof`; its status stays open. Source ranks (`verified`, `complete`, `partial`) are advisory, since the VM computes them; only verifier receipts are authority, and the verifier certifies the target's axioms, not each imported lemma's.
+- **The verifier is the only arbiter.** An independent kernel receipt on the exact target accepts the goal. A node imported by an independently verified proof records that proof in `in_verified_proof`; its status stays open. Imported means inlined, not necessarily used: nothing checks which constants the proof uses. Source ranks (`verified`, `complete`, `partial`) are advisory, since the VM computes them, and a rank that proves a stated node rests on a statement check that judged it (one that could not judge leaves the source `partial`); only verifier receipts are authority, and the verifier certifies the target's axioms, not each imported lemma's. A published module or node statement holds no code that would run where it is imported or checked (no `#eval`, `run_cmd`, elaborators, macros, global notation or IO), so importing a peer's lemma runs none of the peer's code in the importer's VM.
 - Agents cannot set status, apart from an author abandoning its own node. Referees check plans and never move a status (§5.2).
 - Agents may build on a node at any status.
-- **Dependency sources propagate.** Every node shows what it ultimately rests on, by source rank (for example "rests on 2 stubs and 1 verified lemma"). A root proof resting on anything below a complete source is visibly conditional.
+- **Dependency sources propagate.** Every node shows what it ultimately rests on, by source rank (for example "rests on 2 stubs and 1 verified lemma"). A root proof resting on anything below a complete source is visibly conditional. A source counts only while every module its check inlined is still that node's source; once one is replaced it reads `stale`, and another branch cannot replace a complete or verified source at its rank, so importers are not churned stale.
 
 ### 2.3 Claims on work
 
@@ -402,7 +402,7 @@ Wave 0 (expert review of the 40 benchmark targets) remains open. The auto-review
 - **Outcomes:** accepted root, accepted nodes, time to root, cost per accepted node.
 - **Efficiency:** duplicated-work fraction, idle and waiting fraction, post-acceptance spend, tokens spent on coordination versus mathematics.
 - **Knowledge:** citation and reuse rate, retrieval hit rate for applicable accepted nodes.
-- **Society health:** number of live approach families over time (herding), referee catch rate, stale-claim rate, and reuse by provenance (cross-branch imports of published modules, and their share of the accepted proof). The fidelity-check failure rate applies to S1 arms only.
+- **Society health:** number of live approach families over time (herding), referee catch rate, stale-claim rate, and reuse by provenance (cross-branch imports of published modules, and their share of the accepted proof). The accepted proof's modules are those it inlined, used or not, so the share is an upper bound on reuse; confirm use by audit before claiming it. The fidelity-check failure rate applies to S1 arms only.
 - **Matched-budget comparisons:** single agent vs independent attempts vs society. Policies are promoted only on reproducible gains.
 - **Scaffolding and tools:** scaffolding on vs off at matched budget; Lean iterations per accepted node; automation hit rate; library-note and literature usage (skill usage in S1 arms) and whether cited sources contributed; contamination flags in benchmark runs.
 - **Honest separation of evidence:** simulated vs mocked-provider vs live runs.

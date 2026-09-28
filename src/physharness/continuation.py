@@ -5,7 +5,7 @@ from collections import OrderedDict
 from sqlalchemy import and_, case, func, or_, select, union_all
 
 from .commons_models import is_open
-from .commons_sources import COMPLETE_RANKS, RANKS, _statement_digest, source_state
+from .commons_sources import COMPLETE_RANKS, RANKS, Closures, _statement_digest, source_state
 from .domain import digest_json, utcnow
 from .errors import HarnessError
 from .execution.types import ExecutionError
@@ -83,13 +83,14 @@ def scope_restated(scope, node):
     return _statement_digest(node) != scope["lean_statement_sha256"]
 
 
-def scope_ending(scope, node):
+def scope_ending(scope, node, state):
     """How a scoped recruit's work is delivered (S1 audit #23), or None: ``scope_proved``
-    once the node has a complete source of the scoped statement, published by anyone;
+    once the node has a complete source of the scoped statement, published by anyone
+    (``state`` is the node's ``source_state``, so a stale source is none);
     ``scope_closed`` once the node is closed or restated after recruitment."""
     if scope_restated(scope, node):
         return "scope_closed"
-    if source_state(node) in COMPLETE_RANKS:
+    if state in COMPLETE_RANKS:
         return "scope_proved"
     if not is_open(node["status"]):
         return "scope_closed"
@@ -1463,7 +1464,10 @@ class ContinuationMixin:
             return False
         scope = task.payload.get("scope")
         node = session.get(RecordRow, scope["node_id"]) if scope else None
-        if node is None or node.kind != "commons_node" or scope_ending(scope, node.payload) is None:
+        if node is None or node.kind != "commons_node":
+            return False
+        closures = Closures.reading(session, node.payload["experiment_id"])
+        if scope_ending(scope, node.payload, source_state(node.payload, closures)) is None:
             return False
         pending = session.scalar(
             select(RecordRow.id)

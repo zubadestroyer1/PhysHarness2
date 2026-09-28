@@ -26,6 +26,7 @@ from .commons_models import (
 from .commons_sources import (
     COMPLETE_RANKS,
     SOURCE_STATES,
+    Closures,
     has_elaborated_statement,
     node_module,
     source_state,
@@ -110,13 +111,14 @@ def _dependency_children(edges, within=None):
     return children
 
 
-def _open_work(node):
+def _open_work(node, closures):
     """Whether a node is still open work: no status closed it, and it is not proved (only
     the goal is ever accepted). A complete or verified source of the node's current,
     elaborated Lean statement proves it, and so does any such source of a definition, which
-    states nothing to prove. Another node's clean file without such a statement proves
-    nothing the verifier checks (as for REVIEW_UNNEEDED), so the node stays open work."""
-    proved = source_state(node) in COMPLETE_RANKS and (
+    states nothing to prove; a stale one (``source_state``) proves nothing. Another node's
+    clean file without such a statement proves nothing the verifier checks (as for
+    REVIEW_UNNEEDED), so the node stays open work."""
+    proved = source_state(node, closures) in COMPLETE_RANKS and (
         has_elaborated_statement(node) or node["node_type"] == "definition"
     )
     return is_open(node["status"]) and not proved
@@ -515,12 +517,13 @@ class CommonsMixin:
         if not identifiers:
             return {}
         rows = session.scalars(select(RecordRow).where(RecordRow.id.in_(sorted(identifiers))))
+        closures = Closures.reading(session, experiment.id)
         return {
             row.id: {
                 "node_type": row.payload["node_type"],
                 "title": row.payload["title"],
                 "status": public_status(row.payload["status"]),
-                "source": source_state(row.payload),
+                "source": source_state(row.payload, closures),
             }
             for row in rows
             if row.kind == "commons_node"
@@ -571,6 +574,7 @@ class CommonsMixin:
             experiment_id = row.payload["experiment_id"]
             experiment = self._commons_experiment(session, experiment_id, actor, active=False)
             node = copy.deepcopy(row.payload)
+            node["source"] = source_state(node, Closures.reading(session, experiment.id))
             edges_out = self._edge_pairs(session, row.id, actor, outgoing=True)
             edges_in = self._edge_pairs(session, row.id, actor, outgoing=False)
             children = _dependency_children(self._experiment_dependencies(session, experiment))
@@ -691,7 +695,7 @@ class CommonsMixin:
         ]
 
     @staticmethod
-    def _node_item(node):
+    def _node_item(node, closures):
         item = {
             key: node[key]
             for key in ("id", "node_type", "title", "status", "lean_name", "citation_count")
@@ -700,7 +704,7 @@ class CommonsMixin:
         item["statement"] = node["statement"][:300]
         # Nothing imports the goal: it has no module to list.
         item["module"] = None if node["node_type"] == "goal" else node_module(node)
-        item["source"] = source_state(node)
+        item["source"] = source_state(node, closures)
         if node.get("status_derived"):
             item["status_derived"] = True
         return item
@@ -709,9 +713,9 @@ class CommonsMixin:
     def _frontier(nodes, selected, dependencies, limit, claims=None):
         """Transparent ranking of open work (``_open_work``: a proved node is none): root
         path, waiting dependents, neglect, claims."""
-        claims = claims or {}
+        claims, closures = claims or {}, Closures.over(nodes)
         visible = {node["id"] for node in nodes}
-        open_ids = {node["id"] for node in nodes if _open_work(node)}
+        open_ids = {node["id"] for node in nodes if _open_work(node, closures)}
         waiting = Counter(
             target for source, target in dependencies if source in open_ids and target in visible
         )
@@ -723,7 +727,7 @@ class CommonsMixin:
         now = utcnow()
         items = []
         for node in selected:
-            if not _open_work(node):
+            if not _open_work(node, closures):
                 continue
             idle = (now - datetime.fromisoformat(node["last_activity_at"])).total_seconds()
             components = {
@@ -734,14 +738,15 @@ class CommonsMixin:
                 "claimants": float(-claims.get(node["id"], 0)),
             }
             item = {
-                **CommonsMixin._node_item(node),
+                **CommonsMixin._node_item(node, closures),
                 "score": round(sum(components.values()), 4),
                 "score_components": components,
             }
             current = (node.get("lean_source") or {}).get("sha256")
             proofs = [p for p in node.get("in_verified_proof") or [] if p["sha256"] == current]
             if proofs:
-                # Provenance only: independently verified proofs that imported this source.
+                # Provenance only: independently verified proofs that imported (inlined, used
+                # or not) this source.
                 item["in_verified_proof"] = len(proofs)
             items.append(item)
         items.sort(key=lambda item: (-item["score"], item["id"]))
@@ -757,7 +762,8 @@ class CommonsMixin:
         one; ties kept). Without those either, no items and a hint to link the goal's parts.
         ``claims`` are live claim payloads.
         """
-        open_ids = {node["id"] for node in nodes if _open_work(node)}
+        closures = Closures.over(nodes)
+        open_ids = {node["id"] for node in nodes if _open_work(node, closures)}
         goal = next((node["id"] for node in nodes if node["node_type"] == "goal"), None)
         waiting_on_open = {s for s, t in dependencies if s in open_ids and t in open_ids}
         parts = set()
@@ -858,6 +864,7 @@ class CommonsMixin:
                 )
         receipt = self._goal_receipt(experiment_id, actor, nodes)
         nodes = [self._goal_view(node, receipt) for node in nodes]
+        closures = Closures.over(nodes)
         wanted = tokens(text) if text is not None else None
 
         def matches(node):
@@ -865,7 +872,7 @@ class CommonsMixin:
                 return False
             if node_type is not None and node["node_type"] != node_type:
                 return False
-            if source is not None and source_state(node) != source:
+            if source is not None and source_state(node, closures) != source:
                 return False
             if wanted is None:
                 return True
@@ -896,7 +903,7 @@ class CommonsMixin:
         )
         page = selected[:limit]
         return {
-            "items": [self._node_item(node) for node in page],
+            "items": [self._node_item(node, closures) for node in page],
             "next_cursor": page[-1]["id"] if len(selected) > limit else None,
         }
 

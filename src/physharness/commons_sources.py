@@ -3,16 +3,22 @@
 A node's Lean module is ``Commons.N<hex>`` (8 hex of its id, lengthened on a collision). A
 clean ``lean_check`` against the node publishes the checked file as the node's source,
 ranked ``verified`` (the statement check passed on standard axioms), ``complete`` (no
-``sorry``, but the check could not judge) or ``partial``. A higher rank replaces a lower
-one; a verified source of the node's current statement is replaced only by its publisher or
-the node's author (S1 audit #12). A node's first complete source of an elaborated Lean
-statement tells its other claimants to consider stopping their routes (S1 audit #22).
+``sorry`` on standard axioms, for a node with no Lean statement to check) or ``partial``
+(also when the statement check could not judge). A higher rank replaces a lower
+one; a complete or verified source of the node's current statement is replaced at its rank
+only by its publisher or the node's author (S1 audit #12). A node's first complete source
+of an elaborated Lean statement tells its other claimants to consider stopping their routes
+(S1 audit #22).
 
 A file imports node modules with ``import Commons.N…``. The platform inlines them: each
 module's published source, or a ``sorry`` stub of an elaborated statement, goes into one
 self-contained file (``inline_commons``) that ``lean_check`` checks and the verifier gets.
+A published module holds no code that would run in an importer's VM (``refused_command``),
+and a source proves its node only while each module its check inlined is still its node's
+source (``Closures``).
 """
 
+import copy
 import re
 from collections import deque
 from dataclasses import dataclass
@@ -20,7 +26,13 @@ from dataclasses import dataclass
 from .commons_models import axiom_refusal, is_open
 from .domain import utcnow
 from .errors import HarnessError
-from .orchestration.lean_session import _ID_FIRST, _command_word, lean_code
+from .orchestration.lean_session import (
+    _ID_FIRST,
+    HEADER_OPTION_PREFIXES,
+    HEADER_OPTIONS,
+    _command_word,
+    lean_code,
+)
 from .storage import RecordRow
 from .worker_authority import current_worker_effects
 
@@ -36,6 +48,45 @@ _MODULE_NAME = re.compile(r"[A-Za-z_][\w.']*")
 _ID_REST = _ID_FIRST + "0-9'\u2080-\u2089\u2090-\u209c\u1d62-\u1d6a"
 _SCOPE = re.compile(rf"(?<![{_ID_REST}.!?])(namespace|section|mutual|end)(?![{_ID_REST}!?])")
 _SCOPE_NAME = re.compile(r"[ \t]+([\w.'!?]+)")
+# What a published module may not hold. Importers inline it, and so may a referee's
+# lean_check: its compile-time code would run in their VMs, where it can read and overwrite
+# their files, and a global syntax extension would change how their own lines read (a
+# `sorry` that is none, a redefined `#print axioms`). Commands and modifiers that run code or
+# extend syntax, and the prefixes of Lean's and Mathlib's registration commands
+# (`register_option`, `declare_aesop_rule_sets`, `builtin_initialize`, …):
+_RUNS_CODE = frozenset(
+    "run_cmd run_elab run_meta run_tac by_elab elab elab_rules macro macro_rules syntax "
+    "declare_syntax_cat binder_predicate initialize builtin_initialize simproc dsimproc "
+    "simproc_decl dsimproc_decl unsafe".split()
+)
+_REGISTERS = ("builtin_", "declare_", "register_")
+# Notation only as `local`, which ends with the section the inliner wraps the module in.
+_NOTATION = frozenset("notation notation3 infix infixl infixr prefix postfix".split())
+# Attributes (`@[…]`, `attribute […]`) that hand the elaborator code to run.
+_CODE_ATTRIBUTES = frozenset(
+    "command_elab term_elab tactic macro init builtin_init implemented_by extern env_linter "
+    "delab app_unexpander norm_num positivity simproc dsimproc widget_module".split()
+)
+_CODE_ATTRIBUTE_SUFFIXES = (
+    "_elab",
+    "_parser",
+    "_delab",
+    "_unexpander",
+    "_code_action",
+    "_formatter",
+    "_parenthesizer",
+)
+# The `#` commands that only report; `#eval` and the others run code or write files.
+_REPORTS = frozenset(("#check", "#check_failure", "#print", "#reduce", "#synth"))
+# A metaprogram or IO action is written with these namespaces' names, so a module that names
+# none defines no code for a tactic's configuration or an `evalConst` to run.
+_META_NAMESPACES = frozenset(("Lean", "IO", "EIO", "BaseIO"))
+_WORD = rf"[{_ID_FIRST}][{_ID_REST}!?]*"
+_TOKEN = re.compile(rf"#{_WORD}|@\[|(?<![{_ID_REST}.!?]){_WORD}(?:\.{_WORD})*")
+_OPTION = re.compile(rf"\s+({_WORD}(?:\.{_WORD})*)")
+_BRACKET = re.compile(r"\s*\[")
+_LOCAL = re.compile(rf"(?<![{_ID_REST}.!?])local\s+$")
+_ESCAPED_META = re.compile("«(?:" + "|".join(sorted(_META_NAMESPACES)) + ")»")
 
 
 @dataclass(frozen=True)
@@ -99,12 +150,6 @@ def _effective_rank(source, digest):
     return source["rank"]
 
 
-def _complete_for(source, digest):
-    """Whether ``source`` is complete for the statement ``digest``; a source of an older
-    statement is stale and counts as none."""
-    return source is not None and not _stale(source, digest) and source["rank"] in COMPLETE_RANKS
-
-
 def _verified_evidence(node, check):
     """Whether a statement-check record supports the verified rank: the check passed, and
     it found only Lean's standard axioms for the node's theorem."""
@@ -125,17 +170,21 @@ def node_refusal(node: dict) -> str | None:
     return None
 
 
-def blocking_rank(node: dict, rank: str, branch_id: str | None) -> str | None:
+def blocking_rank(node: dict, rank: str, branch_id: str | None, state: str) -> str | None:
     """The rank of the node's source when it keeps its place against a new source of
-    ``rank`` from ``branch_id``, else None. A stale source counts as no source: any source
-    of the current statement replaces it. At equal rank the newer source wins, except that
-    a verified source answers only to its publisher and the node's author."""
-    current = node.get("lean_source")
-    if current is None or _stale(current, _statement_digest(node)):
+    ``rank`` from ``branch_id``, else None. ``state`` is the node's ``source_state``: a
+    stale source (of another statement, or whose imports changed since) counts as no
+    source, so any source of the current statement replaces it. At equal rank the newer
+    source wins, except that a complete or verified source answers only to its publisher
+    and the node's author: other nodes' sources may import it, and each goes stale when it
+    is replaced, so another branch cannot churn equal-rank sources under them."""
+    if state not in RANKS:
         return None
+    current = node["lean_source"]
     held = current["rank"]
     if RANKS[rank] < RANKS[held] or (
-        rank == held == "verified"
+        rank == held
+        and held in COMPLETE_RANKS
         and branch_id not in (current.get("branch_id"), node.get("branch_id"))
     ):
         return held
@@ -148,17 +197,86 @@ def has_elaborated_statement(node: dict) -> bool:
     return node.get("lean_statement") is not None and bool(node.get("lean_elaborated"))
 
 
-def source_state(node: dict) -> str:
-    """What the node's source proves of its current statement: its rank, or ``stale`` when
-    it was checked against another statement (so it is never complete); ``stub`` for an
-    elaborated Lean statement with no source (it imports as a ``sorry`` stub), else
-    ``none``."""
+def statement_state(node: dict) -> str:
+    """What the node's source proves of its current statement, judged by the statement
+    alone: its rank, or ``stale`` when it was checked against another statement; ``stub``
+    for an elaborated Lean statement with no source (it imports as a ``sorry`` stub), else
+    ``none``. ``source_state`` also judges what the source imported."""
     source = node.get("lean_source")
     if source:
         return "stale" if _stale(source, _statement_digest(node)) else source["rank"]
     if has_elaborated_statement(node):
         return "stub"
     return "none"
+
+
+class Closures:
+    """Whether a node's published source still stands on the Lean its check inlined (PR 37
+    review): every module that check inlined (``closure``, recorded at publication) is
+    still its node's source, by digest. A source recorded without ``closure`` stands while
+    each direct import is its node's source and that source stands too. A changed
+    statement of an imported node changes no Lean the importer checked, so it stales only
+    that node's own source.
+
+    ``lookup(node_id)`` returns a node payload or None. Each node is judged once, so one
+    instance serves a whole graph; build one per call.
+    """
+
+    def __init__(self, lookup):
+        self._lookup, self._stands = lookup, {}
+
+    @classmethod
+    def over(cls, nodes):
+        """Judged over these node payloads, which hold every node an import names."""
+        return cls({node["id"]: node for node in nodes}.get)
+
+    @classmethod
+    def reading(cls, session, experiment_id):
+        """Judged over the experiment's node rows, read through ``session``."""
+
+        def lookup(node_id):
+            row = session.get(RecordRow, node_id)
+            if (
+                row is None
+                or row.kind != "commons_node"
+                or row.payload.get("experiment_id") != experiment_id
+            ):
+                return None
+            return row.payload
+
+        return cls(lookup)
+
+    def _child(self, entry):
+        """The node an import entry names, while its source is still the one recorded."""
+        child = self._lookup(entry["node_id"])
+        current = (child or {}).get("lean_source") or {}
+        return child if child is not None and current.get("sha256") == entry["sha256"] else None
+
+    def stands(self, node, depth=0):
+        if node["id"] in self._stands:
+            return self._stands[node["id"]]
+        self._stands[node["id"]] = False  # a cycle, or a chain too long to inline, fails
+        source = node.get("lean_source") or {}
+        recorded = source.get("closure")
+        entries = (source.get("imports") or ()) if recorded is None else recorded
+        children = map(self._child, entries)
+        stands = depth < MAX_COMMONS_MODULES and all(
+            child is not None and (recorded is not None or self.stands(child, depth + 1))
+            for child in children
+        )
+        self._stands[node["id"]] = stands
+        return stands
+
+
+def source_state(node: dict, closures: Closures) -> str:
+    """What the node's source proves of its current statement: its rank; ``stale`` when it
+    was checked against another statement, or when a module its check inlined is no longer
+    its node's source (``closures``), so it is never complete; ``stub`` for an elaborated
+    Lean statement with no source (it imports as a ``sorry`` stub), else ``none``."""
+    state = statement_state(node)
+    if state in RANKS and not closures.stands(node):
+        return "stale"
+    return state
 
 
 def _module_name(token):
@@ -207,9 +325,86 @@ def scope_closers(module, source):
     return [f"end {label}".rstrip() for label in reversed(stack)]
 
 
+def _bracketed(code, start):
+    """The text from ``start`` to its unmatched ``]``, or None when there is none."""
+    depth = 0
+    for index in range(start, len(code)):
+        if code[index] == "[":
+            depth += 1
+        elif code[index] == "]":
+            if not depth:
+                return code[start:index]
+            depth -= 1
+    return None
+
+
+def refused_command(source):
+    """The first command, attribute, option or name in ``source`` after its imports that no
+    published module may hold, or None (PR 37 review): a command or modifier that runs code
+    or extends syntax (``_RUNS_CODE``, ``_REGISTERS``), notation that is not ``local``, a
+    ``#`` command other than ``_REPORTS``, a code attribute, a ``set_option`` of an option a
+    node header may not set, or a name in ``_META_NAMESPACES``.
+
+    It reads ``lean_code``, so comments and literals count for nothing; a source too nested
+    to scan is refused. ``#v[`` (a vector literal) is no command; Mathlib's ``#s`` for a
+    finset's card is refused with the commands (write ``#(s)`` or ``s.card``).
+    """
+    body = "\n".join(split_imports(source)[2])
+    code = lean_code(body)
+    if body.strip() and not code:
+        return "(a source too nested to scan)"
+    for match in _TOKEN.finditer(code):
+        word, end = match.group(), match.end()
+        if word.startswith("#"):
+            if word not in _REPORTS and not (word == "#v" and code.startswith("[", end)):
+                return word
+        elif word in ("@[", "attribute"):
+            bracket = _BRACKET.match(code, end) if word == "attribute" else None
+            if word == "attribute" and bracket is None:
+                continue  # not the attribute command: Lean would not parse it
+            content = _bracketed(code, bracket.end() if bracket else end)
+            if content is None:
+                return word
+            for name in _TOKEN.findall(content):
+                if (
+                    name in _CODE_ATTRIBUTES
+                    or name.startswith("builtin_")
+                    or name.endswith(_CODE_ATTRIBUTE_SUFFIXES)
+                ):
+                    return f"@[{name}]" if word == "@[" else f"attribute [{name}]"
+        elif word == "set_option":
+            option = _OPTION.match(code, end)
+            name = option.group(1) if option else ""
+            if name not in HEADER_OPTIONS and not name.startswith(HEADER_OPTION_PREFIXES):
+                return f"set_option {name}".rstrip()
+        elif word in _NOTATION:
+            if not _LOCAL.search(code, max(0, match.start() - 64), match.start()):
+                return word
+        elif (
+            word in _RUNS_CODE
+            or word.startswith(_REGISTERS)
+            or not _META_NAMESPACES.isdisjoint(word.split("."))
+        ):
+            return word
+    escaped = _ESCAPED_META.search(body)
+    return escaped.group() if escaped else None
+
+
+def _refused_module(module, command):
+    return HarnessError(
+        "COMMONS_MODULE_REFUSED",
+        f"{module} holds {command}, which no published module may hold.",
+        status=422,
+        details={"module": module, "command": command},
+        remediation=_REPUBLISH,
+    )
+
+
 _REPUBLISH = (
-    "Republish the module without #exit and with every end matching a namespace or section "
-    "it opened, or do not import it."
+    "Republish the module without #exit, without commands or attributes that run code or "
+    "extend syntax (only local notation, and set_option only for the options a node header "
+    "may set), and with every end matching a namespace or section it opened; or do not "
+    "import it."
 )
 
 
@@ -372,12 +567,23 @@ class CommonsSourceMixin:
 
     def _module(self, session, name, actor, experiment_id) -> Module:
         """The module as inlined: the node's live published source at its effective rank,
-        else a ``sorry`` stub of its elaborated Lean statement."""
+        else a ``sorry`` stub of its elaborated Lean statement. The goal has no module:
+        nothing imports the target. A source or statement stored before the publication
+        gate that the gate refuses is refused here, so it is never inlined
+        (``refused_command``)."""
         row = self._module_node(session, name, actor, experiment_id)
+        if row.payload["node_type"] == "goal":
+            raise HarnessError(
+                "COMMONS_MODULE_NOT_FOUND",
+                "The goal node has no module: nothing imports the target.",
+                status=404,
+                details={"module": name, "node_id": row.id},
+                remediation="Import or fetch the modules of the nodes the goal depends on.",
+            )
         node, source = row.payload, row.payload.get("lean_source")
         digest = _statement_digest(node)
         if source is not None:
-            return Module(
+            found = Module(
                 name,
                 row.id,
                 self.artifacts.get(source["sha256"]).decode("utf-8"),
@@ -387,10 +593,17 @@ class CommonsSourceMixin:
                 source["branch_id"],
                 stale=_stale(source, digest),
             )
-        if node.get("lean_statement") is not None and node.get("lean_elaborated"):
+        elif node.get("lean_statement") is not None and node.get("lean_elaborated"):
             header, statement = node.get("lean_header") or "", node["lean_statement"]
             stub = f"{header}\n\ntheorem {node['lean_name']} {statement} := sorry\n"
-            return Module(name, row.id, stub, "stub")
+            found = Module(name, row.id, stub, "stub")
+        else:
+            found = None
+        if found is not None:
+            command = refused_command(found.source)
+            if command is not None:
+                raise _refused_module(name, command)
+            return found
         raise HarnessError(
             "COMMONS_MODULE_NOT_FOUND",
             f"{name} has no published source and no elaborated Lean statement.",
@@ -405,14 +618,6 @@ class CommonsSourceMixin:
         self._research_role(actor)
         with self.db.sessions() as session:
             row = self._get(session, "commons_node", node_id, actor)
-            if row.payload["node_type"] == "goal":
-                raise HarnessError(
-                    "COMMONS_MODULE_NOT_FOUND",
-                    "The goal node has no module: nothing imports the target.",
-                    status=404,
-                    details={"node_id": row.id},
-                    remediation="Fetch the modules of the nodes the goal depends on.",
-                )
             found = self._module(
                 session, node_module(row.payload), actor, row.payload["experiment_id"]
             )
@@ -423,6 +628,14 @@ class CommonsSourceMixin:
             "rank": found.rank,
             "sha256": found.sha256,
         }
+
+    def node_source_state(self, node_id, actor) -> tuple[dict, str]:
+        """A commons node's payload and its ``source_state``, its imports read in the same
+        session: a scoped recruit ends on it (``scope_ending``)."""
+        with self.db.sessions() as session:
+            row = self._get(session, "commons_node", node_id, actor)
+            node = copy.deepcopy(row.payload)
+            return node, source_state(node, Closures.reading(session, node["experiment_id"]))
 
     def expand_commons(self, experiment_id, source, actor, *, max_bytes) -> Expansion:
         """``source`` with its ``import Commons.N…`` inlined from the experiment's live node
@@ -441,9 +654,11 @@ class CommonsSourceMixin:
 
         ``record`` is platform evidence assembled by ``lean_check``: ``rank``, ``bytes``,
         ``statement_check``, ``lean_statement_sha256`` (the statement the file was checked
-        against) and ``imports`` (``[{module, node_id, sha256}]``, each a depends_on edge).
+        against), ``imports`` (``[{module, node_id, sha256}]``, each a depends_on edge) and
+        ``closure`` (``[{node_id, sha256}]``, every module the check inlined; ``Closures``).
         A source whose imports reach the node through the stored sources' imports is refused
-        (``imports_own_module``): published, the module would import itself.
+        (``imports_own_module``): published, the module would import itself. So is one that
+        holds what no published module may (``refused_command``), whoever calls.
         """
         self._research_role(actor)
         if not isinstance(record, dict) or record.get("rank") not in RANKS:
@@ -471,6 +686,12 @@ class CommonsSourceMixin:
                     "the node's experiment.",
                     status=403,
                 )
+            content = self.artifacts.get(artifact.payload["sha256"])
+            command = refused_command(content.decode("utf-8", errors="replace"))
+            if command is not None:
+                # Every importer would run it (the publication gate, whoever calls).
+                refused = {"recorded": False, "module": module, "reason": "refused_command"}
+                return {**refused, "command": command}
             digest = _statement_digest(node)
             if digest is not None and record["lean_statement_sha256"] != digest:
                 return {"recorded": False, "module": module, "reason": "statement_changed"}
@@ -484,7 +705,8 @@ class CommonsSourceMixin:
                     status=422,
                 )
             rank, current = record["rank"], node.get("lean_source")
-            held = blocking_rank(node, rank, actor.branch_id)
+            state = source_state(node, Closures.reading(session, experiment.id))
+            held = blocking_rank(node, rank, actor.branch_id, state)
             if held is not None:
                 return {"recorded": False, "module": module, "reason": "lower_rank", "rank": held}
             if _imports_reach(session, row.id, record["imports"]):
@@ -502,6 +724,7 @@ class CommonsSourceMixin:
                 "statement_check": record["statement_check"],
                 "lean_statement_sha256": record["lean_statement_sha256"],
                 "imports": record["imports"],
+                "closure": record.get("closure"),
                 "recorded_at": utcnow().isoformat(),
             }
             self._replace(session, row, {"lean_source": source})
@@ -517,7 +740,7 @@ class CommonsSourceMixin:
             if (
                 rank in COMPLETE_RANKS
                 and has_elaborated_statement(node)
-                and not _complete_for(current, digest)
+                and state not in COMPLETE_RANKS
             ):
                 # First reach only: a re-publication at a complete rank never re-posts.
                 route = next(
@@ -530,8 +753,9 @@ class CommonsSourceMixin:
                 )
                 self._post_route_compiled(session, row, actor.branch_id, route, op)
             replaced = current is not None
-            # A source of an older statement is stale: the new one is a first publication.
-            fresh = replaced and not _stale(current, digest)
+            # A stale source (of an older statement, or whose imports changed) is none: the
+            # new one is a first publication.
+            fresh = replaced and state in RANKS
             self._event(
                 session,
                 actor,
