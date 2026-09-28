@@ -17,6 +17,8 @@ from physharness.domain import (
     ProblemCreate,
     TaskCreate,
 )
+from physharness.execution import ModelConfig, RuntimeCheckpoint, RuntimeLimits, RuntimeSession
+from physharness.orchestration.research_worker import CanonicalRuntimeStore
 from physharness.service import HarnessService
 from physharness.storage import Database, EventRow
 from physharness.worker_authority import worker_effects
@@ -270,3 +272,46 @@ def test_postgres_peer_wait_wakes_on_reply_sent_before_registration(pg_lab):
         "reason": "message_received",
         "message_id": reply["id"],
     }
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_postgres_restarted_store_reuses_its_stored_checkpoint_chunks(pg_lab):
+    # The chunk-cache warm-up filters on nested JSON provenance, which must match on PostgreSQL.
+    service, operator, experiment = pg_lab
+    researcher = Principal(id="researcher", project_id="network-pg", role="researcher")
+    branch = service.create_branch(
+        experiment["id"], BranchCreate(title="Native", objective="Native"), researcher, "native"
+    )
+    task = service.create_task(
+        TaskCreate(branch_id=branch["id"], objective="Native"), researcher, "native-task"
+    )
+    lease = service.acquire_task(task["id"], "worker", 60, operator, "native-lease")
+    session = RuntimeSession(
+        runtime="openai_responses",
+        model=ModelConfig(model="explicit-test-model"),
+        limits=RuntimeLimits(),
+    )
+
+    def store():
+        return CanonicalRuntimeStore(
+            service, operator, experiment["id"], task["id"], "worker", lease["fence"]
+        )
+
+    def chunk_ids():
+        return {
+            a["sha256"]: a["id"]
+            for a in service.list_records("artifact", operator)
+            if a["artifact_kind"] == "native_checkpoint_chunk"
+        }
+
+    history = [{"content": "x" * 4096, "id": str(i)} for i in range(80)]
+    await store().save(RuntimeCheckpoint.build(session, {"input": history}))
+    stored = chunk_ids()
+    restarted = store()
+    restarted._warm_chunk_cache(session.id)
+    assert {digest: ref["id"] for (_, digest), ref in restarted._chunk_cache.items()} == stored
+    grown = [*history, {"content": "y", "id": "80"}]
+    await restarted.save(RuntimeCheckpoint.build(session, {"input": grown}))
+    assert len(chunk_ids()) - len(stored) <= 6  # new last page, sequence, map leaf, root
+    assert (await restarted.load(session.id)).native_state["input"] == grown

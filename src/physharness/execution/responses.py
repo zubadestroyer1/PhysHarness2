@@ -5,16 +5,20 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import os
 import re
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
+from dataclasses import dataclass
 from functools import partial
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
-from ..domain import canonical_json
+from ..domain import ContextBudget, canonical_json
+from .admission import Admission, TokenRateGovernor
+from .context_policy import CONTEXT_MARGIN
 from .parameters import validate_responses_parameters
 from .stagnation import observe as observe_stagnation
 from .stagnation import signal_message, successor_state
@@ -34,20 +38,97 @@ from .types import (
     identifier,
 )
 
+log = logging.getLogger(__name__)
+
 ToolHandler = Callable[[dict[str, Any], str], Awaitable[dict[str, Any]]]
 MAX_TURN_NOTE_CHARS = 4_000
 MAX_STAGNATION_SUGGESTIONS = 10
 MAX_STAGNATION_SUGGESTION_CHARS = 200
 # A provider rate-limit refusal waits at most this long per attempt before a resend.
 MAX_RATE_LIMIT_WAIT_SECONDS = 30.0
+# P1: the input bound's safety margin is max(2,048 tokens, ceil(2% of the bound)).
+BOUND_MARGIN_FLOOR = 2_048
+BOUND_MARGIN_PERCENT = 2
+# A create re-queued after a 429 must be re-admitted this long before the deadline, so that a
+# give-up while queued is still definitely "not sent".
+REQUEUE_MARGIN_SECONDS = 1.0
+# Response fields a checkpoint keeps. The rest is the provider's echo of the request (tools,
+# instructions, settings): kept as a digest; the session record holds the tool digest.
+STORED_RESPONSE_FIELDS = frozenset(
+    {
+        "id",
+        "object",
+        "created_at",
+        "completed_at",
+        "model",
+        "status",
+        "output",
+        "usage",
+        "incomplete_details",
+        "error",
+        "service_tier",
+    }
+)
 
 
-def _rate_limit_wait(error: Exception, fallback: float) -> float | None:
-    """Seconds to wait before resending a request the provider refused for rate limiting.
+def _response_record(native: dict[str, Any]) -> dict[str, Any]:
+    """The billing- and recovery-relevant fields plus a digest of the request echo."""
+    record = {key: value for key, value in native.items() if key in STORED_RESPONSE_FIELDS}
+    record["request_echo_sha256"] = digest(
+        {key: value for key, value in native.items() if key not in STORED_RESPONSE_FIELDS}
+    )
+    return record
+
+
+_DURATION_PART = re.compile(r"([0-9]+(?:\.[0-9]+)?)(ms|h|m|s)")
+
+_DURATION_SCALE = {"h": 3600.0, "m": 60.0, "s": 1.0, "ms": 0.001}
+
+_RATE_LIMIT_COUNTS = (
+    ("x-ratelimit-limit-tokens", "limit_tokens"),
+    ("x-ratelimit-remaining-tokens", "remaining_tokens"),
+    ("x-ratelimit-limit-requests", "limit_requests"),
+    ("x-ratelimit-remaining-requests", "remaining_requests"),
+)
+
+_RATE_LIMIT_RESETS = (
+    ("x-ratelimit-reset-tokens", "reset_tokens_seconds"),
+    ("x-ratelimit-reset-requests", "reset_requests_seconds"),
+)
+
+
+def _duration_seconds(value: Any) -> float | None:
+    """Seconds in a provider duration such as ``6m0s`` or ``20ms``; None if malformed."""
+    if not isinstance(value, str) or not 0 < len(value) <= 32:
+        return None
+    parts = _DURATION_PART.findall(value)
+    if not parts or "".join(number + unit for number, unit in parts) != value:
+        return None
+    return round(sum(float(number) * _DURATION_SCALE[unit] for number, unit in parts), 3)
+
+
+def _rate_limit_headers(error: Exception) -> dict[str, int | float]:
+    """Bounded numbers from rate-limit headers; never the message, which names the org."""
+    headers = getattr(getattr(error, "response", None), "headers", None) or {}
+    fields: dict[str, int | float] = {}
+    for header, name in _RATE_LIMIT_COUNTS:
+        if isinstance(value := headers.get(header), str) and re.fullmatch(r"[0-9]{1,15}", value):
+            fields[name] = int(value)
+    for header, name in _RATE_LIMIT_RESETS:
+        if (seconds := _duration_seconds(headers.get(header))) is not None:
+            fields[name] = seconds
+    return fields
+
+
+def _rate_limit_wait(error: Exception, fallback: float) -> tuple[float, str] | None:
+    """Seconds and source to wait before resending a request the provider refused for
+    rate limiting.
 
     Only an HTTP 429 with code `rate_limit_exceeded` qualifies: the provider refused the
     request before doing any work, so nothing was generated or charged. Quota exhaustion
     (`insufficient_quota`) and every other error return None and keep their existing path.
+    The source is the provider hint used (`retry-after-ms` or `retry-after`), or `"backoff"`
+    for the doubling fallback.
     """
     if getattr(error, "status_code", None) != 429:
         return None
@@ -60,8 +141,8 @@ def _rate_limit_wait(error: Exception, fallback: float) -> float | None:
         except (TypeError, ValueError):
             continue
         if hinted > 0:
-            return min(hinted, MAX_RATE_LIMIT_WAIT_SECONDS)
-    return min(fallback, MAX_RATE_LIMIT_WAIT_SECONDS)
+            return min(hinted, MAX_RATE_LIMIT_WAIT_SECONDS), name
+    return min(fallback, MAX_RATE_LIMIT_WAIT_SECONDS), "backoff"
 
 
 async def _resend_rate_limited(
@@ -70,22 +151,30 @@ async def _resend_rate_limited(
     *,
     operation_id: str | None = None,
     abandon: Callable[[], Awaitable[None]] | None = None,
+    on_wait: Callable[[int, float, str, Exception], Awaitable[None]] | None = None,
+    on_give_up: Callable[[float], None] | None = None,
 ) -> Any:
     """Await `send`, resending it while the provider refuses it for rate limiting.
 
     A refusal did no work, so nothing is in flight while waiting. When the next wait would
     pass the deadline, or the wait is interrupted, `abandon` runs before the error
-    propagates; giving up raises a definite, retryable PROVIDER_RATE_LIMITED.
+    propagates; giving up raises a definite, retryable PROVIDER_RATE_LIMITED. When given,
+    `on_wait(attempt, seconds, source, error)` performs each wait instead of `asyncio.sleep`,
+    under the same interrupt guard, so an error it raises also abandons the request. A
+    refusal given up on without waiting is reported to `on_give_up(seconds)` before `abandon`.
     """
-    backoff = 1.0
+    backoff, attempt = 1.0, 0
     while True:
         try:
             return await send()
         except Exception as error:
-            wait = _rate_limit_wait(error, backoff)
-            if wait is None:
+            hint = _rate_limit_wait(error, backoff)
+            if hint is None:
                 raise
+            wait, source = hint
             if asyncio.get_running_loop().time() + wait >= deadline:
+                if on_give_up is not None:
+                    on_give_up(wait)
                 if abandon is not None:
                     await abandon()
                 raise ExecutionError(
@@ -94,8 +183,9 @@ async def _resend_rate_limited(
                     operation_id=operation_id,
                     retryable=True,
                 ) from error
+            attempt, refused = attempt + 1, error  # `error` is unbound after this block
         try:
-            await asyncio.sleep(wait)
+            await (on_wait(attempt, wait, source, refused) if on_wait else asyncio.sleep(wait))
         except BaseException:
             if abandon is not None:
                 await abandon()
@@ -110,6 +200,71 @@ def _safe_provider_field(value: Any, *, maximum: int) -> str | None:
     return value if re.fullmatch(r"[A-Za-z0-9_.\[\]-]+", value) else None
 
 
+def _provider_rejection(error: Exception) -> tuple[str, str | None, str | None]:
+    """The harness code plus the bounded provider code and parameter of an HTTP 400."""
+    provider_code = _safe_provider_field(getattr(error, "code", None), maximum=80)
+    provider_param = _safe_provider_field(getattr(error, "param", None), maximum=160)
+    schema = provider_code == "invalid_function_parameters" or bool(
+        provider_param and provider_param.startswith("tools")
+    )
+    return (
+        "PROVIDER_TOOL_SCHEMA_INVALID" if schema else "MODEL_REQUEST_INVALID",
+        provider_code,
+        provider_param,
+    )
+
+
+def _request_elements(
+    params: dict[str, Any], tools: list[dict[str, Any]], items: list[Any]
+) -> list[tuple[str, int]]:
+    """P1's positional request elements as (sha256, UTF-8 size) of their canonical JSON: the
+    instructions (null when absent), the tools array, then each input item."""
+    elements = []
+    for element in (params.get("instructions"), tools, *items):
+        raw = canonical_json(element).encode("utf-8")
+        elements.append((hashlib.sha256(raw).hexdigest(), len(raw)))
+    return elements
+
+
+def _bound_margin(tokens: int) -> int:
+    """P1's margin on a token bound: the larger of the floor and a percentage, rounded up."""
+    return max(BOUND_MARGIN_FLOOR, (tokens * BOUND_MARGIN_PERCENT + 99) // 100)
+
+
+def _input_bound(
+    previous: dict[str, Any] | None, elements: list[tuple[str, int]], epoch: int
+) -> int | None:
+    """A sound upper bound on a request's input tokens, margin included (G4, P1), or None to count.
+
+    ``previous`` is this session's last request in the current ``_run``: its element digests, its
+    compaction epoch and the input tokens the provider billed for it. Each element that is not
+    byte-identical to the element at the same position adds at most its canonical UTF-8 size (a
+    byte-level tokenizer emits no more tokens than bytes); removed content earns no credit. A
+    compaction rewrites the input (a new epoch), which voids the bound.
+    """
+    if previous is None or previous["epoch"] != epoch:
+        return None
+    old = previous["digests"]
+    raw = previous["tokens"] + sum(
+        size for index, (sha, size) in enumerate(elements) if index >= len(old) or old[index] != sha
+    )
+    return raw + _bound_margin(raw)
+
+
+def _cached_input_tokens(usage: Any) -> int:
+    """Provider-reported cache hits, or 0 (the full input rate) if absent or inconsistent."""
+    cached = getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", None)
+    return cached if type(cached) is int and 0 <= cached <= usage.input_tokens else 0
+
+
+def _cache_write_input_tokens(usage: Any) -> int:
+    """Provider-reported cache writes, or 0 if absent or inconsistent with the cache hits."""
+    written = getattr(getattr(usage, "input_tokens_details", None), "cache_write_tokens", None)
+    if type(written) is not int or written < 0:
+        return 0
+    return written if written + _cached_input_tokens(usage) <= usage.input_tokens else 0
+
+
 def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
     """Input and output tokens used by a session and every predecessor in its lineage."""
     state = checkpoint.native_state
@@ -117,6 +272,163 @@ def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
         state.get("cumulative_input_offset", 0) + checkpoint.session.input_tokens,
         state.get("cumulative_output_offset", 0) + checkpoint.session.output_tokens,
     )
+
+
+RECALL_PAGE_CHARS = 16_000
+
+RECALL_OUTPUT_TOOL = {
+    "type": "function",
+    "name": "recall_output",
+    "strict": True,
+    "description": "Re-read the full output of an earlier tool call that was shortened in context. "
+    "Returns up to 16,000 characters from offset; pass next_offset to continue.",
+    "parameters": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["call_id", "offset"],
+        "properties": {
+            "call_id": {"type": "string", "description": "The shortened output's call_id."},
+            "offset": {"type": "integer", "minimum": 0, "description": "Start at 0."},
+        },
+    },
+}
+
+
+def request_tools(
+    definitions: list[dict[str, Any]], budget: dict[str, Any] | None
+) -> list[dict[str, Any]]:
+    """Tool definitions actually sent: the registered tools, plus recall under a budget."""
+    return [*definitions, RECALL_OUTPUT_TOOL] if budget else list(definitions)
+
+
+def _tool_output_text(
+    budget: dict[str, Any] | None, call: dict[str, Any], visible: dict[str, Any]
+) -> str:
+    """Model-visible output. Under a budget Unicode stays literal (#5e) and a long output becomes a
+    head plus a recall handle; the full value stays in tool_results."""
+    text = json.dumps(visible, allow_nan=False, ensure_ascii=not budget)
+    if not budget:
+        return text
+    limit = budget.get("max_output_chars")
+    if limit is not None and call["name"] != "recall_output" and len(text) > limit:
+        # A reloaded checkpoint holds the result with sorted keys, and recall pages that text, so
+        # the head uses the same order. Sorting keeps the length.
+        text = json.dumps(visible, allow_nan=False, ensure_ascii=False, sort_keys=True)
+        # Escaping at most doubles the head: the view is at most the cap plus its envelope.
+        head = limit // 2
+        text = json.dumps(
+            {
+                "truncated": True,
+                "tool": call["name"],
+                "total_chars": len(text),
+                "head": text[:head],
+                "recall": {
+                    "tool": "recall_output",
+                    "call_id": call["call_id"],
+                    "next_offset": head,
+                },
+            },
+            ensure_ascii=False,
+        )
+    # UTF-8 cannot encode a lone surrogate, and one left literal would fail every later request of
+    # the lineage, so it keeps the \udXXX escape legacy output uses. Nothing else changes.
+    return text.encode("utf-8", "backslashreplace").decode()
+
+
+def _recall_page(text: str, offset: int) -> str:
+    """The page of ``text`` at ``offset``: as many characters as fit RECALL_PAGE_CHARS once
+    escaped in the JSON tool output, which is the form the model reads."""
+    page = text[offset : offset + RECALL_PAGE_CHARS]
+    while (size := len(json.dumps(page, ensure_ascii=False)) - 2) > RECALL_PAGE_CHARS:
+        page = page[: len(page) * RECALL_PAGE_CHARS // size]
+    return page
+
+
+def _elision_stub(tool: str, call_id: str, output: str, offset: int | None = None) -> str:
+    """What an elided output leaves in context: its size, digest, head and a recall handle. A
+    recalled page's handle names the stored output and the page's offset."""
+    recall = {"tool": "recall_output", "call_id": call_id}
+    if offset is not None:
+        recall["offset"] = offset
+    return json.dumps(
+        {
+            "elided": True,
+            "tool": tool,
+            "chars": len(output),
+            "sha256": hashlib.sha256(output.encode("utf-8")).hexdigest()[:16],
+            "head": output[:160],
+            "recall": recall,
+        },
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+
+
+def _is_elision_stub(output: Any) -> bool:
+    # Stubs use compact separators, and every rendered tool output has a space after its colons,
+    # so no output can pass for a stub.
+    return isinstance(output, str) and output.startswith('{"elided":true')
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Prepared:
+    """A counted or bounded request with its reservation, not yet sent."""
+
+    params: dict[str, Any]
+    # The tools array the digests describe, sent as prepared.
+    tools: list[dict[str, Any]]
+    input_tokens: int
+    counted: bool
+    digests: tuple[str, ...]
+    # A sound bound on the input: the count, the P1 bound, or under context_management the count
+    # plus the P1 margin. Admission uses it, and so does the reservation below the window (G4).
+    input_bound: int
+    input_reservation: int
+    output_reservation: int
+    remaining: int | None
+    parallel_tool_calls: bool
+
+
+@dataclass(frozen=True, kw_only=True)
+class _Sent:
+    """A provider response and the generation operation that produced it."""
+
+    response: Any
+    operation_id: str
+    rate_limit_waits: int = 0
+    rate_limit_wait_seconds: float = 0.0
+    admission: Admission | None = None
+
+
+def _scrub_surrogates(value: Any) -> Any:
+    """``value`` with each string UTF-8 cannot encode (one holding a lone surrogate, which no
+    checkpoint store accepts) replaced by its backslash-escaped form. Dict keys are treated the
+    same. Anything that needs no change is returned as the same object.
+
+    Two keys that would escape to one raise ValueError rather than lose a value; like a
+    self-referential result's RecursionError, dispatch reports it as TOOL_FAILED."""
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return value.encode("utf-8", "backslashreplace").decode()
+        return value
+    if isinstance(value, dict):
+        items = [(_scrub_surrogates(k), _scrub_surrogates(v)) for k, v in value.items()]
+        changed = any(
+            k is not old_k or v is not old_v
+            for (k, v), (old_k, old_v) in zip(items, value.items(), strict=True)
+        )
+        if not changed:
+            return value
+        scrubbed = dict(items)
+        if len(scrubbed) != len(value):
+            raise ValueError("escaping lone surrogates would merge two tool result keys")
+        return scrubbed
+    if isinstance(value, (list, tuple)):  # both serialize as a JSON array
+        items = [_scrub_surrogates(item) for item in value]
+        return items if any(a is not b for a, b in zip(items, value, strict=True)) else value
+    return value
 
 
 class ToolDispatcher:
@@ -181,6 +493,7 @@ class ToolDispatcher:
             result = await handler(arguments, operation_id)
             if not isinstance(result, dict):
                 raise ValueError("tool result must be a JSON object")
+            result = _scrub_surrogates(result)
             json.dumps(result, allow_nan=False)
             return result
         except ExecutionError:
@@ -220,6 +533,9 @@ class ResponsesRuntime:
         update_ack: Callable[[str], Awaitable[None]] | None = None,
         turn_note: Callable[[int], Awaitable[str | None]] | None = None,
         stagnation_suggestions: list[str] | None = None,
+        token_governor: TokenRateGovernor | None = None,
+        admission_priority: int = 1,
+        context_budget: ContextBudget | None = None,
     ):
         self.store = store
         self.dispatcher = dispatcher or ToolDispatcher()
@@ -251,7 +567,23 @@ class ResponsesRuntime:
             self.stagnation_state = successor_state(stagnation_state or {})
         except ValueError:
             raise ExecutionError("INVALID_CONFIG", "Invalid durable stagnation state") from None
+        if not (type(admission_priority) is int and 0 <= admission_priority <= 3):
+            raise ExecutionError("INVALID_CONFIG", "Admission priority must be 0-3")
+        self.token_governor = token_governor
+        self.admission_priority = admission_priority
+        self.context_budget = context_budget
         self._active: dict[str, asyncio.Task[Any]] = {}
+        # Each running session's last saved checkpoint, handed to its hooks.
+        self._saved: dict[str, RuntimeCheckpoint] = {}
+        # Each running session's previous request, for the P1 input bound; never persisted.
+        self._last_request: dict[str, dict[str, Any]] = {}
+        # Each running session's tool results awaiting announcement, in call order: (operation,
+        # name, signal, stagnation snapshot). Announced only after a save that holds them.
+        self._unannounced: dict[str, list[tuple[str, str, str | None, dict[str, Any] | None]]] = {}
+        # Each running session's elision block awaiting announcement: its context_elided payload.
+        self._elided: dict[str, dict[str, Any]] = {}
+        # Each running session's tool-result keys of the archives it has read: (owner, archive).
+        self._archive_keys: dict[str, dict[tuple[str, str], tuple[str, ...]]] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -284,18 +616,87 @@ class ResponsesRuntime:
                 )
             )
 
-    async def _save(self, session: RuntimeSession, state: dict[str, Any]) -> None:
-        await self.store.save(RuntimeCheckpoint.build(session, state))
+    async def _emit_telemetry(
+        self, kind: str, session: RuntimeSession, operation_id: str | None = None, **payload: Any
+    ) -> None:
+        """Observability only: a sink failure is logged and never turns a request that was
+        certainly not sent into an uncertain one."""
+        try:
+            await self._emit(kind, session, operation_id, **payload)
+        except Exception:
+            log.warning(
+                "runtime_telemetry_failed",
+                extra={"event_kind": kind, "session_id": session.id, "operation_id": operation_id},
+            )
+
+    def _release(self, admission: Admission | None) -> None:
+        if admission is not None:
+            self.token_governor.release(admission)
+
+    @property
+    def _governor_throttled(self) -> Callable[[float], None] | None:
+        """The give-up hook: the governor's ``throttled``, or None without a governor. A 429
+        given up on without waiting pauses admission too; waited 429s pause it in the hook."""
+        return self.token_governor.throttled if self.token_governor is not None else None
+
+    def _throttle_hook(
+        self,
+        session: RuntimeSession,
+        operation_id: str | None,
+        waits: list[float],
+        requeue: Callable[[], Awaitable[None]] | None = None,
+    ) -> Callable[[int, float, str, Exception], Awaitable[None]]:
+        """The on_wait hook of one provider call: record and announce each rate-limit wait,
+        then wait it out, or re-queue behind the governor's pause when given ``requeue``."""
+
+        async def on_wait(attempt: int, wait: float, source: str, error: Exception) -> None:
+            waits.append(wait)
+            await self._emit_telemetry(
+                "provider_throttled",
+                session,
+                operation_id,
+                attempt=attempt,
+                wait_seconds=round(wait, 3),
+                wait_source=source,
+                **_rate_limit_headers(error),
+                # The governor's view as the 429 arrived, before it pauses and cuts, to calibrate
+                # against the provider's headers; absent without a governor.
+                **(
+                    {"governor": self.token_governor.snapshot()}
+                    if self.token_governor is not None
+                    else {}
+                ),
+            )
+            if self.token_governor is not None:
+                self.token_governor.throttled(wait)  # every 429 pauses admission (R5, F10)
+            # Only a create holds an admission, so only a create re-queues; a count 429 just
+            # waits out the pause.
+            await (requeue() if requeue is not None else asyncio.sleep(wait))
+
+        return on_wait
+
+    async def _save(self, session: RuntimeSession, state: dict[str, Any]) -> RuntimeCheckpoint:
+        checkpoint = RuntimeCheckpoint.build(session, state)
+        await self.store.save(checkpoint)
+        if session.id in self._active:  # only a run reads it, and `_run` drops it on exit
+            self._saved[session.id] = checkpoint
+        return checkpoint
 
     async def _abandon_refused(
-        self, session: RuntimeSession, state: dict[str, Any], operation_id: str
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        operation_id: str,
+        *,
+        reason: str = "rate_limited",
     ) -> None:
-        """Every send was refused and none is in flight: release the reservation at zero.
+        """No send is in flight (each was refused, or none was made): release the reservation at
+        zero.
 
         As with usage, the operation is cleared only after its accounting succeeds, so a
         failed or interrupted release leaves the session uncertain rather than definite.
         """
-        await self._emit("generation_aborted", session, operation_id, reason="rate_limited")
+        await self._emit("generation_aborted", session, operation_id, reason=reason)
         state["pending_operation"] = None
 
     async def _receive_updates(
@@ -311,7 +712,10 @@ class ResponsesRuntime:
             or state.get("terminal_response_pending")
         ):
             return
-        batch = await self.update_source(RuntimeCheckpoint.build(session, state))
+        saved = self._saved.get(session.id)
+        batch = await self.update_source(
+            saved if saved is not None else RuntimeCheckpoint.build(session, state)
+        )
         if not isinstance(batch, dict):
             raise ExecutionError("INVALID_UPDATES", "Update source returned an invalid batch")
         delivery_id, items = batch.get("delivery_id"), batch.get("items")
@@ -367,7 +771,8 @@ class ResponsesRuntime:
             await self._receive_updates(session, state, changed_retry=True)
 
     async def _receive_turn_note(self, session: RuntimeSession, state: dict[str, Any]) -> None:
-        """Persist optional harness guidance at a settled boundary before the next request."""
+        """Add optional harness guidance at a settled boundary. The generation marker's save
+        makes it durable before generation; a failure before then saves it in `_run`."""
         if self.turn_note is None:
             return
         if (
@@ -391,7 +796,68 @@ class ResponsesRuntime:
         }
         state["input"].append({"role": "user", "content": canonical_json(content)})
         state["turn_note_turns"] = session.turns
-        await self._save(session, state)
+
+    async def _elide_block(self, session: RuntimeSession, state: dict[str, Any]) -> None:
+        """Replace old large tool outputs with recall stubs, once per block of responses.
+
+        Between blocks the input prefix is byte-stable, so provider prefix caching holds; a block
+        breaks it once, at its first newly elided item. Full outputs stay in tool_results for
+        recall_output. Runs at a settled boundary before request preparation; the generation
+        marker save persists it, and `_announce_elided` reports it after that save.
+        """
+        budget, elision = state.get("context_budget"), state.get("elision")
+        if not budget or not isinstance(elision, dict):
+            return
+        seq = elision["seq"]
+        if seq - elision["last_block_seq"] < budget["elide_every_turns"]:
+            return
+        entries = {
+            key.split(":", 1)[1]: entry for key, entry in state.get("tool_results", {}).items()
+        }
+        # A recalled page is never stored, but it goes stale like any output; its stub can
+        # rebuild it from the stored output's call ID and the page's offset.
+        pages = state.get("recall_pages", {})
+        for call_id, page in pages.items():
+            entries.setdefault(call_id, {"seq": page["seq"], "name": "recall_output"})
+        count = removed = 0
+        first = None
+        for index, item in enumerate(state["input"]):
+            entry, output = entries.get(item.get("call_id")), item.get("output")
+            if (
+                item.get("type") != "function_call_output"
+                or not isinstance(entry, dict)
+                or type(entry.get("seq")) is not int
+                or entry["seq"] > seq - budget["elide_after_turns"]
+                or not isinstance(output, str)
+                or len(output) <= budget["elide_min_chars"]
+                or _is_elision_stub(output)
+            ):
+                continue
+            page = pages.get(item["call_id"])
+            stub = (
+                _elision_stub(entry.get("name", "unknown"), item["call_id"], output)
+                if page is None
+                else _elision_stub("recall_output", page["call_id"], output, page["offset"])
+            )
+            if len(stub) >= len(output):  # elision never lengthens an output
+                continue
+            item["output"] = stub
+            count, removed = count + 1, removed + len(output) - len(stub)
+            first = index if first is None else first
+        elision["last_block_seq"] = seq
+        if count:
+            self._elided[session.id] = {
+                "count": count,
+                "chars_removed": removed,
+                "first_index": first,
+                "seq": seq,
+            }
+
+    async def _announce_elided(self, session: RuntimeSession) -> None:
+        """Report a block only after a save that holds its stubs. A restart before that save
+        replays the block, and one after it never repeats it."""
+        if (payload := self._elided.pop(session.id, None)) is not None:
+            await self._emit_telemetry("context_elided", session, **payload)
 
     async def start(
         self,
@@ -415,6 +881,9 @@ class ResponsesRuntime:
             "compaction_recovery_protocol": 1,
             "stagnation": dict(self.stagnation_state),
         }
+        if self.context_budget is not None:
+            state["context_budget"] = self.context_budget.model_dump(mode="json")
+            state["elision"] = {"seq": 0, "last_block_seq": 0}
         if predecessor is not None:
             predecessor.verify()
             if predecessor.session.status != "handed_off":
@@ -592,10 +1061,11 @@ class ResponsesRuntime:
                 }
                 await self._save(session, state)
             await self._advance_active_input(session, state, native)
+        saved = None
         if state.get("settled_boundary") is not True:
             state["settled_boundary"] = True
-            await self._save(session, state)
-        handoff = await self._maybe_handoff(session, state, native)
+            saved = await self._save(session, state)
+        handoff = await self._maybe_handoff(session, state, native, checkpoint=saved)
         if handoff is not None:
             return handoff
         return await self._run(session, state, "", append_prompt=False)
@@ -665,6 +1135,12 @@ class ResponsesRuntime:
             "cumulative_input_offset": cumulative_input,
             "cumulative_output_offset": cumulative_output,
         }
+        if "context_budget" in prior:
+            state["context_budget"] = deepcopy(prior["context_budget"])
+        if "elision" in prior:  # the response counter is lineage-wide
+            state["elision"] = deepcopy(prior["elision"])
+        if "recall_pages" in prior:  # the successor carries the pages in its input
+            state["recall_pages"] = deepcopy(prior["recall_pages"])
         await self._save(session, state)
         return await self._run(session, state, prompt)
 
@@ -679,6 +1155,12 @@ class ResponsesRuntime:
         # Old or externally restored checkpoints must obey the same request
         # contract before they can write new state or issue provider work.
         validate_responses_parameters(session.model.parameters)
+        if state.get("context_budget") and any(
+            definition["name"] == "recall_output" for definition in self.dispatcher.definitions
+        ):
+            raise ExecutionError(
+                "INVALID_CONFIG", "recall_output is reserved for the context budget"
+            )
         if (
             state.get("settled_boundary") is not True
             or state.get("pending_operation")
@@ -715,11 +1197,11 @@ class ResponsesRuntime:
         except asyncio.CancelledError:
             # Cancelling an HTTP request cannot prove the remote generation stopped.
             session.status = "uncertain" if state.get("pending_operation") else "interrupted"
-            await self._save(session, state)
+            await self._save_failure(session, state)
             raise
         except TimeoutError as exc:
             session.status = "uncertain" if state.get("pending_operation") else "failed"
-            await self._save(session, state)
+            await self._save_failure(session, state)
             raise ExecutionError(
                 "TIMEOUT",
                 "Runtime exceeded wall-clock limit",
@@ -727,11 +1209,11 @@ class ResponsesRuntime:
             ) from exc
         except ExecutionError:
             session.status = "uncertain" if state.get("pending_operation") else "failed"
-            await self._save(session, state)
+            await self._save_failure(session, state)
             raise
         except Exception as exc:
             session.status = "uncertain" if state.get("pending_operation") else "failed"
-            await self._save(session, state)
+            await self._save_failure(session, state)
             raise ExecutionError(
                 "PROVIDER_FAILED",
                 "Provider or persistence hook failed; inspect correlated internal error",
@@ -739,6 +1221,24 @@ class ResponsesRuntime:
             ) from exc
         finally:
             self._active.pop(session.id, None)
+            self._saved.pop(session.id, None)
+            self._last_request.pop(session.id, None)
+            self._unannounced.pop(session.id, None)
+            self._elided.pop(session.id, None)
+            self._archive_keys.pop(session.id, None)
+
+    async def _save_failure(self, session: RuntimeSession, state: dict[str, Any]) -> None:
+        """`_run`'s failure save, then a best-effort announcement of the elision block and tool
+        results it made durable. A sink error is only logged, so the original failure still
+        propagates."""
+        await self._save(session, state)
+        await self._announce_elided(session)
+        for tool_operation, name, signal, snapshot in self._unannounced.pop(session.id, []):
+            await self._emit_telemetry("tool_completed", session, tool_operation, name=name)
+            if signal is not None:
+                await self._emit_telemetry(
+                    signal, session, tool_operation, stagnation_state=snapshot
+                )
 
     async def _loop(
         self, session: RuntimeSession, state: dict[str, Any], deadline: float
@@ -751,142 +1251,14 @@ class ResponsesRuntime:
                 raise ExecutionError("BUDGET_EXHAUSTED", "Session exhausted provider-turn budget")
             await self._receive_updates(session, state)
             await self._receive_turn_note(session, state)
-            params = dict(session.model.parameters)
-            count_params = {
-                k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
-            }
-            try:
-                count = await _resend_rate_limited(
-                    partial(
-                        client.responses.input_tokens.count,
-                        model=session.model.model,
-                        input=state["input"],
-                        tools=self.dispatcher.definitions,
-                        parallel_tool_calls=False,
-                        **count_params,
-                    ),
-                    deadline,
-                )
-            except Exception as exc:
-                if getattr(exc, "status_code", None) != 400:
-                    raise
-                provider_code = _safe_provider_field(getattr(exc, "code", None), maximum=80)
-                provider_param = _safe_provider_field(getattr(exc, "param", None), maximum=160)
-                tool_schema = provider_code == "invalid_function_parameters" or bool(
-                    provider_param and provider_param.startswith("tools")
-                )
-                code = "PROVIDER_TOOL_SCHEMA_INVALID" if tool_schema else "MODEL_REQUEST_INVALID"
-                preflight_id = identifier()
-                state["preflight_error"] = {
-                    "stage": "input_token_count",
-                    "operation_id": preflight_id,
-                    "provider_code": provider_code,
-                    "provider_param": provider_param,
-                }
-                await self._save(session, state)
-                raise ExecutionError(
-                    code,
-                    "Provider rejected the model request before generation",
-                    operation_id=preflight_id,
-                    remediation=(
-                        "Inspect the bounded preflight provider code and parameter "
-                        "in the durable runtime checkpoint."
-                    ),
-                ) from exc
-            remaining = (
-                session.limits.max_total_tokens
-                - state.get("cumulative_input_offset", 0)
-                - state.get("cumulative_output_offset", 0)
-                - session.input_tokens
-                - session.output_tokens
-                - count.input_tokens
-                if session.limits.max_total_tokens is not None
-                else None
-            )
-            if remaining is not None and remaining <= 0:
-                raise ExecutionError(
-                    "BUDGET_EXHAUSTED", "Token preflight leaves no generation budget"
-                )
-            if (
-                session.limits.max_context_tokens is not None
-                and count.input_tokens + session.limits.max_output_tokens
-                > session.limits.max_context_tokens
-            ):
-                if (
-                    self.boundary_hook is not None
-                    and session.turns > 0
-                    and state.get("settled_boundary") is True
-                    and not state.get("pending_operation")
-                    and not state.get("pending_tool_call")
-                ):
-                    state["context_pressure"] = {
-                        "input_tokens": count.input_tokens,
-                        "max_context_tokens": session.limits.max_context_tokens,
-                        "max_output_tokens": session.limits.max_output_tokens,
-                    }
-                    await self._save(session, state)
-                    handoff = await self._maybe_handoff(session, state, {"output": []})
-                    if handoff is not None:
-                        return handoff
-                raise ExecutionError("CONTEXT_LIMIT", "Active request exceeds context token limit")
-            input_reservation = (
-                session.limits.max_context_tokens
-                if params.get("context_management")
-                else count.input_tokens
-            )
-            output_reservation = (
-                min(session.limits.max_output_tokens, remaining)
-                if remaining is not None
-                else session.limits.max_output_tokens
-            )
-            if self.pre_generation_guard is not None and await self.pre_generation_guard():
-                return await self._complete_verified(session, state)
-            operation_id = identifier()
-            state["pending_operation"] = operation_id
-            await self._save(session, state)
-            if asyncio.get_running_loop().time() >= deadline:
-                state["pending_operation"] = None
-                raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
-            try:
-                await self._emit(
-                    "generation_started",
-                    session,
-                    operation_id,
-                    model=session.model.model,
-                    input_tokens_reserved=input_reservation,
-                    output_tokens_reserved=output_reservation,
-                )
-            except BaseException:
-                # The provider request has not been sent. A reservation hook
-                # owns any local compensation; do not mark remote work uncertain.
-                state["pending_operation"] = None
-                await self._save(session, state)
-                raise
-            if asyncio.get_running_loop().time() >= deadline:
-                # asyncio.timeout cannot interrupt synchronous event persistence.
-                # The request has not been sent, so release its reservation at zero.
-                state["pending_operation"] = None
-                await self._emit("generation_aborted", session, operation_id, reason="timeout")
-                raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
-            # A rate-limit refusal did no work, so the same operation and reservation
-            # are resent; giving up releases the reservation at zero instead.
-            response = await _resend_rate_limited(
-                partial(
-                    client.responses.create,
-                    model=session.model.model,
-                    input=state["input"],
-                    tools=self.dispatcher.definitions,
-                    parallel_tool_calls=False,
-                    max_output_tokens=output_reservation,
-                    store=False,
-                    include=["reasoning.encrypted_content"],
-                    extra_headers={"X-Client-Request-Id": operation_id},
-                    **params,
-                ),
-                deadline,
-                operation_id=operation_id,
-                abandon=partial(self._abandon_refused, session, state, operation_id),
-            )
+            await self._elide_block(session, state)
+            prepared = await self._prepare_request(session, state, client, deadline)
+            if isinstance(prepared, RuntimeResult):
+                return prepared
+            sent = await self._send(session, state, client, prepared, deadline)
+            if isinstance(sent, RuntimeResult):
+                return sent
+            response, operation_id = sent.response, sent.operation_id
             native = response.model_dump(mode="json", exclude_none=True)
             if native.get("model") != session.model.model:
                 # Retain exact provider evidence and the unsettled reservation.
@@ -901,7 +1273,7 @@ class ResponsesRuntime:
                     operation_id=operation_id,
                 )
             state["settled_boundary"] = False
-            state["responses"].append(native)
+            state["responses"].append(_response_record(native))
             session.native_session_id = response.id
             session.turns += 1
             if response.usage is None:
@@ -914,8 +1286,37 @@ class ResponsesRuntime:
                 )
             session.input_tokens += response.usage.input_tokens
             session.output_tokens += response.usage.output_tokens
+            self._last_request[session.id] = {
+                "epoch": state.get("active_input_epoch", 0),
+                "digests": prepared.digests,
+                "tokens": response.usage.input_tokens,
+            }
+            if isinstance(state.get("elision"), dict):
+                state["elision"]["seq"] += 1
             state["input"].extend(native["output"])
             await self._save(session, state)
+            context = prepared.params.get("context_management")
+            if (
+                context
+                and prepared.input_reservation < session.limits.max_context_tokens
+                and any(item.get("type") == "compaction" for item in native["output"])
+            ):
+                # F4: compaction was assumed impossible below the gate, and the reservation's
+                # soundness depends on it. Name the cause before settlement or a limit check can
+                # stop the run.
+                log.warning(
+                    "bound_reservation_compacted",
+                    extra={"session_id": session.id, "operation_id": operation_id},
+                )
+                await self._emit_telemetry(
+                    "bound_reservation_compacted",
+                    session,
+                    operation_id,
+                    response_id=response.id,
+                    input_tokens_reserved=prepared.input_reservation,
+                    input_tokens=response.usage.input_tokens,
+                    compact_threshold=context[0]["compact_threshold"],
+                )
             await self._emit(
                 "usage",
                 session,
@@ -924,8 +1325,15 @@ class ResponsesRuntime:
                 model=session.model.model,
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
+                cached_input_tokens=_cached_input_tokens(response.usage),
+                cache_write_input_tokens=_cache_write_input_tokens(response.usage),
                 native_usage=response.usage.model_dump(mode="json"),
+                rate_limit_waits=sent.rate_limit_waits,
+                rate_limit_wait_seconds=sent.rate_limit_wait_seconds,
             )
+            if sent.admission is not None:
+                usage = response.usage
+                self.token_governor.settle(sent.admission, usage.input_tokens + usage.output_tokens)
             # Clear only after authoritative accounting succeeds. The checkpoint
             # retains the native response and correlation ID if settlement fails.
             state["pending_operation"] = None
@@ -934,11 +1342,13 @@ class ResponsesRuntime:
                 "operation_id": operation_id,
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
-                "input_reserved": input_reservation,
-                "output_reserved": output_reservation,
+                "input_reserved": prepared.input_reservation,
+                "output_reserved": prepared.output_reservation,
             }
             state.pop("compaction_replay_pending", None)
-            await self._save(session, state)
+            # The next save records settlement (compaction marker, first tool marker, terminal
+            # save or _run's failure save); until then B still holds the generation marker, so a
+            # crash stays uncertain.
             if (
                 session.limits.max_total_tokens is not None
                 and state.get("cumulative_input_offset", 0)
@@ -952,8 +1362,8 @@ class ResponsesRuntime:
                     "Provider reported consumption beyond preflight token reservation",
                 )
             if (
-                response.usage.input_tokens > input_reservation
-                or response.usage.output_tokens > output_reservation
+                response.usage.input_tokens > prepared.input_reservation
+                or response.usage.output_tokens > prepared.output_reservation
             ):
                 raise ExecutionError(
                     "PROVIDER_LIMIT_VIOLATION",
@@ -1007,15 +1417,15 @@ class ResponsesRuntime:
                         )
                     await self._advance_active_input(session, state, native)
                     state["settled_boundary"] = True
-                    await self._save(session, state)
-                    handoff = await self._maybe_handoff(session, state, native)
+                    saved = await self._save(session, state)
+                    handoff = await self._maybe_handoff(session, state, native, checkpoint=saved)
                     if handoff is not None:
                         return handoff
                     continue
                 # A terminal result needs no active-input pruning. Preserve the
                 # exact response suffix for crash recovery and handoff auditing.
                 state["settled_boundary"] = True
-                await self._save(session, state)
+                state["terminal_response_pending"] = True
                 artifact = OutputArtifact(
                     content=text,
                     digest=hashlib.sha256(text.encode()).hexdigest(),
@@ -1026,10 +1436,14 @@ class ResponsesRuntime:
                         "response_id": response.id,
                     },
                 )
-                state["terminal_response_pending"] = True
-                await self._save(session, state)
+                checkpoint = await self._save(session, state)
                 handoff = await self._maybe_handoff(
-                    session, state, native, output_text=text, artifacts=[artifact]
+                    session,
+                    state,
+                    native,
+                    output_text=text,
+                    artifacts=[artifact],
+                    checkpoint=checkpoint,
                 )
                 if handoff is not None:
                     return handoff
@@ -1045,98 +1459,524 @@ class ResponsesRuntime:
                     artifacts=[artifact],
                     native_items=native["output"],
                 )
-            for call in calls:
-                tool_operation = f"{session.id}:{call['call_id']}"
-                try:
-                    arguments = json.loads(call["arguments"])
-                    if not isinstance(arguments, dict):
-                        raise ValueError("object required")
-                except (ValueError, TypeError) as exc:
+            await self._run_calls(session, state, native, calls)
+            await self._advance_active_input(session, state, native)
+            state["settled_boundary"] = True
+            checkpoint = await self._save(session, state)
+            await self._emit_completed(session)
+            handoff = await self._maybe_handoff(session, state, native, checkpoint=checkpoint)
+            if handoff is not None:
+                return handoff
+
+    async def _prepare_request(
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        client: Any,
+        deadline: float,
+    ) -> _Prepared | RuntimeResult:
+        """Count or bound the active input, check the budgets and size the reservation."""
+        params = dict(session.model.parameters)
+        # Popped here, not left in params, so it cannot clash with the explicit
+        # keyword passed to the count and create calls below.
+        parallel = bool(params.pop("parallel_tool_calls", False))
+        tools = request_tools(self.dispatcher.definitions, state.get("context_budget"))
+        elements = _request_elements(params, tools, state["input"])
+        bound = _input_bound(
+            self._last_request.get(session.id), elements, state.get("active_input_epoch", 0)
+        )
+        if bound is None or self._near_limit(session, state, bound):
+            count_params = {
+                k: v for k, v in params.items() if k in {"instructions", "reasoning", "text"}
+            }
+            try:
+                count = await _resend_rate_limited(
+                    partial(
+                        client.responses.input_tokens.count,
+                        model=session.model.model,
+                        input=state["input"],
+                        tools=tools,
+                        parallel_tool_calls=parallel,
+                        **count_params,
+                    ),
+                    deadline,
+                    on_wait=self._throttle_hook(session, None, []),
+                    on_give_up=self._governor_throttled,
+                )
+            except Exception as exc:
+                if getattr(exc, "status_code", None) != 400:
+                    raise
+                code, provider_code, provider_param = _provider_rejection(exc)
+                preflight_id = identifier()
+                state["preflight_error"] = {
+                    "stage": "input_token_count",
+                    "operation_id": preflight_id,
+                    "provider_code": provider_code,
+                    "provider_param": provider_param,
+                }
+                await self._save(session, state)
+                raise ExecutionError(
+                    code,
+                    "Provider rejected the model request before generation",
+                    operation_id=preflight_id,
+                    remediation=(
+                        "Inspect the bounded preflight provider code and parameter "
+                        "in the durable runtime checkpoint."
+                    ),
+                ) from exc
+            input_tokens, counted = count.input_tokens, True
+        else:
+            input_tokens, counted = bound, False
+        remaining = (
+            session.limits.max_total_tokens
+            - state.get("cumulative_input_offset", 0)
+            - state.get("cumulative_output_offset", 0)
+            - session.input_tokens
+            - session.output_tokens
+            - input_tokens
+            if session.limits.max_total_tokens is not None
+            else None
+        )
+        if remaining is not None and remaining <= 0:
+            raise ExecutionError("BUDGET_EXHAUSTED", "Token preflight leaves no generation budget")
+        if (
+            session.limits.max_context_tokens is not None
+            and input_tokens + session.limits.max_output_tokens > session.limits.max_context_tokens
+        ):
+            if (
+                self.boundary_hook is not None
+                and session.turns > 0
+                and state.get("settled_boundary") is True
+                and not state.get("pending_operation")
+                and not state.get("pending_tool_call")
+            ):
+                state["context_pressure"] = {
+                    "input_tokens": input_tokens,
+                    "max_context_tokens": session.limits.max_context_tokens,
+                    "max_output_tokens": session.limits.max_output_tokens,
+                }
+                saved = await self._save(session, state)
+                await self._announce_elided(session)
+                handoff = await self._maybe_handoff(
+                    session, state, {"output": []}, checkpoint=saved
+                )
+                if handoff is not None:
+                    return handoff
+            raise ExecutionError("CONTEXT_LIMIT", "Active request exceeds context token limit")
+        context = params.get("context_management")
+        # The count is taken without context_management, which the count endpoint does not
+        # accept, so under it a counted request carries the bound's margin too.
+        input_bound = (
+            input_tokens + _bound_margin(input_tokens) if context and counted else input_tokens
+        )
+        if context:
+            # A compaction pass may bill more than the bound, so the bound is reserved only while
+            # compaction cannot fire.
+            input_reservation = (
+                input_bound
+                if input_bound + CONTEXT_MARGIN <= context[0]["compact_threshold"]
+                else session.limits.max_context_tokens
+            )
+        else:
+            input_reservation = input_bound
+        output_reservation = (
+            min(session.limits.max_output_tokens, remaining)
+            if remaining is not None
+            else session.limits.max_output_tokens
+        )
+        return _Prepared(
+            params=params,
+            tools=tools,
+            input_tokens=input_tokens,
+            counted=counted,
+            digests=tuple(sha for sha, _ in elements),
+            input_bound=input_bound,
+            input_reservation=input_reservation,
+            output_reservation=output_reservation,
+            remaining=remaining,
+            parallel_tool_calls=parallel,
+        )
+
+    @staticmethod
+    def _near_limit(session: RuntimeSession, state: dict[str, Any], tokens: int) -> bool:
+        """Whether an estimate is close enough to a limit that only an exact count may decide."""
+        limits = session.limits
+        if (
+            limits.max_context_tokens is not None
+            and tokens + limits.max_output_tokens > limits.max_context_tokens - CONTEXT_MARGIN
+        ):
+            return True
+        if limits.max_total_tokens is not None:
+            used = (
+                state.get("cumulative_input_offset", 0)
+                + state.get("cumulative_output_offset", 0)
+                + session.input_tokens
+                + session.output_tokens
+            )
+            if limits.max_total_tokens - used - tokens < limits.max_output_tokens + CONTEXT_MARGIN:
+                return True
+        return False
+
+    async def _send(
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        client: Any,
+        prepared: _Prepared,
+        deadline: float,
+    ) -> _Sent | RuntimeResult:
+        """Mark the generation pending, announce its reservation and send it."""
+        # The provider counts the requested max output toward TPM, so the estimate does too;
+        # settlement refunds what the response did not use.
+        admission, estimate = None, prepared.input_bound + prepared.output_reservation
+        if self.token_governor is not None:
+            # Admission precedes the dollar reservation: a request waiting for its first admission
+            # holds no dollar reservation, and a target verified while queued sends nothing. A
+            # re-queued create keeps its reservation, as a rate-limit wait always did.
+            # Bounded like a re-queue, so a wait that outlasts the run gives the same retryable
+            # refusal; nothing is marked or reserved yet.
+            budget = deadline - asyncio.get_running_loop().time() - REQUEUE_MARGIN_SECONDS
+            try:
+                # Unlike wait_for(0), a timeout context still admits a grantable request.
+                async with asyncio.timeout(max(budget, 0.0)):
+                    admission = await self.token_governor.admit(
+                        key=session.id, tokens=estimate, priority=self.admission_priority
+                    )
+            except TimeoutError:
+                raise ExecutionError(
+                    "PROVIDER_RATE_LIMITED",
+                    "Provider rate governance outlasted the runtime deadline",
+                    retryable=True,
+                ) from None
+        try:
+            if self.pre_generation_guard is not None and await self.pre_generation_guard():
+                self._release(admission)
+                return await self._complete_verified(session, state)
+            operation_id = identifier()
+            state["pending_operation"] = operation_id
+            await self._save(session, state)
+        except BaseException:
+            self._release(admission)  # nothing was sent
+            raise
+        if asyncio.get_running_loop().time() >= deadline:
+            state["pending_operation"] = None
+            self._release(admission)
+            raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
+        try:
+            await self._announce_elided(session)  # the marker save holds the block's stubs
+            await self._emit(
+                "generation_started",
+                session,
+                operation_id,
+                model=session.model.model,
+                input_tokens_reserved=prepared.input_reservation,
+                output_tokens_reserved=prepared.output_reservation,
+                input_tokens_estimate=prepared.input_tokens,
+                input_tokens_counted=prepared.counted,
+                **(
+                    {"admission_wait_seconds": round(admission.waited_seconds, 3)}
+                    if admission
+                    else {}
+                ),
+            )
+        except BaseException:
+            # The provider request has not been sent. A reservation hook
+            # owns any local compensation; do not mark remote work uncertain.
+            state["pending_operation"] = None
+            self._release(admission)
+            await self._save(session, state)
+            raise
+        if asyncio.get_running_loop().time() >= deadline:
+            # asyncio.timeout cannot interrupt synchronous event persistence.
+            # The request has not been sent, so release its reservation at zero.
+            self._release(admission)
+            await self._abandon_refused(session, state, operation_id, reason="timeout")
+            raise ExecutionError("TIMEOUT", "Runtime exceeded wall-clock limit")
+        # A rate-limit refusal did no work, so the same operation and reservation
+        # are resent; giving up releases the reservation at zero instead.
+        waits: list[float] = []
+
+        async def requeue() -> None:
+            # Re-queue behind the global pause instead of a private sleep, so the request waits in
+            # the priority queue with every other one, keeping the age it has built up.
+            nonlocal admission
+            enqueued = admission.enqueued
+            self._release(admission)
+            admission = None
+            budget = deadline - asyncio.get_running_loop().time() - REQUEUE_MARGIN_SECONDS
+            try:
+                admission = await asyncio.wait_for(
+                    self.token_governor.admit(
+                        key=session.id,
+                        tokens=estimate,
+                        priority=self.admission_priority,
+                        enqueued=enqueued,
+                    ),
+                    timeout=max(budget, 0.0),
+                )
+            except TimeoutError:
+                # Raised inside _resend_rate_limited's wait guard, so its abandon runs
+                # _abandon_refused first: generation_aborted, then the marker clears.
+                raise ExecutionError(
+                    "PROVIDER_RATE_LIMITED",
+                    "Provider rate limit outlasted the runtime deadline",
+                    operation_id=operation_id,
+                    retryable=True,
+                ) from None
+
+        try:
+            response = await _resend_rate_limited(
+                partial(
+                    client.responses.create,
+                    model=session.model.model,
+                    input=state["input"],
+                    tools=prepared.tools,
+                    parallel_tool_calls=prepared.parallel_tool_calls,
+                    max_output_tokens=prepared.output_reservation,
+                    store=False,
+                    include=["reasoning.encrypted_content"],
+                    extra_headers={"X-Client-Request-Id": operation_id},
+                    **prepared.params,
+                ),
+                deadline,
+                operation_id=operation_id,
+                abandon=partial(self._abandon_refused, session, state, operation_id),
+                on_wait=self._throttle_hook(
+                    session,
+                    operation_id,
+                    waits,
+                    requeue if self.token_governor is not None else None,
+                ),
+                on_give_up=self._governor_throttled,
+            )
+        except Exception as error:
+            if isinstance(error, ExecutionError) and error.code == "PROVIDER_RATE_LIMITED":
+                self._release(admission)  # the rate-limit give-up: nothing is in flight
+            # A 400 means the provider refused the request before generating anything.
+            if getattr(error, "status_code", None) != 400:
+                raise
+            code, provider_code, provider_param = _provider_rejection(error)
+            state["preflight_error"] = {
+                "stage": "create",
+                "operation_id": operation_id,
+                "provider_code": provider_code,
+                "provider_param": provider_param,
+            }
+            self._release(admission)
+            # Emit, then clear, as for a rate-limit give-up: a failed release stays uncertain.
+            await self._abandon_refused(session, state, operation_id, reason="request_invalid")
+            raise ExecutionError(
+                code,
+                "Provider rejected the model request before generation",
+                operation_id=operation_id,
+            ) from error
+        return _Sent(
+            response=response,
+            operation_id=operation_id,
+            rate_limit_waits=len(waits),
+            rate_limit_wait_seconds=round(sum(waits), 3),
+            admission=admission,
+        )
+
+    async def _run_calls(
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        native: dict[str, Any],
+        calls: list[dict[str, Any]],
+    ) -> None:
+        """Dispatch each call in order, replaying any committed result for its ID.
+
+        Each result waits in `_unannounced` for the next save: the next call's marker save,
+        the settled save or `_run`'s failure save.
+        """
+        unannounced = self._unannounced.setdefault(session.id, [])
+        for call in calls:
+            tool_operation = f"{session.id}:{call['call_id']}"
+            try:
+                arguments = json.loads(call["arguments"])
+                if not isinstance(arguments, dict):
+                    raise ValueError("object required")
+            except (ValueError, TypeError) as exc:
+                raise ExecutionError(
+                    "INVALID_TOOL_ARGUMENTS", "Provider tool arguments are not a JSON object"
+                ) from exc
+            identity = digest({"name": call["name"], "arguments": arguments})
+            # A recall is a pure read of stored outputs: never stored, replayed or marked.
+            recall = call["name"] == "recall_output" and bool(state.get("context_budget"))
+            results = state.setdefault("tool_results", {})
+            previous = (
+                None if recall else await self._find_tool_result(session, state, tool_operation)
+            )
+            if previous is not None:
+                if previous["identity"] != identity:
                     raise ExecutionError(
-                        "INVALID_TOOL_ARGUMENTS", "Provider tool arguments are not a JSON object"
-                    ) from exc
-                identity = digest({"name": call["name"], "arguments": arguments})
-                results = state.setdefault("tool_results", {})
-                previous = results.get(tool_operation)
-                if previous is None:
-                    for archive_id in reversed(state.get("archives", [])):
-                        archive = await self.store.load_archive(session.id, archive_id)
-                        previous = archive["tool_results"].get(tool_operation)
-                        if previous is not None:
-                            break
-                if previous is None:
-                    for ref in reversed(state.get("archive_refs", [])):
-                        archive = await self.store.load_archive(
-                            ref["session_id"], ref["archive_id"]
-                        )
-                        previous = archive["tool_results"].get(tool_operation)
-                        if previous is not None:
-                            break
-                if previous is not None:
-                    if previous["identity"] != identity:
-                        raise ExecutionError(
-                            "COMMAND_MISMATCH",
-                            "Reused tool call ID changed its arguments",
-                            operation_id=tool_operation,
-                        )
-                    result = previous["result"]
-                    visible_output = previous.get("visible_output", result)
-                    signal = None
+                        "COMMAND_MISMATCH",
+                        "Reused tool call ID changed its arguments",
+                        operation_id=tool_operation,
+                    )
+                result = previous["result"]
+                visible_output = previous.get("visible_output", result)
+                signal = None
+            else:
+                if recall:
+                    result = await self._recall(session, state, arguments)
+                    if isinstance(state.get("elision"), dict) and "text" in result:
+                        state.setdefault("recall_pages", {})[call["call_id"]] = {
+                            "seq": state["elision"]["seq"],
+                            "call_id": result["call_id"],
+                            "offset": result["offset"],
+                        }
                 else:
                     state["pending_operation"] = tool_operation
                     await self._save(session, state)
+                    try:
+                        await self._emit_completed(session)
+                    except BaseException:
+                        # An earlier result's announcement failed before this call ran, so
+                        # nothing about it is uncertain, whatever the durable marker says.
+                        state["pending_operation"] = None
+                        raise
                     result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
-                    signal = observe_stagnation(
-                        state.setdefault("stagnation", {}), call["name"], arguments, result
-                    )
-                    visible_output = result
-                    if signal is not None:
-                        visible_output = {
-                            **result,
-                            "_research_runtime_signal": {
-                                "kind": signal,
-                                "message": signal_message(
-                                    signal,
-                                    self.stagnation_suggestions
-                                    if signal == "stagnation_warning"
-                                    else None,
-                                ),
-                            },
-                        }
-                    results[tool_operation] = {
-                        "identity": identity,
-                        "result": result,
-                        "visible_output": visible_output,
-                    }
-                state["input"].append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": call["call_id"],
-                        "output": json.dumps(visible_output, allow_nan=False),
-                    }
+                signal = observe_stagnation(
+                    state.setdefault("stagnation", {}), call["name"], arguments, result
                 )
-                state["pending_operation"] = None
-                await self._save(session, state)
-                await self._emit("tool_completed", session, tool_operation, name=call["name"])
+                visible_output = result
                 if signal is not None:
-                    await self._emit(
-                        signal,
-                        session,
-                        tool_operation,
-                        stagnation_state=dict(state["stagnation"]),
-                    )
+                    visible_output = {
+                        **result,
+                        "_research_runtime_signal": {
+                            "kind": signal,
+                            "message": signal_message(
+                                signal,
+                                self.stagnation_suggestions
+                                if signal == "stagnation_warning"
+                                else None,
+                            ),
+                        },
+                    }
+                if not recall:
+                    entry = {"identity": identity, "result": result}
+                    if visible_output is not result:
+                        entry["visible_output"] = visible_output
+                    # Only an entry with a seq is ever elided.
+                    if isinstance(state.get("elision"), dict):
+                        entry.update(seq=state["elision"]["seq"], name=call["name"])
+                    results[tool_operation] = entry
+            state["input"].append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call["call_id"],
+                    "output": _tool_output_text(state.get("context_budget"), call, visible_output),
+                }
+            )
+            state["pending_operation"] = None
+            unannounced.append(
+                (
+                    tool_operation,
+                    call["name"],
+                    signal,
+                    dict(state["stagnation"]) if signal is not None else None,
+                )
+            )
 
-            await self._advance_active_input(session, state, native)
-            state["settled_boundary"] = True
-            await self._save(session, state)
-            handoff = await self._maybe_handoff(session, state, native)
-            if handoff is not None:
-                return handoff
+    async def _emit_completed(self, session: RuntimeSession) -> None:
+        """Announce tool results only after the save that made them durable."""
+        unannounced = self._unannounced.get(session.id, [])
+        while unannounced:
+            tool_operation, name, signal, snapshot = unannounced.pop(0)
+            await self._emit("tool_completed", session, tool_operation, name=name)
+            if signal is not None:
+                await self._emit(signal, session, tool_operation, stagnation_state=snapshot)
+
+    async def _find_tool_result(
+        self,
+        session: RuntimeSession,
+        state: dict[str, Any],
+        key: str,
+        *,
+        match_suffix: bool = False,
+    ) -> dict[str, Any] | None:
+        """A committed tool result: active state, then own archives, then inherited ones.
+
+        With ``match_suffix`` the key is a bare call ID, matched against any session's
+        ``{session_id}:{call_id}`` key; the latest match wins."""
+
+        def pick(results: dict[str, Any]) -> dict[str, Any] | None:
+            if match_suffix:
+                return next(
+                    (v for k, v in reversed(list(results.items())) if k.endswith(f":{key}")), None
+                )
+            return results.get(key)
+
+        # An archive never changes, so its keys, once read, tell a later lookup in this run
+        # whether to load it again; a recall of an unknown ID loads each archive at most once.
+        known = self._archive_keys.setdefault(session.id, {})
+
+        async def search(owner: str, archive_id: str) -> dict[str, Any] | None:
+            keys = known.get((owner, archive_id))
+            if keys is not None and pick(dict.fromkeys(keys, True)) is None:
+                return None
+            results = (await self.store.load_archive(owner, archive_id))["tool_results"]
+            known[(owner, archive_id)] = tuple(results)
+            return pick(results)
+
+        found = pick(state.get("tool_results", {}))
+        for archive_id in reversed(state.get("archives", [])) if found is None else ():
+            if (found := await search(session.id, archive_id)) is not None:
+                break
+        for ref in reversed(state.get("archive_refs", [])) if found is None else ():
+            if (found := await search(ref["session_id"], ref["archive_id"])) is not None:
+                break
+        return found
+
+    async def _recall(
+        self, session: RuntimeSession, state: dict[str, Any], arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """A page of a stored tool output. A pure read: no marker and no dispatcher."""
+        call_id, offset = arguments.get("call_id"), arguments.get("offset")
+        if (
+            not isinstance(call_id, str)
+            or not 0 < len(call_id) <= 200
+            or type(offset) is not int
+            or offset < 0
+        ):
+            return {
+                "error": {
+                    "code": "INVALID_TOOL_ARGUMENTS",
+                    "message": "Give call_id and offset >= 0.",
+                }
+            }
+        if (
+            entry := await self._find_tool_result(session, state, call_id, match_suffix=True)
+        ) is None:
+            return {
+                "error": {
+                    "code": "RECALL_NOT_FOUND",
+                    "message": "No stored output has this call_id.",
+                }
+            }
+        text = json.dumps(
+            entry.get("visible_output", entry["result"]),
+            allow_nan=False,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        page = _recall_page(text, offset)
+        end = offset + len(page)
+        return {
+            "call_id": call_id,
+            "offset": offset,
+            "next_offset": end if end < len(text) else None,
+            "total_chars": len(text),
+            "text": page,
+        }
 
     async def _complete_verified(self, session, state):
         session.status = "completed"
         state.pop("terminal_response_pending", None)
         await self._save(session, state)
+        await self._announce_elided(session)
         return RuntimeResult(session=session, output_text="", completion_reason="target_verified")
 
     async def _maybe_handoff(
@@ -1147,10 +1987,13 @@ class ResponsesRuntime:
         *,
         output_text: str = "",
         artifacts: list[OutputArtifact] | None = None,
+        checkpoint: RuntimeCheckpoint | None = None,
     ) -> RuntimeResult | None:
         if self.boundary_hook is None:
             return None
-        request = await self.boundary_hook(RuntimeCheckpoint.build(session, state))
+        request = await self.boundary_hook(
+            checkpoint if checkpoint is not None else RuntimeCheckpoint.build(session, state)
+        )
         if request is None:
             return None
         if request == {"complete_reason": "target_verified"}:
@@ -1175,8 +2018,7 @@ class ResponsesRuntime:
         ):
             raise ExecutionError("INVALID_CONTINUATION", "Boundary hook returned invalid reason")
         session.status = "handed_off"
-        await self._save(session, state)
-        terminal = RuntimeCheckpoint.build(session, state)
+        terminal = await self._save(session, state)
         return RuntimeResult(
             session=session,
             output_text=output_text,

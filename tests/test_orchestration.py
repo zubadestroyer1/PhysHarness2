@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from test_core import setup_experiment
 
@@ -436,3 +438,229 @@ async def test_experiment_continue_as_new_preserves_pending_and_inflight_signals
     await resumed.command(cancelled)
     assert await resumed.run(continuations[0]) == {"status": "cancelled"}
     assert seen == queued + [arriving, cancelled]
+
+
+PRICES = {"explicit-test-model": {"input_usd_per_million": "1", "output_usd_per_million": "2"}}
+
+
+def started_task(lab, experiment=None):
+    """A started experiment with one root task."""
+    from physharness.domain import BranchCreate, TaskCreate
+
+    service, actor, _ = lab
+    experiment = experiment or setup_experiment(lab)[0]
+    service.transition_experiment(experiment["id"], "start", 1, actor, "start")
+    branch = service.create_branch(
+        experiment["id"], BranchCreate(title="B", objective="Explore"), actor, "branch"
+    )
+    task = service.create_task(
+        TaskCreate(branch_id=branch["id"], objective="Research"), actor, "task"
+    )
+    return service, actor, experiment, task
+
+
+class UsageRuntime:
+    """Emits one reserved generation with the class's usage payload, then completes."""
+
+    usage = {"input_tokens": 10, "output_tokens": 5}
+
+    def __init__(self, store, dispatcher, event_sink):
+        self.store, self.event_sink = store, event_sink
+
+    async def start(self, prompt, model, limits):
+        from physharness.execution import (
+            RuntimeCheckpoint,
+            RuntimeEvent,
+            RuntimeResult,
+            RuntimeSession,
+        )
+
+        session = RuntimeSession(runtime="responses", model=model, limits=limits)
+        await self.store.save(RuntimeCheckpoint.build(session, {"source": "usage fixture"}))
+        for kind, payload in (
+            ("generation_started", {"input_tokens_reserved": 10, "output_tokens_reserved": 20}),
+            ("usage", self.usage),
+        ):
+            await self.event_sink(
+                RuntimeEvent(
+                    kind=kind, session_id=session.id, operation_id="usage-call", payload=payload
+                )
+            )
+        session.status = "completed"
+        await self.store.save(RuntimeCheckpoint.build(session, {"result": "Unresolved"}))
+        return RuntimeResult(
+            session=session, output_text="No proof; remaining assumptions need review."
+        )
+
+
+def price_provenance(service, actor):
+    return [
+        a["provenance"]["price"]
+        for a in service.list_records("artifact", actor)
+        if a["artifact_kind"] == "runtime_event"
+    ]
+
+
+def test_cached_input_rate_is_optional_bounded_and_exact():
+    plain = ModelPrice(input_usd_per_million="2.50", output_usd_per_million="10", source="s1")
+    assert plain.cost(1000, 10, 900) == plain.cost(1000, 10)
+    assert plain.model_dump(mode="json", exclude_none=True) == {
+        "input_usd_per_million": "2.50",
+        "output_usd_per_million": "10",
+        "source": "s1",
+    }
+    cached = ModelPrice(
+        input_usd_per_million="2.50",
+        output_usd_per_million="10",
+        cached_input_usd_per_million="0.25",
+        cache_write_usd_per_million="3",
+    )
+    assert cached.cost(1000, 10, 900) == Decimal("0.000575")  # 100·2.50 + 900·0.25 + 10·10
+    # 100·2.50 + 800·0.25 + 100·3 + 10·10
+    assert cached.cost(1000, 10, 800, 100) == Decimal("0.000850")
+    assert cached.reservation_cost(1000, 10) == Decimal("0.003100")  # 1000·3 + 10·10
+    assert plain.reservation_cost(1000, 10) == plain.cost(1000, 10)
+    for fields in (
+        {"cached_input_usd_per_million": "2", "cache_write_usd_per_million": "2"},
+        # A cache hit discount without the write rate would under-settle cache writes.
+        {"cached_input_usd_per_million": "0.1"},
+    ):
+        with pytest.raises(ValueError):
+            ModelPrice(input_usd_per_million="1", output_usd_per_million="1", **fields)
+    for bad in ((11, 0), (-1, 0), (6, 5), (0, -1)):
+        with pytest.raises(ValueError):
+            plain.cost(10, 1, *bad)
+
+
+@pytest.mark.asyncio
+async def test_worker_settles_cached_input_at_the_cached_rate(lab, monkeypatch):
+    from physharness.orchestration.research_worker import ResearchTaskExecutor
+
+    class CachedUsage(UsageRuntime):
+        usage = {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cached_input_tokens": 4,
+            "cache_write_input_tokens": 6,
+        }
+
+    service, actor, experiment, task = started_task(lab)
+    reserved = []
+    reserve = service.reserve_resources
+
+    def recording(experiment_id, cost, *args, **kwargs):
+        reserved.append(Decimal(cost))
+        return reserve(experiment_id, cost, *args, **kwargs)
+
+    monkeypatch.setattr(service, "reserve_resources", recording)
+    prices = {
+        "explicit-test-model": {
+            **PRICES["explicit-test-model"],
+            "cached_input_usd_per_million": "0.1",
+            "cache_write_usd_per_million": "3",
+        }
+    }
+    await ResearchTaskExecutor(service, prices=prices, runtime_factory=CachedUsage).execute(
+        task["id"], actor.project_id
+    )
+    # Reserved: every input token at the cache-write rate, the highest input rate.
+    assert Decimal("0.000070") in reserved  # (10·3 + 20·2)/1e6
+    ledger = service.ledger(experiment["id"], actor)
+    assert ledger["spent_cost_usd"] == "0.000029"  # (4·0.1 + 6·3 + 5·2)/1e6, rounded up
+    assert (ledger["tokens_spent"], ledger["tokens_reserved"]) == (15, 0)
+    assert all(p["cached_input_usd_per_million"] == "0.1" for p in price_provenance(service, actor))
+
+
+class KeywordRuntime:
+    """Accepts every runtime keyword, records them, and completes without a model call."""
+
+    seen: dict = {}
+
+    def __init__(self, **kwargs):
+        KeywordRuntime.seen = kwargs
+        self.store = kwargs["store"]
+
+    async def start(self, prompt, model, limits):
+        from physharness.execution import RuntimeCheckpoint, RuntimeResult, RuntimeSession
+
+        session = RuntimeSession(runtime="responses", model=model, limits=limits)
+        await self.store.save(RuntimeCheckpoint.build(session, {"source": "keyword fixture"}))
+        session.status = "completed"
+        await self.store.save(RuntimeCheckpoint.build(session, {"result": "Unresolved"}))
+        return RuntimeResult(
+            session=session, output_text="No proof; remaining assumptions need review."
+        )
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_shared_governor_and_role_priority(lab):
+    from physharness.execution.admission import TokenRateGovernor
+    from physharness.orchestration.research_worker import ResearchTaskExecutor
+
+    service, actor, _, task = started_task(lab)
+    governor = TokenRateGovernor(tokens_per_minute=1_000_000)
+    executor = ResearchTaskExecutor(
+        service, prices=PRICES, runtime_factory=KeywordRuntime, token_governor=governor
+    )
+    assert (await executor.execute(task["id"], actor.project_id))["status"] == "completed"
+    assert KeywordRuntime.seen["token_governor"] is governor
+    assert KeywordRuntime.seen["admission_priority"] == 0  # a root is on the critical path
+
+
+def budgeted_task(lab):
+    """A started experiment with ``context_budget`` set, and its root task."""
+    from physharness.domain import ExperimentCreate
+
+    service, actor, _ = lab
+    _, problem = setup_experiment(lab)
+    budgeted = service.create_experiment(
+        ExperimentCreate(
+            campaign_id=problem["campaign_id"],
+            problem_id=problem["id"],
+            models=[{"runtime": "responses", "model": "explicit-test-model"}],
+            budget={"max_cost_usd": "1.00", "max_concurrency": 2, "max_runtime_seconds": 600},
+            context_budget={"elide_every_turns": 8},
+        ),
+        actor,
+        "budgeted-experiment",
+    )
+    return started_task(lab, budgeted)
+
+
+@pytest.mark.asyncio
+async def test_executor_passes_context_budget_and_digests_recall_tool(lab):
+    from physharness.domain import digest_json
+    from physharness.execution.responses import RECALL_OUTPUT_TOOL
+    from physharness.orchestration.research_worker import ResearchTaskExecutor
+
+    service, actor, experiment, task = budgeted_task(lab)
+    executor = ResearchTaskExecutor(service, prices=PRICES, runtime_factory=KeywordRuntime)
+    assert (await executor.execute(task["id"], actor.project_id))["status"] == "completed"
+    assert KeywordRuntime.seen["context_budget"].elide_every_turns == 8
+    record = service.list_records("session", actor, experiment["id"])[0]
+    assert record["tool_definition_digest"] == digest_json(
+        [*KeywordRuntime.seen["dispatcher"].definitions, RECALL_OUTPUT_TOOL]
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_refuses_a_budget_the_runtime_cannot_apply(lab):
+    from physharness.errors import HarnessError
+    from physharness.orchestration.research_worker import ResearchTaskExecutor
+
+    built = []
+
+    class Unbudgeted(UsageRuntime):  # takes no context_budget keyword
+        def __init__(self, store, dispatcher, event_sink):
+            built.append(True)
+            super().__init__(store, dispatcher, event_sink)
+
+    service, actor, experiment, task = budgeted_task(lab)
+    executor = ResearchTaskExecutor(service, prices=PRICES, runtime_factory=Unbudgeted)
+    with pytest.raises(HarnessError) as refused:
+        await executor.execute(task["id"], actor.project_id)
+    # A budgeted arm never runs silently unbudgeted, and the refusal precedes any provider request.
+    assert refused.value.code == "CONTEXT_BUDGET_UNSUPPORTED"
+    assert built == []
+    assert service.get_record("task", task["id"], actor)["status"] == "blocked"
+    assert service.ledger(experiment["id"], actor)["active_workers"] == 0

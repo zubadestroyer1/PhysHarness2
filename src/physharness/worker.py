@@ -151,6 +151,7 @@ async def main():
         tls=settings.temporal_tls,
         api_key=settings.temporal_api_key.get_secret_value() if settings.temporal_api_key else None,
     )
+    from .execution.admission import TokenRateGovernor
     from .orchestration.workspace_selection import configured_workspace_factory
 
     workspace_factory = configured_workspace_factory(settings)
@@ -160,6 +161,10 @@ async def main():
             service,
             prices=settings.model_prices,
             workspace_factory=workspace_factory,
+            # Created on the worker's loop; every research activity shares it (R5).
+            token_governor=TokenRateGovernor(tokens_per_minute=settings.provider_tokens_per_minute)
+            if settings.provider_tokens_per_minute
+            else None,
         ),
     )
 

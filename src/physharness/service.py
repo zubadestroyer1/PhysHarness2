@@ -992,6 +992,8 @@ class HarnessService(
         if data.get("society") is None:
             # Legacy experiments keep byte-identical payloads and command fingerprints.
             data.pop("society", None)
+        if data.get("context_budget") is None:
+            data.pop("context_budget", None)
 
         def action(session, op):
             problem = self._get(session, "problem", request.problem_id, actor)
@@ -1490,23 +1492,70 @@ class HarnessService(
                 self._get(session, "experiment", request.experiment_id, actor)
             content = request.content.encode("utf-8")
             digest = self.artifacts.put(content)
-            metadata = {k: v for k, v in data.items() if k != "content"}
-            record = self._insert(
-                session,
-                "artifact",
-                actor,
-                {
-                    **metadata,
-                    "artifact_kind": request.kind,
-                    "sha256": digest,
-                    "size_bytes": len(content),
-                    "submitted_by": actor.id,
-                },
-            )
+            record = self._artifact_record(session, request, actor, digest, len(content))
             self._event(session, actor, op, "artifact.created", record["id"], {"sha256": digest})
             return record
 
         return self._execute(actor, key, "artifact.create", data, action)
+
+    def _artifact_record(
+        self,
+        session,
+        request: ArtifactCreate,
+        actor: Principal,
+        digest: str,
+        size: int,
+        *,
+        record_id: str | None = None,
+    ) -> dict:
+        """Insert one artifact row for bytes already in the object store (no event)."""
+        return self._insert(
+            session,
+            "artifact",
+            actor,
+            {
+                **request.model_dump(mode="json", exclude={"content"}),
+                "artifact_kind": request.kind,
+                "sha256": digest,
+                "size_bytes": size,
+                "submitted_by": actor.id,
+            },
+            record_id=record_id,
+        )
+
+    def commit_native_checkpoint(self, actor, key, inputs, artifacts, publish):
+        """Commit a checkpoint's new artifact rows and its session pointer atomically.
+
+        Callers store every artifact's bytes first, so a committed row never references
+        missing bytes, and a failed or replayed transaction leaves only harmless orphan
+        bytes. One command inserts the rows (no per-chunk event or command row) and runs
+        ``publish(session, op, records)``, which writes the session record and
+        ``session.saved``. ``artifacts`` holds ``(record_id, request, sha256, size)`` rows.
+        """
+        require_role(actor, "operator", "admin")
+        if any(
+            r.kind not in {"native_checkpoint", "native_checkpoint_chunk"}
+            for _, r, _, _ in artifacts
+        ):
+            raise HarnessError(
+                "ARTIFACT_KIND_RESERVED",
+                "Only native checkpoint artifacts commit with a save.",
+                status=403,
+            )
+
+        def action(session, op):
+            for experiment_id in {r.experiment_id for _, r, _, _ in artifacts} - {None}:
+                self._get(session, "experiment", experiment_id, actor)
+            return publish(
+                session,
+                op,
+                {
+                    rid: self._artifact_record(session, r, actor, sha, size, record_id=rid)
+                    for rid, r, sha, size in artifacts
+                },
+            )
+
+        return self._execute(actor, key, "runtime.save", inputs, action)
 
     def artifact_content(self, artifact_id: str, actor: Principal) -> bytes:
         record = self.get_record("artifact", artifact_id, actor)

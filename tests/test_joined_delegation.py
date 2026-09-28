@@ -33,9 +33,24 @@ def response(items, text="", response_id="resp_1"):
 
 
 @pytest.mark.asyncio
-async def test_parent_final_response_joins_child_with_one_slot_and_no_paid_replay(lab):
+@pytest.mark.parametrize("context_budget", [None, {}])
+async def test_parent_final_response_joins_child_with_one_slot_and_no_paid_replay(
+    lab, context_budget
+):
     service, actor, _ = lab
-    experiment, _ = setup_experiment(lab, concurrency=1)
+    experiment, problem = setup_experiment(lab, concurrency=1)
+    if context_budget is not None:  # F8: a budgeted wait must still resume natively
+        experiment = service.create_experiment(
+            ExperimentCreate(
+                campaign_id=problem["campaign_id"],
+                problem_id=problem["id"],
+                models=[{"runtime": "responses", "model": "explicit-test-model"}],
+                budget={"max_cost_usd": "1.00", "max_concurrency": 1, "max_runtime_seconds": 600},
+                context_budget=context_budget,
+            ),
+            actor,
+            "budgeted-experiment",
+        )
     service.transition_experiment(experiment["id"], "start", 1, actor, "start")
     branch = service.create_branch(
         experiment["id"], BranchCreate(title="Root", objective="Explore"), actor, "root"
@@ -45,6 +60,7 @@ async def test_parent_final_response_joins_child_with_one_slot_and_no_paid_repla
     )
     phases = {"parent": 0, "child": 0}
     seen_joined = []
+    seen_tools = []
 
     async def route(request):
         if request.url.path.endswith("/input_tokens"):
@@ -100,6 +116,7 @@ async def test_parent_final_response_joins_child_with_one_slot_and_no_paid_repla
             for item in payload["input"]
         )
         seen_joined.append(prompt["joined_results"])
+        seen_tools.append([tool["name"] for tool in payload["tools"]])
         return httpx.Response(200, json=response([message("Parent integrated child result.")]))
 
     client = AsyncOpenAI(
@@ -134,6 +151,7 @@ async def test_parent_final_response_joins_child_with_one_slot_and_no_paid_repla
     )
     assert service.get_record("task", parent["id"], actor)["continuation_count"] == 1
     assert service.ledger(experiment["id"], actor)["active_workers"] == 0
+    assert ("recall_output" in seen_tools[0]) == (context_budget is not None)
     await client.close()
 
 

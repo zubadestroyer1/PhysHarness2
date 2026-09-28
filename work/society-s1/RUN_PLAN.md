@@ -288,6 +288,92 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
 - Repetitions double the arm cost. Two per arm is the smallest design that shows any
   variance.
 
+### Output cap (recommended, not applied)
+
+- Set `runtime_limits.max_output_tokens: 16000` in society plans, and the same value in
+  every arm so the arms stay matched. The example plan keeps 64,000.
+- Every request reserves the whole output cap. S1's largest response used 3,234 output
+  tokens (p99 1,680), so 64,000 holds about 20 times more than any S1 response needed,
+  and 16,000 still leaves about 5 times headroom.
+- A response that reaches the cap ends incomplete: the runtime raises
+  `PROVIDER_INCOMPLETE` and the session fails.
+- With the `research` context profile the compaction threshold is the smaller of 3/4 of
+  the window and window − output cap − 8,192. On a 256,000-token window, 16,000 moves it
+  from 183,808 to 192,000 tokens, so compaction fires later.
+- This is a documented recommendation only. Neither `run-plan.example.json` nor any code
+  default changes.
+
+### Provider rate limit (governor)
+
+- Budget about 0.55M tokens per minute (TPM) per concurrently busy agent. S1's
+  unthrottled independent-arm agents averaged 0.53M (0.45–0.61M by class), so a 2M TPM
+  org limit carries about 3–4 of them, and arm S at concurrency 12 needs about 6.6M TPM
+  to run unthrottled. Raising the org limit, or spreading load across orgs or models, is
+  an operator action.
+- Set `PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` in every process that calls the provider
+  (each worker and `run-team`) to about 90% of the org limit divided by the number of
+  those processes. Unset, requests are not governed. The governor adds no throughput: it
+  admits roots and joined children first and turns 429 waits into queueing
+  (docs/EXECUTION.md, "Provider rate governance"). The Compose and Terraform workers do
+  not forward the variable yet (docs/DEPLOYMENT.md).
+- Admission charges each request its input plus the `max_output_tokens` it sends, until
+  settlement refunds the unused output. The lower output cap recommended above therefore
+  also lets the governor admit more requests at once. A 429 cuts the rate by 20% at most
+  once per 30 s, and the rate recovers 5% of the limit every 10 s.
+- During the dev calibration, before any paid arm enables the governor, compare each
+  `provider_throttled` event's `remaining_tokens` and `limit_tokens` with its
+  `governor.level` and `governor.effective_tokens_per_minute`. The `governor` field is the
+  governor's snapshot as the 429 arrived, and it is present only with a governor.
+
+### Prices
+
+- Do not change `PHYSHARNESS_MODEL_PRICES` while an experiment runs. A replayed
+  settlement with a new amount fails with `IDEMPOTENCY_CONFLICT`, and arms priced
+  differently cannot be compared.
+- S1 settled every input token at the full input rate. Once a run records
+  `cached_input_usd_per_million`, re-price S1 at the same rates before any S1-vs-S2 cost
+  comparison. `tools/society_metrics.py` reads cost from the ledger (`spent_cost_usd`),
+  which keeps the prices in force when each run settled. S1's `usage` events carry the
+  provider's native usage, including cached tokens, so S1 can be re-priced from them.
+
+### Reservation smoke check (first paid run)
+
+- Under `context_management` a request is counted without it, since the count endpoint
+  does not accept it, but billed with it. The runtime assumes it adds no billed input
+  and adds the bound's margin (the larger of 2,048 tokens and 2%) to a counted
+  reservation. S1 reserved the whole window, so this assumption has not been observed
+  yet (docs/EXECUTION.md).
+- In the development calibration, before any arm starts, pair every `generation_started`
+  event with `input_tokens_counted: true` with its `usage` event (same operation ID).
+  - `usage.input_tokens` must be at most `input_tokens_reserved`. An overrun already
+    halts the experiment: treat it as a fault (stop rule 5) and do not start the arms.
+  - Record `usage.input_tokens − input_tokens_estimate`, the input that
+    `context_management` added over the exact count. Report any positive gap before the
+    arms start.
+- Also report any `bound_reservation_compacted` event before the arms start: compaction
+  fired on a request that the runtime assumed could not compact.
+
+### Context budget arm (opt-in, not applied)
+
+- `context_budget` changes what the model sees. It caps each tool output (the rest can be
+  recalled with `recall_output`), keeps Unicode literal, and every `elide_every_turns`
+  responses replaces large stale outputs with recall stubs (docs/EXECUTION.md, "Context
+  budget (opt-in)"). It stays opt-in until a quality A/B has run; for that A/B, blocks of 8 to
+  20 responses are recommended (the default is 10).
+- An example A/B arm makes three changes to an otherwise identical plan:
+
+  ```json
+  "context_budget": {},
+  "context_profile": "research_lean"
+  ```
+
+  It also sets `runtime_limits.max_context_tokens` to 128000 and keeps every other runtime
+  limit the same as the control's. `{}` takes the defaults, including a 24,000-character
+  output cap. `research_lean` compacts at min(96,000, window − output cap − 8,192). On a
+  128,000-token window that is 55,808 tokens with the example's 64,000 output cap, and 96,000
+  with the recommended 16,000.
+- Neither `run-plan.example.json` nor any arm above sets it.
+
 ## 6. Stop rules (predeclared)
 
 1. **Root accepted.** An independent-kernel receipt on the exact target stops the run

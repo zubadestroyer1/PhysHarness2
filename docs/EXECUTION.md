@@ -84,11 +84,65 @@ result = await runtime.start(
 ```
 
 This is a genuine `AsyncOpenAI.responses.create` tool loop. The real SDK's
-`responses.input_tokens.count` preflights each request. The next output cap is bounded by
-remaining cumulative tokens. A provider consumption discrepancy raises a limit violation and
-stops further turns. No aliases or substitute models are selected by the adapter. Parameters
-supported here are `instructions`, `reasoning`, `text`, `temperature`, `top_p`, and `service_tier`.
-Unsupported provider parameter/model combinations fail at the provider.
+`responses.input_tokens.count` counts the first request of every start, continuation, resume or
+handoff; a native wake is a new run, so it counts too. It also counts any request whose estimate
+plus the output cap comes within 8,192 tokens (`CONTEXT_MARGIN`) of the context window or of the
+cumulative guard. Otherwise the input is bounded without a count. The bound is the last billed
+input, plus the canonical UTF-8 bytes of every request element that differs from the element at
+the same position in the previous request, plus a margin of the larger of 2,048 tokens and 2% of
+that sum. The elements are the instructions, the tools array and each input item, and removed
+content earns no credit. The previous request's element digests stay in runtime memory for the
+current run only, so a restart counts again. A compaction voids the bound. The budget and context
+checks use the count when one was taken and the bound otherwise. The same value is the input
+reservation, except under `context_management`. There a count is reserved with the bound's margin
+added, and the count plus margin, or the bound, is reserved only while it plus 8,192 is at most
+`compact_threshold`; otherwise the whole window (`max_context_tokens`) is. The output reservation,
+which is also the output cap sent, is `max_output_tokens`, or the remaining cumulative tokens when
+fewer remain. A 400 from `create` means the request was not sent: it is recorded as
+`preflight_error` (stage `create`), then `generation_aborted(reason="request_invalid")` releases
+the reservation at zero, and the session fails rather than being left uncertain, unless that
+release itself fails. A provider consumption discrepancy raises a limit violation and stops
+further turns.
+No aliases or substitute models are selected by the adapter. Parameters supported here are
+`instructions`, `reasoning`, `text`, `temperature`, `top_p`, `service_tier`,
+`context_management`, and `parallel_tool_calls`. Unsupported provider parameter/model combinations
+fail at the provider.
+
+Reserving less than the window under `context_management` rests on two provider assumptions.
+- **Compaction fires only above the threshold.** The gate assumes server compaction never fires
+  on a request whose input is at or below `compact_threshold`, so a request under the gate cannot
+  compact, and every compaction pass, which may bill more than the counted or bounded input,
+  falls on a request that reserved the whole window. S1 is consistent with this but shows the
+  trigger is not billed input: one session billed 185,264 tokens against a 183,808 threshold
+  without compacting, and compacted on the next turn. Only the direction the gate relies on is
+  assumed, and the first paid run's smoke check (`work/society-s1/RUN_PLAN.md`) re-checks it. If a response to a request reserved below the window does carry a
+  compaction item, the runtime logs a warning and emits `bound_reservation_compacted`
+  (`response_id`, `input_tokens_reserved`, `input_tokens` and `compact_threshold`). It does so
+  once the response is durable and before `usage` is emitted, so before the ledger settles it
+  and before any limit check. A compaction that billed past the reservation still stops, through
+  the ledger's sticky reconciliation halt (`BUDGET_RECONCILIATION_REQUIRED`) when settlement
+  finds the overrun, or else through `PROVIDER_LIMIT_VIOLATION`; the alarm names the cause.
+- **`context_management` adds no billed input.** `responses.input_tokens.count` does not accept
+  `context_management`, so a request is counted without it but billed with it. The runtime
+  assumes it adds no input tokens while compaction does not fire. The margin added to a counted
+  reservation covers a small gap. S1 cannot confirm this, because every S1 request under
+  `context_management` reserved the whole window; the first paid run checks it
+  (`work/society-s1/RUN_PLAN.md`, "Reservation smoke check").
+
+`tools/reservation_bound.py` re-checks the bound offline on audit-extracted turns. Its bound sums
+the characters of the appended items. That never exceeds the runtime's bound, which sums their
+canonical UTF-8 bytes, so a turn that passes offline would also pass at runtime. On S1's 3,651
+consecutive completed turn pairs, the billed input was at most 0.9996 of the offline bound without
+its margin and 0.980 with it. That leaves little raw headroom: the runtime's safety comes mainly
+from the JSON syntax its byte count adds over those characters and from the margin.
+
+`parallel_tool_calls` defaults to `false`, as today. With `true`, a response's function calls
+still run one at a time, in the order the provider emitted them: the calls in a batch are never
+executed concurrently, and each call's pending marker is durable before that call's dispatch. A
+fatal tool error stops the batch, leaving its later calls undispatched and the session
+`uncertain`; a tool error envelope (a normal failed result returned to the model, not raised) does
+not stop the batch. Handoff and wait intents from the boundary hook apply only after the whole
+batch settles. There is no per-response call cap beyond the output cap.
 
 The adapter uses `store=False`, requests encrypted reasoning content, and replays native output
 items in subsequent inputs, preserving item IDs and function `call_id`. Native responses are
@@ -98,22 +152,280 @@ and must return JSON objects. JSON Schema validates every argument. Tool errors 
 Handlers are trusted control-plane code: they must authorize project access and reserve their
 own budgets before starting children or external work. There is no implicit native subagent tool.
 
+A stored response keeps only `STORED_RESPONSE_FIELDS` (`id`, `object`, `created_at`,
+`completed_at`, `model`, `status`, `output`, `usage`, `incomplete_details`, `error` and
+`service_tier`) plus `request_echo_sha256`, a digest of the rest: the provider's echo of the
+request (tools, instructions and settings). A response from a different model than requested is
+kept whole as evidence. Checkpoints saved with full echoes still load. A `tool_results` entry
+stores `visible_output` only when a stagnation signal changed it; replay otherwise uses `result`.
+`update_source` and `boundary_hook` receive the checkpoint that was just saved, not a rebuilt copy.
+
 Optional async `event_sink(RuntimeEvent)` receives `generation_started`, `generation_aborted`,
 `usage`, `tool_completed`, and `completed`. The generation-start event contains the input/output
 token reservation and fires before billable generation. A core ledger can veto generation by
 raising. If the runtime deadline expires before the provider request, `generation_aborted` releases
-that reservation with zero usage.
+that reservation with zero usage, and only then is the marker cleared, so a failed release leaves
+the session uncertain.
+
+A 429 with code `rate_limit_exceeded` did no work, whether it refused the count or the create, so
+the same request is resent. The wait follows the provider's hint (`retry-after-ms`, then
+`retry-after`) or a doubling backoff, capped at 30 s per wait. `provider_throttled` is emitted once
+per wait. It carries the attempt, the wait, its source and bounded header numbers, never the error
+text. A sink failure is logged and ignored. A create's event carries the generation's operation id.
+A count's event has none. `usage` reports the create's wait totals. A count has no operation or
+reservation, so its waits appear only as events. The runtime gives up when the next wait would
+outlast the deadline or when the wait is interrupted. A count holds no reservation, so its give-up
+aborts nothing. A create's give-up is definite: `generation_aborted(reason="rate_limited")`
+releases the reservation at zero, and only then is the marker cleared. Giving up at the deadline
+fails the session with retryable `PROVIDER_RATE_LIMITED`, and the executor blocks the task for an
+operator to resume. An interrupted wait leaves the session `interrupted`, or `failed` with
+`TIMEOUT` when the runtime's own deadline cancelled it.
+
 The usage event includes the stable operation ID and actual native usage; reconciliation should
 be idempotent by operation ID. If the provider response was persisted but delivery of a usage
 callback failed, reconcile from the saved native response. The adapter does not implement a
-transactional outbox or monetary pricing; those belong to the controller/ledger.
+transactional outbox or monetary pricing; those belong to the controller/ledger. `usage` also
+carries `cached_input_tokens`, the provider's reported cache hits (0 when absent or inconsistent).
+The ledger settles them at the price's optional `cached_input_usd_per_million`, which may not
+exceed the input rate, and at the full input rate without one. It also carries
+`cache_write_input_tokens`, the reported cache writes (0 when absent or inconsistent), which
+settle at `cache_write_usd_per_million`; a price with a cached rate must give that rate. Every
+reservation charges each input token at the higher of the input and cache-write rates, since
+neither a hit nor a write is known in advance, so a reservation still bounds its settlement
+(`docs/FIRST_LIVE_RUN.md`).
 
-The session is checkpointed before each external request and host tool. A crash or tool failure
-with a pending marker prohibits automatic resume. Provider usage absent from a response also
-requires reconciliation. A session's total token budget persists across `continue_session`.
+The session is checkpointed before each external request and host tool. A turn saves at:
+- **A**, the generation marker, which also carries any turn note;
+- **B**, the response, before `usage`;
+- **D**, one per dispatched call: its marker, the settlement and the earlier calls' outputs;
+- **F**, the last output and the settled boundary.
+
+A one-call turn makes 4 saves, and a k-call turn makes 3 + k. A final text response instead saves
+the settled terminal response, then its completion. A peer delivery adds its save before the
+acknowledgement, and a compaction adds its marker and prune saves. Settlement after `usage` is not
+saved on its own: until the next save the durable state is B, which holds the generation marker,
+so a crash stays uncertain. A fatal tool error, a cancellation or a failed settlement is recorded
+by `_run`'s failure save. `tool_completed` and any stagnation signal are emitted after the save
+that made the call's output durable. When that is `_run`'s failure save, they follow it
+best-effort, in call order, and a sink error is only logged so the original failure propagates. If
+the failure save itself fails, nothing is announced.
+
+The controller's store verifies each checkpoint's digest once, then encodes it into
+content-addressed chunks; encoding stays on the event loop by design. A save first stores its new
+chunk and manifest bytes, then commits their artifact rows, the session pointer and one
+`session.saved` event in one `runtime.save` transaction. A committed row therefore never references
+missing bytes, and an interrupted save publishes nothing and leaves only orphan bytes. Chunks carry
+no `artifact.created` event. A crash or tool failure with a pending marker prohibits automatic
+resume. Provider usage absent from a response also requires reconciliation. A session's total token
+budget persists across `continue_session`.
 `start_from_handoff` and `start(..., predecessor=checkpoint)` seed a successor with its
 lineage's cumulative usage, so the budget also persists across a task's continuations.
 `interrupt` cancels the active local coroutine; provider completion/billing may remain uncertain.
+
+### Provider rate governance
+
+`PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` (`Settings.provider_tokens_per_minute`) enables one
+`TokenRateGovernor` (`execution/admission.py`) per process. The worker and `run-team` share it
+across every runtime on the process's event loop. Unset, there is no governor and nothing changes.
+The governor is a token bucket that holds 15 s of tokens (a quarter of the limit;
+`DEFAULT_BURST_SECONDS`), so a cold start or an idle spell cannot spend a whole minute's tokens at
+once. A request's estimate is its input bound plus the `max_output_tokens` it sends (its output
+reservation), because the provider counts the requested max output toward the limit. The input
+bound is the value the reservation uses below the window: the exact count, the margin-inclusive
+bound, or under `context_management` the count plus the bound's margin (G4). Cached tokens count,
+since the provider's limit counts them. Admission comes before
+`generation_started`, so a request waiting for its first admission holds no dollar reservation,
+and a target verified while it is queued sends nothing. A re-queued create keeps its reservation,
+as a rate-limit wait always did. `generation_started` then carries `admission_wait_seconds`. Once
+`usage` is emitted, the governor settles at the billed input plus output, refunding the unused
+output and any overestimate, or charging an underestimate. Any other exit after the send keeps the
+estimate charged.
+
+Roots and joined children, which a parent waits on, are admitted first, then referees, then
+everything else. A waiting request ages one class per 30 s, so nothing starves.
+
+Every 429 pauses all admission for its wait. That includes a 429 the runtime gives up on at once
+because the wait would pass the deadline. A 429 also spends whatever the bucket holds, since the
+provider's window is full whatever the bucket thinks, and nothing refills during the pause, so
+admission resumes at the rate instead of releasing a burst. Refunds from requests still in flight
+are credited as they settle, even while paused, so a pause that ends while many settle can still
+admit what they returned at once. A 429 also cuts the rate by 20%, but at most once per
+30 s (`CUT_COOLDOWN_SECONDS`). A 429 that arrives while admission is paused, or within 30 s of the
+last cut, only extends the pause if its wait is longer. A burst of refusals therefore cuts once,
+and isolated refusals from traffic the governor cannot see cannot ratchet the rate down. The rate
+recovers additively by 5% of the limit every 10 s, so one cut is gone in 40 s. With one isolated
+429 a minute the rate stays at or above 80% of the limit. A 429 on `responses.create` also
+releases its admission and re-queues the request behind the pause instead of sleeping. The
+re-queued request keeps the queue age it had built up, so it waits in the priority queue with
+every other request without starting over. A 429 on `input_tokens.count` holds no admission, so
+it pauses and may cut but does not re-queue (F10). A request's first admission and a re-queue must both come one second before
+the deadline. Otherwise the give-up is definite, as without a governor:
+`generation_aborted(reason="rate_limited")`, then the marker clears, and the session fails with
+retryable `PROVIDER_RATE_LIMITED`. These exits return the admission, because they certainly sent
+nothing:
+- a target verified while queued;
+- a failed pre-generation guard or marker save;
+- a timeout before the send;
+- a failed `generation_started`;
+- a 400;
+- a rate-limit give-up.
+
+Any other exit keeps the estimate charged until the bucket refills.
+
+The governor adds no throughput. It spreads requests under the limit, in priority order, instead
+of letting them all meet 429s. It cannot see other processes, so set it to about 90% of the org
+limit divided by the number of processes that share it. Cross-process governance belongs to the
+model router (`PLAN.md` §6.1). The estimate follows OpenAI's rate-limit guidance, which counts
+the requested max output toward TPM. Validate it in a dev calibration before a paid arm enables
+the governor. With a governor, each `provider_throttled` event carries a `governor` key holding
+the governor's `snapshot()` as the 429 arrived, before it pauses and cuts:
+- `tokens_per_minute`;
+- `effective_tokens_per_minute`;
+- `level`, the tokens available;
+- `waiting`;
+- `paused_seconds`.
+
+Compare its `level` and `effective_tokens_per_minute` with the same event's `remaining_tokens` and
+`limit_tokens`. Without a governor the event has no `governor` key and is unchanged.
+
+### Context budget (opt-in)
+
+An experiment or run plan may set `context_budget`. When it is absent, requests, tool outputs and
+native state are exactly as described above. The fields and their defaults are:
+- `elide_min_chars`: 4,000 (at least 500);
+- `elide_after_turns`: 5 (at least 1);
+- `elide_every_turns`: 10 (at least 1);
+- `max_output_chars`: 24,000 (at least 20,000), or `null` for no cap. A truncated view may exceed
+  it by its envelope, about 150 characters plus the tool name and call ID.
+
+The executor passes `ResponsesRuntime(context_budget=...)` only when the field is set. A runtime
+that cannot accept `context_budget` is refused with `CONTEXT_BUDGET_UNSUPPORTED` before any provider
+request, so a budgeted experiment never runs silently unbudgeted. `start`
+stores the policy in native state under `context_budget`, and `start_from_handoff` copies it, so a
+continuation keeps the policy its lineage started with, even when its own runtime was built
+without one. Under a budget:
+- **Literal Unicode (#5e).** Tool outputs are serialized with `ensure_ascii=False`, so non-ASCII
+  text reaches the model as literal characters, not `\uXXXX` escapes. A lone surrogate is the
+  exception: UTF-8 cannot encode it, and left literal it would make every later request of the
+  lineage fail, so it keeps the `\udXXX` escape that legacy output uses. In every experiment,
+  `ToolDispatcher.dispatch` also rewrites a lone surrogate in a tool result (keys included) as
+  that escape before the result is stored, so checkpoints always save, and returns a result that
+  has none unchanged. Two keys that would escape to the same key fail the call with
+  `TOOL_FAILED` rather than lose a value.
+- **Output cap.** An output whose serialized text is longer than `max_output_chars` is replaced in
+  the model's input by a view. The view is `{"truncated": true, "tool", "total_chars", "head",
+  "recall": {"tool": "recall_output", "call_id", "next_offset"}}`, and its `head` holds the first
+  `max_output_chars // 2` characters. The head and every recall page serialize the output with
+  sorted keys, the order a reloaded checkpoint keeps, so they join exactly. The full result stays
+  in `tool_results`, and replay is unchanged. This one per-output cap also covers whole-file
+  reads (R7).
+- **`recall_output(call_id, offset)`.** This built-in tool is appended to the tools array that is
+  sent. It returns a page of a stored output's text from `offset`, with `next_offset` (null at
+  the end) and `total_chars`. A page holds as many characters as fit 16,000 once escaped in the
+  tool output, which is the form the model reads, so a quote-heavy page holds fewer. It searches the active `tool_results`, then
+  the session's own archives, then the inherited ones, and matches the call ID from any session
+  in the lineage; the latest match wins. An archive never changes, so a run remembers the keys
+  of each archive it has read, and a recall of an unknown ID reads each archive at most once. An unknown ID returns a `RECALL_NOT_FOUND` error
+  envelope. A recall is a pure read. It sets no pending marker, never reaches the dispatcher, is
+  never stored in `tool_results` and is never capped; its page is bounded instead. Like any call, it emits `tool_completed`
+  (and any stagnation signal, since stagnation counts it as a read) after the save that holds its
+  output, so tool-call metrics count recalls. It is not part of the society tool catalog, and a
+  dispatcher that registers its own `recall_output` under a budget fails with `INVALID_CONFIG`.
+- **Block elision.** Every `elide_every_turns` provider responses, at the settled boundary before
+  the next request is prepared, each tool output longer than `elide_min_chars` characters from a
+  response at least `elide_after_turns` responses old is replaced in place by a stub,
+  `{"elided":true,"tool","chars","sha256","head","recall":{"tool":"recall_output","call_id"}}`.
+  `chars` is the replaced text's length, `sha256` the first 16 hex digits of its digest and
+  `head` its first 160 characters. The full result stays in `tool_results`, so `recall_output`
+  on the stub's call ID pages it back. A recall page goes stale like any output. Its stub's
+  `recall` names the stored output's call ID and the page's `offset`, so the page can be read
+  again, and recalls cannot grow the context for good. An output is replaced only when its stub
+  is strictly shorter, so elision never lengthens an output and `chars_removed` is always
+  positive. Never elided are stubs, outputs stored without a `seq` (before this feature), and
+  outputs whose `tool_results` entries a compaction archived. Between blocks the input only
+  grows, so its prefix is byte-stable and provider prefix caching holds; a block breaks the
+  prefix once, at its first newly elided item. A block that elides anything emits
+  `context_elided` with `count`, `chars_removed`, `first_index` (the input index of the first new
+  stub) and `seq`. It is emitted only after the save that holds the stubs, normally the
+  generation marker save and otherwise the save that ends the run. A crash before that save
+  replays the block with the same payload, and `(session_id, seq)` identifies a block, so
+  consumers can dedupe on it.
+- **Elision state.** `elision = {"seq", "last_block_seq"}` in native state. `seq` counts the
+  lineage's provider responses: it grows with each response and is saved with it (save B), and
+  `start_from_handoff` copies it, so a native successor keeps the block schedule; a portable
+  successor starts a fresh context at 0. Every stored `tool_results` entry records its response's
+  `seq` and the tool `name`. The stubs and `last_block_seq` are saved with the next generation
+  marker, so a restart never elides twice. Checkpoints without `elision` never elide.
+- **Elision and the bound.** A stub is not byte-identical to the output it replaces, so the P1
+  bound counts it at its full size and credits nothing for the removed output: a block's request
+  adds every new stub to its bound, and the requests between blocks bound only their appended
+  items. The text the model sees shrinks by `chars_removed`.
+- **Not a default yet.** Elision changes what the model sees. Making it a default needs a quality
+  A/B; block sizes (`elide_every_turns`) of 8 to 20 are recommended for it. Larger blocks break
+  the cache less often but keep stale outputs longer.
+- **Tool digest.** The session record's `tool_definition_digest` covers the tools actually sent,
+  including `recall_output`. If the digest changes between a joined-children wait and its wake,
+  for example because the runtime stops accepting the budget, that in-flight native handoff falls
+  back to a portable continuation. A budgeted wait whose digest is unchanged still resumes
+  natively. The bound above treats the tools array as one element, so adding the recall tool is
+  counted once, at its full size.
+
+The `research_lean` context profile sets the compaction threshold to
+`min(96,000, window − max_output − 8,192)`. It is independent of `context_budget`, but is meant to
+be paired with it.
+
+### Stored shape changes (G3 infrastructure, all experiments)
+
+G1 covers the bytes the model sees and the pinned freeze tests (F7), so these changes reach legacy
+experiments too.
+- The `usage` wait totals (`rate_limit_waits`, `rate_limit_wait_seconds`).
+- The `provider_throttled` events.
+- Stored responses keep only `STORED_RESPONSE_FIELDS` plus `request_echo_sha256`.
+- A `tool_results` entry omits an unchanged `visible_output`.
+- Checkpointed native state has sorted object keys, since `RuntimeCheckpoint.build` copies it
+  through the digest's sorted serialization. A session continued from a reloaded checkpoint
+  therefore sends input items whose keys are sorted: the same content, but not `main`'s bytes.
+- `generation_started` carries `input_tokens_estimate` (the exact count or the margin-inclusive
+  bound) and `input_tokens_counted`.
+- `preflight_error.stage` may be `create`, with the generation's operation ID, after a 400 from
+  `create`; its `generation_aborted` has `reason="request_invalid"`.
+- `usage.cached_input_tokens`: the provider's reported cache hit (0 when absent or inconsistent).
+  The controller/ledger settles those tokens at an optional cached rate, while every reservation
+  stays at the full input rate or above, since a cache hit is never guaranteed in advance.
+- `usage.cache_write_input_tokens`: the provider's reported cache writes (0 when absent or
+  inconsistent), settled at `cache_write_usd_per_million`.
+- A checkpoint chunk has no `artifact.created` event and no command row of its own; each save is
+  one `runtime.save` transaction.
+- The `native_checkpoint` manifest row has no `artifact.created` event and no
+  `runtime-artifact:{state_digest}` command row either. The console's incremental refresh
+  therefore misses manifest rows until a reload.
+- Without `context_management`, which covers every `general`-profile experiment, a request that
+  is not counted reserves its P1 bound, which is never below the exact count reserved before.
+  Holds are therefore larger, so an experiment at the edge of its envelope can hit
+  `BUDGET_EXCEEDED` one request earlier.
+- Smaller input reservations under `context_management`: `generation_started.input_tokens_reserved`
+  and `settled_response.input_reserved` hold the count plus the bound's margin, or the bound, not
+  the whole window, while that value plus 8,192 is at most `compact_threshold`.
+- The `bound_reservation_compacted` alarm event.
+- Fewer saves per turn: 4 for a single call, 3 + k for k calls. `tool_completed` is emitted after
+  the save that made its output durable. Settlement rides on the next save, so a crash between
+  `usage` and that save leaves the session `uncertain` (save B holds the generation marker). The
+  ledger's settled reservation stays authoritative, so nothing is charged twice, but a
+  compaction-only response in that window is not routed to compaction recovery. If an earlier
+  result's `tool_completed` fails after the next call's marker save, that call never ran: the
+  session fails without naming it.
+- A deadline abort before the send emits `generation_aborted` before it clears the marker, so a
+  failed release leaves the session `uncertain`, not `failed`.
+- `ToolDispatcher.dispatch` escapes a lone surrogate in a tool result, keys included, as
+  `\udXXX`. This changes no stored shape for any input that saved before: no store could save a
+  result holding one.
+
+Under `context_budget` only (opt-in):
+- Native state holds `context_budget` and `elision = {"seq", "last_block_seq"}`.
+- Each `tool_results` entry records its response's `seq` and the tool `name`.
+- Model-visible tool output text keeps a lone surrogate as its `\udXXX` escape, while other
+  Unicode stays literal.
+- The `context_elided` event.
 
 ## Official Codex SDK
 
@@ -297,7 +609,7 @@ process isolation and durable delivery.
 ## Continuation, duplicate calls, and authority
 
 Responses checkpoints are independent snapshots. Every continuation saves `running` before
-awaiting input-token preflight. The in-process active-session guard prevents concurrent calls
+its first provider call. The in-process active-session guard prevents concurrent calls
 through one adapter, and canonical research workers additionally acquire a durable task lease.
 Custom shared runtime stores must provide controller-side serialization; the generic
 `RuntimeStore` protocol is not a distributed lock.

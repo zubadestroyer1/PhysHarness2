@@ -55,9 +55,22 @@ Development endpoints bind only loopback:
 - Console: run `npm ci && npm run dev` in `console`; configure its API connection and role token.
 
 To enable real research deliberately, add `OPENAI_API_KEY` and a reviewed exact-model
-`PHYSHARNESS_MODEL_PRICES` JSON object to the private environment. Experiment records select the
-model; the worker never chooses a default replacement. E2B tools additionally require the key and
-an exact separately qualified template ID. Then start both application and worker profiles:
+`PHYSHARNESS_MODEL_PRICES` JSON object to the private environment. A price entry may add
+`cached_input_usd_per_million`, which bills the provider's reported cache hits at that rate. It
+must not exceed `input_usd_per_million`, and it requires `cache_write_usd_per_million`, the
+provider's cache-write rate. Without it every input token bills at the input rate, as before
+(`docs/FIRST_LIVE_RUN.md`). Experiment records select the model; the worker never chooses
+a default replacement. E2B tools additionally require the key and an exact separately qualified
+template ID. `PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` optionally governs the organisation's
+tokens-per-minute limit in each process that calls the provider (a worker or `run-team`). Set it
+to about 90% of the org limit divided by the number of those processes. Unset, requests are not
+governed (`docs/EXECUTION.md`, "Provider rate governance"). The governor charges each request its
+input plus the requested max output and cuts its rate at most once per 30 s. Validate that
+estimate in a dev calibration, against the provider's rate-limit headers, before a paid run
+enables it. Neither the Compose worker
+(`compose.yaml`) nor the Terraform ECS worker (`infra/terraform/aws/services.tf`) forwards it
+yet, since both list the worker's environment explicitly. Then start both application and worker
+profiles:
 
 ```sh
 docker-compose --env-file .env --profile app --profile worker up --build -d
@@ -65,6 +78,10 @@ docker-compose --env-file .env --profile app --profile worker up --build -d
 
 The worker command is `python -m physharness.worker`. Missing provider/pricing/template inputs
 remain unavailable. Starting the worker is not evidence of accepted research or scale.
+
+Without `PHYSHARNESS_DATABASE_URL`, a process uses the SQLite file `.state/harness.db`. SQLite
+databases open in WAL mode with `synchronous=FULL`, so keep the file on a local filesystem and
+back it up as `docs/OPERATIONS.md` describes, never by copying `harness.db` alone.
 
 ## Managed AWS control plane
 

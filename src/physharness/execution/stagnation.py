@@ -48,6 +48,8 @@ READ_TOOLS = frozenset(
         "fetch_source",
         "verification_status",
         "load_skill",
+        # Re-reading an elided or truncated output (context budget).
+        "recall_output",
     }
 )
 TERMINAL_READS = frozenset({"tail", "cat", "head", "sed", "rg", "grep", "awk"})

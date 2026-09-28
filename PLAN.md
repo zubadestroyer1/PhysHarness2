@@ -333,6 +333,7 @@ This **updates the 2026-09-22 scaling recommendation**, which said ECS first and
 - The commons lives in PostgreSQL, partitioned per campaign. The event stream (the existing outbox) feeds subscriptions, and digests are computed incrementally.
 - Hierarchical budgets (§4.6) remove hot-row locks.
 - Chunked checkpoints keep storage bounded: 93% smaller on real checkpoints, already implemented.
+- Checkpoint saves are slim (a stored response keeps its billing and recovery fields plus a digest of the request echo), coalesced (4 per single-call turn and 3 + k for k calls, down from about 6.5 per turn) and one transaction each, and SQLite runs in WAL mode. Encoding checkpoints off the event loop is future work.
 - Indexed task, session and workspace queries replace in-Python filtering where measurements show cost.
 - Lease-renewal and command volume at 1,000 agents is about 100 renewals/s. This needs profiling (see the 2026-09-22 research).
 
@@ -347,6 +348,8 @@ Useful concurrency is bounded by the smallest of:
 - verifier throughput.
 
 Size each plane from measured per-agent demand in the 8–32 agent runs. VM count alone is not a capacity measure.
+
+Hosted rate limits are held today by a per-process client-side TPM governor (`PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE`), set to about 90% of the org limit divided by the processes that share it; cross-process governance belongs to the model router (§6.1). S1's unthrottled agents needed about 0.55M TPM each.
 
 ---
 

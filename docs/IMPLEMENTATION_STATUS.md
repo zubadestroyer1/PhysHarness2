@@ -5,6 +5,35 @@
 - **Commit IDs:** every commit ID changed. Older documents and evidence cite the old IDs; [`work/history-rewrite-2026-09-26.json`](../work/history-rewrite-2026-09-26.json) maps each one to its new ID.
 - **Evidence:** the JUnit XML files parse again, and every digest that one committed file records for another matches the current bytes. The redaction manifest note records the change.
 
+## S1 runtime remediation — 2026-09-26
+
+**Status:** implemented, with deterministic mocked-provider tests only. No paid request, live run or VM was used. Changes to what the model sees are opt-in: the context budget, the TPM governor, `parallel_tool_calls` and the cached price. Infrastructure changes are always on and keep every write-ahead marker. In legacy experiments the model sees byte-identical requests, and the pinned freeze tests pass unmodified. One exception: after a checkpoint reload, the JSON keys inside each input item are sorted, because `RuntimeCheckpoint.build` copies state through one sorted serialization. The provider parses those objects, so their content is unchanged, but the request bytes differ from `main`'s. See the [runtime remediation plan](superpowers/plans/2026-09-26-s1-remediation-runtime.md), the [S1 audit](../work/society-s1/audit-2026-09-26/AUDIT.md) it answers, and [EXECUTION.md](EXECUTION.md) for the behaviour.
+- **Task 1:** `_loop` is split into `_prepare_request`, `_send`, `_run_calls` and `_find_tool_result`, with no change in behaviour.
+- **Task 2:** each provider 429 wait emits `provider_throttled` (bounded header numbers, never the error text), and `usage` carries the create's wait totals.
+- **Task 3:** stored responses keep their billing and recovery fields plus a digest of the request echo, `visible_output` is stored only when it differs, hooks reuse the saved checkpoint, and SQLite runs in WAL mode with `synchronous=FULL`.
+- **Task 4:** the input is counted exactly only on each run's first request and near a limit. Otherwise a sound bound replaces the count: the last billed input, plus the bytes of every changed request element, plus max(2,048, 2%). A 400 from `create` is definitely not sent.
+- **Task 5:** an optional `cached_input_usd_per_million` bills reported cache hits. It requires `cache_write_usd_per_million`, which bills reported cache writes, and reservations charge input at the higher of the input and cache-write rates.
+- **Task 6:** under `context_management`, input is reserved from the bound while it plus 8,192 stays within `compact_threshold`, with the `bound_reservation_compacted` alarm. The offline check on S1's 3,651 completed turn pairs found no violation: billed input was at most 0.99955 of the bound without its margin (the gate is 1) and 0.97995 with it.
+- **Task 7:** an opt-in per-process TPM governor (`PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE`) admits by priority on the input bound plus the requested max output, pauses on every 429 and cuts its rate at most once per 30 s, recovering 5% of the limit every 10 s. Only a create 429 re-queues, keeping its queue age; a count 429 pauses but does not re-queue.
+- **Task 8:** `parallel_tool_calls` is a validated model parameter. A batch's calls still run one at a time, in order, each after its own durable marker.
+- **Task 9:** checkpoints are encoded in one pass, each save commits in one transaction with no per-chunk `artifact.created`, and a save refuses any checkpoint that loading would refuse.
+- **Task 10:** saves are coalesced to 4 per single-call turn and 3 + k for k calls, down from about 6.5 per turn. Tool results are announced after the save that makes them durable.
+- **Task 11:** an opt-in `context_budget` keeps Unicode literal and caps each tool output (`max_output_chars`, default 24,000) behind a built-in `recall_output`; the `research_lean` profile compacts earlier.
+- **Task 11b:** a lone surrogate in any tool result is escaped before the result is stored, so the session always saves.
+- **Task 12:** under the budget, every `elide_every_turns` responses, stale large outputs become recall stubs, and the input prefix stays byte-stable between blocks.
+- **Task 13:** this documentation sweep, plus the integration audits' minor fixes. Admission now uses the reservation's margin-inclusive input, the create sends exactly the tools its bound describes, a deadline abort emits before it clears the marker, and per-session caches end with their run.
+- **Tests:** the full suite passes 2,137 tests with 3 opt-in skips. Ruff check and format are clean.
+
+Next steps:
+- a harder target (audit #25);
+- the paid A/B of the context budget, which needs an explicit budget;
+- olean-based imports (#12d);
+- warm-REPL reuse;
+- raising or splitting the org TPM limit, an operator action;
+- encoding checkpoints off the event loop;
+- carrying the input bound across a byte-identical native handoff, so a native wake need not count (today every wake counts);
+- storing each count-throttle event as its own artifact: the worker keys runtime events by content, so identical count waits in one session collapse into one.
+
 ## S1 live comparison — 2026-09-26
 
 **Status:** run on the local Colima workbench with `gpt-6-sol`; the evidence is in the [results report](../work/society-s1/results-2026-09-26/REPORT.md).

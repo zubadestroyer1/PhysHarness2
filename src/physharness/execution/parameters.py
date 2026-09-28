@@ -67,6 +67,7 @@ class ResponsesParameters(_ParameterObject):
     context_management: (
         Annotated[list[CompactionParameters], Field(min_length=1, max_length=1)] | None
     ) = None
+    parallel_tool_calls: bool | None = None
 
 
 def validate_responses_parameters(parameters: dict) -> dict:

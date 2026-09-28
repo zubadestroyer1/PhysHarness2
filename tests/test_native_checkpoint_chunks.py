@@ -1,15 +1,109 @@
 """Native checkpoint payloads remain exact while repeated prefixes are shared."""
 
+import hashlib
 import json
+from pathlib import Path
 
 import pytest
 from test_core import setup_experiment
 
-from physharness.domain import ArtifactCreate, BranchCreate, TaskCreate, digest_json
+from physharness.domain import (
+    ArtifactCreate,
+    BranchCreate,
+    TaskCreate,
+    canonical_json,
+    digest_json,
+)
 from physharness.errors import HarnessError
-from physharness.execution import ModelConfig, RuntimeCheckpoint, RuntimeLimits, RuntimeSession
+from physharness.execution import (
+    ModelConfig,
+    RuntimeCheckpoint,
+    RuntimeLimits,
+    RuntimeSession,
+    checkpoint_chunks,
+)
+from physharness.execution.checkpoint_chunks import decode, encode
 from physharness.orchestration.research_worker import CanonicalRuntimeStore
 from physharness.reproduction import validate_export
+
+GOLDEN = Path(__file__).parent / "fixtures" / "native_checkpoint_golden.json"
+
+GOLDEN_SESSION = RuntimeSession(
+    id="golden-session",
+    runtime="openai_responses",
+    model=ModelConfig(model="exact-model"),
+    limits=RuntimeLimits(),
+)
+
+
+def golden_cases():
+    unicode, tool = "∀ ε > 0, ∃ δ ≥ 0 — ℝ", {"type": "string", "description": "d" * 300}
+    return {
+        "small": {"input": [{"role": "user", "content": "hi"}], "settled_boundary": True},
+        "paged_list": {"input": [{"id": str(i), "content": "x" * 4096} for i in range(40)]},
+        "nested_map": {
+            "tool_results": {f"s:{i}": {"result": {"text": unicode * 200}} for i in range(30)}
+        },
+        "long_text": {"initial_anchor": ("é" * 3000 + "a") * 20},
+        "legacy_response": {
+            "responses": [
+                {
+                    "id": "r1",
+                    "output": [],
+                    "tools": [{"name": f"t{i}", "parameters": tool} for i in range(40)],
+                }
+            ]
+        },
+    }
+
+
+def encode_to_memory(state):
+    chunks, order = {}, []
+
+    def put(content):
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        chunks[digest] = content.encode("utf-8")
+        order.append(digest)
+        return {"id": digest, "sha256": digest}
+
+    checkpoint = RuntimeCheckpoint.build(GOLDEN_SESSION, state)
+    return checkpoint, encode(checkpoint, put), chunks, order
+
+
+def chunk_digests(state):
+    _, manifest, _, order = encode_to_memory(state)
+    return {
+        "chunks": order,
+        "manifest": hashlib.sha256(canonical_json(manifest).encode()).hexdigest(),
+    }
+
+
+def nested_state(shape, depth):
+    """A state nested ``depth`` levels deep whose every level is chunked, not inlined."""
+    node = "z" * 20000
+    for _ in range(depth):
+        if shape == "list":
+            node = [node, *range(300)]  # 38 pages, so one index level
+        else:
+            width = 40 if shape == "map" else 0  # 41 keys split into dict branches
+            node = {**{f"k{i}": i for i in range(width)}, "child": node}
+    return {"doc": node}
+
+
+def encodes(state):
+    try:
+        encode_to_memory(state)
+    except HarnessError:
+        return False
+    return True
+
+
+def decodes(manifest, chunks, checkpoint):
+    try:
+        raw = canonical_json(manifest).encode()
+        return decode(raw, lambda ref: chunks[ref["sha256"]]) == checkpoint
+    except HarnessError:
+        return False
 
 
 @pytest.fixture
@@ -76,6 +170,24 @@ async def test_old_full_checkpoint_and_new_chunked_checkpoint_restore_exactly(na
 
 
 @pytest.mark.asyncio
+async def test_a_dispatched_tool_result_with_lone_surrogates_saves_and_loads(native_store):
+    from test_execution_responses import echo_dispatcher
+
+    _, _, _, _, store, session = native_store
+    dispatcher = echo_dispatcher({"out": "a\ud800b", "nested": [{"k\udc00": "x"}]})
+    result = await dispatcher.dispatch("echo", {}, "operation")
+    checkpoint = RuntimeCheckpoint.build(
+        session,
+        {
+            "tool_results": {f"{session.id}:call": {"identity": "i", "result": result}},
+            "settled_boundary": True,
+        },
+    )
+    await store.save(checkpoint)
+    assert await store.load(session.id) == checkpoint
+
+
+@pytest.mark.asyncio
 async def test_chunk_missing_or_tampered_fails_closed(native_store):
     service, actor, _, _, store, session = native_store
     await store.save(
@@ -100,28 +212,291 @@ async def test_chunk_missing_or_tampered_fails_closed(native_store):
         path.write_bytes(original)
 
 
+def test_encoder_is_byte_identical_to_golden_and_round_trips():
+    assert {n: chunk_digests(s) for n, s in golden_cases().items()} == json.loads(
+        GOLDEN.read_text()
+    )
+    for state in golden_cases().values():
+        checkpoint, manifest, chunks, _ = encode_to_memory(state)
+        assert (
+            decode(
+                canonical_json(manifest).encode(), lambda ref, chunks=chunks: chunks[ref["sha256"]]
+            )
+            == checkpoint
+        )
+
+
+@pytest.mark.parametrize("shape", ["map", "single_key", "list"])
+def test_encoder_refuses_exactly_the_depths_decode_refuses(shape, monkeypatch):
+    accepted = {depth: encodes(nested_state(shape, depth)) for depth in range(4, 34)}
+    assert set(accepted.values()) == {True, False}
+    for depth, ok in accepted.items():
+        # Build the same graph with the depth bound lifted, then ask decode's real bound.
+        with monkeypatch.context() as unbounded:
+            unbounded.setattr(checkpoint_chunks, "MAX_DEPTH", 10**6)
+            checkpoint, manifest, chunks, _ = encode_to_memory(nested_state(shape, depth))
+        assert decodes(manifest, chunks, checkpoint) == ok, (shape, depth)
+
+
+def test_encoder_refuses_exactly_the_bytes_decode_refuses(monkeypatch):
+    state = golden_cases()["paged_list"]
+    checkpoint, manifest, chunks, order = encode_to_memory(state)
+    total = len(canonical_json(manifest).encode()) + sum(len(chunks[d]) for d in order)
+    # The band: the whole checkpoint fits the bound while its graph does not.
+    assert len(canonical_json(checkpoint.model_dump(mode="json")).encode()) < total - 1
+    for limit, ok in ((total, True), (total - 1, False)):
+        monkeypatch.setattr(checkpoint_chunks, "MAX_BYTES", limit)
+        assert encodes(state) == ok
+        assert decodes(manifest, chunks, checkpoint) == ok
+
+
 @pytest.mark.asyncio
-async def test_interrupted_chunk_save_does_not_publish_manifest(native_store, monkeypatch):
+@pytest.mark.parametrize("bound", ["depth", "bytes"])
+async def test_save_refuses_an_unloadable_graph_and_keeps_the_last_good_checkpoint(
+    native_store, monkeypatch, bound
+):
     service, actor, _, _, store, session = native_store
     first = RuntimeCheckpoint.build(session, {"input": ["first"]})
     await store.save(first)
-    before = service.list_records("session", actor)[0]
-    original = service.create_artifact
+    before = (service.list_records("session", actor)[0], service.list_records("artifact", actor))
+    state = nested_state("map", 20) if bound == "depth" else golden_cases()["paged_list"]
+    checkpoint = RuntimeCheckpoint.build(session, state)
+    if bound == "bytes":
+        whole = canonical_json(checkpoint.model_dump(mode="json")).encode()
+        monkeypatch.setattr(checkpoint_chunks, "MAX_BYTES", len(whole))
+    with pytest.raises(HarnessError) as caught:
+        await store.save(checkpoint)
+    assert caught.value.code == "NATIVE_CHECKPOINT_INVALID"
+    assert (
+        service.list_records("session", actor)[0],
+        service.list_records("artifact", actor),
+    ) == before
+    assert await store.load(session.id) == first
 
-    def fail_manifest(request, *args):
+
+@pytest.mark.asyncio
+async def test_save_verifies_the_checkpoint_digest_exactly_once(native_store, monkeypatch):
+    _, _, _, _, store, session = native_store
+    calls, original = [], RuntimeCheckpoint.verify
+    checkpoint = RuntimeCheckpoint.build(
+        session, {"input": [{"content": "x" * 4096, "id": str(i)} for i in range(80)]}
+    )
+    monkeypatch.setattr(
+        RuntimeCheckpoint,
+        "verify",
+        lambda self, runtime=None: calls.append(1) or original(self, runtime),
+    )
+    await store.save(checkpoint)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_single_transaction_commit_is_atomic(native_store, monkeypatch):
+    service, actor, _, _, store, session = native_store
+    first = RuntimeCheckpoint.build(session, {"input": ["first"]})
+    await store.save(first)
+
+    def chunk_rows():
+        return [
+            a["id"]
+            for a in service.list_records("artifact", actor)
+            if a["artifact_kind"] == "native_checkpoint_chunk"
+        ]
+
+    before = (service.list_records("session", actor)[0], service.list_records("artifact", actor))
+    chunks_before, inserted = chunk_rows(), []
+    original = service._artifact_record
+
+    def fail_manifest(db_session, request, *args, **kwargs):
         if request.kind == "native_checkpoint":
             raise RuntimeError("crash before manifest")
-        return original(request, *args)
+        inserted.append(original(db_session, request, *args, **kwargs))
+        return inserted[-1]
 
-    monkeypatch.setattr(service, "create_artifact", fail_manifest)
+    monkeypatch.setattr(service, "_artifact_record", fail_manifest)
     with pytest.raises(RuntimeError, match="crash before manifest"):
         await store.save(
             RuntimeCheckpoint.build(
                 session, {"input": [{"content": "x" * 4096, "id": str(i)} for i in range(80)]}
             )
         )
-    assert service.list_records("session", actor)[0] == before
+    # The failed save inserted chunk rows in its transaction; none of them survive.
+    assert inserted
+    assert chunk_rows() == chunks_before
+    assert (
+        service.list_records("session", actor)[0],
+        service.list_records("artifact", actor),
+    ) == before
     assert await store.load(session.id) == first
+
+
+@pytest.mark.asyncio
+async def test_restart_dedupes_existing_chunks_without_cache(native_store):
+    service, actor, experiment, task, store, session = native_store
+    history = [{"content": "x" * 4096, "id": str(i)} for i in range(80)]
+    await store.save(RuntimeCheckpoint.build(session, {"input": history}))
+
+    def chunk_rows():
+        return sum(
+            a["artifact_kind"] == "native_checkpoint_chunk"
+            for a in service.list_records("artifact", actor)
+        )
+
+    before = chunk_rows()
+    restarted = CanonicalRuntimeStore(
+        service, actor, experiment["id"], task["id"], "worker", store.fence
+    )
+    await restarted.save(
+        RuntimeCheckpoint.build(session, {"input": [*history, {"content": "y", "id": "80"}]})
+    )
+    assert chunk_rows() - before <= 6  # new last page, sequence, map leaf, root; not all 11 pages
+    assert (await restarted.load(session.id)).native_state["input"][-1] == {
+        "content": "y",
+        "id": "80",
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_new_sessions_first_save_scans_no_chunks(native_store):
+    from sqlalchemy import event
+
+    service, actor, experiment, task, store, session = native_store
+    scans = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "native_checkpoint_chunk" in (
+            statement + str(parameters)
+        ):
+            scans.append(statement)
+
+    history = [{"content": "x" * 4096, "id": str(i)} for i in range(80)]
+    restarted = CanonicalRuntimeStore(
+        service, actor, experiment["id"], task["id"], "worker", store.fence
+    )
+    event.listen(service.db.engine, "before_cursor_execute", capture)
+    try:
+        await store.save(RuntimeCheckpoint.build(session, {"input": history}))
+        first_save = len(scans)
+        await restarted.save(
+            RuntimeCheckpoint.build(session, {"input": [*history, {"content": "y", "id": "80"}]})
+        )
+    finally:
+        event.remove(service.db.engine, "before_cursor_execute", capture)
+    # Chunk rows commit with the session record, so a session without one has no chunks to learn.
+    assert first_save == 0
+    assert len(scans) == 1  # a restarted store still learns a published session's chunks
+
+
+def base_save(native_store, checkpoint):
+    """Save ``checkpoint`` with the rows BASE (origin/main 9333b25) wrote: each chunk and the
+    manifest as an artifact command of its own, then one ``runtime-save`` for the pointer."""
+    from sqlalchemy import select
+
+    from physharness.storage import RecordRow
+    from physharness.worker_authority import worker_effects
+
+    service, actor, experiment, task, store, _ = native_store
+    provenance = {"task_id": task["id"], "session_id": checkpoint.session.id}
+
+    def artifact(kind, content, key):
+        request = ArtifactCreate(
+            experiment_id=experiment["id"],
+            kind=kind,
+            content=content,
+            media_type="application/json",
+            provenance=provenance,
+        )
+        return service.create_artifact(request, actor, key)
+
+    def put_chunk(content):
+        digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        key = f"runtime-chunk:{task['id']}:{checkpoint.session.id}:{digest}"
+        return artifact("native_checkpoint_chunk", content, key)
+
+    with worker_effects(actor, task["id"], store.holder, store.fence, require_active=False):
+        data = encode(checkpoint, put_chunk)
+        manifest = artifact(
+            "native_checkpoint", canonical_json(data), f"runtime-artifact:{checkpoint.state_digest}"
+        )
+
+        def publish(session, op):
+            service._fenced(session, task["id"], store.holder, store.fence)
+            row = session.scalar(
+                select(RecordRow).where(
+                    RecordRow.project_id == actor.project_id,
+                    RecordRow.kind == "session",
+                    RecordRow.payload["native_record_id"].as_string() == checkpoint.session.id,
+                )
+            )
+            values = {
+                "experiment_id": experiment["id"],
+                "task_id": task["id"],
+                "native_record_id": checkpoint.session.id,
+                "runtime": checkpoint.session.runtime,
+                "model": checkpoint.session.model.model_dump(mode="json"),
+                "status": checkpoint.session.status,
+                "checkpoint_artifact_id": manifest["id"],
+                "input_tokens": checkpoint.session.input_tokens,
+                "output_tokens": checkpoint.session.output_tokens,
+                "tool_definition_digest": None,
+            }
+            record = (
+                service._replace(session, row, values)
+                if row
+                else service._insert(session, "session", actor, values)
+            )
+            service._event(
+                session,
+                actor,
+                op,
+                "session.saved",
+                record["id"],
+                {
+                    "experiment_id": experiment["id"],
+                    "task_id": task["id"],
+                    "revision": record["revision"],
+                },
+            )
+            return record
+
+        service._execute(
+            actor, f"runtime-save:{checkpoint.state_digest}", "runtime.save", data, publish
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_session_saved_by_base_loads_continues_and_replays(native_store):
+    service, actor, experiment, task, store, session = native_store
+    history = [{"content": "x" * 4096, "id": str(i)} for i in range(80)]
+    old = RuntimeCheckpoint.build(session, {"input": history, "settled_boundary": True})
+    base_save(native_store, old)
+
+    def restart():
+        return CanonicalRuntimeStore(
+            service, actor, experiment["id"], task["id"], "worker", store.fence
+        )
+
+    def chunk_rows():
+        return sum(
+            a["artifact_kind"] == "native_checkpoint_chunk"
+            for a in service.list_records("artifact", actor)
+        )
+
+    resumed = restart()
+    assert await resumed.load(session.id) == old
+    continued = RuntimeCheckpoint.build(
+        session,
+        {"input": [*history, {"content": "y", "id": "80"}], "settled_boundary": True},
+    )
+    await resumed.save(continued)
+    rows = chunk_rows()
+    # After another restart, re-saving either checkpoint replays its committed save. The warm
+    # cache reproduces BASE's chunk ids, so there is no IDEMPOTENCY_CONFLICT and no new row.
+    again = restart()
+    await again.save(old)
+    await again.save(continued)
+    assert chunk_rows() == rows
+    assert await again.load(session.id) == continued
 
 
 @pytest.mark.asyncio
@@ -306,8 +681,8 @@ async def test_save_and_load_sql_cost_scales_with_new_chunks_not_history(native_
         statements.clear()
     total = chunk_count()
     assert total > 60
-    # A fixed per-new-chunk transaction plus the fenced manifest publication.
-    assert all(sql <= 12 * new + 40 for new, sql in costs), costs
+    # One row insert per new chunk inside the single fenced save transaction.
+    assert all(sql <= 2 * new + 40 for new, sql in costs), costs
     event.listen(service.db.engine, "before_cursor_execute", count)
     assert (await store.load(session.id)).native_state["input"] == history
     event.remove(service.db.engine, "before_cursor_execute", count)

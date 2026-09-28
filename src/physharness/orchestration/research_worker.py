@@ -21,6 +21,7 @@ from ..commons_review import (
 from ..domain import (
     ArtifactCreate,
     BranchCreate,
+    ContextBudget,
     Principal,
     TaskCreate,
     canonical_json,
@@ -38,6 +39,7 @@ from ..execution import (
 from ..execution.checkpoint_chunks import encode as encode_native_checkpoint
 from ..execution.context_policy import apply_context_profile
 from ..execution.parameters import validate_responses_parameters
+from ..execution.responses import request_tools
 from ..execution.types import digest as native_digest
 from ..knowledge.literature import LiteratureBroker
 from ..memory import PortableMemory
@@ -164,6 +166,7 @@ class CanonicalRuntimeStore:
         self.task_id, self.holder, self.fence = task_id, holder, fence
         self.tool_definition_digest = None
         self._chunk_cache = {}
+        self._warm_sessions: set[str] = set()
 
     async def save(self, checkpoint):
         # Cancellation may still retain uncertain evidence; stale holders cannot
@@ -173,42 +176,99 @@ class CanonicalRuntimeStore:
         ):
             self._save_checkpoint(checkpoint)
 
+    def _warm_chunk_cache(self, session_id):
+        """After a restart, learn this session's stored chunks once so they are reused.
+
+        Chunk rows commit in the same transaction as the session record, so a session without a
+        record has none: a new session's first save skips the scan of the experiment's artifacts,
+        which would otherwise block the shared event loop.
+        """
+        if session_id in self._warm_sessions:
+            return
+        with self.service.db.sessions() as session:
+            published = session.scalar(
+                select(RecordRow.id)
+                .where(
+                    RecordRow.project_id == self.actor.project_id,
+                    RecordRow.kind == "session",
+                    RecordRow.payload["native_record_id"].as_string() == session_id,
+                )
+                .limit(1)
+            )
+            if published is not None:
+                for row in session.scalars(
+                    select(RecordRow)
+                    .where(
+                        RecordRow.project_id == self.actor.project_id,
+                        RecordRow.kind == "artifact",
+                        RecordRow.payload["artifact_kind"].as_string() == "native_checkpoint_chunk",
+                        RecordRow.payload["experiment_id"].as_string() == self.experiment_id,
+                        RecordRow.payload["provenance"]["task_id"].as_string() == self.task_id,
+                        RecordRow.payload["provenance"]["session_id"].as_string() == session_id,
+                    )
+                    .order_by(RecordRow.id)
+                ):
+                    digest = row.payload["sha256"]
+                    self._chunk_cache.setdefault(
+                        (session_id, digest), {"id": row.id, "sha256": digest}
+                    )
+        self._warm_sessions.add(session_id)
+
     def _save_checkpoint(self, checkpoint):
+        """Store new chunk and manifest bytes, then commit their rows and the pointer at once.
+
+        Bytes are durable before the single ``runtime.save`` transaction, so a committed row
+        never references missing bytes; a failed or replayed transaction leaves only orphan
+        bytes. Chunks get no ``artifact.created`` event or command row of their own.
+        """
+        # The one digest check per save; encoding derives every byte from this object in the
+        # same synchronous call, so nothing can change it in between.
         checkpoint.verify()
+        session_id = checkpoint.session.id
+        self._warm_chunk_cache(session_id)
+        provenance, rows, written = {"task_id": self.task_id, "session_id": session_id}, [], {}
+
+        def artifact(kind, content):
+            return ArtifactCreate(
+                experiment_id=self.experiment_id,
+                kind=kind,
+                content=content,
+                media_type="application/json",
+                provenance=provenance,
+            )
 
         def put_chunk(content):
-            digest = hashlib.sha256(content.encode("utf-8")).hexdigest()
-            cache_key = (checkpoint.session.id, digest)
-            if cache_key in self._chunk_cache:
-                return self._chunk_cache[cache_key]
-            artifact = self.service.create_artifact(
-                ArtifactCreate(
-                    experiment_id=self.experiment_id,
-                    kind="native_checkpoint_chunk",
-                    content=content,
-                    media_type="application/json",
-                    provenance={"task_id": self.task_id, "session_id": checkpoint.session.id},
-                ),
-                self.actor,
-                f"runtime-chunk:{self.task_id}:{checkpoint.session.id}:{digest}",
+            raw = content.encode("utf-8")
+            digest = hashlib.sha256(raw).hexdigest()
+            if (
+                known := self._chunk_cache.get((session_id, digest)) or written.get(digest)
+            ) is not None:
+                return known
+            self.service.artifacts.put(raw)  # durable before any row can reference it
+            written[digest] = {"id": new_id(), "sha256": digest}
+            rows.append(
+                (
+                    written[digest]["id"],
+                    artifact("native_checkpoint_chunk", content),
+                    digest,
+                    len(raw),
+                )
             )
-            self._chunk_cache[cache_key] = artifact
-            return artifact
+            return written[digest]
 
         data = encode_native_checkpoint(checkpoint, put_chunk)
-        artifact = self.service.create_artifact(
-            ArtifactCreate(
-                experiment_id=self.experiment_id,
-                kind="native_checkpoint",
-                content=canonical_json(data),
-                media_type="application/json",
-                provenance={"task_id": self.task_id, "session_id": checkpoint.session.id},
-            ),
-            self.actor,
-            f"runtime-artifact:{checkpoint.state_digest}",
+        manifest, manifest_id = canonical_json(data), new_id()
+        raw_manifest = manifest.encode("utf-8")
+        rows.append(
+            (
+                manifest_id,
+                artifact("native_checkpoint", manifest),
+                self.service.artifacts.put(raw_manifest),
+                len(raw_manifest),
+            )
         )
 
-        def action(session, op):
+        def publish(session, op, records):
             self.service._fenced(session, self.task_id, self.holder, self.fence)
             task = self.service._get(session, "task", self.task_id, self.actor)
             row = session.scalar(
@@ -290,7 +350,7 @@ class CanonicalRuntimeStore:
                 "runtime": checkpoint.session.runtime,
                 "model": checkpoint.session.model.model_dump(mode="json"),
                 "status": checkpoint.session.status,
-                "checkpoint_artifact_id": artifact["id"],
+                "checkpoint_artifact_id": records[manifest_id]["id"],
                 "input_tokens": checkpoint.session.input_tokens,
                 "output_tokens": checkpoint.session.output_tokens,
                 "tool_definition_digest": self.tool_definition_digest,
@@ -325,9 +385,13 @@ class CanonicalRuntimeStore:
             )
             return record
 
-        self.service._execute(
-            self.actor, f"runtime-save:{checkpoint.state_digest}", "runtime.save", data, action
+        record = self.service.commit_native_checkpoint(
+            self.actor, f"runtime-save:{checkpoint.state_digest}", data, rows, publish
         )
+        # A replayed save returns the earlier record without inserting these rows; only a save
+        # that committed this manifest may teach the cache new chunk ids.
+        if record.get("checkpoint_artifact_id") == manifest_id:
+            self._chunk_cache.update({(session_id, d): ref for d, ref in written.items()})
 
     async def load(self, session_id):
         rows = self.service.list_records("session", self.actor, self.experiment_id)
@@ -419,6 +483,13 @@ def _task_contract(task, branch):
         "delegated_from_task_id": task.get("delegated_from_task_id"),
         "strategy": task.get("strategy"),
     }
+
+
+def _admission_priority(task, branch):
+    """TPM admission class: roots and children a parent waits on first, then referees."""
+    if is_referee_task(task):
+        return 1
+    return 0 if _task_contract(task, branch)["kind"] in {"root", "joined_child"} else 2
 
 
 def _peer_routing(directory, sharing, own_branch_id):
@@ -913,7 +984,14 @@ def research_tools(service, agent, branch_id, *, task_context=None, workspace_to
 
 class ResearchTaskExecutor:
     def __init__(
-        self, service, *, prices: dict, runtime_factory=None, limits=None, workspace_factory=None
+        self,
+        service,
+        *,
+        prices: dict,
+        runtime_factory=None,
+        limits=None,
+        workspace_factory=None,
+        token_governor=None,
     ):
         self.service = service
         self.prices = {name: ModelPrice.model_validate(price) for name, price in prices.items()}
@@ -921,6 +999,8 @@ class ResearchTaskExecutor:
         self.live_runtime = runtime_factory is None or runtime_factory is ResponsesRuntime
         self.limits = limits or RuntimeLimits()
         self.workspace_factory = workspace_factory
+        # One process-wide TPM governor shared by every runtime, or None (R5, off by default).
+        self.token_governor = token_governor
 
     def _masked_reference(self, society, actor):
         """The benchmark screen's reference text, read only from the operator-configured id.
@@ -1263,7 +1343,7 @@ class ResearchTaskExecutor:
                     reservation = await _reserve_model_with_wait(
                         self.service,
                         experiment["id"],
-                        price.cost(inp, out),
+                        price.reservation_cost(inp, out),
                         inp + out,
                         actor,
                         event.operation_id,
@@ -1288,7 +1368,12 @@ class ResearchTaskExecutor:
                 inp, out = event.payload["input_tokens"], event.payload["output_tokens"]
                 settlement = self.service.settle_resources(
                     reservations[event.operation_id],
-                    price.cost(inp, out),
+                    price.cost(
+                        inp,
+                        out,
+                        event.payload.get("cached_input_tokens", 0),
+                        event.payload.get("cache_write_input_tokens", 0),
+                    ),
                     False,
                     actor,
                     f"model-settle:{event.operation_id}",
@@ -1338,7 +1423,10 @@ class ResearchTaskExecutor:
                         kind="runtime_event",
                         content=canonical_json(event.model_dump(mode="json")),
                         media_type="application/json",
-                        provenance={"task_id": task_id, "price": price.model_dump(mode="json")},
+                        provenance={
+                            "task_id": task_id,
+                            "price": price.model_dump(mode="json", exclude_none=True),
+                        },
                     ),
                     actor,
                     f"runtime-event:{digest_json(event.model_dump(mode='json'))}",
@@ -1681,7 +1769,25 @@ class ResearchTaskExecutor:
                     task_context=tool_context,
                     workspace_tools=workspace_tools,
                 )
-            store.tool_definition_digest = digest_json(dispatcher.definitions)
+            parameters = inspect.signature(self.runtime_factory).parameters
+            accepts_any = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+            context_budget = experiment.get("context_budget")
+            pass_budget = bool(context_budget) and ("context_budget" in parameters or accepts_any)
+            if context_budget and not pass_budget:
+                # Never drop a budget silently: a budgeted arm would quietly become the control.
+                raise HarnessError(
+                    "CONTEXT_BUDGET_UNSUPPORTED",
+                    "This runtime cannot apply the experiment's context_budget.",
+                    remediation=(
+                        "Run the experiment on a runtime that accepts context_budget (the "
+                        "Responses runtime), or create it without context_budget."
+                    ),
+                )
+            # The digest covers the tools actually sent, so it must be set before
+            # native_compatible reads it, or every budgeted wait would resume portably (F8).
+            store.tool_definition_digest = digest_json(
+                request_tools(dispatcher.definitions, context_budget if pass_budget else None)
+            )
             native_compatible = bool(
                 ready
                 and ready["reason"] == "joined_children"
@@ -1695,7 +1801,6 @@ class ResearchTaskExecutor:
                 dispatcher=dispatcher,
                 event_sink=accounting,
             )
-            parameters = inspect.signature(self.runtime_factory).parameters
             if stop_on_verified_target and (
                 "pre_generation_guard" in parameters
                 or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
@@ -1727,10 +1832,12 @@ class ResearchTaskExecutor:
                 )
                 runtime_kwargs["update_source"] = update_source
                 runtime_kwargs["update_ack"] = update_ack
+            if self.token_governor is not None and ("token_governor" in parameters or accepts_any):
+                runtime_kwargs["token_governor"] = self.token_governor
+                runtime_kwargs["admission_priority"] = _admission_priority(task, branch)
+            if pass_budget:
+                runtime_kwargs["context_budget"] = ContextBudget.model_validate(context_budget)
             if society:
-                accepts_any = any(
-                    p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
-                )
                 scaffolding = society["scaffolding"]
                 every = scaffolding["checkin_every_turns"]
                 if every and ("turn_note" in parameters or accepts_any):

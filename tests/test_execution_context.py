@@ -1,12 +1,14 @@
 """Native Responses context management and clean continuation boundaries."""
 
 import asyncio
+import hashlib
 import json
 
 import httpx
 import pytest
 from openai import AsyncOpenAI
 
+from physharness.domain import ContextBudget, canonical_json
 from physharness.execution import (
     ExecutionError,
     ModelConfig,
@@ -17,6 +19,7 @@ from physharness.execution import (
     SQLiteRuntimeStore,
     ToolDispatcher,
 )
+from physharness.execution.admission import TokenRateGovernor
 from physharness.execution.parameters import validate_responses_parameters
 
 
@@ -883,8 +886,7 @@ async def test_later_tool_response_clears_stale_compaction_recovery_marker(tmp_p
             if (
                 not self.tripped
                 and checkpoint.session.turns == 2
-                and state.get("pending_operation") is None
-                and state.get("settled_boundary") is False
+                and (state.get("pending_operation") or "").endswith(":a")
             ):
                 self.tripped = True
                 raise asyncio.CancelledError()
@@ -996,12 +998,7 @@ async def test_interrupted_response_before_tool_output_is_not_safe_to_resume(tmp
         async def save(self, checkpoint):
             await super().save(checkpoint)
             state = checkpoint.native_state
-            if (
-                not self.tripped
-                and state.get("pending_operation") is None
-                and state.get("responses")
-                and not any(item.get("type") == "function_call_output" for item in state["input"])
-            ):
+            if not self.tripped and (state.get("pending_operation") or "").endswith(":a"):
                 self.tripped = True
                 raise asyncio.CancelledError()
 
@@ -1011,7 +1008,7 @@ async def test_interrupted_response_before_tool_output_is_not_safe_to_resume(tmp
         await runtime.start("work", ModelConfig(model="exact-model"), RuntimeLimits())
     checkpoint = store.db.execute("SELECT data FROM runtime_sessions").fetchone()[0]
     native = json.loads(checkpoint)
-    assert native["session"]["status"] == "interrupted"
+    assert native["session"]["status"] == "uncertain"
     assert native["native_state"]["settled_boundary"] is False
     with pytest.raises(ExecutionError) as error:
         await runtime.resume(await runtime.checkpoint(native["session"]["id"]))
@@ -1111,3 +1108,1311 @@ def test_completed_result_rejects_unsafe_or_inconsistent_checkpoint(mutation):
     with pytest.raises(ExecutionError) as error:
         ResponsesRuntime.completed_result(RuntimeCheckpoint.build(session, state))
     assert error.value.code == "COMPLETED_RESULT_INVALID"
+
+
+def observe_dispatcher(result=None):
+    dispatcher = ToolDispatcher()
+
+    async def observe(arguments, operation_id):
+        return result if result is not None else {"seen": True}
+
+    dispatcher.register(
+        "observe",
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        observe,
+    )
+    return dispatcher
+
+
+COMPACTING = {"context_management": [{"type": "compaction", "compact_threshold": 40_000}]}
+
+WIDE = RuntimeLimits(max_context_tokens=64_000, max_output_tokens=1_000, max_total_tokens=None)
+
+
+async def test_compaction_epoch_invalidates_the_estimate(tmp_path):
+    requests = []
+    client = sdk_client(
+        [
+            response([compaction_item("one"), call_item("a")], "r1"),
+            response([call_item("b")], "r2"),
+            response([text_item("done")], "r3"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(),
+    )
+    await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
+    assert [p.rsplit("/", 1)[-1] for p, _ in requests] == [
+        "input_tokens",
+        "responses",
+        "input_tokens",
+        "responses",
+        "responses",
+    ]
+    await client.close()
+
+
+async def run_reserved(tmp_path, threshold, window, final_input=10):
+    requests, events, error = [], [], None
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            response([call_item("a")], "r1"),
+            response([text_item("done")], "r2", input_tokens=final_input),
+        ],
+        requests,
+    )
+    tmp_path.mkdir()
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(),
+        event_sink=emit,
+    )
+    params = {"context_management": [{"type": "compaction", "compact_threshold": threshold}]}
+    try:
+        await runtime.start(
+            "work",
+            ModelConfig(model="exact-model", parameters=params),
+            RuntimeLimits(
+                max_context_tokens=window, max_output_tokens=1_000, max_total_tokens=None
+            ),
+        )
+    except ExecutionError as caught:
+        error = caught
+    await client.close()
+    creates = [p for path, p in requests if path.endswith("/responses")]
+    return (
+        creates,
+        [e.payload["input_tokens_reserved"] for e in events if e.kind == "generation_started"],
+        error,
+    )
+
+
+async def test_reservation_bound_window_fallback_and_violation(tmp_path):
+    creates, reserved, error = await run_reserved(tmp_path / "bound", 40_000, 64_000)
+    appended = creates[1]["input"][len(creates[0]["input"]) :]
+    assert error is None and reserved == [
+        10 + 2048,  # the count plus the P1 margin
+        10 + sum(len(canonical_json(i).encode("utf-8")) for i in appended) + 2048,  # P1 bound
+    ]
+    # count + margin + 8,192 > threshold
+    _, reserved, error = await run_reserved(tmp_path / "near", 8_200, 10_000)
+    assert error is None and reserved == [10_000, 10_000]
+    _, reserved, error = await run_reserved(tmp_path / "over", 40_000, 64_000, final_input=5_000)
+    assert reserved[1] < 5_000 and error.code == "PROVIDER_LIMIT_VIOLATION"
+
+
+async def test_compaction_on_a_request_reserved_below_the_window_raises_an_alarm(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            response([compaction_item("one"), call_item("a")], "r1"),
+            response([text_item("done")], "r2"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(),
+        event_sink=emit,
+    )
+    await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
+    assert [e.payload for e in events if e.kind == "bound_reservation_compacted"] == [
+        {
+            "response_id": "r1",
+            "input_tokens_reserved": 10 + 2048,
+            "input_tokens": 10,
+            "compact_threshold": 40_000,
+        }
+    ]
+    await client.close()
+
+
+async def test_compaction_on_a_request_reserved_at_the_window_raises_no_alarm(tmp_path):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client([response([compaction_item("one"), text_item("done")], "r1")], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"), client=client, event_sink=emit
+    )
+    params = {"context_management": [{"type": "compaction", "compact_threshold": 8_200}]}
+    await runtime.start(
+        "work",
+        ModelConfig(model="exact-model", parameters=params),
+        RuntimeLimits(max_context_tokens=10_000, max_output_tokens=1_000, max_total_tokens=None),
+    )
+    assert [
+        e.payload["input_tokens_reserved"] for e in events if e.kind == "generation_started"
+    ] == [10_000]
+    assert "bound_reservation_compacted" not in [e.kind for e in events]
+    await client.close()
+
+
+@pytest.mark.parametrize("settles", [False, True])
+async def test_the_alarm_precedes_usage_so_a_halt_on_settlement_still_names_the_cause(
+    tmp_path, settles
+):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+        if settles and event.kind == "usage":
+            # As the worker's accounting sink does when settlement finds an overrun.
+            raise ExecutionError("BUDGET_RECONCILIATION_REQUIRED", "Usage exceeds reservation")
+
+    client = sdk_client(
+        [response([compaction_item("one"), call_item("a")], "r1", input_tokens=5_000)], []
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(),
+        event_sink=emit,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
+    assert error.value.code == (
+        "BUDGET_RECONCILIATION_REQUIRED" if settles else "PROVIDER_LIMIT_VIOLATION"
+    )
+    assert [e.kind for e in events] == [
+        "generation_started",
+        "bound_reservation_compacted",
+        "usage",
+    ]
+    await client.close()
+
+
+async def test_the_alarm_follows_the_durable_save_of_its_response(tmp_path):
+    seen = []
+    store = LastSavedStore(tmp_path / "sessions.db")
+
+    async def emit(event):
+        if event.kind == "bound_reservation_compacted":
+            state = store.last.native_state
+            seen.append(
+                (
+                    state["pending_operation"] == event.operation_id,
+                    [stored["id"] for stored in state["responses"]],
+                )
+            )
+
+    client = sdk_client(
+        [
+            response([compaction_item("one"), call_item("a")], "r1"),
+            response([text_item("done")], "r2"),
+        ],
+        [],
+    )
+    runtime = ResponsesRuntime(
+        store=store, client=client, dispatcher=observe_dispatcher(), event_sink=emit
+    )
+    await runtime.start("work", ModelConfig(model="exact-model", parameters=COMPACTING), WIDE)
+    # Save B already holds the response, under the generation marker.
+    assert seen == [(True, ["r1"])]
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    ("threshold", "window", "admitted"),
+    [
+        (None, 256_000, 10),  # without compaction, the exact count
+        (183_808, 256_000, 10 + 2_048),  # the count plus the margin, as reserved
+        (8_200, 10_000, 10 + 2_048),  # the window is reserved; admission keeps the bound
+    ],
+)
+async def test_a_counted_request_is_admitted_on_its_margin_inclusive_input(
+    tmp_path, threshold, window, admitted
+):
+    tokens = []
+
+    class Recording(TokenRateGovernor):
+        async def admit(self, **kwargs):
+            tokens.append(kwargs["tokens"])
+            return await super().admit(**kwargs)
+
+    client = sdk_client([response([text_item("done")], "r1")], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        token_governor=Recording(tokens_per_minute=1_000_000),
+    )
+    params = (
+        {"context_management": [{"type": "compaction", "compact_threshold": threshold}]}
+        if threshold
+        else {}
+    )
+    await runtime.start(
+        "work",
+        ModelConfig(model="exact-model", parameters=params),
+        RuntimeLimits(max_context_tokens=window, max_output_tokens=1_500, max_total_tokens=None),
+    )
+    assert tokens == [admitted + 1_500]  # plus the max_output_tokens sent
+    await client.close()
+
+
+@pytest.mark.parametrize(
+    ("threshold", "count", "reserved"),
+    [
+        (None, 10, 10),  # without compaction a count is reserved exactly
+        (183_808, 10, 10 + 2_048),
+        (183_808, 150_000, 150_000 + 3_000),  # 2% of the count exceeds the 2,048 floor
+        (183_808, 175_000, 256_000),  # count + 8,192 fits the gate, count + margin does not
+    ],
+)
+async def test_a_counted_request_under_compaction_reserves_the_count_plus_the_margin(
+    tmp_path, threshold, count, reserved
+):
+    events = []
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client([response([text_item("done")], "r1", input_tokens=count)], [], count=count)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"), client=client, event_sink=emit
+    )
+    params = (
+        {"context_management": [{"type": "compaction", "compact_threshold": threshold}]}
+        if threshold
+        else {}
+    )
+    await runtime.start(
+        "work",
+        ModelConfig(model="exact-model", parameters=params),
+        RuntimeLimits(max_context_tokens=256_000, max_output_tokens=1_000, max_total_tokens=None),
+    )
+    assert [
+        (e.payload["input_tokens_estimate"], e.payload["input_tokens_reserved"])
+        for e in events
+        if e.kind == "generation_started"
+    ] == [(count, reserved)]
+    await client.close()
+
+
+async def test_create_400_is_pre_generation_not_uncertain(tmp_path):
+    events = []
+
+    def handle(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "message": "private schema text",
+                    "type": "invalid_request_error",
+                    "param": "tools[0].parameters",
+                    "code": "invalid_function_parameters",
+                }
+            },
+        )
+
+    async def emit(event):
+        events.append(event)
+
+    client = AsyncOpenAI(
+        api_key="test-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    )
+    store = SQLiteRuntimeStore(tmp_path / "sessions.db")
+    with pytest.raises(ExecutionError) as error:
+        await ResponsesRuntime(store=store, client=client, event_sink=emit).start(
+            "work", ModelConfig(model="exact-model"), RuntimeLimits()
+        )
+    assert error.value.code == "PROVIDER_TOOL_SCHEMA_INVALID"
+    assert [(e.kind, e.payload.get("reason")) for e in events] == [
+        ("generation_started", None),
+        ("generation_aborted", "request_invalid"),
+    ]
+    saved = RuntimeCheckpoint.model_validate_json(
+        store.db.execute("SELECT data FROM runtime_sessions").fetchone()[0]
+    )
+    assert (saved.session.status, saved.native_state["pending_operation"]) == ("failed", None)
+    assert saved.native_state["preflight_error"] == {
+        "stage": "create",
+        "operation_id": events[0].operation_id,
+        "provider_code": "invalid_function_parameters",
+        "provider_param": "tools[0].parameters",
+    }
+    assert "private" not in saved.model_dump_json()
+    await client.close()
+
+
+BUDGET = ContextBudget(max_output_chars=20_000)
+
+
+def big_result(size):
+    return {"text": "∀" + "x" * size}
+
+
+def recall_item(call_id, target, offset):
+    return {
+        "id": "fc-" + call_id,
+        "type": "function_call",
+        "call_id": call_id,
+        "name": "recall_output",
+        "arguments": json.dumps({"call_id": target, "offset": offset}),
+        "status": "completed",
+    }
+
+
+def outputs_of(payload):
+    return {
+        i["call_id"]: i["output"]
+        for i in payload["input"]
+        if i.get("type") == "function_call_output"
+    }
+
+
+def creates_of(requests):
+    return [payload for path, payload in requests if path.endswith("/responses")]
+
+
+def page_offsets(text, pages):
+    """The offsets a model following next_offset passes for the first ``pages`` pages."""
+    from physharness.execution.responses import _recall_page
+
+    offsets = [0]
+    for _ in range(pages - 1):
+        offsets.append(offsets[-1] + len(_recall_page(text, offsets[-1])))
+    return offsets
+
+
+async def test_oversized_output_is_truncated_and_recalled_exactly(tmp_path):
+    requests = []
+    offsets = page_offsets(json.dumps(big_result(40_000), ensure_ascii=False), 3)
+    client = sdk_client(
+        [
+            response([call_item("a")], "r1"),
+            *[
+                response([recall_item(f"p{n}", "a", offset)], f"r{n + 1}")
+                for n, offset in enumerate(offsets, 1)
+            ],
+            response([text_item("done")], "r5"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(40_000)),
+        context_budget=BUDGET,
+    )
+    await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    creates = creates_of(requests)
+    assert creates[0]["tools"][-1]["name"] == "recall_output"
+    outputs, original = outputs_of(creates[-1]), json.dumps(big_result(40_000), ensure_ascii=False)
+    view = json.loads(outputs["a"])
+    assert (view["truncated"], view["total_chars"], view["head"]) == (
+        True,
+        len(original),
+        original[:10_000],
+    )
+    assert view["recall"] == {"tool": "recall_output", "call_id": "a", "next_offset": 10_000}
+    pages = [json.loads(outputs[p]) for p in ("p1", "p2", "p3")]
+    assert "".join(p["text"] for p in pages) == original
+    assert [p["next_offset"] for p in pages] == [*offsets[1:], None]
+    # A page is at most 16,000 characters as the model reads it, escapes included.
+    assert all(len(json.dumps(p["text"], ensure_ascii=False)) - 2 <= 16_000 for p in pages)
+    await client.close()
+
+
+async def test_a_recalled_page_is_sized_as_the_model_reads_it(tmp_path):
+    """Quotes double when a page is escaped into the tool output: a page of them holds 8,000."""
+    requests = []
+    client = sdk_client(
+        [
+            response([call_item("a")], "r1"),
+            response([recall_item("p1", "a", 0)], "r2"),
+            response([text_item("done")], "r3"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher({"text": '"' * 40_000}),
+        context_budget=BUDGET,
+    )
+    await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    page = outputs_of(creates_of(requests)[-1])["p1"]
+    assert len(page) < 16_200  # the page plus its small envelope
+    assert json.loads(page)["next_offset"] == len(json.loads(page)["text"])
+    await client.close()
+
+
+async def test_recall_output_after_native_handoff_uses_the_stored_policy(tmp_path):
+    requests, store = [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"}
+
+    first = sdk_client([response([call_item("a")], "r1")], requests)
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(big_result(100)),
+        boundary_hook=boundary,
+        context_budget=BUDGET,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [response([recall_item("p1", "a", 0)], "r2"), response([text_item("done")], "r3")],
+        requests,
+    )
+    successor = ResponsesRuntime(
+        store=store, client=second, dispatcher=observe_dispatcher(big_result(100))
+    )
+    await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    final = creates_of(requests)[-1]
+    assert final["tools"][-1]["name"] == "recall_output"
+    assert json.loads(outputs_of(final)["p1"])["text"] == json.dumps(
+        big_result(100), ensure_ascii=False
+    )
+    await first.close()
+    await second.close()
+
+
+async def test_a_recall_page_carried_across_a_handoff_is_elided_in_the_successor(tmp_path):
+    requests, store = [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"} if checkpoint.native_state.get("recall_pages") else None
+
+    first = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+            response([recall_item("p4", "c1", 0)], "r4"),
+        ],
+        requests,
+    )
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        boundary_hook=boundary,
+        context_budget=ELIDE,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (5, 6, 7)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    successor = ResponsesRuntime(
+        store=store,
+        client=second,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        context_budget=ELIDE,
+    )
+    await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    page = json.loads(outputs_of(creates_of(requests)[-1])["p4"])
+    assert page["elided"] and page["recall"] == {
+        "tool": "recall_output",
+        "call_id": "c1",
+        "offset": 0,
+    }
+    await first.close()
+    await second.close()
+
+
+async def test_no_context_budget_keeps_requests_and_state_unchanged(tmp_path):
+    requests = []
+    client = sdk_client(
+        [response([call_item("a")], "r1"), response([text_item("done")], "r2")], requests
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(30_000)),
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    creates = creates_of(requests)
+    assert all(tool["name"] != "recall_output" for p in creates for tool in p["tools"])
+    assert outputs_of(creates[1])["a"] == json.dumps(
+        big_result(30_000), allow_nan=False
+    )  # escaped, uncapped
+    assert "context_budget" not in (await runtime.checkpoint(result.session.id)).native_state
+    await client.close()
+
+
+async def test_a_registered_recall_output_is_rejected_under_a_budget(tmp_path):
+    requests, dispatcher = [], ToolDispatcher()
+
+    async def recall(arguments, operation_id):
+        return {}
+
+    dispatcher.register("recall_output", {"type": "object", "properties": {}}, recall)
+    client = sdk_client([], requests)
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=dispatcher,
+        context_budget=BUDGET,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("work", ModelConfig(model="exact-model"), RuntimeLimits())
+    assert error.value.code == "INVALID_CONFIG" and requests == []
+    await client.close()
+
+
+async def test_a_recall_is_unstored_but_announced_like_any_call(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    recalls = [response([recall_item(f"p{n}", "a", 0)], f"r{n}") for n in range(1, 5)]
+    client = sdk_client(
+        [response([call_item("a")], "r0"), *recalls, response([text_item("done")], "r5")],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(100)),
+        event_sink=emit,
+        context_budget=BUDGET,
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    announced = [
+        (e.kind, e.operation_id.rsplit(":", 1)[-1])
+        for e in events
+        if e.kind in {"tool_completed", "stagnation_warning"}
+    ]
+    assert announced == [
+        *[("tool_completed", call_id) for call_id in ("a", "p1", "p2", "p3", "p4")],
+        ("stagnation_warning", "p4"),
+    ]
+    names = [e.payload["name"] for e in events if e.kind == "tool_completed"]
+    assert names == ["observe", *["recall_output"] * 4]
+    state = (await runtime.checkpoint(result.session.id)).native_state
+    assert list(state["tool_results"]) == [f"{result.session.id}:a"]
+    assert "_research_runtime_signal" in json.loads(outputs_of(creates_of(requests)[-1])["p4"])
+    await client.close()
+
+
+async def test_a_truncated_head_and_its_recall_join_exactly_after_a_reload(tmp_path):
+    # Checkpoints store results with sorted keys, so the head must use the same key order.
+    requests, store = [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    unsorted = {"z": "x" * 20_000, "a": "∀" * 5_000}
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"}
+
+    first = sdk_client([response([call_item("a")], "r1")], requests)
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(unsorted),
+        boundary_hook=boundary,
+        context_budget=BUDGET,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [response([recall_item("p1", "a", 10_000)], "r2"), response([text_item("done")], "r3")],
+        requests,
+    )
+    successor = ResponsesRuntime(store=store, client=second, dispatcher=observe_dispatcher())
+    await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    outputs = outputs_of(creates_of(requests)[-1])
+    view, page = json.loads(outputs["a"]), json.loads(outputs["p1"])
+    assert page["next_offset"] is None
+    assert json.loads(view["head"] + page["text"]) == unsorted
+    await first.close()
+    await second.close()
+
+
+async def test_a_recall_of_an_unknown_id_loads_each_archive_once_per_run():
+    loads = []
+
+    class Archives:
+        async def load_archive(self, owner, archive_id):
+            loads.append(archive_id)
+            key = f"{owner}:c-{archive_id}"
+            return {"tool_results": {key: {"identity": "x", "result": {"n": archive_id}}}}
+
+    client = sdk_client([], [])
+    runtime = ResponsesRuntime(
+        store=Archives(), client=client, dispatcher=observe_dispatcher(), context_budget=BUDGET
+    )
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    state = {"tool_results": {}, "archives": ["a1", "a2"]}
+    for missing in ("nope-1", "nope-2"):
+        assert await runtime._find_tool_result(session, state, missing, match_suffix=True) is None
+    found = await runtime._find_tool_result(session, state, "c-a1", match_suffix=True)
+    assert found["result"] == {"n": "a1"}
+    # The misses read each archive once; the hit skips a2 by its keys and reads only a1.
+    assert loads == ["a2", "a1", "a1"]
+    await client.close()
+
+
+class ObjectStore:
+    """Keeps checkpoint objects. The SQLite and chunk encoders reject a lone surrogate anywhere in
+    a checkpoint, for every experiment; this isolates what the runtime renders and sends."""
+
+    def __init__(self):
+        self.saved = {}
+
+    async def save(self, checkpoint):
+        checkpoint.verify()
+        self.saved[checkpoint.session.id] = checkpoint
+
+
+async def test_a_lone_surrogate_under_a_budget_keeps_the_lineage_sendable():
+    # UTF-8 cannot encode a lone surrogate, so it keeps the escape legacy output uses.
+    # ToolDispatcher escapes its own results; this covers a dispatch override that does not.
+    requests = []
+    result = {"path": "notes/\ud800∀.md", "text": "x" * 30_000}
+    dispatcher = observe_dispatcher()
+
+    async def unscrubbed(name, arguments, operation_id):
+        return result
+
+    dispatcher.dispatch = unscrubbed
+    client = sdk_client(
+        [
+            response([call_item("a")], "r1"),
+            response([recall_item("p1", "a", 0)], "r2"),
+            response([text_item("done")], "r3"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=ObjectStore(),
+        client=client,
+        dispatcher=dispatcher,
+        context_budget=BUDGET,
+    )
+    await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    creates = creates_of(requests)
+    assert len(creates) == 3
+    outputs = outputs_of(creates[-1])
+    original = json.dumps(result, ensure_ascii=False, sort_keys=True)
+    for call_id in ("a", "p1"):
+        assert "notes/\\ud800∀.md" in outputs[call_id]  # escaped surrogate, literal ∀
+    assert json.loads(outputs["a"])["head"] == original[:10_000]
+    assert json.loads(outputs["p1"])["text"] == original[: page_offsets(original, 2)[1]]
+    await client.close()
+
+
+ELIDE = ContextBudget(
+    elide_min_chars=500, elide_after_turns=1, elide_every_turns=3, max_output_chars=None
+)
+
+
+async def run_elided(tmp_path, requests, events, calls, store=None):
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in range(1, calls + 1)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=store or SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    await client.close()
+    return runtime, result
+
+
+async def test_elision_blocks_keep_the_prefix_stable_between_boundaries(tmp_path):
+    requests, events = [], []
+    await run_elided(tmp_path, requests, events, calls=6)
+    inputs = [p["input"] for p in creates_of(requests)]
+    assert [inputs[n + 1][: len(inputs[n])] == inputs[n] for n in range(6)] == [
+        True,
+        True,
+        False,
+        True,
+        True,
+        False,
+    ]
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2, 3]
+    fourth = outputs_of({"input": inputs[3]})
+    assert json.loads(fourth["c1"])["recall"] == {"tool": "recall_output", "call_id": "c1"}
+    assert fourth["c3"].startswith('{"text"')
+
+
+async def test_elision_skips_small_recent_and_legacy_outputs(tmp_path):
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "sessions.db"), client=object())
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    big = json.dumps({"text": "x" * 1_000})
+    outputs = {"legacy": big, "small": "{}", "recent": big, "old": big}
+    seqs = {"small": 1, "recent": 3, "old": 1}
+    state = {
+        "input": [
+            {"type": "function_call_output", "call_id": k, "output": v} for k, v in outputs.items()
+        ],
+        "tool_results": {
+            f"{session.id}:{k}": {
+                "identity": "i",
+                "result": {},
+                **({"seq": seqs[k], "name": "observe"} if k in seqs else {}),
+            }
+            for k in outputs
+        },
+        "context_budget": ELIDE.model_dump(mode="json"),
+        "elision": {"seq": 3, "last_block_seq": 0},
+    }
+    await runtime._elide_block(session, state)
+    after = {i["call_id"]: i["output"] for i in state["input"]}
+    assert (after["legacy"], after["small"], after["recent"]) == (big, "{}", big)
+    assert json.loads(after["old"])["elided"] is True and state["elision"]["last_block_seq"] == 3
+
+
+async def test_a_stub_longer_than_the_threshold_is_never_elided_again(tmp_path):
+    runtime = ResponsesRuntime(store=SQLiteRuntimeStore(tmp_path / "sessions.db"), client=object())
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    call_id = "c" * 120  # a long ID and an escaped head make the stub longer than elide_min_chars
+    state = {
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": json.dumps({"text": "\\" * 1_000}),
+            }
+        ],
+        "tool_results": {
+            f"{session.id}:{call_id}": {"identity": "i", "result": {}, "seq": 1, "name": "observe"}
+        },
+        "context_budget": ELIDE.model_dump(mode="json"),
+        "elision": {"seq": 3, "last_block_seq": 0},
+    }
+    await runtime._elide_block(session, state)
+    stub = state["input"][0]["output"]
+    assert json.loads(stub)["elided"] is True and len(stub) > ELIDE.elide_min_chars
+    state["elision"]["seq"] = 6
+    await runtime._elide_block(session, state)
+    assert state["input"][0]["output"] == stub and state["elision"]["last_block_seq"] == 6
+
+
+async def test_elision_state_survives_resume_without_reeliding(tmp_path):
+    requests, events = [], []
+    store = SQLiteRuntimeStore(tmp_path / "sessions.db")
+    runtime, result = await run_elided(tmp_path, requests, events, calls=3, store=store)
+    saved = (await runtime.checkpoint(result.session.id)).native_state
+    assert saved["elision"] == {"seq": 4, "last_block_seq": 3}
+    second = sdk_client([response([text_item("again")], "r5")], requests)
+
+    async def emit(event):
+        events.append(event)
+
+    resumed = ResponsesRuntime(
+        store=store,
+        client=second,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+    )
+    assert (await resumed.continue_session(result.session.id, "next")).output_text == "again"
+    assert creates_of(requests)[-1]["input"][:-1] == saved["input"]
+    assert len([e for e in events if e.kind == "context_elided"]) == 1
+    await second.close()
+
+
+async def test_an_elided_output_recalls_in_full_and_a_stale_page_is_elided_too(tmp_path):
+    requests, events = [], []
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+            response([recall_item("p4", "c1", 0)], "r4"),
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (5, 6)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    original = json.dumps(big_result(2_000), ensure_ascii=False)
+    outputs = outputs_of(creates_of(requests)[-1])
+    assert json.loads(outputs["c1"]) == {
+        "elided": True,
+        "tool": "observe",
+        "chars": len(original),
+        "sha256": hashlib.sha256(original.encode("utf-8")).hexdigest()[:16],
+        "head": original[:160],
+        "recall": {"tool": "recall_output", "call_id": "c1"},
+    }
+    # The recall read the full stored output. By block 2 its page is stale too, and its stub
+    # names the stored output and the page's offset, so the page can be read again.
+    page = json.loads(outputs["p4"])
+    assert (page["elided"], page["tool"]) == (True, "recall_output")
+    assert page["recall"] == {"tool": "recall_output", "call_id": "c1", "offset": 0}
+    assert page["head"].startswith('{"call_id": "c1", "offset": 0, "next_offset": null')
+    # Block 1 (seq 3): c1 and c2. Block 2 (seq 6): c3, the page from response 4, and c5.
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2, 3]
+    assert [call_id for call_id, text in outputs.items() if text.startswith('{"elided"')] == [
+        "c1",
+        "c2",
+        "c3",
+        "p4",
+        "c5",
+    ]
+    state = (await runtime.checkpoint(result.session.id)).native_state
+    assert {
+        k.split(":", 1)[1]: (v["seq"], v["name"]) for k, v in state["tool_results"].items()
+    } == {f"c{n}": (n, "observe") for n in (1, 2, 3, 5, 6)}
+    await client.close()
+
+
+async def test_an_output_is_elided_only_when_its_stub_is_shorter(tmp_path):
+    from physharness.execution.responses import _elision_stub
+
+    # A 64-character tool name, a 29-character call ID and a backslash-heavy head: this
+    # 502-character output would get a 528-character stub.
+    requests, events, name, tight = [], [], "t" * 64, "call_" + "0" * 24
+    dispatcher = observe_dispatcher(big_result(2_000))
+
+    async def backslashes(arguments, operation_id):
+        return {"text": "\\" * 245}
+
+    dispatcher.register(
+        name,
+        {"type": "object", "properties": {}, "required": [], "additionalProperties": False},
+        backslashes,
+    )
+
+    async def emit(event):
+        events.append(event)
+
+    client = sdk_client(
+        [
+            response([{**call_item(tight), "name": name}], "r1"),
+            response([call_item("c2")], "r2"),
+            response([call_item("c3")], "r3"),
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=dispatcher,
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    outputs = outputs_of(creates_of(requests)[-1])
+    assert (len(outputs[tight]), len(_elision_stub(name, tight, outputs[tight]))) == (502, 528)
+    assert json.loads(outputs[tight]) == {"text": "\\" * 245}  # kept whole
+    original = json.dumps(big_result(2_000), ensure_ascii=False)
+    assert json.loads(outputs["c2"])["elided"] is True
+    assert [e.payload for e in events if e.kind == "context_elided"] == [
+        {
+            "count": 1,
+            "chars_removed": len(original) - len(outputs["c2"]),
+            "first_index": 4,
+            "seq": 3,
+        }
+    ]
+    await client.close()
+
+
+class LastSavedStore(SQLiteRuntimeStore):
+    """Remembers the last committed checkpoint, after refusing the first saves of a block."""
+
+    def __init__(self, path, refusals=0):
+        super().__init__(path)
+        self.refusals, self.last = refusals, None
+
+    async def save(self, checkpoint):
+        if self.refusals and checkpoint.native_state.get("elision", {}).get("last_block_seq"):
+            self.refusals -= 1
+            raise RuntimeError("disk full")
+        await super().save(checkpoint)
+        self.last = checkpoint
+
+
+def saved_block(store):
+    """What the last committed save holds of a block: status, last_block_seq and stub count."""
+    state = store.last.native_state
+    stubs = [text for text in outputs_of(state).values() if text.startswith('{"elided"')]
+    return store.last.session.status, state["elision"]["last_block_seq"], len(stubs)
+
+
+@pytest.mark.parametrize(
+    ("refusals", "announced"),
+    [
+        (0, [(3, ("running", 3, 2))]),  # after the generation marker save (A)
+        (1, [(3, ("uncertain", 3, 2))]),  # A was refused: after the failure save
+        (2, []),  # the failure save was refused too: never
+    ],
+)
+async def test_context_elided_follows_the_save_that_holds_its_stubs(tmp_path, refusals, announced):
+    requests, events, seen = [], [], []
+    store = LastSavedStore(tmp_path / "sessions.db", refusals)
+
+    async def emit(event):
+        events.append(event.kind)
+        if event.kind == "context_elided":
+            seen.append((event.payload["seq"], saved_block(store)))
+
+    client = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=store,
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    if refusals:
+        with pytest.raises((ExecutionError, RuntimeError)):
+            await runtime.start(
+                "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+            )
+    else:
+        await runtime.start(
+            "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+        )
+        started = [n for n, kind in enumerate(events) if kind == "generation_started"]
+        assert events[started[3] - 1] == "context_elided"  # announced before its request
+    assert seen == announced
+    await client.close()
+
+
+@pytest.mark.parametrize("ending", ["context_pressure", "target_verified"])
+async def test_a_block_whose_run_ends_before_its_request_is_announced_after_saving(
+    tmp_path, ending
+):
+    # The first run ends at seq 3, so the second run opens with a block, then stops before
+    # sending: a context-pressure handoff after the count, or a target verified during send.
+    requests, seen, guard_calls = [], [], []
+    store = LastSavedStore(tmp_path / "sessions.db")
+
+    async def emit(event):
+        if event.kind == "context_elided":
+            seen.append((event.payload["seq"], saved_block(store)))
+
+    async def boundary(checkpoint):
+        return (
+            {"reason": "context_pressure"}
+            if "context_pressure" in checkpoint.native_state
+            else None
+        )
+
+    async def guard():
+        guard_calls.append(True)
+        return ending == "target_verified" and len(guard_calls) == 8  # the second run's send
+
+    client = sdk_client(
+        [
+            response([call_item("c1")], "r1"),
+            response([call_item("c2")], "r2"),
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+        count=[10, 50_000 if ending == "context_pressure" else 10],
+    )
+    runtime = ResponsesRuntime(
+        store=store,
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        boundary_hook=boundary,
+        pre_generation_guard=guard,
+        context_budget=ELIDE,
+    )
+    limits = RuntimeLimits(
+        max_context_tokens=20_000, max_output_tokens=1_000, max_total_tokens=None
+    )
+    first = await runtime.start("work", ModelConfig(model="exact-model"), limits)
+    assert seen == [] and len(creates_of(requests)) == 3
+    result = await runtime.continue_session(first.session.id, "next")
+    assert len(creates_of(requests)) == 3  # the block's request was never sent
+    if ending == "context_pressure":
+        assert result.continuation["reason"] == "context_pressure"
+        assert seen == [(3, ("running", 3, 2))]
+    else:
+        assert result.completion_reason == "target_verified"
+        assert seen == [(3, ("completed", 3, 2))]
+    await client.close()
+
+
+async def test_a_refused_block_request_keeps_its_stubs_and_resumes_without_a_second_block(
+    tmp_path,
+):
+    requests, events = [], []
+    scripted = [
+        *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+        None,  # the block's request is refused before generation
+        response([text_item("done")], "rt"),
+    ]
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append((request.url.path, payload))
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        if (scripted_response := scripted.pop(0)) is None:
+            refusal = {"message": "refused", "type": "invalid_request_error", "param": None}
+            return httpx.Response(400, json={"error": {**refusal, "code": None}})
+        return httpx.Response(200, json=scripted_response)
+
+    async def emit(event):
+        events.append(event)
+
+    client = AsyncOpenAI(
+        api_key="test-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    )
+    store = SQLiteRuntimeStore(tmp_path / "sessions.db")
+    runtime = ResponsesRuntime(
+        store=store,
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start(
+            "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+        )
+    assert error.value.code == "MODEL_REQUEST_INVALID"
+    failed = await runtime.checkpoint(events[0].session_id)
+    saved = failed.native_state
+    assert (failed.session.status, saved["elision"]) == ("failed", {"seq": 3, "last_block_seq": 3})
+    assert saved["input"] == creates_of(requests)[-1]["input"]  # the refused request's stubs
+    assert [k for k, text in outputs_of(saved).items() if text.startswith('{"elided"')] == [
+        "c1",
+        "c2",
+    ]
+    resumed = ResponsesRuntime(
+        store=store,
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+    )
+    await resumed.resume(failed)
+    assert (await resumed.continue_session(failed.session.id, "next")).output_text == "done"
+    assert creates_of(requests)[-1]["input"][:-1] == saved["input"]
+    assert [e.payload["seq"] for e in events if e.kind == "context_elided"] == [3]  # just one
+    assert [p.rsplit("/", 1)[-1] for p, _ in requests[-2:]] == ["input_tokens", "responses"]
+    assert [e.payload for e in events if e.kind == "generation_started"][-1][
+        "input_tokens_counted"
+    ] is True
+    await client.close()
+
+
+async def test_a_native_handoff_carries_the_lineage_wide_elision_counter(tmp_path):
+    requests, events, store = [], [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+
+    async def emit(event):
+        events.append(event)
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"}
+
+    first = sdk_client([response([call_item("c1")], "r1")], requests)
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        boundary_hook=boundary,
+        context_budget=ELIDE,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [
+            response([call_item("c2")], "r2"),
+            response([call_item("c3")], "r3"),
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    successor = ResponsesRuntime(
+        store=store,
+        client=second,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+    )
+    result = await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    # The lineage's third response is the successor's second, so its third request elides the
+    # source's c1 and its own c2.
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2]
+    outputs = outputs_of(creates_of(requests)[-1])
+    assert [call_id for call_id, text in outputs.items() if text.startswith('{"elided"')] == [
+        "c1",
+        "c2",
+    ]
+    state = (await successor.checkpoint(result.session.id)).native_state
+    assert state["elision"] == {"seq": 4, "last_block_seq": 3}
+    assert (await source.checkpoint(handed.session.id)).native_state["elision"] == {
+        "seq": 1,
+        "last_block_seq": 0,
+    }
+    await first.close()
+    await second.close()
+
+
+def request_elements(payload):
+    """P1's positional elements of a sent request, as canonical UTF-8 bytes."""
+    elements = (payload.get("instructions"), payload["tools"], *payload["input"])
+    return [canonical_json(element).encode("utf-8") for element in elements]
+
+
+async def test_the_input_bound_stays_sound_through_elision_blocks(tmp_path):
+    # The provider bills one token per canonical byte of every element: the most P1 admits.
+    requests, events = [], []
+    scripted = [*[[call_item(f"c{i}")] for i in range(1, 8)], [text_item("done")]]
+
+    def handle(request):
+        payload = json.loads(request.content)
+        requests.append((request.url.path, payload))
+        tokens = sum(len(element) for element in request_elements(payload))
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(
+                200, json={"object": "response.input_tokens", "input_tokens": tokens}
+            )
+        items = scripted.pop(0)
+        return httpx.Response(200, json=response(items, f"r{len(requests)}", input_tokens=tokens))
+
+    async def emit(event):
+        events.append(event)
+
+    client = AsyncOpenAI(
+        api_key="test-only",
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        event_sink=emit,
+        context_budget=ELIDE,
+    )
+    result = await runtime.start(
+        "work",
+        ModelConfig(model="exact-model"),
+        RuntimeLimits(max_turns=10, max_total_tokens=None),
+    )
+    assert result.output_text == "done"  # no request billed past its reservation
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2, 3]
+    creates = [request_elements(p) for p in creates_of(requests)]
+    started = [e.payload for e in events if e.kind == "generation_started"]
+    assert [s["input_tokens_counted"] for s in started] == [True] + [False] * 7
+    rewritten = []
+    for n in range(1, len(creates)):
+        before, after = creates[n - 1], creates[n]
+        billed_before, billed = sum(map(len, before)), sum(map(len, after))
+        changed = [e for i, e in enumerate(after) if i >= len(before) or before[i] != e]
+        raw = billed_before + sum(map(len, changed))  # P1, without the margin
+        assert started[n]["input_tokens_reserved"] == raw + max(2_048, -(-raw * 2 // 100))
+        assert billed <= raw
+        # Only a block rewrites earlier elements, and the bytes it removes earn no credit.
+        replaced = [i for i in range(len(before)) if before[i] != after[i]]
+        assert raw - billed == sum(len(before[i]) for i in replaced)
+        rewritten.append(len(replaced))
+    assert rewritten == [0, 0, 2, 0, 0, 3, 0]
+    await client.close()
+
+
+# The creates of a 7-call run without a budget. The digest is the same at the mid-lane commit
+# c1f16af and at origin/main 9333b25, so the freeze covers the whole lane (G1).
+UNBUDGETED_REQUESTS_SHA256 = "765670738ca10f826d661a232eac444b8a15f4f0c82017342baa63612f52dde2"
+
+
+async def test_without_a_budget_long_runs_send_frozen_requests_and_state(tmp_path):
+    requests = []
+    client = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in range(1, 8)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+    )
+    result = await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    creates = creates_of(requests)
+    assert len(creates) == 8
+    assert (
+        hashlib.sha256(canonical_json(creates).encode("utf-8")).hexdigest()
+        == UNBUDGETED_REQUESTS_SHA256
+    )
+    state = (await runtime.checkpoint(result.session.id)).native_state
+    assert "elision" not in state
+    assert all(set(entry) == {"identity", "result"} for entry in state["tool_results"].values())
+    await client.close()
