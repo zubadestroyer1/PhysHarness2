@@ -192,7 +192,8 @@ first uses a workspace. That includes a workspace a handoff restored before
 `society_tools()` enabled the self-test, and a self-test that raised runs again on the
 next use. A failed self-test stops the task with `STATEMENT_CHECK_UNAVAILABLE`, and later
 tasks on that image provision no workspace. A failure never overrides a pass on another
-workspace of the same image, so tasks whose self-test passed keep working.
+workspace of the same image, so tasks whose self-test passed keep working, and a workspace whose
+own self-test failed stays failed.
 
 The checker imports only the Lean modules it uses (`Lean.CoreM`, `Lean.Replay` and four
 utilities), not `Lean`. Lean maps a module's `.olean` from its file only on the module's

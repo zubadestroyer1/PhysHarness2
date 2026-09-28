@@ -750,7 +750,7 @@ def provisioning_tools(verdict, template_id="image-a"):
     tools = WorkspaceTools.__new__(WorkspaceTools)
     tools.policy = SimpleNamespace(template_id=template_id, timeout_seconds=600, cost_bound_usd=0)
     tools.workspace, tools.cleanup_report, tools.checker_self_test = None, None, True
-    tools._checker_judged = False
+    tools._checker_judged = tools._checker_failed = tools._self_testing = False
     provisions, checks = [], []
 
     async def provision(**kwargs):
@@ -806,6 +806,42 @@ async def test_failed_self_test_provisions_no_later_workspace(self_tests):
     other, provisions, _ = provisioning_tools(OK_VERDICT, template_id="image-b")
     await other._ensure()  # each image is judged on its own
     assert len(provisions) == 1 and self_tests == {"image-a": False, "image-b": True}
+
+
+async def test_self_test_through_the_real_lean_session_runs_once(self_tests):
+    """The self-test's own uploads and run go through _ensure, which must not start it again."""
+    tools, provisions, _ = provisioning_tools(OK_VERDICT)
+    tools._lean_session = None  # the real LeanSession, over this WorkspaceTools
+    uploads, runs = [], []
+
+    async def upload_file(workspace_id, *, path, **kwargs):
+        uploads.append(path)
+        return {"path": path}
+
+    async def run(workspace_id, *, request, **kwargs):
+        runs.append(request.argv)
+        return {"exit_code": 0, "stdout": json.dumps({"ok": True, "axioms": []}), "stderr": ""}
+
+    tools.broker.upload_file, tools.broker.run = upload_file, run
+    await tools._ensure()
+    await tools._ensure()
+    assert len(provisions) == 1 and len(runs) == 1 and self_tests == {"image-a": True}
+    assert [Path(path).name for path in uploads] == [
+        "statement_check.py",
+        "statement_check.lean",
+        "Source.lean",
+        "Reference.lean",
+    ]
+
+
+async def test_a_workspace_that_failed_its_self_test_stays_failed(self_tests):
+    tools, _, _ = provisioning_tools(BROKEN)
+    with pytest.raises(HarnessError):
+        await tools._ensure()
+    self_tests["image-a"] = True  # another VM of the image passed meanwhile
+    with pytest.raises(HarnessError) as error:
+        await tools._ensure()
+    assert error.value.code == "STATEMENT_CHECK_UNAVAILABLE"
 
 
 async def test_self_test_that_raises_judges_nothing_and_runs_again(self_tests):
