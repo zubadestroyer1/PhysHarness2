@@ -109,10 +109,13 @@ No aliases or substitute models are selected by the adapter. Parameters supporte
 fail at the provider.
 
 Reserving less than the window under `context_management` rests on two provider assumptions.
-- **Compaction fires only above the threshold.** Server compaction fires only when a request's
-  input exceeds `compact_threshold`, so a request under the gate cannot compact, and every
-  compaction pass, which may bill more than the counted or bounded input, falls on a request that
-  reserved the whole window. If a response to a request reserved below the window does carry a
+- **Compaction fires only above the threshold.** The gate assumes server compaction never fires
+  on a request whose input is at or below `compact_threshold`, so a request under the gate cannot
+  compact, and every compaction pass, which may bill more than the counted or bounded input,
+  falls on a request that reserved the whole window. S1 is consistent with this but shows the
+  trigger is not billed input: one session billed 185,264 tokens against a 183,808 threshold
+  without compacting, and compacted on the next turn. Only the direction the gate relies on is
+  assumed, and the first paid run's smoke check (`work/society-s1/RUN_PLAN.md`) re-checks it. If a response to a request reserved below the window does carry a
   compaction item, the runtime logs a warning and emits `bound_reservation_compacted`
   (`response_id`, `input_tokens_reserved`, `input_tokens` and `compact_threshold`). It does so
   once the response is durable and before `usage` is emitted, so before the ledger settles it

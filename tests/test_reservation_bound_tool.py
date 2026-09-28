@@ -88,3 +88,19 @@ def test_bound_reports_violations_and_skips_compaction_and_failed_turns(tmp_path
     report = tool.check(tmp_path, threshold=183_808, margin=8_192)
     assert (report["pairs"], report["violations"], report["passed"]) == (1, 1, False)
     assert tool.main([str(tmp_path)]) == 1
+
+
+def test_tool_defaults_match_the_runtime_bound():
+    """The G4 gate must check the margins the runtime reserves, so its defaults cannot drift."""
+    import inspect
+
+    from physharness.execution import responses
+    from physharness.execution.context_policy import CONTEXT_MARGIN
+
+    source = inspect.getsource(tool.main)
+    assert f'"--margin", type=int, default={CONTEXT_MARGIN:_}' in source
+    assert f'"--margin-floor", type=int, default={responses.BOUND_MARGIN_FLOOR:_}' in source
+    assert f'"--margin-percent", type=int, default={responses.BOUND_MARGIN_PERCENT}' in source
+    check = inspect.signature(tool.check).parameters
+    assert check["margin_floor"].default == responses.BOUND_MARGIN_FLOOR
+    assert check["margin_percent"].default == responses.BOUND_MARGIN_PERCENT
