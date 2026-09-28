@@ -1304,17 +1304,17 @@ class ContinuationMixin:
 
         # The long pole comes from the memo, computed outside the lock for a new graph.
         with self.db.sessions() as session:
-            task = self._get(session, "task", task_id, actor)
-            experiment = self._get(session, "experiment", task.payload["experiment_id"], actor)
+            experiment_id = self._get(session, "task", task_id, actor).payload["experiment_id"]
+            experiment = self._get(session, "experiment", experiment_id, actor)
             head = graph_head(session, experiment)
             ids = long_pole(session, experiment, head)
         with self.db.transaction() as session:
             # Under the experiment lock, so no commons event commits below the anchor.
-            experiment = self._active(session, experiment.id, actor)
+            experiment = self._active(session, experiment_id, actor)
             self._fenced(session, task_id, holder, fence)
             task = self._get(session, "task", task_id, actor)
-            if graph_head(session, experiment) != head:
-                ids = long_pole(session, experiment, graph_head(session, experiment))
+            if (locked_head := graph_head(session, experiment)) != head:
+                ids = long_pole(session, experiment, locked_head)
             anchor = {
                 "event_sequence": self._discussion_max_sequence(session),
                 "long_pole_ids": ids,
