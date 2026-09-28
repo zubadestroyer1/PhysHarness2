@@ -984,7 +984,9 @@ class CommonsReviewMixin:
     def _record_proof_imports(self, session, experiment, receipt):
         """Append ``{receipt_id, sha256}`` to ``in_verified_proof`` on each node whose current
         source the verified proof imported: provenance only, with no status move and no
-        announcement.
+        announcement. Imported means inlined, directly or through another module, not used:
+        the platform checks no module's constants against the proof, so an unused import
+        counts too.
 
         Only ``commons_modules`` counts, which the platform's flattened submission alone
         writes; the candidate artifact's provenance is caller-written and never read. An

@@ -1694,6 +1694,15 @@ async def test_submit_with_commons_imports_verifies_one_flattened_artifact(lab):
     )
     assert legacy == {"receipt_id": "receipt", "status": "queued"}
     target = {"path": "P.lean", "sha256": "e" * 64, "target_digest": exp["target_digest"]}
+    # Every inlined module is listed, used or not: in_verified_proof and the accepted-proof
+    # metrics mean imported by the verified proof, an upper bound on reuse (PR 37 review).
+    unused = f"import {module}\n\ntheorem target : (1 : Nat) + 1 = 2 := rfl\n"
+    listed = await call(
+        profile(service, agent, context, workspace=CapturingWorkspace(service, unused)),
+        "submit_for_verification",
+        {"path": "Unused.lean", "sha256": sha(unused)},
+    )
+    assert [entry["node_id"] for entry in listed["commons_modules"]] == [lemma_id]
     assert [name for name, _ in plain.calls] == ["read", "submit"]
     assert plain.calls[-1] == ("submit", target)
 

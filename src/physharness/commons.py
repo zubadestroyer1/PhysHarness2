@@ -744,7 +744,8 @@ class CommonsMixin:
             current = (node.get("lean_source") or {}).get("sha256")
             proofs = [p for p in node.get("in_verified_proof") or [] if p["sha256"] == current]
             if proofs:
-                # Provenance only: independently verified proofs that imported this source.
+                # Provenance only: independently verified proofs that imported (inlined, used
+                # or not) this source.
                 item["in_verified_proof"] = len(proofs)
             items.append(item)
         items.sort(key=lambda item: (-item["score"], item["id"]))

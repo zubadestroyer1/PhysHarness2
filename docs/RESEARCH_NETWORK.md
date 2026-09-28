@@ -143,7 +143,11 @@ tools, the prompts and the delivery shapes.
   that proof's receipt and the imported source's digest (`{receipt_id, sha256}`) in
   `in_verified_proof` (shown by `commons_read`; a proved node is not open work and leaves
   the frontier, which otherwise counts only the entries for the node's current source);
-  its status stays open. Source ranks are advisory and only
+  its status stays open. Imported means inlined, directly or through another module, not
+  used: nothing checks which constants the proof uses, so an unused import counts, as it
+  does in the accepted-proof provenance metrics (`accepted_proof_modules`,
+  `accepted_proof_cross_branch_modules`, the char share), an upper bound on reuse.
+  Source ranks are advisory and only
   verifier receipts are authority: the verifier certifies the target's axioms, not each
   imported lemma's. Only the receipt's platform-written `commons_modules` count, never
   the candidate artifact's provenance. Stale entries, nodes outside the experiment,
