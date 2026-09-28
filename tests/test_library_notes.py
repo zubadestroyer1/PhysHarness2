@@ -113,11 +113,12 @@ def seeded_surface(lab, monkeypatch):
 
 def test_a_query_for_a_lemma_about_a_noted_name_surfaces_its_note(lab, monkeypatch):
     _, _, (dot, _, lp), surfaced = seeded_surface(lab, monkeypatch)
-    # A noted name that equals the query, or prefixes it (or it prefixes the name) at a
-    # `.` or `_` boundary, surfaces its note first.
+    # A noted name that equals a query word, or (holding a `.` or `_`) prefixes it or is
+    # prefixed by it at a `.` or `_` boundary, surfaces its note first.
     for query in (
         "Matrix.dotProduct_comm",
-        "dotProduct_assoc",
+        "Matrix.dotProduct_assoc",
+        "dotProduct",
         "Matrix.vecMul_pow_two",
         "Matrix.vecMul",
     ):
@@ -135,6 +136,32 @@ def test_prose_words_surface_no_note(lab, monkeypatch):
     note = "The `exp` and `log` simp lemmas need a positive argument."
     service.append_library_note(note, alpha, "n1")
     assert surfaced("exp log") == [note]
+
+
+def appended_surface(lab, *notes):
+    """A lab whose builder appended ``notes``, and a peer's surfaced-notes lookup."""
+    service, _, _, _, (alpha, beta) = society_lab(lab)
+    for index, note in enumerate(notes):
+        service.append_library_note(note, alpha, f"n{index}")
+
+    def surfaced(query):
+        return [n["text"] for n in service.library_notes(beta, query=query, surfaced=True)["notes"]]
+
+    return surfaced
+
+
+def test_a_stop_word_still_counts_toward_the_words_a_query_needs_shared(lab):
+    surfaced = appended_surface(lab, "Sorting a list needs a decidable order at this pin.")
+    for query in ("List.all", "List.any", "Bool.not", "one list"):
+        assert surfaced(query) == [], query
+
+
+def test_a_quoted_namespace_meets_only_an_equal_query_word(lab):
+    note = "In `Finset`, the card lemmas moved to Mathlib.Data.Finset.Card."
+    surfaced = appended_surface(lab, note)
+    for query in ("Finset.sum_comm", "Finset.prod_const"):
+        assert surfaced(query) == [], query
+    assert surfaced("Finset") == [note]
 
 
 def test_the_checked_in_seed_covers_the_s1_audit_findings():
