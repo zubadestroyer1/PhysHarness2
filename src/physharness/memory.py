@@ -22,6 +22,7 @@ FORMAT = "physharness.portable-context.v1"
 WORKING_FORMAT = "physharness.working-context.v1"
 NOTES_FORMAT = "physharness.research-notes.v1"
 HISTORY_KINDS = frozenset({"artifact", "claim", "task", "verification", "source", "program"})
+ALLOWED_KINDS_TEXT = ", ".join(sorted(HISTORY_KINDS))
 STATUS_FIELDS = (
     "status",
     "proof_status",
@@ -107,12 +108,22 @@ class PortableMemory:
     def _reference(self, session, row, reader):
         # Authorize before classifying, so the kind of an unreadable record is never revealed.
         row = self.service._get(session, row.kind, row.id, reader)
-        if row.kind not in HISTORY_KINDS or (
-            row.kind == "artifact"
-            and row.payload.get("artifact_kind") in self.service._private_artifact_kinds
-        ):
+        if row.kind not in HISTORY_KINDS:
             raise _error(
-                "CONTEXT_EVIDENCE_KIND", "Native/private checkpoints are not portable evidence."
+                "CONTEXT_EVIDENCE_KIND",
+                f"A {row.kind} record is not portable evidence; cite one of: {ALLOWED_KINDS_TEXT}.",
+                kind=row.kind,
+                allowed=sorted(HISTORY_KINDS),
+            )
+        artifact_kind = row.payload.get("artifact_kind")
+        if row.kind == "artifact" and artifact_kind in self.service._private_artifact_kinds:
+            raise _error(
+                "CONTEXT_EVIDENCE_KIND",
+                f"A {artifact_kind} artifact is private platform state, not portable evidence; "
+                f"cite one of: {ALLOWED_KINDS_TEXT}.",
+                kind="artifact",
+                artifact_kind=artifact_kind,
+                allowed=sorted(HISTORY_KINDS),
             )
         data = row.payload
         if data.get("proof_status") == "verified" or (
@@ -218,7 +229,12 @@ class PortableMemory:
 
     def history_page(self, branch_id, actor, *, kind, limit=50, after=None, max_bytes=65536):
         if kind not in HISTORY_KINDS:
-            raise _error("CONTEXT_EVIDENCE_KIND", "Select a portable scientific record kind.")
+            raise _error(
+                "CONTEXT_EVIDENCE_KIND",
+                f"{kind!r} is not a portable record kind; use one of: {ALLOWED_KINDS_TEXT}.",
+                kind=kind,
+                allowed=sorted(HISTORY_KINDS),
+            )
         if (
             type(limit) is not int
             or not 1 <= limit <= 100
@@ -254,7 +270,12 @@ class PortableMemory:
     def read_record(self, branch_id, actor, *, kind, identifier, max_bytes=65536):
         """Read one authorized portable record with its exact, checked reference."""
         if kind not in HISTORY_KINDS:
-            raise _error("CONTEXT_EVIDENCE_KIND", "Select a portable scientific record kind.")
+            raise _error(
+                "CONTEXT_EVIDENCE_KIND",
+                f"{kind!r} is not a portable record kind; use one of: {ALLOWED_KINDS_TEXT}.",
+                kind=kind,
+                allowed=sorted(HISTORY_KINDS),
+            )
         if not isinstance(identifier, str) or not identifier:
             raise _error("CONTEXT_INPUT_INVALID", "A canonical record identifier is required.")
         if type(max_bytes) is not int or not 1 <= max_bytes <= MAX_BYTES:

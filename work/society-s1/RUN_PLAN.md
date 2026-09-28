@@ -417,8 +417,30 @@ Each item needs the user. None has been started.
    - Upload the `masked_reference` artifact and fill the example plan.
    - Run `prepare-run`, review the target, register the verifier bundle,
      `configure_workforce`, and `check-run`.
-   - Start the VM or E2B, and start the monitor.
+   - Start the VM or E2B, pre-warm the VM (item 9), and start the monitor.
    - Each of these needs the approvals above. No VM or paid call is started without them.
+9. **Pre-warm the workbench VM (`local_docker`), before any arm and after every VM start.**
+   The statement check behind every recorded local compile requires it
+   (docs/FORMAL_ENVIRONMENT.md). Read every `.olean`, `.ilean`, `.olean.server` and
+   `.olean.private` file under `/opt` once, in a throwaway container on the workbench
+   digest, through the worker's own Docker endpoint:
+
+   ```sh
+   docker --host "$PHYSHARNESS_WORKER_DOCKER_HOST" run --rm --network none --read-only \
+     --entrypoint /bin/sh "$PHYSHARNESS_WORKER_IMAGE_DIGEST" -c \
+     'find /opt -type f \( -name "*.olean" -o -name "*.ilean" -o -name "*.olean.server" -o -name "*.olean.private" \) -print0 | xargs -0 cat | wc -c'
+   ```
+
+   - On workbench-v2 this reads about 7.9 GB in about 8 seconds, and the VM's page cache
+     then holds about 8 GiB (measured on a 28 GiB VM). Size the VM for that on top of
+     its workbenches' memory limits, or the cache is evicted.
+   - Measured effect on each Lean step of a whole-`import Mathlib` statement check at
+     2 GiB: cold, about 80 seconds, so the three-step check times out at 240 seconds;
+     `.olean` and `.ilean` only, about 31–38 seconds (101 seconds per check); all four
+     parts, about 2.4 seconds.
+   - A timed-out check records no local compile and logs no ERROR. The checker's
+     `import Lean` self-test cannot detect a cold VM: it loads only Lean core, and
+     passes cold in about 4 seconds.
 
 ## 9. Known limitations going in
 

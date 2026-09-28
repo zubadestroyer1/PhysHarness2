@@ -8,7 +8,7 @@ from test_sharing import approaches, artifact
 
 from physharness.domain import ArtifactCreate, Principal, TaskCreate
 from physharness.errors import HarnessError
-from physharness.memory import PortableMemory
+from physharness.memory import HISTORY_KINDS, PortableMemory
 from physharness.storage import RecordRow
 
 
@@ -315,6 +315,46 @@ def test_native_checkpoint_cannot_enter_portable_history(lab):
     with pytest.raises(HarnessError) as exc:
         capture(memory, alpha.branch_id, alpha, "own-branch", evidence_ids=[alpha.branch_id])
     assert exc.value.code == "CONTEXT_EVIDENCE_KIND"
+    assert exc.value.message == (
+        "A branch record is not portable evidence; cite one of: "
+        "artifact, claim, program, source, task, verification."
+    )
+    assert exc.value.details == {"kind": "branch", "allowed": sorted(HISTORY_KINDS)}
+    for read in (
+        lambda: memory.history_page(alpha.branch_id, alpha, kind="commons_node"),
+        lambda: memory.read_record(alpha.branch_id, alpha, kind="commons_node", identifier="x"),
+    ):
+        with pytest.raises(HarnessError) as kind:
+            read()
+        assert kind.value.message.startswith("'commons_node' is not a portable record kind")
+        assert kind.value.details["kind"] == "commons_node"
+
+
+def test_readable_private_artifact_is_refused_by_its_kind(lab):
+    service, author, _, _, (alpha, _) = approaches(lab, "none")
+    checkpoint = service.create_artifact(
+        ArtifactCreate(
+            experiment_id=alpha.experiment_id,
+            branch_id=alpha.branch_id,
+            kind="checkpoint",
+            content='{"approach":"earlier"}',
+        ),
+        author.model_copy(update={"role": "operator"}),
+        "checkpoint",
+    )
+    memory = PortableMemory(service)
+    with pytest.raises(HarnessError) as exc:
+        capture(memory, alpha.branch_id, alpha, evidence_ids=[checkpoint["id"]])
+    assert exc.value.code == "CONTEXT_EVIDENCE_KIND"
+    assert exc.value.message == (
+        "A checkpoint artifact is private platform state, not portable evidence; cite one of: "
+        "artifact, claim, program, source, task, verification."
+    )
+    assert exc.value.details == {
+        "kind": "artifact",
+        "artifact_kind": "checkpoint",
+        "allowed": sorted(HISTORY_KINDS),
+    }
 
 
 def test_rehashed_summary_cannot_claim_authority(lab):

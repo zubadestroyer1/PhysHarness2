@@ -27,6 +27,8 @@ from .types import GUEST_PYTHON, Capabilities, CommandRequest, CommandResult, Ex
 ARCHIVE_LIMIT = 65_536
 FILE_LIMIT = 32_768
 FILE_COUNT_LIMIT = 64
+# Helper actions that only read /work, so a failed one leaves every file unchanged.
+_READ_ACTIONS = frozenset({"read", "capture_slice", "export"})
 
 
 def _path(value: str) -> str:
@@ -643,7 +645,9 @@ class E2BSandboxProvider:
             if completed:
                 raise ExecutionError(
                     "WORKSPACE_TRANSFER_REJECTED",
-                    "Workspace helper completed unsuccessfully; inspect files before retry. "
+                    "Workspace helper completed the read unsuccessfully; /work is unchanged"
+                    if action in _READ_ACTIONS
+                    else "Workspace helper completed unsuccessfully; inspect files before retry. "
                     "VM preserved; operation may have changed files.",
                 ) from exc
             execution_id = self.execution_id

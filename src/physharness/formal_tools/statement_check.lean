@@ -17,8 +17,18 @@ It prints one line: `PHYSHARNESS_STATEMENT_CHECK <json>`.
 Compiling SOURCE, before this program runs, executes the file's compile-time code in the
 same VM, which can alter this file, REFERENCE or the imported .olean files it trusts (only
 SOURCE's own declarations are replayed). The verdict is VM-attested evidence.
+
+It imports only the modules it uses. Lean maps an .olean from its file only on its first
+load in a process, and SOURCE's imports load after this file's, so each module in both is
+copied onto the heap: with `import Lean`, all of Lean (1.6 GB) for an `import Lean` SOURCE,
+which the 2 GiB workbench killed. These modules' closure is a quarter of that.
 -/
-import Lean
+import Lean.CoreM
+import Lean.Data.Json
+import Lean.Replay
+import Lean.Util.CollectAxioms
+import Lean.Util.FoldConsts
+import Lean.Util.Path
 open Lean
 
 def emit (fields : List (String × Json)) : IO UInt32 := do

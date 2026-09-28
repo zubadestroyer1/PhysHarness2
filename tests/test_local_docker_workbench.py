@@ -1,13 +1,15 @@
 import asyncio
 import hashlib
 import os
+import subprocess
 import sys
 from types import SimpleNamespace
 
 import pytest
 
+from physharness.execution import local_docker
 from physharness.execution.local_docker import LocalDockerWorkspaceProvider
-from physharness.execution.types import CommandRequest, ExecutionError
+from physharness.execution.types import GUEST_PYTHON, CommandRequest, ExecutionError
 
 
 class DockerTranscript:
@@ -71,6 +73,16 @@ async def test_container_launch_isolation_and_command_budgets():
     assert not any(
         token.startswith("--volume") or token.startswith("--mount=type=bind") for token in run
     )
+    tmpfs = [run[index + 1] for index, token in enumerate(run) if token == "--tmpfs"]
+    assert tmpfs[0].startswith("/work:") and tmpfs[1] == local_docker.PROFILE_D_TMPFS
+    writes = [
+        (index, argv)
+        for index, (argv, *_) in enumerate(transport.commands)
+        if local_docker._PROFILE_WRITER in argv
+    ]
+    [(position, write)] = writes
+    assert write[3:] == ["exec", "container-id", *GUEST_PYTHON, "-c", local_docker._PROFILE_WRITER]
+    assert position > next(i for i, (argv, *_) in enumerate(transport.commands) if "run" in argv)
     assert provider.execution_id == "container-id"
     result = await provider.run(
         CommandRequest(
@@ -88,6 +100,67 @@ async def test_container_launch_isolation_and_command_budgets():
     assert executed[2] == 5
     await provider.close()
     assert any("rm" in argv for argv, *_ in transport.commands)
+
+
+@pytest.mark.asyncio
+async def test_profile_write_failure_quarantines_the_container():
+    class FailingProfile(DockerTranscript):
+        async def __call__(self, argv, **kwargs):
+            if local_docker._PROFILE_WRITER in argv:
+                self.commands.append((argv, b"", 30, 65536))
+                return (1, b"", b"read-only file system")
+            return await super().__call__(argv, **kwargs)
+
+    transport = FailingProfile()
+    provider = LocalDockerWorkspaceProvider(
+        docker_host="unix:///tmp/physharness-pilot/docker.sock",
+        image_digest="sha256:" + "a" * 64,
+        timeout_seconds=120,
+        runner=transport,
+    )
+    with pytest.raises(ExecutionError) as error:
+        await provider.create()
+    assert error.value.code == "PROVIDER_FAILED" and provider._quarantined is True
+    assert any("rm" in argv for argv, *_ in transport.commands)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raised", [TimeoutError, asyncio.CancelledError])
+async def test_profile_write_client_timeout_or_cancellation_quarantines_the_container(raised):
+    class InterruptedProfile(DockerTranscript):
+        async def __call__(self, argv, **kwargs):
+            if local_docker._PROFILE_WRITER in argv:
+                raise raised
+            return await super().__call__(argv, **kwargs)
+
+    transport = InterruptedProfile()
+    provider = LocalDockerWorkspaceProvider(
+        docker_host="unix:///tmp/physharness-pilot/docker.sock",
+        image_digest="sha256:" + "a" * 64,
+        timeout_seconds=120,
+        runner=transport,
+    )
+    with pytest.raises(raised):
+        await provider.create()
+    assert provider._quarantined is True
+    assert any("rm" in argv for argv, *_ in transport.commands)
+
+
+def test_profile_writer_restores_the_image_path(tmp_path, monkeypatch):
+    target = tmp_path / "physharness-path.sh"
+    monkeypatch.setenv("PATH", "/opt/lean/bin:/usr/local/bin:/usr/bin:/bin")
+    exec(  # noqa: S102 - the harness's own script, run as the guest would run it
+        local_docker._PROFILE_WRITER,
+        {"__builtins__": __builtins__, "open": lambda path, mode: open(target, mode)},
+    )
+    assert target.read_text() == "export PATH=/opt/lean/bin:/usr/local/bin:/usr/bin:/bin\n"
+    sourced = subprocess.run(
+        ["/bin/sh", "-c", f'PATH=/bin; . "{target}"; printf %s "$PATH"'],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert sourced.stdout == "/opt/lean/bin:/usr/local/bin:/usr/bin:/bin"
 
 
 def test_command_validation_allows_only_exact_pinned_source_cwds():

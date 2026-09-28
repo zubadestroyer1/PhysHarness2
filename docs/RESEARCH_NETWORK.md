@@ -153,7 +153,9 @@ tools, the prompts and the delivery shapes.
     Only `propext`, `Classical.choice` and `Quot.sound` count. The commons service
     enforces that rule, and that the compile names the node's current statement,
     whoever calls it. Every backend (REPL daemon, inline REPL, one-shot) runs the same
-    check, and any failure to run it records nothing.
+    check, and any failure to run it records nothing. A society task self-tests it once
+    per process and image before it first uses a workspace, and a failed self-test stops
+    the task with `STATEMENT_CHECK_UNAVAILABLE`.
   - The check, like statement elaboration, runs in the agent-controlled workspace VM, and
     compiling the file there runs the file's compile-time code (`#eval`, `run_cmd`, and
     any elaborator, macro or tactic it defines). That code can read and write VM files
@@ -226,6 +228,13 @@ tools, the prompts and the delivery shapes.
   another branch into that branch's lab. `message(to="lab")` fans out to the lab. Direct
   messages across labs are refused unless the policy allows them, so cross-lab
   discourse goes through the commons.
+- **Ids.** Every society tool id argument accepts the full id or a unique prefix of at
+  least 8 hex characters of a record the agent can see; an ambiguous prefix returns
+  `AMBIGUOUS_ID` with the candidates. Routing arguments (`message.to`, `wait.ids`) name
+  records the agent may be unable to read, so their prefixes resolve only among the
+  tool's own targets: the branches it may message, its delegated child tasks, or its
+  peer branches. A prefix that names none or several of them is refused exactly as an
+  unknown full id, so it reveals no other record.
 
 Society workers get the consolidated profile in
 `src/physharness/orchestration/society_tools.py`. It has 26 tools in all; a worker's

@@ -192,6 +192,41 @@ def test_seed_is_atomic_idempotent_and_legacy_task_path_obeys_cap(lab):
     assert len(service.list_records("task", operator, experiment["id"])) == 2
 
 
+def test_task_caps_report_budget_not_input(lab):
+    service, researcher, operator, experiment = started(lab)
+    policy = service.configure_workforce(
+        experiment["id"],
+        ConfigureWorkforceRequest(max_total_tasks=3, max_pending_tasks=1),
+        operator,
+        "configure",
+    )
+    roots = SeedPortfolioRequest(roots=[PortfolioRoot(title="A", objective="Try A")])
+    branch = service.seed_portfolio(experiment["id"], roots, operator, "seed")["roots"][0]["branch"]
+    with pytest.raises(HarnessError) as pending:
+        service.create_task(TaskCreate(branch_id=branch["id"], objective="Two"), researcher, "two")
+    cap = pending.value
+    assert cap.code == "TASK_PENDING_CAP" and cap.details == {"limit": 1, "used": 1}
+    assert "budget, not input: limit 1, used 1" in cap.message
+    assert cap.remediation.startswith("This is a budget limit, not an input error.")
+    # The pending cap frees up as tasks end, so it alone is retryable, and says when.
+    assert cap.retryable is True and "Retry only after a queued or running task ends" in (
+        cap.remediation
+    )
+    service.configure_workforce(
+        experiment["id"],
+        ConfigureWorkforceRequest(
+            max_total_tasks=1, max_pending_tasks=1, expected_revision=policy["revision"]
+        ),
+        operator,
+        "configure-total",
+    )
+    with pytest.raises(HarnessError) as total:
+        service.create_task(TaskCreate(branch_id=branch["id"], objective="Two"), researcher, "t")
+    cap = total.value
+    assert cap.code == "TASK_TOTAL_CAP" and cap.details == {"limit": 1, "used": 1}
+    assert cap.retryable is False and "Do not retry the same request" in cap.remediation
+
+
 def test_invalid_second_root_rolls_back_first_root_and_task(lab):
     service, _, operator, experiment = started(lab)
     with pytest.raises(HarnessError) as error:
