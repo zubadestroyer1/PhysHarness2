@@ -1780,7 +1780,13 @@ class ResponsesRuntime:
                 else:
                     state["pending_operation"] = tool_operation
                     await self._save(session, state)
-                    await self._emit_completed(session)
+                    try:
+                        await self._emit_completed(session)
+                    except BaseException:
+                        # An earlier result's announcement failed before this call ran, so
+                        # nothing about it is uncertain, whatever the durable marker says.
+                        state["pending_operation"] = None
+                        raise
                     result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
                 signal = observe_stagnation(
                     state.setdefault("stagnation", {}), call["name"], arguments, result

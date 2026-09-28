@@ -397,7 +397,11 @@ experiments too.
 - The `bound_reservation_compacted` alarm event.
 - Fewer saves per turn: 4 for a single call, 3 + k for k calls. `tool_completed` is emitted after
   the save that made its output durable. Settlement rides on the next save, so a crash between
-  `usage` and that save leaves the session `uncertain` (save B holds the generation marker).
+  `usage` and that save leaves the session `uncertain` (save B holds the generation marker). The
+  ledger's settled reservation stays authoritative, so nothing is charged twice, but a
+  compaction-only response in that window is not routed to compaction recovery. If an earlier
+  result's `tool_completed` fails after the next call's marker save, that call never ran: the
+  session fails without naming it.
 - A deadline abort before the send emits `generation_aborted` before it clears the marker, so a
   failed release leaves the session `uncertain`, not `failed`.
 - `ToolDispatcher.dispatch` escapes a lone surrogate in a tool result, keys included, as

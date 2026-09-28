@@ -100,7 +100,9 @@ in WAL mode with `synchronous=FULL`. Recent commits live in the `harness.db-wal`
 `harness.db`, with a `harness.db-shm` index, so the database needs a local filesystem (WAL does not
 work over a network share). Back it up with the SQLite backup API
 (`sqlite3 harness.db ".backup copy.db"`), or stop the harness, run
-`PRAGMA wal_checkpoint(TRUNCATE)` and copy. Never copy `harness.db` alone.
+`PRAGMA wal_checkpoint(TRUNCATE)` and copy. Never copy `harness.db` alone. A read-only reader
+(the `work/society-s1` scripts open `?mode=ro`) needs the `-shm` file or a writable directory; for
+a copy on read-only media, checkpoint it first, or open it with `immutable=1`.
 
 ## Fault-injection and scale qualification
 

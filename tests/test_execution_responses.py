@@ -1289,6 +1289,31 @@ async def test_batch_failing_before_a_marker_announces_earlier_results_after_the
     await client.close()
 
 
+async def test_sink_failure_before_a_call_runs_leaves_that_call_certain(tmp_path):
+    """call_1 is announced after call_2's marker save; if that announcement fails, call_2 never
+    ran, so the session fails without naming it as uncertain."""
+    seen = []
+    store = RecordingStore(tmp_path / "s.db")
+
+    async def emit(event):
+        if event.kind == "tool_completed":
+            raise RuntimeError("event sink down")
+
+    client = client_for([response([double_call("call_1"), double_call("call_2", 3)])], [])
+    runtime = ResponsesRuntime(
+        store=store, dispatcher=double_dispatcher(seen), client=client, event_sink=emit
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    [session_id] = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
+    saved = await store.load(session_id)
+    assert seen == [f"{session_id}:call_1"]
+    assert error.value.operation_id is None
+    assert saved.session.status == "failed"
+    assert saved.native_state["pending_operation"] is None
+    await client.close()
+
+
 class RefusingSettledSaves(RecordingStore):
     """Refuses the next ``refusals`` saves of a settled first turn: F, then the failure save."""
 
