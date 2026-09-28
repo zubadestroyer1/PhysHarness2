@@ -52,17 +52,20 @@ def seed_notes(environment_digest: str) -> list[str]:
 
 def _names_meet(name: str, word: str) -> bool:
     """Whether a quoted Lean name meets a query word, case-insensitively: they are equal,
-    or the name holds a ``.`` or ``_`` and the shorter prefixes the longer at a ``.`` or
-    ``_`` boundary (``PiLp.toLp`` meets ``PiLp.toLp_apply``). A bare quoted name, such as a
-    namespace, meets only an equal word, never every name under it. A prefix has at least
-    ``SURFACE_WORD_CHARS`` characters."""
+    or the shorter holds a ``.`` or ``_`` and prefixes the longer at a ``.`` or ``_``
+    boundary (``PiLp.toLp`` meets ``PiLp.toLp_apply``, either way round). A bare name, such
+    as a namespace, quoted or queried, meets only an equal name, never every name under it.
+    A prefix has at least ``SURFACE_WORD_CHARS`` characters."""
     name, word = name.casefold(), word.casefold()
     if name == word:
         return True
-    if "." not in name and "_" not in name:
-        return False
     short, long = sorted((name, word), key=len)
-    return len(short) >= SURFACE_WORD_CHARS and long.startswith(short) and long[len(short)] in "._"
+    return (
+        ("." in short or "_" in short)
+        and len(short) >= SURFACE_WORD_CHARS
+        and long.startswith(short)
+        and long[len(short)] in "._"
+    )
 
 
 def _names_query(text: str, query: str) -> bool:
