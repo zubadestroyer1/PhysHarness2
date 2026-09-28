@@ -64,11 +64,10 @@ _RUNS_CODE = frozenset(
 )
 _REGISTERS = ("builtin_", "declare_", "register_")
 # `unsafe` modifies a declaration, or makes a term (`unsafe t`) that runs `t` through an
-# unsafe helper; it passes only as aesop's rule phase, in the innermost bracket of an aesop
-# clause and followed by a success probability or a rule builder: `aesop (add unsafe 50%
-# apply foo)`, `@[aesop unsafe 20% apply]`. Names of unsafe escapes (`unsafeBaseIO`,
-# `unsafeCast`, …) are refused as a backstop.
-_OPEN_BRACKETS, _CLOSE_BRACKETS = "([{⟨⦃", ")]}⟩⦄"
+# unsafe helper. It is refused wherever it is read as code, aesop's `unsafe` rule phase
+# included: that phase (`unsafe 50% foo`) reads the same as the term `unsafe (50 % foo)`,
+# so no pattern can tell them apart. Names of unsafe escapes (`unsafeBaseIO`, `unsafeCast`,
+# …) are refused too.
 _UNSAFE_NAMES = "unsafe"
 # Notation only as `local`, which ends with the section the inliner wraps the module in;
 # global or `scoped` notation reaches the importer's own lines.
@@ -145,15 +144,6 @@ _SCOPED = re.compile(rf"(?<![{_ID_REST}.!?])scoped(?:\s*\[[^\]]*\])?\s+$")
 # Any escaped name (`«…»`) the scanner reads as code is refused, whatever it escapes: an
 # agent's lemma needs none, and a name read through them is a name the gate cannot read.
 ESCAPED_NAME = "«…»"
-_AESOP_PHASE = re.compile(
-    rf"\s*(?:[0-9]+(?:\.[0-9]+)?%|(?:apply|forward|destruct|constructors|cases|simp|unfold"
-    rf"|tactic)(?![{_ID_REST}!?]))"
-)
-_AESOP_CLAUSE = re.compile(rf"\s*(?:add|erase)(?![{_ID_REST}!?])")
-# An aesop-family tactic (`aesop`, `aesop?`, `aesop_cat`, …) right before its clauses.
-_AESOP_TACTIC = re.compile(rf"(?<![{_ID_REST}.!?])aesop[{_ID_REST}!?]*\s*$")
-_AESOP_ENTRY = re.compile(rf"\s*(?:(?:local|scoped)\s+)?aesop(?![{_ID_REST}!?])")
-_ATTRIBUTE_COMMAND = re.compile(rf"(?<![{_ID_REST}.!?])attribute\s*$")
 
 
 @dataclass(frozen=True)
@@ -420,62 +410,6 @@ def scope_closers(module, source):
     return [f"end {label}".rstrip() for label in reversed(stack)]
 
 
-def _aesop_call(code, opened):
-    """Whether the clause opening at ``code[opened]`` belongs to an aesop-family tactic:
-    the tactic's word comes right before it, or before the earlier balanced clauses of the
-    same call (``aesop (config := …) (add …)``)."""
-    index = opened
-    while True:
-        end = len(code[:index].rstrip())
-        if not end or code[end - 1] != ")":
-            return _AESOP_TACTIC.search(code, max(0, end - 64), end) is not None
-        depth = 0
-        for index in range(end - 1, -1, -1):  # back over the earlier clause
-            if code[index] == ")":
-                depth += 1
-            elif code[index] == "(":
-                depth -= 1
-                if not depth:
-                    break
-        else:
-            return False
-
-
-def _aesop_phase(code, start, end):
-    """Whether the ``unsafe`` at ``code[start:end]`` is aesop's rule phase: a success
-    probability (``N%``) or a rule builder follows it, and its innermost bracket is an
-    aesop tactic's clause, ``(add …)`` or ``(erase …)``, or an attribute entry starting
-    with ``aesop``."""
-    if not _AESOP_PHASE.match(code, end):
-        return False
-    depth = 0
-    for opened in range(start - 1, -1, -1):
-        if code[opened] in _CLOSE_BRACKETS:
-            depth += 1
-        elif code[opened] in _OPEN_BRACKETS:
-            if not depth:
-                break
-            depth -= 1
-    else:
-        return False
-    if code[opened] == "(":
-        return _AESOP_CLAUSE.match(code, opened + 1) is not None and _aesop_call(code, opened)
-    if code[opened] != "[" or not (
-        code.endswith("@", 0, opened)
-        or _ATTRIBUTE_COMMAND.search(code, max(0, opened - 64), opened)
-    ):
-        return False
-    entry, depth = opened + 1, 0  # the attribute entry holding it: after its last comma
-    for index in range(opened + 1, start):
-        if code[index] in _OPEN_BRACKETS:
-            depth += 1
-        elif code[index] in _CLOSE_BRACKETS:
-            depth -= 1
-        elif code[index] == "," and not depth:
-            entry = index + 1
-    return _AESOP_ENTRY.match(code, entry) is not None
-
-
 def _bracketed(code, start):
     """The text from ``start`` to its unmatched ``]``, or None when there is none."""
     depth = 0
@@ -497,8 +431,8 @@ def _meta_name(name):
 def refused_command(source):
     """The first command, attribute, option or name in ``source`` after its imports that no
     published module may hold, or None (PR 37 review): a command or modifier that runs code
-    or extends syntax (``_RUNS_CODE``, ``_REGISTERS``, and ``unsafe`` unless it is aesop's
-    rule phase), a name of an unsafe escape (a component starting with ``unsafe``), notation
+    or extends syntax (``_RUNS_CODE``, ``_REGISTERS`` and ``unsafe``, aesop's rule phase
+    included), a name of an unsafe escape (a component starting with ``unsafe``), notation
     that is not ``local`` (``scoped notation`` is named
     so), a ``#`` command of ``_RUNS_TERMS``, a code attribute, a ``set_option`` outside the
     module options, a name with a component in ``_META_NAMESPACES``, or any escaped name
@@ -547,13 +481,11 @@ def refused_command(source):
                 return f"scoped {word}"
             if not _LOCAL.search(code, *before):
                 return word
-        elif word == "unsafe":
-            if not _aesop_phase(code, match.start(), end):
-                return word
         elif (
             word in _RUNS_CODE
             or word.startswith(_REGISTERS)
             or _meta_name(word)
+            # `unsafe` itself, anywhere, and unsafe escapes (`unsafeBaseIO`, …) by name.
             or any(part.startswith(_UNSAFE_NAMES) for part in word.split("."))
         ):
             return word
@@ -582,8 +514,9 @@ def gate_remedy(command):
         return "Drop the attribute: it would hand every importer's elaborator code to run."
     if command == "unsafe":
         return (
-            "Drop unsafe: it makes an unsafe declaration or term. It is fine only as aesop's "
-            "rule phase, as in aesop (add unsafe 50% apply foo) or @[aesop unsafe 20% apply]."
+            "Drop unsafe: it makes an unsafe declaration or term, and aesop's unsafe rule phase "
+            "reads the same. Use a safe or norm aesop rule, as in aesop (add safe apply foo), "
+            "or apply the lemma directly."
         )
     if any(part.startswith(_UNSAFE_NAMES) for part in command.split(".")):
         return f"Drop {command}: an unsafe escape can run IO wherever the module is imported."

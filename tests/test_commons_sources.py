@@ -897,25 +897,11 @@ def test_the_gate_refuses_any_escaped_name_the_scanner_reads_as_code():
     assert "rename" in gate_remedy("«…»").lower() and "«»" in gate_remedy("«…»")
 
 
-def test_the_gate_allows_unsafe_only_as_aesops_rule_phase():
-    """PR 37 re-audits: aesop's `unsafe` rule phase (87 Mathlib lines) is no declaration,
-    but Lean's term `unsafe t` runs `t` through an unsafe helper, and bracketed it passed.
-    So `unsafe` passes only as the phase of an aesop clause; unsafe escapes such as
-    `unsafeBaseIO` are refused by name as a backstop."""
-    hints = (
-        "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50% apply id)\n",
-        "theorem t (p : Prop) (h : p) : p := by\n  aesop (add safe apply id, unsafe apply id)\n",
-        # After earlier clauses of the same call, and from aesop's other tactics.
-        "theorem t (p : Prop) (h : p) : p := by\n"
-        "  aesop (config := { terminal := true }) (add unsafe 50% apply id)\n",
-        "theorem t (p : Prop) (h : p) : p := by aesop? (add unsafe 50% apply id)\n",
-        "theorem t (p : Prop) (h : p) : p := by aesop_cat (erase unsafe apply id)\n",
-        "@[aesop unsafe 50% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
-        "@[simp, aesop unsafe 20% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
-        "attribute [local aesop unsafe 20% apply] Nat.le_succ\n",
-    )
-    for body in hints:
-        assert refused_command(f"import Mathlib\n{body}") is None, body
+def test_the_gate_refuses_unsafe_everywhere_aesop_hints_included():
+    """PR 37 re-audits: Lean's term `unsafe t` runs `t` through an unsafe helper, and aesop's
+    `unsafe` rule phase (`unsafe 50% foo`) reads the same as the term `unsafe (50 % foo)`, so
+    two pattern-based exceptions for the phase each let a term through. `unsafe` is refused
+    wherever it is code; unsafe escapes such as `unsafeBaseIO` are refused by name too."""
     refused = {
         "unsafe def f : Nat := 1\n": "unsafe",
         "@[inline] private unsafe def f : Nat := 1\n": "unsafe",
@@ -923,19 +909,23 @@ def test_the_gate_allows_unsafe_only_as_aesops_rule_phase():
         "def x : Nat := unsafe 0\n": "unsafe",
         "theorem t : True := by exact (unsafe trivial)\n": "unsafe",
         "def x : List Nat := [unsafe 0]\n": "unsafe",
-        "def x : Nat := (add unsafe 0)\n": "unsafe",  # no probability or builder follows
-        # A clause only after an aesop tactic, and a probability only as N%, no space.
         "def f := (add <| unsafe 5 % 2)\n": "unsafe",
-        "def f := foo (add unsafe 50% apply id)\n": "unsafe",
-        "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50 % apply id)\n": "unsafe",
-        "@[aesop (rule_sets := [unsafe 50% apply])] theorem l : True := trivial\n": "unsafe",
+        "def f := aesop_x (add unsafe 50%2)\n": "unsafe",
+        "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50% apply id)\n": "unsafe",
+        "@[aesop unsafe 50% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n": "unsafe",
+        "attribute [local aesop unsafe 20% apply] Nat.le_succ\n": "unsafe",
         "def x : Nat := unsafeBaseIO (pure 0)\n": "unsafeBaseIO",
         "def x : Nat := (unsafeCast ())\n": "unsafeCast",
         "def x := Foo.unsafeEIO\n": "Foo.unsafeEIO",
     }
     for body, command in refused.items():
         assert refused_command(f"import Mathlib\n{body}") == command, body
-    assert "aesop" in gate_remedy("unsafe") and "unsafe" in gate_remedy("unsafeBaseIO")
+    for body in (
+        "theorem t (p : Prop) (h : p) : p := by aesop (add safe apply id)\n",
+        'def s := "unsafe" -- unsafe in a string and a comment\n',
+    ):
+        assert refused_command(f"import Mathlib\n{body}") is None, body
+    assert "safe" in gate_remedy("unsafe") and "unsafe" in gate_remedy("unsafeBaseIO")
 
 
 def test_each_refusal_names_its_workaround():
