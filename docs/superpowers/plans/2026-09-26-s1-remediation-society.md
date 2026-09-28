@@ -14,6 +14,7 @@
 > - Nothing is pushed to a referee: no auto-subscription (citing its own node included) and no self-subscription (`REFEREE_ISOLATED`) reaches a referee branch, and a referee's worker gets no update source.
 > - A compact update line renders its excerpt, like its node title, as a quoted JSON string, so a peer cannot forge a platform-looking segment inside its own line.
 > - `commons_read`'s thread digest quotes each post's text, and the platform's note for an author's abandonment names the author and quotes its reason.
+> - Library notes an agent appends are read only within its experiment (migration `0004`'s index now leads with `experiment_id`); the checked-in seed stays shared. A branch appends at most 20 notes and an experiment holds at most 200; `find_declaration` surfaces a note only when it shares two of the query's words; the `library_notes` read result carries `notes_are`.
 
 ## Global Constraints
 

@@ -1,4 +1,4 @@
-"""Project-scoped library notes per pinned Lean environment (S1 audit #24)."""
+"""Library notes per pinned Lean environment, read within their experiment (S1 audit #24)."""
 
 import sqlalchemy as sa
 from alembic import op
@@ -21,12 +21,12 @@ def upgrade():
         sa.Column("created_at", sa.String(40), nullable=False),
     )
     op.create_index(
-        "library_notes_project_environment",
+        "library_notes_experiment_environment",
         "library_notes",
-        ["project_id", "environment_digest", "created_at"],
+        ["project_id", "experiment_id", "environment_digest", "created_at"],
     )
 
 
 def downgrade():
-    op.drop_index("library_notes_project_environment", table_name="library_notes")
+    op.drop_index("library_notes_experiment_environment", table_name="library_notes")
     op.drop_table("library_notes")

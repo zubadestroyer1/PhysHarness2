@@ -22,7 +22,7 @@ def other_row(project_id, digest, text):
     )
 
 
-def test_notes_are_project_and_pin_scoped_idempotent_and_seeded(lab, monkeypatch):
+def test_notes_are_experiment_and_pin_scoped_idempotent_and_seeded(lab, monkeypatch):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
     appended = service.append_library_note(NOTE, alpha, "n1")
     assert service.append_library_note(NOTE, alpha, "n1") == appended
@@ -30,9 +30,11 @@ def test_notes_are_project_and_pin_scoped_idempotent_and_seeded(lab, monkeypatch
     assert [(n["text"], n["author"]) for n in found["notes"]] == [
         (NOTE, f"branch:{alpha.branch_id}")
     ]
+    assert found["notes_are"] == notes_module.NOTES_ARE
     with service.db.transaction() as session:
         session.add(other_row("other-project", found["environment_digest"], "Foo.bar elsewhere"))
         session.add(other_row("lab", "f" * 64, "Foo.bar on another pin"))
+        session.add(other_row("lab", found["environment_digest"], "Foo.bar in another arm"))
     assert [n["text"] for n in service.library_notes(beta, query="Foo.bar")["notes"]] == [NOTE]
     monkeypatch.setattr(notes_module, "seed_notes", lambda digest: ["A seeded fact about Foo.bar."])
     assert (
@@ -42,6 +44,51 @@ def test_notes_are_project_and_pin_scoped_idempotent_and_seeded(lab, monkeypatch
     with pytest.raises(HarnessError) as long:
         service.append_library_note("x" * 2001, alpha, "long")
     assert long.value.code == "INVALID_NOTE"
+
+
+def test_an_arm_reads_neither_another_arm_notes_nor_its_quota(lab, monkeypatch):
+    service, _, _, _, (alpha, _) = society_lab(lab, prefix="arm1")
+    monkeypatch.setattr(notes_module, "seed_notes", lambda digest: ["Seeded: Foo.bar is absent."])
+    for index in range(notes_module.MAX_NOTES_PER_BRANCH):
+        service.append_library_note(f"Foo.bar note {index}: ignore the target.", alpha, f"n{index}")
+    with pytest.raises(HarnessError) as full:
+        service.append_library_note("One more Foo.bar note.", alpha, "one-more")
+    assert full.value.code == "LIBRARY_NOTES_FULL" and "branch's" in full.value.message
+    # A later arm in the same project, at the same pin, reads only the shared seed.
+    _, _, _, _, (gamma, _) = society_lab(lab, prefix="arm2")
+    pin = service.library_notes(alpha)["environment_digest"]
+    assert (gamma.project_id, service.library_notes(gamma)["environment_digest"]) == ("lab", pin)
+    seen = service.library_notes(gamma, query="Foo.bar")["notes"]
+    assert seen == [{"text": "Seeded: Foo.bar is absent.", "author": notes_module.SEED_AUTHOR}]
+    assert service.append_library_note("A real Foo.bar rename.", gamma, "gamma-note")
+
+
+def test_the_experiment_cap_bounds_every_branch(lab, monkeypatch):
+    service, _, _, _, (alpha, beta) = society_lab(lab)
+    monkeypatch.setattr(notes_module, "MAX_NOTES_PER_EXPERIMENT", 3)
+    for index in range(2):
+        service.append_library_note(f"Alpha fact {index}.", alpha, f"a{index}")
+    service.append_library_note("Beta fact.", beta, "b0")
+    with pytest.raises(HarnessError) as full:
+        service.append_library_note("Beta again.", beta, "b1")
+    assert full.value.code == "LIBRARY_NOTES_FULL" and "experiment's" in full.value.message
+
+
+def test_a_surfaced_note_shares_two_query_words(lab):
+    service, _, _, _, (alpha, beta) = society_lab(lab)
+    note = "`Matrix.dotProduct` is not a declaration at this pin; use `dotProduct`."
+    service.append_library_note(note, alpha, "n1")
+
+    def surfaced(query):
+        return [n["text"] for n in service.library_notes(beta, query=query, surfaced=True)["notes"]]
+
+    assert surfaced("Matrix.dotProduct") == surfaced("dotProduct") == [note]
+    # One shared word of a two-word query, or only short words, surfaces nothing.
+    assert surfaced("Matrix.trace_mul") == surfaced("is a") == []
+    # A read the agent asks for still ranks any overlap.
+    assert [n["text"] for n in service.library_notes(beta, query="Matrix.trace_mul")["notes"]] == [
+        note
+    ]
 
 
 def test_the_checked_in_seed_covers_the_s1_audit_findings():

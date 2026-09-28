@@ -180,8 +180,8 @@ class EdgeRow(Base):
 
 
 class LibraryNoteRow(Base):
-    """Agent-written facts about one pinned Lean/Mathlib environment, shared by a project's
-    experiments (S1 audit #24): the one table the S1 remediation adds."""
+    """Agent-written facts about one pinned Lean/Mathlib environment, read within the
+    experiment that wrote them (S1 audit #24): the one table the S1 remediation adds."""
 
     __tablename__ = "library_notes"
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -193,7 +193,11 @@ class LibraryNoteRow(Base):
     created_at: Mapped[str] = mapped_column(String(40))
     __table_args__ = (
         Index(
-            "library_notes_project_environment", "project_id", "environment_digest", "created_at"
+            "library_notes_experiment_environment",
+            "project_id",
+            "experiment_id",
+            "environment_digest",
+            "created_at",
         ),
     )
 
