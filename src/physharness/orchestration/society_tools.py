@@ -171,6 +171,10 @@ SHARE_LEAN = (
 POST_KINDS = ("question", "finding", "objection", "attempt_failed", "synthesis", "update")
 # Statement-check verdicts that the file does not prove the node's statement: no publication.
 STATEMENT_REJECTIONS = frozenset({"statement_mismatch", "kernel_rejected", "theorem_missing"})
+# The axiom names a referee's lean_check shows once modules are inlined: Lean's own, which no
+# module can declare. Any other name may be a module author's text.
+REFEREE_AXIOMS = STANDARD_AXIOMS | {"sorryAx"}
+WITHHELD_AXIOM = "(another axiom; name withheld from referees)"
 NODE_ACTIONS = ("create", "link", "set_lean_statement", "abandon", "request_review")
 # Fields each commons_node action reads; any other field must stay at its default.
 ACTION_FIELDS = {
@@ -722,34 +726,49 @@ def _referee_view(result, keep=(), *, items=False):
 
 
 def _referee_lean_result(result, source, expansion):
-    """A referee's ``lean_check`` result. A message or hole inside an inlined commons module
-    keeps its place but not its text: a module's ``#print`` or ``#eval`` output, or the goal
-    of its ``sorry``, is its publisher's text, maybe the reviewed author's, and would reach
-    the referee unfenced. For the same reason the axiom report keeps only the declarations
-    of the referee's own ``source`` (a «guillemet» name holds near-arbitrary text) and counts
-    the rest as ``axioms_withheld``."""
+    """A referee's ``lean_check`` result. With modules inlined, only text located on the
+    referee's own lines reaches it as Lean wrote it. A message or hole inside an inlined
+    commons module keeps its place but not its text: a module's ``#print`` output, or the
+    goal of its ``sorry``, is its publisher's text, maybe the reviewed author's. One with no
+    line on the referee's own text (unlocated, or on a hoisted import) keeps its text
+    fenced as untrusted author data, since a module may have printed it (PR 37 review). For
+    the same reason the axiom report keeps only the declarations of the referee's own
+    ``source`` (a «guillemet» name holds near-arbitrary text), counting the rest as
+    ``axioms_withheld``, and in their axiom lists shows only Lean's standard axioms and
+    ``sorryAx`` (no module can declare either name), each other name replaced by a
+    placeholder."""
+    if not expansion.modules:
+        return result
 
-    def withheld(item, kept, field, what):
-        if item.get("module") is None:
-            return item
-        text = f"({what} inside inlined module {item['module']}; {field} withheld from referees)"
-        return {**{key: item[key] for key in kept}, field: text}
+    def shown(item, kept, field, what):
+        if item.get("module") is not None:
+            text = (
+                f"({what} inside inlined module {item['module']}; {field} withheld from referees)"
+            )
+            return {**{key: item[key] for key in kept}, field: text}
+        if item.get("line") is None and item.get(field) is not None:
+            return {**item, field: fence_author_data(item[field])}
+        return item
 
     view = {
         **result,
         "messages": [
-            withheld(item, ("severity", "module", "expanded_line"), "text", "message")
+            shown(item, ("severity", "module", "expanded_line"), "text", "message")
             for item in result["messages"]
         ],
         "holes": [
-            withheld(item, ("index", "module", "expanded_line"), "goal", "hole")
+            shown(item, ("index", "module", "expanded_line"), "goal", "hole")
             for item in result["holes"]
         ],
+        "note": REFEREE_DATA_NOTE,
     }
-    if expansion.modules:
-        axioms, own = result.get("axioms") or {}, set(top_level_names(source))
-        view["axioms"] = {name: found for name, found in axioms.items() if name in own}
-        view["axioms_withheld"] = len(axioms) - len(view["axioms"])
+    axioms, own = result.get("axioms") or {}, set(top_level_names(source))
+    view["axioms"] = {
+        name: [axiom if axiom in REFEREE_AXIOMS else WITHHELD_AXIOM for axiom in found]
+        for name, found in axioms.items()
+        if name in own
+    }
+    view["axioms_withheld"] = len(axioms) - len(view["axioms"])
     return view
 
 

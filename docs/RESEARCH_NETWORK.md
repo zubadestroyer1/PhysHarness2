@@ -460,7 +460,10 @@ tools, the prompts and the delivery shapes.
   assigned node's thread. A referee's `lean_check` may inline published modules; text
   from them in Lean output (messages on the referee's own lines, `#print` output, axiom
   names) is untrusted author data. Messages, goals and axiom keys located inside inlined
-  modules are withheld.
+  modules are withheld; a message or goal with no line on the referee's own text is
+  fenced, and axiom names other than Lean's standard ones and `sorryAx` are replaced by a
+  placeholder. The publication gate keeps a module from printing onto the referee's
+  own lines.
 - **Recruits.** `recruit` takes one narrow deliverable (a named lemma with its Lean
   signature, or a specific lookup), since in S1 broad recruits drifted into attempting the
   whole target (S1 audit #23). The librarian hat looks up library names, signatures and
@@ -658,9 +661,15 @@ scope, and the thread search reads the earliest posts first and fails closed pas
 bound. A referee's `find_declaration` surfaces no library notes, and its `lean_check`
 withholds the text of every message, and the goal of every `sorry`, inside an inlined
 module, keeping only their place (severity or hole index, module and expanded line): a
-module's output is its publisher's text. With modules inlined, its axiom report keeps only
-the declarations of the referee's own text and counts the rest (`axioms_withheld`), since a
-«guillemet» declaration name can hold near-arbitrary text.
+module's output is its publisher's text. With modules inlined, a message or goal with no
+line on the referee's own text (unlocated, or on a hoisted import) keeps its text only
+fenced as untrusted author data, since a module may have printed it, and the axiom report
+keeps only the declarations of the referee's own text and counts the rest
+(`axioms_withheld`), since a «guillemet» declaration name can hold near-arbitrary text. In
+those declarations' axiom lists only `propext`, `Classical.choice`, `Quot.sound` and
+`sorryAx`, which no module can declare, are named; any other name reads "(another axiom;
+name withheld from referees)". What is left verbatim is located on the referee's own
+lines, where the publication gate leaves a module no code to print with.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
 that lists the available tools. Rejections count per native session whatever the name,
 so a model that keeps inventing names reaches the stagnation warning after four and the
