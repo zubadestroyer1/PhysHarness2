@@ -52,6 +52,7 @@ from ..commons_sources import (
     blocking_rank,
     node_module,
     node_refusal,
+    refused_command,
     remap,
     scope_closers,
     source_state,
@@ -432,8 +433,13 @@ def _compile_refusal(source, node):
     statement check's judgement (``LeanSession.verify_statement``), which compares elaborated
     types: text-level checks cannot see instances, macros or options that change it.
     """
-    if header_problem(node.get("lean_header")) or signature_problem(node.get("lean_statement")):
-        return "invalid_lean_statement"  # recorded before statements were checked for shape
+    header, statement = node.get("lean_header"), node.get("lean_statement")
+    if (
+        header_problem(header)
+        or signature_problem(statement)
+        or refused_command(f"{header or ''}\n{statement}")  # the check elaborates it here
+    ):
+        return "invalid_lean_statement"  # recorded before these checks
     if "#exit" in source:  # Lean stops there: later declarations and reports never run.
         return "exit_command"
     code = lean_code(source)
@@ -450,13 +456,16 @@ def _compile_refusal(source, node):
 
 
 def _publication_refusal(source, node, result):
-    """Why a checked file cannot be the node's module, or None (S1 audit #12)."""
+    """Why a checked file cannot be the node's module, or None (S1 audit #12). A module
+    whose compile-time code would run in every importer's VM is ``refused_command``."""
     if node.get("node_type") == "goal":
         return "goal_node"
     if not result["ok"]:
         return "lean_errors"
     if "#exit" in source:
         return "exit_command"
+    if refused_command(source) is not None:
+        return "refused_command"
     try:
         scope_closers("source", source)  # an importer inlines it inside a section
     except HarnessError:
@@ -479,6 +488,14 @@ def _checked_refusal(source, node, expansion, result):
         # Published, the module would import itself and fail every importer.
         return "imports_own_module"
     return refusal
+
+
+def _refused(module, reason, source):
+    """A refused publication; a refused command is named (``refused_command``)."""
+    refused = {"recorded": False, "module": module, "reason": reason}
+    if reason == "refused_command":
+        refused["command"] = refused_command(source)
+    return refused
 
 
 def _source_rank(node, result, verdict):
@@ -1026,11 +1043,7 @@ def society_tools(
                     reason = _checked_refusal(source, node, expansion, checked)
                     held = None if reason else blocking_rank(node, "partial", agent.branch_id)
                 if reason or held:
-                    refused = {
-                        "recorded": False,
-                        "module": node_module(node),
-                        "reason": reason or "lower_rank",
-                    }
+                    refused = _refused(node_module(node), reason or "lower_rank", source)
                     if held:
                         refused["rank"] = held
                     return source, [], (checked, refused)
@@ -1120,7 +1133,7 @@ def society_tools(
             module = node_module(node)
             refusal = _checked_refusal(source, node, expansion, result)
             if refusal is not None:
-                return {"recorded": False, "module": module, "reason": refusal}
+                return _refused(module, refusal, source)
             header, name, statement = (
                 node.get("lean_header"),
                 node.get("lean_name"),
@@ -1250,7 +1263,11 @@ def society_tools(
                 "Commons.N<8 hex>, ranked verified (the statement check passed on standard "
                 "axioms), complete (no sorry; the check could not judge) or partial; a higher "
                 "rank replaces a lower one, and publishing claims the node. A complete check "
-                "runs the platform's statement check. The file "
+                "runs the platform's statement check. A published module runs no code where "
+                "it is imported: no #-command but #check, #print, #reduce or #synth, no "
+                "run_cmd, elab, macro, syntax, initialize, unsafe or code attribute, notation "
+                "only as local notation, set_option only as in a lean_header, and no Lean or "
+                "IO names. The file "
                 "header must hold the node's lean_header lines, the file must have no variable "
                 "or #exit command, and "
                 "it must declare theorem <lean_name> <lean_statement> := ... once, outside "

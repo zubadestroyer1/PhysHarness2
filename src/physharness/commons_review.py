@@ -26,6 +26,7 @@ from .commons_sources import (
     COMPLETE_RANKS,
     MAX_COMMONS_MODULES,
     has_elaborated_statement,
+    refused_command,
     source_state,
 )
 from .domain import StrictModel, digest_json, new_id
@@ -822,6 +823,8 @@ class CommonsReviewMixin:
         The header must be only import, open, set_option and universe lines and the statement
         one declaration signature, whoever the caller: otherwise text in either could end the
         elaborated declaration early (``#exit``, say) and make any statement "elaborate".
+        Neither may hold what no published module may (``refused_command``): an importer's
+        sorry stub and every publisher's statement check elaborate them in their own VMs.
         """
         self._research_role(actor)
         request = _validated(
@@ -843,6 +846,16 @@ class CommonsReviewMixin:
                 status=422,
                 remediation=HEADER_RULES + " A statement is binders then ': type', with no "
                 "':=' or 'where' outside brackets.",
+            )
+        command = refused_command(f"{request.lean_header or ''}\n{request.lean_statement}")
+        if command is not None:
+            raise HarnessError(
+                "INVALID_LEAN_STATEMENT",
+                f"The Lean header or statement holds {command}, which would run in the VM of "
+                "every importer and publisher.",
+                status=422,
+                details={"command": command},
+                remediation="State it without metaprogramming, IO or #-commands.",
             )
         data = request.model_dump(mode="json")
 

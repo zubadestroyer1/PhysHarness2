@@ -27,8 +27,11 @@ from commons_helpers import society_lab
 from test_lean_session import FakeWorkspaceTools, RealLeanScratchTools, lean_env  # noqa: F401
 from test_society_tools import FakeWorkspace, call, lemma_args, profile, running
 
+from physharness import commons_sources
+from physharness.commons_sources import refused_command
 from physharness.errors import HarnessError
 from physharness.formal_tools import statement_check as driver
+from physharness.orchestration import society_tools
 from physharness.orchestration import workspace_tools as workspace_tools_module
 from physharness.orchestration.lean_session import (
     CHECK_BACKEND,
@@ -78,6 +81,14 @@ FORGERY_OUTCOMES = {
     "macro_rules": "statement_mismatch",
     "print_axioms_override": "partial",
     "skip_kernel_tc": "kernel_rejected",
+}
+# The command the publication gate names for each forgery (PR 37 review): it refuses all but
+# the instance before any check, since an importer would run the rest.
+GATED = {
+    "instance_shadowing": None,
+    "macro_rules": "macro_rules",
+    "print_axioms_override": "Lean",
+    "skip_kernel_tc": "Lean",
 }
 HONEST = (
     "import Lean\n\n"
@@ -161,7 +172,13 @@ async def _formal_node(tools, service, node):
 
 @pytest.mark.lean
 @pytest.mark.parametrize("backend", ["one_shot", "repl_inline", "repl"])
-async def test_elaboration_tricks_cannot_forge_a_verified_source(lab, real_lean, backend):
+async def test_elaboration_tricks_cannot_forge_a_verified_source(
+    lab, real_lean, backend, monkeypatch
+):
+    assert {label: refused_command(source) for label, source in FORGERIES.items()} == GATED
+    # With the gate lifted, the statement check must still stop each one on its own.
+    for module in (commons_sources, society_tools):
+        monkeypatch.setattr(module, "refused_command", lambda source: None)
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     session = LeanSession(_tools(real_lean, backend))

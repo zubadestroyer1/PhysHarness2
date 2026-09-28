@@ -802,6 +802,9 @@ Before opening the Tier-0 PR: run the full suite and ruff (Task 21, Steps 4–5)
 
 ## Society lane (one PR, stacked on Tier 0)
 
+> **Merge audit (2026-09-27): the lemma store's trust boundary.** The PR 37 review found these, fixed before merge:
+> - **Publication gate.** A published module's compile-time code ran in every importer's and referee's VM. `refused_command` now refuses code-running and syntax-extending commands and attributes, non-`local` notation, `#` commands but `#check`/`#check_failure`/`#print`/`#reduce`/`#synth`, options a header may not set, and `Lean`/`IO` names, in `lean_check`, `record_lean_source`, `set_lean_statement` (a statement becomes a stub) and at inline and fetch time for records stored before the gate.
+
 ### Task 5: Remove check-ins and stagnation nudges; the removed-field refusal (#20)
 
 **Files:**

@@ -190,7 +190,10 @@ tools, the prompts and the delivery shapes.
     elaboration-level tricks (instances, macros, `#print axioms` overrides, skipped kernel
     checks), but a file or command that tampers with the VM can still reach a `verified`
     rank. It is VM-attested evidence, never acceptance. Only independent acceptance is
-    trusted: the independent receipt on the exact target accepts the goal.
+    trusted: the independent receipt on the exact target accepts the goal. That code is
+    the publisher's own, in its own VM: no published module or node statement holds any
+    (the publication gate below), so an importer, a referee or another publisher runs
+    none of a peer's.
   - `set_lean_statement` elaborates the statement with `set_option autoImplicit false`
     after the header, overriding the header's own `autoImplicit`. An unknown name or an
     undeclared universe is then refused (`Unknown identifier`) instead of silently
@@ -226,6 +229,31 @@ tools, the prompts and the delivery shapes.
     ranks on the file's own axiom report) or `partial`. A statement check that rejects the
     file publishes nothing. `record_lean_source` refuses a `verified` rank whose record
     lacks a passing statement check on standard axioms, whoever calls it.
+  - The publication gate. Every importer inlines a module, and so may a referee's
+    `lean_check`, so a module's compile-time code would run in their VMs, and a global
+    syntax extension would change how their own lines read (a `sorry` that is none, a
+    redefined `#print axioms`). `lean_check` and `record_lean_source` (whoever calls it)
+    refuse a source that holds, outside comments and literals (`refused_command`, naming
+    the `command`): a `#` command other than `#check`, `#check_failure`, `#print`,
+    `#reduce` and `#synth` (so Mathlib's `#s` card notation too: write `#(s)`);
+    `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
+    `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
+    `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), `unsafe`, or any
+    `builtin_…`, `declare_…` or `register_…` command; `notation`, `notation3`, `infix`,
+    `infixl`, `infixr`, `prefix` or `postfix` unless `local` (Lean drops local notation
+    at the `end` of the section around the module; `scoped` is refused); a code attribute
+    in `@[…]` or `attribute […]` (`command_elab`, `term_elab`, `tactic`, `macro`, `init`,
+    `implemented_by`, `extern`, `env_linter`, `delab`, `app_unexpander`, `norm_num`,
+    `positivity`, `simproc`, `dsimproc`, `widget_module`, and any `builtin_…`, `…_elab`,
+    `…_parser`, `…_delab`, `…_unexpander`, `…_code_action`, `…_formatter` or
+    `…_parenthesizer` one); `set_option` of an option a node header may not set (so
+    `set_option maxHeartbeats N in` stays); and a name in the `Lean`, `IO`, `EIO` or
+    `BaseIO` namespaces, so no metaprogram or IO action is written for a tactic's
+    configuration to run. `set_lean_statement` refuses a header or statement the gate
+    refuses: an importer's `sorry` stub and every publisher's statement check elaborate
+    them. A source or statement stored before the gate that it refuses is refused when
+    imported or fetched (`COMMONS_MODULE_REFUSED`), and publication against such a
+    statement is `invalid_lean_statement`.
   - A source proves a node only for the statement it was checked against. Once the
     node's Lean statement changes (or a node published without one gets one), its source
     reports `stale`: it is never complete, so the node can draw a referee again and a node
@@ -271,7 +299,8 @@ tools, the prompts and the delivery shapes.
     platform step writes, lists each module's node, source digest, branch and `stale`
     flag. Every imported module must have a complete or verified source
     (`COMMONS_CLOSURE_INCOMPLETE`). Import cycles, more than 200 modules, a module with
-    `#exit` or an unopened `end`, and an expansion over the size limit are refused.
+    `#exit`, an unopened `end` or anything the publication gate refuses, and an expansion
+    over the size limit are refused.
   - A skeleton is any node whose published source imports stub nodes; `lean_check(stubs=true)`
     creates them. It is optional. With `node_id`, each top-level
     `theorem X <signature> := sorry` (or `:= by sorry`) whose lines hold nothing else

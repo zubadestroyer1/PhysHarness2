@@ -1,5 +1,9 @@
 """The lemma store: node modules and ranked lean_source publication (S1 audit #12)."""
 
+import os
+import shlex
+import subprocess
+
 import pytest
 from commons_helpers import publish, society_lab
 from test_commons_review import referee
@@ -14,6 +18,7 @@ from physharness.commons_sources import (
     inline_commons,
     module_prefix,
     node_module,
+    refused_command,
     remap,
     scope_closers,
     source_state,
@@ -21,6 +26,8 @@ from physharness.commons_sources import (
 )
 from physharness.domain import ArtifactCreate, BranchCreate, Principal
 from physharness.errors import HarnessError
+from physharness.orchestration.lean_session import parse_lean_output
+from physharness.storage import RecordRow
 
 LEAN = {
     "lean_header": "import Mathlib",
@@ -623,3 +630,172 @@ def test_expand_commons_reads_live_sources_stubs_and_flags_stale_ones(lab):
     with pytest.raises(HarnessError) as foreign:
         service.expand_commons(other["id"], caller, outsider, max_bytes=30_000)
     assert foreign.value.code == "COMMONS_MODULE_NOT_FOUND"
+
+
+# The publication gate (PR 37 review) -----------------------------------------------------
+
+# Every body a published module may not hold, with the command the gate names. A module's
+# compile-time code would run in each importer's VM, and a referee's.
+REFUSED = {
+    'run_cmd do\n  IO.FS.writeFile "/work/Checker.lean" ""\n': "run_cmd",
+    'theorem a : True := trivial #eval IO.getEnv "HOME"\n': "#eval",
+    "#guard 1 = 1\n": "#guard",
+    "theorem a (s : Finset Nat) : #s = s.card := rfl\n": "#s",
+    "theorem a : True := by\n  run_tac pure ()\n": "run_tac",
+    "example : True := by_elab do return default\n": "by_elab",
+    'elab "x" : term => return default\n': "elab",
+    "axiom cheat {p : Prop} : p\nmacro_rules | `(tactic| sorry) => `(tactic| exact cheat)\n": (
+        "macro_rules"
+    ),
+    'syntax "cheat" : tactic\n': "syntax",
+    "initialize counter : Nat ← pure 0\n": "initialize",
+    "unsafe def f : Nat := 1\n": "unsafe",
+    "simproc s (_) := fun _ => pure .continue\n": "simproc",
+    "register_simp_attr my_simp\n": "register_simp_attr",
+    "@[command_elab printAxioms] def fake : Nat := 1\n": "@[command_elab]",
+    "@[simp, to_additive (attr := norm_num)] theorem a : True := trivial\n": "@[norm_num]",
+    '@[extern "c_fn"] opaque g : Nat\n': "@[extern]",
+    "attribute [tactic foo] bar\n": "attribute [tactic]",
+    'notation "⟪" x "⟫" => x + 1\n': "notation",
+    'scoped notation "⟪" x "⟫" => x + 1\n': "notation",
+    'scoped[Foo] infixl:65 " +++ " => Nat.add\n': "infixl",
+    'set_option trace.profiler.output "x" in\ntheorem a : True := trivial\n': (
+        "set_option trace.profiler.output"
+    ),
+    "set_option debug.skipKernelTC true\n": "set_option debug.skipKernelTC",
+    "open Lean in\ntheorem a : True := trivial\n": "Lean",
+    "def t := _root_.IO.FS.writeFile\n": "_root_.IO.FS.writeFile",
+    "def t := «IO».FS.writeFile\n": "«IO»",
+    "#exit\n": "#exit",
+}
+ALLOWED = (
+    PROOF.split("\n", 1)[1],
+    'local notation "⟪" x "⟫" => x + 1\n@[inherit_doc] local infixl:65 " +++ " => Nat.add\n',
+    "set_option maxHeartbeats 400000 in\ntheorem a : True := by trivial\n",
+    "set_option synthInstance.maxHeartbeats 100 in\nset_option linter.unusedVariables false\n",
+    "attribute [local simp] Nat.add_comm\n@[simp, macro_inline, elab_as_elim] def g := 1\n",
+    "#check Nat.add_comm\n#print axioms Nat.add_comm\ntheorem a : #v[1, 2].size = 2 := rfl\n",
+    '-- run_cmd, #eval\n/- macro_rules -/ theorem a : "run_cmd".length = 7 := rfl\n',
+    "theorem x (init : Nat) : List.foldl (· + ·) init [] = init := rfl\n",
+    "noncomputable section\nnamespace Foo\nopen Real\n"
+    "lemma l (x : ℝ) : x = x := rfl\nend Foo\nend\n",
+)
+
+
+def test_the_publication_gate_refuses_code_and_syntax_beyond_the_module():
+    for body, command in REFUSED.items():
+        assert refused_command(f"import Lean\nimport Mathlib\n\n{body}") == command, body
+    for body in ALLOWED:
+        assert refused_command(f"import Mathlib\n\n{body}") is None, body
+
+
+def plant(service, node_id, **fields):
+    """Write fields straight into a node's row, as a record from before the gate reads."""
+    with service.db.transaction() as session:
+        row = session.get(RecordRow, node_id)
+        service._replace(session, row, fields)
+
+
+def test_a_module_that_runs_code_is_neither_published_nor_inlined(lab):
+    """PR 37 review: a published module's run_cmd ran in every importer's VM, where it could
+    read the importer's private files and overwrite its checker."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    node = lemma(service, exp, alpha, "Helper", "helper")
+    evil = (
+        "import Lean\ntheorem helper : 1 + 1 = 2 := rfl\n\nrun_cmd do\n"
+        '  let secret ← IO.FS.readFile "/work/private.lean"\n'
+        '  IO.FS.writeFile "/work/.physharness/statement_check.lean" secret\n'
+    )
+    assert publish(service, node["id"], beta, "complete", "evil", content=evil) == {
+        "recorded": False,
+        "module": node["lean_module"],
+        "reason": "refused_command",
+        "command": "run_cmd",
+    }
+    assert service.read_node(node["id"], alpha)["node"]["lean_source"] is None
+    # A source stored before the gate is refused when imported or fetched, too.
+    publish(service, node["id"], beta, "complete", "clean", content=PROOF)
+    artifact = service.create_artifact(
+        ArtifactCreate(
+            experiment_id=exp["id"], branch_id=beta.branch_id, kind="lean_source", content=evil
+        ),
+        beta,
+        "evil-artifact",
+    )
+    source = service.read_node(node["id"], alpha)["node"]["lean_source"]
+    plant(
+        service,
+        node["id"],
+        lean_source={**source, "artifact_id": artifact["id"], "sha256": artifact["sha256"]},
+    )
+    importer = f"import {node['lean_module']}\n\ntheorem mine : 2 = 1 + 1 := helper.symm\n"
+    for attempt in (
+        lambda: service.expand_commons(exp["id"], importer, alpha, max_bytes=30_000),
+        lambda: service.commons_module(node["id"], alpha),
+    ):
+        with pytest.raises(HarnessError) as refused:
+            attempt()
+        assert (refused.value.code, refused.value.details) == (
+            "COMMONS_MODULE_REFUSED",
+            {"module": node["lean_module"], "command": "run_cmd"},
+        )
+        assert "republish" in refused.value.remediation.lower()
+
+
+def test_a_statement_that_runs_code_is_never_stored_or_imported_as_a_stub(lab):
+    """A node's statement is elaborated in importers' VMs (its sorry stub) and in every
+    publisher's statement check, so the gate reads it too."""
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    node = lemma(service, exp, alpha, "Evil", "evil")
+    statement = ": (by_elab do return default) = (0 : Nat)"
+    with pytest.raises(HarnessError) as refused:
+        service.set_lean_statement(
+            node["id"], "import Mathlib", "evil", statement, ELABORATED, alpha, "stated"
+        )
+    assert (refused.value.code, refused.value.details) == (
+        "INVALID_LEAN_STATEMENT",
+        {"command": "by_elab"},
+    )
+    plant(
+        service,
+        node["id"],
+        lean_header="import Mathlib",
+        lean_name="evil",
+        lean_statement=statement,
+        lean_elaborated=True,
+    )
+    with pytest.raises(HarnessError) as stub:
+        service.expand_commons(
+            exp["id"], f"import {node['lean_module']}\n", alpha, max_bytes=30_000
+        )
+    assert (stub.value.code, stub.value.details["command"]) == (
+        "COMMONS_MODULE_REFUSED",
+        "by_elab",
+    )
+
+
+@pytest.mark.lean
+def test_real_local_notation_ends_with_the_section_around_its_module(tmp_path):
+    """Run with PHYSHARNESS_LEAN_CMD (e.g. 'lean +leanprover/lean4:v4.33.0'). The gate allows
+    local notation, which Lean drops at the `end` of the section the inliner wraps the module
+    in; global notation, which it refuses, would reach the importer's lines."""
+    command = os.environ.get("PHYSHARNESS_LEAN_CMD")
+    if not command:
+        pytest.skip("set PHYSHARNESS_LEAN_CMD")
+    caller = f"import {A}\n\ntheorem outside : ⟪(1 : Nat)⟫ = 2 := rfl\n"
+    errors = {}
+    for kind in ("local notation", "notation"):
+        text = f'{kind} "⟪" x "⟫" => x + 1\ntheorem inside : ⟪(1 : Nat)⟫ = 2 := rfl\n'
+        flat = inline_commons(caller, resolver(module(A, text)), max_bytes=30_000)
+        path = tmp_path / "Flat.lean"
+        path.write_text(flat.source, encoding="utf-8")
+        completed = subprocess.run(
+            [*shlex.split(command), str(path)], capture_output=True, text=True, timeout=300
+        )
+        found = parse_lean_output(completed.stdout, str(path))
+        errors[kind] = [remap({"messages": found, "holes": []}, flat)["messages"], text]
+    (message,) = [m for m in errors["local notation"][0] if m["severity"] == "error"]
+    assert message["line"] == 3 and "module" not in message  # the caller's own line only
+    assert refused_command(errors["local notation"][1]) is None
+    assert not [m for m in errors["notation"][0] if m["severity"] == "error"]
+    assert refused_command(errors["notation"][1]) == "notation"

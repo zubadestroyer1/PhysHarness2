@@ -2443,6 +2443,31 @@ def test_publication_refusals_and_source_ranks():
     assert _source_rank(node, {**clean, "axioms": {}}, unjudged) == "partial"
 
 
+async def test_lean_check_never_publishes_a_module_whose_code_would_run_in_importers(lab):
+    """PR 37 review: the publication gate, before any artifact is stored. A node statement
+    stored before the gate that it refuses is no statement to publish against: the statement
+    check would elaborate it in the publisher's VM."""
+    service, author, exp, _, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    workspace = FakeWorkspace()
+    tools = profile(service, agent, context, workspace=workspace)
+    plain = await call(tools, "commons_node", lemma_args(title="Plain"))
+    before = len(service.list_records("artifact", agent))
+    evil = PROOF + 'run_cmd do\n  IO.FS.writeFile "/work/.physharness/statement_check.lean" ""\n'
+    checked = await call(tools, "lean_check", {"source": evil, "node_id": plain["id"]})
+    assert checked["published"] == {
+        "recorded": False,
+        "module": "Commons.N" + plain["id"][:8],
+        "reason": "refused_command",
+        "command": "run_cmd",
+    }
+    assert len(service.list_records("artifact", agent)) == before
+    assert service.read_node(plain["id"], agent)["node"]["lean_source"] is None
+    stated = {"node_type": "lemma", **LEAN, "lean_statement": ": (by_elab pure default) = 1"}
+    clean = {"ok": True, "complete": True, "axioms": {"trace_add": ["propext"]}}
+    assert _publication_refusal(PROOF, stated, clean) == "invalid_lean_statement"
+
+
 async def test_recruit_claims_focus_node(lab):
     service, author, exp, branches, _ = society_lab(lab, models=2)
     alpha, context = running(service, author, exp, branches[0]["id"])
