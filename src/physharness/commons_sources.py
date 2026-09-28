@@ -567,10 +567,19 @@ class CommonsSourceMixin:
 
     def _module(self, session, name, actor, experiment_id) -> Module:
         """The module as inlined: the node's live published source at its effective rank,
-        else a ``sorry`` stub of its elaborated Lean statement. A source or statement
-        stored before the publication gate that the gate refuses is refused here, so it is
-        never inlined (``refused_command``)."""
+        else a ``sorry`` stub of its elaborated Lean statement. The goal has no module:
+        nothing imports the target. A source or statement stored before the publication
+        gate that the gate refuses is refused here, so it is never inlined
+        (``refused_command``)."""
         row = self._module_node(session, name, actor, experiment_id)
+        if row.payload["node_type"] == "goal":
+            raise HarnessError(
+                "COMMONS_MODULE_NOT_FOUND",
+                "The goal node has no module: nothing imports the target.",
+                status=404,
+                details={"module": name, "node_id": row.id},
+                remediation="Import or fetch the modules of the nodes the goal depends on.",
+            )
         node, source = row.payload, row.payload.get("lean_source")
         digest = _statement_digest(node)
         if source is not None:
@@ -609,14 +618,6 @@ class CommonsSourceMixin:
         self._research_role(actor)
         with self.db.sessions() as session:
             row = self._get(session, "commons_node", node_id, actor)
-            if row.payload["node_type"] == "goal":
-                raise HarnessError(
-                    "COMMONS_MODULE_NOT_FOUND",
-                    "The goal node has no module: nothing imports the target.",
-                    status=404,
-                    details={"node_id": row.id},
-                    remediation="Fetch the modules of the nodes the goal depends on.",
-                )
             found = self._module(
                 session, node_module(row.payload), actor, row.payload["experiment_id"]
             )

@@ -218,8 +218,9 @@ tools, the prompts and the delivery shapes.
 - **Lemma store.** Every node is a Lean module, `Commons.N<8 hex>` (8 hex of its id, or
   12 or 16 when an experiment node already holds that name). `commons_query` reports it
   (`module`) with the node's source rank (`source`); `commons_read` shows the node's
-  `lean_module`, published `lean_source` and `source`. Nothing imports the goal, so it lists no
-  module.
+  `lean_module`, published `lean_source` and `source`. Nothing imports the goal, so it
+  lists no module, and neither an import nor a fetch of its module resolves
+  (`COMMONS_MODULE_NOT_FOUND`).
   - Published modules are experiment-public commons content for every role, referees
     included. Only private workspaces and unpublished artifacts are private: no other
     agent can read an agent's workspace. An agent shares Lean by publishing it on its

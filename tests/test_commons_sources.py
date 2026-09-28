@@ -294,6 +294,14 @@ def test_the_goal_lists_no_module(lab):
     with pytest.raises(HarnessError) as error:
         service.commons_module(goal["id"], alpha)
     assert (error.value.code, error.value.status) == ("COMMONS_MODULE_NOT_FOUND", 404)
+    # Nor does an import of its module inline anything, even with an elaborated statement
+    # that would otherwise make a sorry stub of the target (PR 37 review).
+    plant(service, goal["id"], **{**LEAN, "lean_elaborated": True})
+    name = node_module(service.get_record("commons_node", goal["id"], alpha))
+    with pytest.raises(HarnessError) as imported:
+        service.expand_commons(exp["id"], f"import {name}\n", alpha, max_bytes=30_000)
+    assert imported.value.code == "COMMONS_MODULE_NOT_FOUND"
+    assert imported.value.details == {"module": name, "node_id": goal["id"]}
 
 
 def test_query_matches_lean_name_and_filters_by_source(lab):
