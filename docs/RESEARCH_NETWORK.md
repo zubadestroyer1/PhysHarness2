@@ -250,13 +250,17 @@ tools, the prompts and the delivery shapes.
     redefined `#print axioms`). `lean_check` and `record_lean_source` (whoever calls it)
     refuse a source that holds, outside comments and literals (`refused_command`, naming
     the `command` and a `remediation`, what to write instead). The lists are denylists:
-    - a `#` command that evaluates or runs a term or another command, wherever it
-      appears: `#eval`, `#exit`, `#exec`, `#guard` (and `#guard_expr`, `#guard_msgs`),
-      `#html`, `#widget`, `#test`, `#sample`, `#time`, `#count_heartbeats`, `#help`,
-      `#find`, `#norm_num`, `#simp`, `#conv`, `#whnf`, `#reduce` (for its cost),
-      `#check_tactic`, `#check_simp`, `#lint`, `#list_linters`, `#leansearch`, `#loogle`,
-      `#moogle`, `#min_imports`, `#unfold?`, and any word that starts with one (Lean
-      reads `#evalx` as `#eval x`). Any other `#ident` is a term, such as Mathlib's `#s`
+    - a `#` command that evaluates or runs a term or another command, reaches a search
+      service over the network, touches files, lake or git, or costs a scan of the whole
+      environment, wherever it appears: `#eval`, `#exit`, `#exec`, `#guard` (and
+      `#guard_expr`, `#guard_msgs`), `#html`, `#widget`, `#test`, `#sample`, `#time`,
+      `#count_heartbeats`, `#help`, `#find`, `#norm_num`, `#simp`, `#conv`, `#whnf`,
+      `#reduce` and `#grind_lint` (for their cost), `#check_tactic`, `#check_simp`,
+      `#lint`, `#list_linters`, LeanSearchClient's `#leansearch`, `#search`,
+      `#statesearch`, `#loogle` and `#moogle` (commands, terms or tactics), Mathlib's
+      `#min_imports`, `#import_bumps`, `#clear_deprecations` (it rewrites files and runs
+      `lake build`) and `#create_deprecated_module`, `#unfold?`, and any word that
+      starts with one (Lean reads `#evalx` as `#eval x`). Any other `#ident` is a term, such as Mathlib's `#s`
       for a finset's card, and `#check`, `#print` and `#synth` are fine;
     - `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
       `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
@@ -313,10 +317,10 @@ tools, the prompts and the delivery shapes.
     nodes' sources may import it and go stale when it is replaced, so no other branch can
     churn equal-rank sources under them (it can outrank a complete one with a verified
     source). Nothing outranks a complete source of a node with no elaborated statement (a
-    definition, say), so there any branch replaces it at its rank: a lock would let the
-    first file, however unrelated, hold the node for good once its publisher and author
-    were gone. The trade-off is churn: each such replacement stales the importers' sources
-    until they republish.
+    definition, say): it answers only to its publisher and the node's author while either
+    branch is live (has a task that is not completed, failed or blocked), so no other
+    branch can swap a real definition for junk and stale its importers, and to any branch
+    once both have ended, so no first file, however unrelated, holds the node for good.
   - Publishing claims the node: a check renews the branch's live claim, and only a
     publication claims afresh (on the branch's prior route), so a refused check never
     re-creates a lapsed or released claim. The source's imports become `depends_on` edges

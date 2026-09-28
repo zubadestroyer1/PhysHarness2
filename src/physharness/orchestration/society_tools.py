@@ -49,7 +49,6 @@ from ..commons_review import (
 from ..commons_sources import (
     COMPLETE_RANKS,
     SOURCE_STATES,
-    blocking_rank,
     gate_remedy,
     node_module,
     node_refusal,
@@ -1104,7 +1103,7 @@ def society_tools(
                     held = (
                         None
                         if reason
-                        else blocking_rank(node, "partial", agent.branch_id, node["source"])
+                        else service.source_blocking_rank(node["id"], "partial", agent)
                     )
                 if reason or held:
                     refused = _refused(node_module(node), reason or "lower_rank", source)
@@ -1232,7 +1231,7 @@ def society_tools(
             # Refused before any artifact is stored, so a refusal leaves none behind;
             # record_lean_source repeats these checks under the node's lock.
             refusal = node_refusal(node)
-            held = blocking_rank(node, rank, agent.branch_id, node["source"])
+            held = service.source_blocking_rank(node["id"], rank, agent)
             if refusal is not None:
                 return {"recorded": False, "module": module, "reason": refusal}
             if held is not None:

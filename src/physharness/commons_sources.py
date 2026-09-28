@@ -23,6 +23,8 @@ import re
 from collections import deque
 from dataclasses import dataclass
 
+from sqlalchemy import select
+
 from .commons_models import axiom_refusal, is_open
 from .domain import utcnow
 from .errors import HarnessError
@@ -34,7 +36,7 @@ from .orchestration.lean_session import (
     _opaque,
     lean_code,
 )
-from .storage import RecordRow
+from .storage import RecordRow, record_json_text
 from .worker_authority import current_worker_effects
 
 RANKS = {"partial": 1, "complete": 2, "verified": 3}
@@ -85,10 +87,12 @@ _CODE_ATTRIBUTE_SUFFIXES = (
     "_formatter",
     "_parenthesizer",
 )
-# A denylist: the `#` commands that evaluate or run a term or another command (`#reduce`
-# for its cost), wherever they appear; any other `#ident` is a term, such as Mathlib's `#s`
-# for a finset's card. Lean reads the longest token, so `#evalx` is `#eval x`: a word that
-# starts with one of these is that command.
+# A denylist: the `#` commands that evaluate or run a term or another command, reach a
+# search service over the network (LeanSearchClient's, as commands, terms or tactics),
+# touch files, lake or git (Mathlib's deprecation and import tools), or cost a scan of the
+# whole environment (`#reduce`, `#grind_lint`), wherever they appear; any other `#ident` is
+# a term, such as Mathlib's `#s` for a finset's card. Lean reads the longest token, so
+# `#evalx` is `#eval x`: a word that starts with one of these is that command.
 _RUNS_TERMS = (
     "#eval",
     "#exit",
@@ -107,6 +111,7 @@ _RUNS_TERMS = (
     "#conv",
     "#whnf",
     "#reduce",
+    "#grind_lint",
     "#check_tactic",
     "#check_simp",
     "#lint",
@@ -114,7 +119,12 @@ _RUNS_TERMS = (
     "#leansearch",
     "#loogle",
     "#moogle",
+    "#search",
+    "#statesearch",
     "#min_imports",
+    "#import_bumps",
+    "#clear_deprecations",
+    "#create_deprecated_module",
     "#unfold",
 )
 # Options a module may set besides a node header's: they only steer elaboration. `trace.*`
@@ -224,7 +234,7 @@ def node_refusal(node: dict) -> str | None:
     return None
 
 
-def blocking_rank(node: dict, rank: str, branch_id: str | None, state: str) -> str | None:
+def blocking_rank(node, rank, branch_id, state, holders_live) -> str | None:
     """The rank of the node's source when it keeps its place against a new source of
     ``rank`` from ``branch_id``, else None. ``state`` is the node's ``source_state``: a
     stale source (of another statement, or whose imports changed since) counts as no
@@ -235,17 +245,21 @@ def blocking_rank(node: dict, rank: str, branch_id: str | None, state: str) -> s
     equal-rank sources under them; it can outrank a complete one with a verified source.
 
     Nothing outranks a complete source of a node with no elaborated statement (a
-    definition, say), so there any branch replaces it at its rank: a lock would let the
-    first file, however unrelated, hold the node once its publisher and author had gone.
-    The cost is churn: each such replacement stales its importers until they republish."""
+    definition, say). It answers only to its publisher and author while either branch is
+    live (``holders_live()``, asked only then), so no other branch can swap a real
+    definition for junk, and to any branch once both have ended, so no file, however
+    unrelated, holds the node for good."""
     if state not in RANKS:
         return None
     current = node["lean_source"]
     held = current["rank"]
-    if RANKS[rank] < RANKS[held] or (
+    if RANKS[rank] < RANKS[held]:
+        return held
+    if (
         rank == held
-        and (held == "verified" or held == "complete" and has_elaborated_statement(node))
+        and held in COMPLETE_RANKS
         and branch_id not in (current.get("branch_id"), node.get("branch_id"))
+        and (held == "verified" or has_elaborated_statement(node) or holders_live())
     ):
         return held
     return None
@@ -805,6 +819,51 @@ class CommonsSourceMixin:
             "sha256": found.sha256,
         }
 
+    @staticmethod
+    def _branch_live(session, project_id, branch_id):
+        """Whether a branch is live: it has a task that is not completed, failed or blocked
+        (a branch record stays open; its tasks end)."""
+        from .commons_review import TERMINAL_TASK_STATUSES  # it imports this module
+
+        return (
+            branch_id is not None
+            and session.scalar(
+                select(RecordRow.id)
+                .where(
+                    RecordRow.project_id == project_id,
+                    RecordRow.kind == "task",
+                    record_json_text("branch_id") == branch_id,
+                    record_json_text("status").not_in(TERMINAL_TASK_STATUSES),
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
+    def _holders_live(self, session, project_id, node):
+        """Whether the branch that published the node's source, or its author's, is live."""
+        source = node.get("lean_source") or {}
+        return any(
+            self._branch_live(session, project_id, holder)
+            for holder in {source.get("branch_id"), node.get("branch_id")}
+        )
+
+    def source_blocking_rank(self, node_id, rank, actor) -> str | None:
+        """``blocking_rank`` of a new source of ``rank`` from the actor's branch, for
+        lean_check to refuse before it stores an artifact; ``record_lean_source`` decides
+        under the experiment lock."""
+        with self.db.sessions() as session:
+            row = self._get(session, "commons_node", node_id, actor)
+            node = row.payload
+            state = source_state(node, Closures.reading(session, node["experiment_id"]))
+            return blocking_rank(
+                node,
+                rank,
+                actor.branch_id,
+                state,
+                lambda: self._holders_live(session, row.project_id, node),
+            )
+
     def node_source_state(self, node_id, actor) -> tuple[dict, str]:
         """A commons node's payload and its ``source_state``, its imports read in the same
         session: a scoped recruit ends on it (``scope_ending``)."""
@@ -882,7 +941,13 @@ class CommonsSourceMixin:
                 )
             rank, current = record["rank"], node.get("lean_source")
             state = source_state(node, Closures.reading(session, experiment.id))
-            held = blocking_rank(node, rank, actor.branch_id, state)
+            held = blocking_rank(
+                node,
+                rank,
+                actor.branch_id,
+                state,
+                lambda: self._holders_live(session, experiment.project_id, node),
+            )
             if held is not None:
                 return {"recorded": False, "module": module, "reason": "lower_rank", "rank": held}
             if _imports_reach(session, row.id, record["imports"]):
