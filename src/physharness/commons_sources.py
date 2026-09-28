@@ -33,7 +33,7 @@ from .orchestration.lean_session import (
     HEADER_OPTION_PREFIXES,
     HEADER_OPTIONS,
     _command_word,
-    _opaque,
+    _scan,
     lean_code,
 )
 from .storage import RecordRow, record_json_text
@@ -142,8 +142,9 @@ _OPTION = re.compile(rf"\s+({_WORD}(?:\.{_WORD})*)")
 _BRACKET = re.compile(r"\s*\[")
 _LOCAL = re.compile(rf"(?<![{_ID_REST}.!?])local\s+$")
 _SCOPED = re.compile(rf"(?<![{_ID_REST}.!?])scoped(?:\s*\[[^\]]*\])?\s+$")
-_ESCAPED = re.compile("«[^»]*»")
-_PLAIN = re.compile(rf"{_WORD}")
+# Any escaped name (`«…»`) the scanner reads as code is refused, whatever it escapes: an
+# agent's lemma needs none, and a name read through them is a name the gate cannot read.
+ESCAPED_NAME = "«…»"
 _AESOP_PHASE = re.compile(
     rf"\s*(?:[0-9]+(?:\.[0-9]+)?\s*%|(?:apply|forward|destruct|constructors|cases|simp|unfold"
     rf"|tactic)(?![{_ID_REST}!?]))"
@@ -469,16 +470,6 @@ def _meta_name(name):
     return not _META_NAMESPACES.isdisjoint(name.split("."))
 
 
-def _unescaped(body, code):
-    """``code`` with each escaped name component of ``body`` (``«IO»``, ``«_root_»``, an
-    opaque token in ``lean_code``) written plainly, so a name reads as Lean resolves it; a
-    component that is no plain word reads as ``_escaped``."""
-    for escaped in set(_ESCAPED.findall(body)):
-        plain = escaped[1:-1] if _PLAIN.fullmatch(escaped[1:-1]) else "_escaped"
-        code = code.replace(_opaque(escaped), plain)
-    return code
-
-
 def refused_command(source):
     """The first command, attribute, option or name in ``source`` after its imports that no
     published module may hold, or None (PR 37 review): a command or modifier that runs code
@@ -486,18 +477,22 @@ def refused_command(source):
     rule phase), a name of an unsafe escape (a component starting with ``unsafe``), notation
     that is not ``local`` (``scoped notation`` is named
     so), a ``#`` command of ``_RUNS_TERMS``, a code attribute, a ``set_option`` outside the
-    module options, or a name with a component in ``_META_NAMESPACES``, escaped components
-    read plainly. ``gate_remedy`` says what to write instead.
+    module options, a name with a component in ``_META_NAMESPACES``, or any escaped name
+    (``ESCAPED_NAME``) read as code. ``gate_remedy`` says what to write instead.
 
     These are denylists, so the last check is the backstop: no side effect is written
-    without a Lean or IO name. It reads ``lean_code``, so comments and literals count for
-    nothing; a source too nested to scan is refused.
+    without a Lean or IO name. It reads the scanner's code (as ``lean_code`` does), so
+    comments and literals count for nothing; a source too nested to scan is refused.
     """
     body = "\n".join(split_imports(source)[2])
-    code = lean_code(body)
-    if body.strip() and not code:
+    out, escapes = [], []
+    try:
+        _scan(body, 0, out, None, escapes)
+    except RecursionError:
         return "(a source too nested to scan)"
-    code = _unescaped(body, code)
+    if escapes:
+        return ESCAPED_NAME
+    code = "".join(out)
     for match in _TOKEN.finditer(code):
         word, end = match.group(), match.end()
         if word.startswith("#"):
@@ -568,6 +563,11 @@ def gate_remedy(command):
         )
     if any(part.startswith(_UNSAFE_NAMES) for part in command.split(".")):
         return f"Drop {command}: an unsafe escape can run IO wherever the module is imported."
+    if command == ESCAPED_NAME:
+        return (
+            "Rename it without «»: a published module or statement holds no escaped name "
+            "(outside strings and comments), so every name in it reads plainly."
+        )
     if command.startswith("("):
         return "Simplify the nesting of its interpolated strings and syntax quotations."
     if _meta_name(command):

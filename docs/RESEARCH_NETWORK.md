@@ -284,11 +284,14 @@ tools, the prompts and the delivery shapes.
       `simprocs`, `tactic.hygienic` and `backward.*` (so `set_option maxHeartbeats N in`
       stays, and `trace.*`, which can write files, goes: drop it);
     - a name with a `Lean`, `IO`, `EIO` or `BaseIO` component anywhere
-      (`Std.IO.Process.setCwd`, `_root_.IO…`), escaped components read plainly
-      (`«_root_».«IO».FS.writeFile` is `_root_.IO.FS.writeFile`). This is the backstop
-      behind the denylists: no metaprogram or IO action, for a tactic's configuration or
-      an `evalConst` to run, is written without such a name. A rare name such as `Foo.IO`
-      is refused with them.
+      (`Std.IO.Process.setCwd`, `_root_.IO…`). This is the backstop behind the
+      denylists: no metaprogram or IO action, for a tactic's configuration or an
+      `evalConst` to run, is written without such a name. A rare name such as `Foo.IO` is
+      refused with them;
+    - any escaped name (`«…»`) the scanner reads as code, whatever it escapes
+      (`«IO».FS.writeFile`, `Foo.«bar»`; the remediation: rename it without `«»`). An
+      agent's lemma needs none, and a name read through them is one the gate cannot read.
+      `«` inside a string or comment is fine.
 
     `set_lean_statement` refuses a header or statement the gate
     refuses: an importer's `sorry` stub and every publisher's statement check elaborate
