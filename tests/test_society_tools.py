@@ -25,7 +25,6 @@ from physharness.api import VerifyInput
 from physharness.commons import _lean_digest
 from physharness.commons_models import NodeCreate, NodePostCreate
 from physharness.commons_review import NODE_DATA_BEGIN, NODE_DATA_END
-from physharness.commons_sources import source_state
 from physharness.domain import (
     ArtifactCreate,
     LiteraturePolicy,
@@ -2187,7 +2186,7 @@ async def test_a_dependency_with_a_stale_source_is_not_reused_as_a_stub(lab):
     ]
     current = {**older, "lean_statement": ": (1 : Nat) + 1 = 2"}
     await call(tools, "commons_node", {**restate, **current})
-    assert source_state(service.get_record("commons_node", one, agent)) == "stale"
+    assert service.read_node(one, agent)["node"]["source"] == "stale"
     again = await call(tools, "lean_check", arguments)
     fresh, reused = again["stubs"]
     assert fresh["created"] is True and fresh["node_id"] != one

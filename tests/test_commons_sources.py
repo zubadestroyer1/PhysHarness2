@@ -5,7 +5,7 @@ import shlex
 import subprocess
 
 import pytest
-from commons_helpers import publish, society_lab
+from commons_helpers import publish, society_lab, state_lean
 from test_commons_review import referee
 
 from physharness import commons
@@ -21,7 +21,6 @@ from physharness.commons_sources import (
     refused_command,
     remap,
     scope_closers,
-    source_state,
     split_imports,
 )
 from physharness.domain import ArtifactCreate, BranchCreate, Principal
@@ -154,7 +153,7 @@ def test_publication_refused_when_the_statement_changed(lab):
     # The verified source of the older statement proves nothing of the current one: it reads
     # stale and counts as no source, so another branch's source of the current statement
     # replaces it.
-    assert source_state(service.read_node(node["id"], alpha)["node"]) == "stale"
+    assert service.read_node(node["id"], alpha)["node"]["source"] == "stale"
     listed = service.query_nodes(exp["id"], alpha, source="stale")["items"]
     assert [item["id"] for item in listed] == [node["id"]]
     gamma = third_branch(service, author, exp)
@@ -177,7 +176,7 @@ def test_any_source_of_the_current_statement_replaces_a_stale_one(lab):
     current = _lean_digest(*changed.values())
     partial = publish(service, node["id"], beta, "partial", "p", lean_statement_sha256=current)
     assert partial["recorded"] is True and partial["replaced"] is True
-    assert source_state(service.read_node(node["id"], alpha)["node"]) == "partial"
+    assert service.read_node(node["id"], alpha)["node"]["source"] == "partial"
     # A verified source answers only to its publisher and the author while it is current.
     gamma = third_branch(service, author, exp)
     publish(service, node["id"], beta, "verified", "v", lean_statement_sha256=current)
@@ -369,6 +368,7 @@ def test_publication_is_scoped_and_announced_on_the_node(lab):
         "statement_check",
         "lean_statement_sha256",
         "imports",
+        "closure",
         "recorded_at",
     }
     (event,) = [
@@ -401,6 +401,92 @@ def test_a_referee_may_read_the_nodes_published_source(lab):
     ref = referee(service.request_review(node["id"], alpha, "review"), exp)
     assert service.referee_may_read_artifact(node["id"], source["artifact_id"], ref) is True
     assert service.referee_may_read_artifact(node["id"], scratch["id"], ref) is False
+
+
+def imported(service, node, agent):
+    """An import entry of the node's current source (or stub), as lean_check records it."""
+    current = service.get_record("commons_node", node["id"], agent)
+    sha256 = (current["lean_source"] or {}).get("sha256")
+    return {"module": current["lean_module"], "node_id": current["id"], "sha256": sha256}
+
+
+def test_an_importer_goes_stale_once_its_import_is_replaced(lab):
+    """PR 37 review: a verified importer stayed verified, off the frontier and immune to
+    review after the source it imported was replaced."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    gamma = third_branch(service, author, exp)
+    a, b = lemma(service, exp, alpha, "A", "a"), lemma(service, exp, alpha, "B", "b")
+    da, db = state_lean(service, a["id"], alpha, "la"), state_lean(service, b["id"], alpha, "lb")
+    helper = "theorem helper_b : True := trivial\ntheorem trace_add : (1 : Nat) + 1 = 2 := rfl\n"
+    publish(service, b["id"], beta, "complete", "b1", content=helper, lean_statement_sha256=db)
+    source = (
+        f"import {b['lean_module']}\ntheorem trace_add : (1 : Nat) + 1 = 2 := by\n"
+        "  have := helper_b\n  rfl\n"
+    )
+    imports = [imported(service, b, alpha)]
+    publish(
+        service, a["id"], alpha, "verified", "a1", source, lean_statement_sha256=da, imports=imports
+    )
+
+    def state(node):
+        return service.read_node(node["id"], alpha)["node"]["source"]
+
+    def frontier():
+        return {
+            item["id"] for item in service.query_nodes(exp["id"], alpha, frontier=True)["items"]
+        }
+
+    assert state(a) == "verified" and a["id"] not in frontier()
+    # Another branch cannot replace an equal-rank complete source: others may import it.
+    refused = publish(service, b["id"], gamma, "complete", "g1", PROOF, lean_statement_sha256=db)
+    assert (refused["reason"], refused["rank"]) == ("lower_rank", "complete")
+    # Its publisher (or the node's author) can, and A's check inlined the old one.
+    assert publish(service, b["id"], beta, "complete", "b2", PROOF, lean_statement_sha256=db)[
+        "replaced"
+    ]
+    assert (state(a), state(b)) == ("stale", "complete")
+    assert a["id"] in frontier() and service.node_source_state(a["id"], alpha)[1] == "stale"
+    assert service.request_review(a["id"], beta, "review")  # no REVIEW_UNNEEDED
+    # A stale source is none: another branch's source of A's statement replaces it.
+    assert publish(service, a["id"], gamma, "partial", "g2", lean_statement_sha256=da)["replaced"]
+    assert publish(service, b["id"], alpha, "complete", "a-b", lean_statement_sha256=db)["replaced"]
+
+
+def test_a_source_stands_only_on_the_lean_its_check_inlined(lab):
+    """A change two imports down stales the importer too. A source recording its check's
+    closure stands on exactly that Lean, and an import's restatement changes none of it."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab)
+    a, b, c, x = (lemma(service, exp, alpha, title, title) for title in "ABCX")
+    digests = {n["id"]: state_lean(service, n["id"], alpha, "l" + n["title"]) for n in (a, b, c, x)}
+
+    def put(node, key, *children, closure=None):
+        lines = [f"import {child['lean_module']}" for child in children]
+        record = {"imports": [imported(service, child, alpha) for child in children]}
+        if closure is not None:
+            record["closure"] = [imported(service, member, alpha) for member in closure]
+        record["lean_statement_sha256"] = digests[node["id"]]
+        content = "\n".join([*lines, f"theorem {key} : True := trivial"])
+        published = publish(service, node["id"], beta, "complete", key, content, **record)
+        assert published["recorded"] is True, published
+
+    def state(node):
+        return service.read_node(node["id"], alpha)["node"]["source"]
+
+    put(c, "c1")
+    put(b, "b1", c)
+    put(a, "a1", b)
+    assert [state(n) for n in (a, b, c)] == ["complete"] * 3
+    restated = {**LEAN, "lean_statement": ": (2 : Nat) = 2"}
+    service.set_lean_statement(b["id"], *restated.values(), ELABORATED, alpha, "restate")
+    assert (state(a), state(b)) == ("complete", "stale")
+    service.set_lean_statement(b["id"], *LEAN.values(), ELABORATED, alpha, "restate-back")
+    put(c, "c2")
+    assert [state(n) for n in (a, b, c)] == ["stale", "stale", "complete"]
+    # X's check inlined A, B and C as they are now, so X stands though A's own check did not.
+    put(x, "x1", a, closure=(b, c, a))
+    assert state(x) == "complete"
+    put(c, "c3")
+    assert state(x) == "stale"
 
 
 # Commons imports: the inliner (S1 audit #12) ---------------------------------------------

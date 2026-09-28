@@ -133,7 +133,7 @@ tools, the prompts and the delivery shapes.
     claims. A proved node is not open work, as for the long pole: it leaves the frontier
     and waits on nothing. A node is proved by a complete or verified source of its
     current, elaborated Lean statement; a definition, which states nothing to prove, by
-    any complete or verified source. A clean file on any other node without an elaborated
+    any complete or verified source. A stale source (below) proves nothing. A clean file on any other node without an elaborated
     statement proves nothing the verifier checks, so that node stays open work. The score
     is attention, never proof.
 - **Status.** A node is `open` until its author abandons it (`abandoned`, with a reason) or
@@ -214,7 +214,7 @@ tools, the prompts and the delivery shapes.
 - **Lemma store.** Every node is a Lean module, `Commons.N<8 hex>` (8 hex of its id, or
   12 or 16 when an experiment node already holds that name). `commons_query` reports it
   (`module`) with the node's source rank (`source`); `commons_read` shows the node's
-  `lean_module` and published `lean_source`. Nothing imports the goal, so it lists no
+  `lean_module`, published `lean_source` and `source`. Nothing imports the goal, so it lists no
   module.
   - Published modules are experiment-public commons content for every role, referees
     included. Only private workspaces and unpublished artifacts are private: no other
@@ -266,9 +266,19 @@ tools, the prompts and the delivery shapes.
     resting on it is conditional. For replacement it counts as no source: any source of
     the current statement, of any rank, replaces it, and a stale verified source keeps no
     publisher lock. An importer still inlines it, flagged stale.
+  - A source also proves nothing once a module its check inlined is no longer that node's
+    source. Publication records each inlined module's digest (`closure`); while one of
+    them has been replaced, the source reports `stale` and counts as above, so a verified
+    importer returns to the frontier and the long pole once a dependency is replaced
+    further down (a source recorded without `closure` reads its direct imports, and
+    theirs). A restated import changes no Lean the importer checked: only its own source
+    goes stale, and the importer does once that source is replaced. The check is memoized
+    per call over the graph. An importer inlines the live source either way, and its own
+    check judges the file it gets.
   - Higher ranks replace lower ones, and an equal rank replaces its peer, except that a
-    verified source of the current statement is replaced only by its publisher or the
-    node's author.
+    complete or verified source of the current statement is replaced at its rank only by
+    its publisher or the node's author: other nodes' sources may import it and go stale
+    when it is replaced, so no other branch can churn equal-rank sources under them.
   - Publishing claims the node: a check renews the branch's live claim, and only a
     publication claims afresh (on the branch's prior route), so a refused check never
     re-creates a lapsed or released claim. The source's imports become `depends_on` edges
@@ -547,8 +557,8 @@ tools, the prompts and the delivery shapes.
   where help counts most. Here a node counts as open while no status closed it and it is
   not proved, as on the frontier (only the goal is ever accepted): a complete or verified
   source of its current, elaborated Lean statement, or of a definition, proves it. So
-  publishing such a source moves the pole, and a restatement that makes the source stale
-  moves it back. The pole is the open nodes the goal reaches through open
+  publishing such a source moves the pole, and a restatement or a replaced import that
+  makes the source stale moves it back. The pole is the open nodes the goal reaches through open
   `depends_on` paths (never the parts of an abandoned or proved route) that wait on no
   other open node, oldest first (at most 3, with their age and claimants). Without such
   parts it is the open nodes that most open nodes depend on; failing that, a hint to link

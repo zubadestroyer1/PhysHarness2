@@ -1036,8 +1036,8 @@ class ResearchTaskExecutor:
         joined = bool(task.get("reply_to_parent_task_id"))
         scope, reason, source = task.get("scope"), None, None
         if scope:
-            node = self.service.get_record("commons_node", scope["node_id"], agent)
-            reason = scope_ending(scope, node)
+            node, state = self.service.node_source_state(scope["node_id"], agent)
+            reason = scope_ending(scope, node, state)
             source = node.get("lean_source")
         if reason is None and joined and task.get("return_result"):
             reason = "result_returned"
@@ -2568,8 +2568,8 @@ class ResearchTeamRunner:
             }
             for task in tasks:
                 if task["id"] in events and task.get("scope") and task["id"] not in joined_pending:
-                    node = self.service.get_record("commons_node", task["scope"]["node_id"], actor)
-                    if scope_ending(task["scope"], node) is not None:
+                    node, state = self.service.node_source_state(task["scope"]["node_id"], actor)
+                    if scope_ending(task["scope"], node, state) is not None:
                         wait_checks.pop(task["id"], None)  # check it at once: it can end
                         return False
             return not any(

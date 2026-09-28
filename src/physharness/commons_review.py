@@ -25,9 +25,11 @@ from .commons_models import ALLOWED_TRANSITIONS, LEAN_NAME, is_open, public_stat
 from .commons_sources import (
     COMPLETE_RANKS,
     MAX_COMMONS_MODULES,
+    Closures,
     has_elaborated_statement,
     refused_command,
     source_state,
+    statement_state,
 )
 from .domain import StrictModel, digest_json, new_id
 from .errors import HarnessError
@@ -277,10 +279,11 @@ class CommonsReviewMixin:
     # Requests ------------------------------------------------------------------
 
     @staticmethod
-    def _review_precondition(node):
+    def _review_precondition(node, state):
         """A referee checks a plan or argument: an open approach, conjecture or lemma without
         a complete source of an elaborated Lean statement (the verifier checks compiled Lean;
-        without such a statement a clean file proves nothing it checks)."""
+        without such a statement a clean file proves nothing it checks). ``state`` is the
+        node's ``source_state``: a stale source is none."""
         status, node_type = public_status(node["status"]), node["node_type"]
         if not is_open(status) or node_type not in REVIEWABLE_TYPES:
             raise HarnessError(
@@ -289,7 +292,7 @@ class CommonsReviewMixin:
                 f"is {status}.",
                 details={"status": status, "node_type": node_type},
             )
-        if has_elaborated_statement(node) and source_state(node) in COMPLETE_RANKS:
+        if has_elaborated_statement(node) and state in COMPLETE_RANKS:
             raise HarnessError(
                 "REVIEW_UNNEEDED",
                 "A compiled node needs no referee; the verifier checks it.",
@@ -523,7 +526,9 @@ class CommonsReviewMixin:
         def action(session, op):
             row, experiment = self._review_node(session, node_id, actor)
             node = row.payload
-            self._review_precondition(node)
+            self._review_precondition(
+                node, source_state(node, Closures.reading(session, experiment.id))
+            )
             owner = self._statement_owner(session, row)
             if owner is not None:
                 raise HarnessError(
@@ -805,7 +810,8 @@ class CommonsReviewMixin:
             else node.get("origin_actor_id") == actor.id
         ):
             return True
-        if source_state(node) == "verified" or (
+        closures = Closures.reading(session, node["experiment_id"])
+        if source_state(node, closures) == "verified" or (
             node.get("lean_statement") is not None
             and node.get("lean_elaborated")
             and self._lean_writer(node) != _writer(actor)
@@ -1000,7 +1006,8 @@ class CommonsReviewMixin:
                 continue
             session.refresh(row)
             source = row.payload.get("lean_source") or {}
-            if source.get("sha256") != entry["sha256"] or source_state(row.payload) == "stale":
+            # The proof inlined this very source: only its own statement's change stales it.
+            if source.get("sha256") != entry["sha256"] or statement_state(row.payload) == "stale":
                 continue
             proofs = list(row.payload.get("in_verified_proof") or [])
             if (

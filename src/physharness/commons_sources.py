@@ -5,16 +5,20 @@ clean ``lean_check`` against the node publishes the checked file as the node's s
 ranked ``verified`` (the statement check passed on standard axioms), ``complete`` (no
 ``sorry`` on standard axioms, for a node with no Lean statement to check) or ``partial``
 (also when the statement check could not judge). A higher rank replaces a lower
-one; a verified source of the node's current statement is replaced only by its publisher or
-the node's author (S1 audit #12). A node's first complete source of an elaborated Lean
-statement tells its other claimants to consider stopping their routes (S1 audit #22).
+one; a complete or verified source of the node's current statement is replaced at its rank
+only by its publisher or the node's author (S1 audit #12). A node's first complete source
+of an elaborated Lean statement tells its other claimants to consider stopping their routes
+(S1 audit #22).
 
 A file imports node modules with ``import Commons.N…``. The platform inlines them: each
 module's published source, or a ``sorry`` stub of an elaborated statement, goes into one
 self-contained file (``inline_commons``) that ``lean_check`` checks and the verifier gets.
-A published module holds no code that would run in an importer's VM (``refused_command``).
+A published module holds no code that would run in an importer's VM (``refused_command``),
+and a source proves its node only while each module its check inlined is still its node's
+source (``Closures``).
 """
 
+import copy
 import re
 from collections import deque
 from dataclasses import dataclass
@@ -146,12 +150,6 @@ def _effective_rank(source, digest):
     return source["rank"]
 
 
-def _complete_for(source, digest):
-    """Whether ``source`` is complete for the statement ``digest``; a source of an older
-    statement is stale and counts as none."""
-    return source is not None and not _stale(source, digest) and source["rank"] in COMPLETE_RANKS
-
-
 def _verified_evidence(node, check):
     """Whether a statement-check record supports the verified rank: the check passed, and
     it found only Lean's standard axioms for the node's theorem."""
@@ -172,17 +170,21 @@ def node_refusal(node: dict) -> str | None:
     return None
 
 
-def blocking_rank(node: dict, rank: str, branch_id: str | None) -> str | None:
+def blocking_rank(node: dict, rank: str, branch_id: str | None, state: str) -> str | None:
     """The rank of the node's source when it keeps its place against a new source of
-    ``rank`` from ``branch_id``, else None. A stale source counts as no source: any source
-    of the current statement replaces it. At equal rank the newer source wins, except that
-    a verified source answers only to its publisher and the node's author."""
-    current = node.get("lean_source")
-    if current is None or _stale(current, _statement_digest(node)):
+    ``rank`` from ``branch_id``, else None. ``state`` is the node's ``source_state``: a
+    stale source (of another statement, or whose imports changed since) counts as no
+    source, so any source of the current statement replaces it. At equal rank the newer
+    source wins, except that a complete or verified source answers only to its publisher
+    and the node's author: other nodes' sources may import it, and each goes stale when it
+    is replaced, so another branch cannot churn equal-rank sources under them."""
+    if state not in RANKS:
         return None
+    current = node["lean_source"]
     held = current["rank"]
     if RANKS[rank] < RANKS[held] or (
-        rank == held == "verified"
+        rank == held
+        and held in COMPLETE_RANKS
         and branch_id not in (current.get("branch_id"), node.get("branch_id"))
     ):
         return held
@@ -195,17 +197,86 @@ def has_elaborated_statement(node: dict) -> bool:
     return node.get("lean_statement") is not None and bool(node.get("lean_elaborated"))
 
 
-def source_state(node: dict) -> str:
-    """What the node's source proves of its current statement: its rank, or ``stale`` when
-    it was checked against another statement (so it is never complete); ``stub`` for an
-    elaborated Lean statement with no source (it imports as a ``sorry`` stub), else
-    ``none``."""
+def statement_state(node: dict) -> str:
+    """What the node's source proves of its current statement, judged by the statement
+    alone: its rank, or ``stale`` when it was checked against another statement; ``stub``
+    for an elaborated Lean statement with no source (it imports as a ``sorry`` stub), else
+    ``none``. ``source_state`` also judges what the source imported."""
     source = node.get("lean_source")
     if source:
         return "stale" if _stale(source, _statement_digest(node)) else source["rank"]
     if has_elaborated_statement(node):
         return "stub"
     return "none"
+
+
+class Closures:
+    """Whether a node's published source still stands on the Lean its check inlined (PR 37
+    review): every module that check inlined (``closure``, recorded at publication) is
+    still its node's source, by digest. A source recorded without ``closure`` stands while
+    each direct import is its node's source and that source stands too. A changed
+    statement of an imported node changes no Lean the importer checked, so it stales only
+    that node's own source.
+
+    ``lookup(node_id)`` returns a node payload or None. Each node is judged once, so one
+    instance serves a whole graph; build one per call.
+    """
+
+    def __init__(self, lookup):
+        self._lookup, self._stands = lookup, {}
+
+    @classmethod
+    def over(cls, nodes):
+        """Judged over these node payloads, which hold every node an import names."""
+        return cls({node["id"]: node for node in nodes}.get)
+
+    @classmethod
+    def reading(cls, session, experiment_id):
+        """Judged over the experiment's node rows, read through ``session``."""
+
+        def lookup(node_id):
+            row = session.get(RecordRow, node_id)
+            if (
+                row is None
+                or row.kind != "commons_node"
+                or row.payload.get("experiment_id") != experiment_id
+            ):
+                return None
+            return row.payload
+
+        return cls(lookup)
+
+    def _child(self, entry):
+        """The node an import entry names, while its source is still the one recorded."""
+        child = self._lookup(entry["node_id"])
+        current = (child or {}).get("lean_source") or {}
+        return child if child is not None and current.get("sha256") == entry["sha256"] else None
+
+    def stands(self, node, depth=0):
+        if node["id"] in self._stands:
+            return self._stands[node["id"]]
+        self._stands[node["id"]] = False  # a cycle, or a chain too long to inline, fails
+        source = node.get("lean_source") or {}
+        recorded = source.get("closure")
+        entries = (source.get("imports") or ()) if recorded is None else recorded
+        children = map(self._child, entries)
+        stands = depth < MAX_COMMONS_MODULES and all(
+            child is not None and (recorded is not None or self.stands(child, depth + 1))
+            for child in children
+        )
+        self._stands[node["id"]] = stands
+        return stands
+
+
+def source_state(node: dict, closures: Closures) -> str:
+    """What the node's source proves of its current statement: its rank; ``stale`` when it
+    was checked against another statement, or when a module its check inlined is no longer
+    its node's source (``closures``), so it is never complete; ``stub`` for an elaborated
+    Lean statement with no source (it imports as a ``sorry`` stub), else ``none``."""
+    state = statement_state(node)
+    if state in RANKS and not closures.stands(node):
+        return "stale"
+    return state
 
 
 def _module_name(token):
@@ -557,6 +628,14 @@ class CommonsSourceMixin:
             "sha256": found.sha256,
         }
 
+    def node_source_state(self, node_id, actor) -> tuple[dict, str]:
+        """A commons node's payload and its ``source_state``, its imports read in the same
+        session: a scoped recruit ends on it (``scope_ending``)."""
+        with self.db.sessions() as session:
+            row = self._get(session, "commons_node", node_id, actor)
+            node = copy.deepcopy(row.payload)
+            return node, source_state(node, Closures.reading(session, node["experiment_id"]))
+
     def expand_commons(self, experiment_id, source, actor, *, max_bytes) -> Expansion:
         """``source`` with its ``import Commons.N…`` inlined from the experiment's live node
         modules; a source that names no module is returned unchanged, without a read."""
@@ -574,7 +653,8 @@ class CommonsSourceMixin:
 
         ``record`` is platform evidence assembled by ``lean_check``: ``rank``, ``bytes``,
         ``statement_check``, ``lean_statement_sha256`` (the statement the file was checked
-        against) and ``imports`` (``[{module, node_id, sha256}]``, each a depends_on edge).
+        against), ``imports`` (``[{module, node_id, sha256}]``, each a depends_on edge) and
+        ``closure`` (``[{node_id, sha256}]``, every module the check inlined; ``Closures``).
         A source whose imports reach the node through the stored sources' imports is refused
         (``imports_own_module``): published, the module would import itself. So is one that
         holds what no published module may (``refused_command``), whoever calls.
@@ -624,7 +704,8 @@ class CommonsSourceMixin:
                     status=422,
                 )
             rank, current = record["rank"], node.get("lean_source")
-            held = blocking_rank(node, rank, actor.branch_id)
+            state = source_state(node, Closures.reading(session, experiment.id))
+            held = blocking_rank(node, rank, actor.branch_id, state)
             if held is not None:
                 return {"recorded": False, "module": module, "reason": "lower_rank", "rank": held}
             if _imports_reach(session, row.id, record["imports"]):
@@ -642,6 +723,7 @@ class CommonsSourceMixin:
                 "statement_check": record["statement_check"],
                 "lean_statement_sha256": record["lean_statement_sha256"],
                 "imports": record["imports"],
+                "closure": record.get("closure"),
                 "recorded_at": utcnow().isoformat(),
             }
             self._replace(session, row, {"lean_source": source})
@@ -657,7 +739,7 @@ class CommonsSourceMixin:
             if (
                 rank in COMPLETE_RANKS
                 and has_elaborated_statement(node)
-                and not _complete_for(current, digest)
+                and state not in COMPLETE_RANKS
             ):
                 # First reach only: a re-publication at a complete rank never re-posts.
                 route = next(
@@ -670,8 +752,9 @@ class CommonsSourceMixin:
                 )
                 self._post_route_compiled(session, row, actor.branch_id, route, op)
             replaced = current is not None
-            # A source of an older statement is stale: the new one is a first publication.
-            fresh = replaced and not _stale(current, digest)
+            # A stale source (of an older statement, or whose imports changed) is none: the
+            # new one is a first publication.
+            fresh = replaced and state in RANKS
             self._event(
                 session,
                 actor,

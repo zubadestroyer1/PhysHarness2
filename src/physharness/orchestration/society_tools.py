@@ -55,8 +55,8 @@ from ..commons_sources import (
     refused_command,
     remap,
     scope_closers,
-    source_state,
     split_imports,
+    statement_state,
 )
 from ..continuation import EVENT_WAIT_DEFAULT_SECONDS
 from ..domain import ArtifactCreate, Principal
@@ -1031,7 +1031,7 @@ def society_tools(
                 if edge["relation"] == "depends_on" and edge["status"] != "abandoned":
                     target = service.get_record("commons_node", edge["node_id"], agent)
                     # It imports, and not a source of an older statement than the stub's.
-                    if source_state(target) not in ("none", "stale"):
+                    if statement_state(target) not in ("none", "stale"):
                         digest = _lean_digest(
                             target.get("lean_header"),
                             target.get("lean_name"),
@@ -1050,7 +1050,11 @@ def society_tools(
                     reason, held = (None if checked["ok"] else "lean_errors"), None
                 else:
                     reason = _checked_refusal(source, node, expansion, checked)
-                    held = None if reason else blocking_rank(node, "partial", agent.branch_id)
+                    held = (
+                        None
+                        if reason
+                        else blocking_rank(node, "partial", agent.branch_id, node["source"])
+                    )
                 if reason or held:
                     refused = _refused(node_module(node), reason or "lower_rank", source)
                     if held:
@@ -1174,7 +1178,8 @@ def society_tools(
             )
             # Refused before any artifact is stored, so a refusal leaves none behind;
             # record_lean_source repeats these checks under the node's lock.
-            refusal, held = node_refusal(node), blocking_rank(node, rank, agent.branch_id)
+            refusal = node_refusal(node)
+            held = blocking_rank(node, rank, agent.branch_id, node["source"])
             if refusal is not None:
                 return {"recorded": False, "module": module, "reason": refusal}
             if held is not None:
@@ -1192,6 +1197,8 @@ def society_tools(
                 "imports": [
                     {"module": m.name, "node_id": m.node_id, "sha256": m.sha256} for m in direct
                 ],
+                # What the check inlined: while each is its node's source, this one stands.
+                "closure": [{"node_id": m.node_id, "sha256": m.sha256} for m in expansion.modules],
             }
 
             def store():
