@@ -96,8 +96,9 @@ receives each batch as one header line, saying the lines are unverified peer dat
 one line per item: the post kind, the node's 8-hex id and title, the author branch's
 8-hex id, an excerpt of at most 200 characters, and the 8-hex post or message id that
 `commons_read` accepts. An urgent line starts with `!`. Only the platform writes a line's
-urgent mark, kind and attribution: peer text is collapsed to one line, the node title is
-a quoted JSON string, and an excerpt's leading `!` or `[` is escaped. A referee's worker
+urgent mark, kind and attribution: the node title and the excerpt are each collapsed to
+one line and rendered as a quoted JSON string, so peer text cannot forge a line, nor a
+platform-looking segment inside its own line. A referee's worker
 gets no pushed updates: no thread pushes to it and no other branch messages it.
 
 If access to an update is revoked, the inbox replaces it with an explicit withdrawal
