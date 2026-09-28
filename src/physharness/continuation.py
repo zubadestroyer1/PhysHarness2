@@ -1387,6 +1387,13 @@ class ContinuationMixin:
             return status(True, "wait_error", {"code": error.code})
         return status(False, "waiting")
 
+    def scope_delivered(self, task_id, actor):
+        """Whether a scoped recruit can end now (``_scope_delivered``): a recruit parked on
+        its recruits wakes for it too, whether or not they have finished (merge audit)."""
+        self._research_role(actor)
+        with self.db.sessions() as session:
+            return self._scope_delivered(session, {"task_id": task_id}, actor)
+
     @staticmethod
     def _scope_delivered(session, peer_wait, actor):
         """Whether the waiter is a scoped recruit that can end now: its work is delivered

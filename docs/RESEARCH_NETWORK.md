@@ -442,7 +442,9 @@ tools, the prompts and the delivery shapes.
     statement changed after recruitment. A parked recruit's wait watches its node, so
     each of these endings wakes it (`scope_delivered`), whether or not it still claims
     the node, and it ends without another request; with joined recruits of its own
-    pending, the wake waits for them (see below).
+    pending, the wake waits for them (see below). A recruit parked with `for="tasks"` wakes
+    the same way while the recruits it waits for are still pending, provided none of them
+    is joined: its detached recruits keep running, and nothing tells them it ended.
     A recruit whose node is proved or closed while it is still queued, or while its first
     request waits for rate admission, ends before that request is sent. Every later session,
     such as a wake from a wait, is checked the same way, but ends there only for its scope

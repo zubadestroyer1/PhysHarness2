@@ -1128,6 +1128,80 @@ async def test_a_parked_scoped_recruit_wakes_when_a_peer_proves_its_node(lab, mo
     assert service.get_record("task", root["id"], author)["status"] == "completed"
 
 
+async def test_a_scoped_recruit_parked_on_a_detached_helper_ends_when_its_node_is_proved(
+    lab, monkeypatch
+):
+    """Merge audit: the root waits for its until_proved recruit, which waits for tasks on a
+    detached helper parked on events. A peer then proves the recruit's node. The recruit
+    wakes without another request although its helper is pending, ends scope_proved, and
+    the root resumes: no false SOCIETY_IDLE with both stranded. The helper, not joined,
+    keeps its wait."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    node = service.read_node(node["id"], agent)["node"]
+    finish_task(service, context["task_id"])
+    root = service.create_task(
+        TaskCreate(branch_id=branches[1]["id"], objective="Root"), author, "root"
+    )
+    proved, status = [], service.peer_wait_status
+
+    def proving(ticket, actor):
+        result = status(ticket, actor)
+        if result["reason"] == "waiting" and not proved:  # the helper parked, checked
+            proved.append(True)
+            digest = node["lean_statement_sha256"]
+            publish(service, node["id"], alpha, "complete", "peer", lean_statement_sha256=digest)
+        return result
+
+    monkeypatch.setattr(service, "peer_wait_status", proving)
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            brief = {"brief": "Prove it.", "title": "Prover", "focus_node_id": node["id"]}
+            return [tool_call("recruit", {**brief, "until_proved": True}, "r-1")]
+        if phase == 1:
+            return [tool_call("wait", {"for": "tasks", "ids": [outputs[0]["task_id"]]}, "w-1")]
+        return [message("Root done.")]
+
+    def prover_steps(phase, outputs):
+        if phase == 0:
+            side = {"brief": "Side lookup.", "title": "Side", "detached": True}
+            return [tool_call("recruit", side, "r-2")]
+        if phase == 1:
+            return [tool_call("wait", {"for": "tasks", "ids": [outputs[-1]["task_id"]]}, "w-2")]
+        return [message("Unneeded.")]
+
+    def side_steps(phase, outputs):
+        wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+        return [tool_call("wait", wait, "w-3")] if phase == 0 else [message("Side done.")]
+
+    route, phases = scripted_society_route(
+        root_steps, {"Prove it": prover_steps, "Side lookup": side_steps}
+    )
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    tasks = service.list_records("task", author, exp["id"])
+    prover = next(task for task in tasks if task.get("scope"))
+    side = next(task for task in tasks if task["objective"].startswith("Side lookup"))
+    assert proved and phases["Prove it"] == 2 and phases["root"] == 3
+    assert prover["status"] == "completed"
+    source = service.read_node(node["id"], alpha)["node"]["lean_source"]
+    assert prover["return_result"]["artifact_ids"][0] == source["artifact_id"]
+    assert service.get_record("task", root["id"], author)["status"] == "completed"
+    # Only the detached helper still waits, on events that nothing can now bring.
+    assert side["ready_continuation"]["reason"] == "wait_for_events"
+    assert report["stop_reason"] == "SOCIETY_IDLE"
+
+
 def waiter_and_peer(service, author, branches, peer="Busy"):
     return [
         service.create_task(TaskCreate(branch_id=branch["id"], objective=name), author, name)

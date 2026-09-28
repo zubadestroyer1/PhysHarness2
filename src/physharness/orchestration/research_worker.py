@@ -1234,7 +1234,10 @@ class ResearchTaskExecutor:
                         branch_id=task["branch_id"],
                     ),
                 )
-                if not child_status["all_terminal"]:
+                # A scoped recruit whose work is delivered ends without its detached recruits.
+                if not child_status["all_terminal"] and not (
+                    task.get("scope") and self.service.scope_delivered(task_id, actor)
+                ):
                     return {"task_id": task_id, "status": "waiting", "code": "CHILDREN_PENDING"}
             if ready.get("peer_wait"):
                 waiter = Principal(
@@ -2418,6 +2421,8 @@ class ResearchTeamRunner:
         # Each event wait's last check, (event head, wall time, reason, ready), until its task
         # runs: see wait_check_due (S1 #14). A woken wait runs without another check.
         wait_checks = {}
+        # Each scoped task wait's last undelivered scope check, (event head, wall time).
+        scope_checks = {}
         # The wall time of the first of two idle observations an idle stop needs, or None.
         idle_since = None
         stop_reason = None
@@ -2523,6 +2528,20 @@ class ResearchTeamRunner:
                 )
             )
 
+        def scope_wakes(task, wall):
+            """Whether a scoped recruit parked on its recruits can end now, its work delivered
+            and no joined recruit pending (merge audit): checked again once the event head
+            moves or the last check is EVENT_WAIT_MAX_STALE_SECONDS old."""
+            if not experiment.get("society") or not task.get("scope"):
+                return False
+            last = scope_checks.get(task["id"])
+            if last and last[0] == head and wall - last[1] < EVENT_WAIT_MAX_STALE_SECONDS:
+                return False
+            if self.service.scope_delivered(task["id"], actor):
+                return True
+            scope_checks[task["id"]] = (head, wall)
+            return False
+
         def all_waiting(pending, head, checked_after=0):
             """Whether the society is idle (S1 #14): every pending task waits, at least one on
             events; every event wait found nothing at this head (checked at or after
@@ -2571,10 +2590,12 @@ class ResearchTeamRunner:
                 if task["status"] not in terminal
             }
             for task in tasks:
-                if task["id"] in events and task.get("scope") and task["id"] not in joined_pending:
+                # Event and task waits alike: a delivered recruit ends however its wait stands.
+                if task["id"] in tickets and task.get("scope") and task["id"] not in joined_pending:
                     node = self.service.get_record("commons_node", task["scope"]["node_id"], actor)
                     if scope_ending(task["scope"], node) is not None:
                         wait_checks.pop(task["id"], None)  # check it at once: it can end
+                        scope_checks.pop(task["id"], None)
                         return False
             return not any(
                 receipt["status"] == "queued"
@@ -2762,9 +2783,13 @@ class ResearchTeamRunner:
                         outcomes[task_id] = {"task_id": task_id, "status": task["status"]}
                         continue
                     ready_ticket = task.get("ready_continuation")
-                    if ready_ticket and any(
-                        task_states.get(child_id) not in {"completed", "failed", "blocked"}
-                        for child_id in ready_ticket.get("wait_task_ids", [])
+                    if (
+                        ready_ticket
+                        and any(
+                            task_states.get(child_id) not in {"completed", "failed", "blocked"}
+                            for child_id in ready_ticket.get("wait_task_ids", [])
+                        )
+                        and not scope_wakes(task, utcnow().timestamp())
                     ):
                         continue
                     if ready_ticket and ready_ticket.get("peer_wait"):
@@ -2823,6 +2848,7 @@ class ResearchTeamRunner:
                         continue
                     attempted.add(task_id)
                     wait_checks.pop(task_id, None)  # its next ticket is checked afresh
+                    scope_checks.pop(task_id, None)
                     if is_referee:
                         active_referees.add(task_id)
                     else:
