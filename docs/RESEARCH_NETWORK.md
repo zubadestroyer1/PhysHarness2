@@ -234,7 +234,10 @@ tools, the prompts and the delivery shapes.
     long pole, needs no referee and ends scoped recruits) rests on a statement check that
     judged the statement: a check that could not judge (a timeout, a failed or missing
     checker) leaves the file `partial` whatever its own report says, and the result names
-    it (`statement_check`), so the agent checks again. Only a node with no Lean statement,
+    it (`statement_check`) with a `remediation`: check again, except after a
+    `check_timeout` or an oversized file. The check recompiles the flattened file cold
+    within at most 240 s, so the same file fails the same way; the proof must get faster
+    or be split into imported lemmas. Only a node with no Lean statement,
     which has nothing to check, ranks `complete` on the file's own axiom report (no
     `sorry`, standard axioms only); the publication gate keeps a module from redefining
     that report, and such a source proves only a definition. A statement check that

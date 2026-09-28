@@ -1472,6 +1472,7 @@ async def test_without_a_judging_statement_check_a_source_stays_partial(lab):
         "rank": "partial",
         "replaced": False,
         "statement_check": "statement_check_unavailable",
+        "remediation": "The statement check could not judge the file; check it again.",
     }
     node = service.read_node(created["id"], agent)["node"]
     assert node["lean_source"]["rank"] == "partial"
@@ -1482,6 +1483,16 @@ async def test_without_a_judging_statement_check_a_source_stays_partial(lab):
         "reason": "statement_check_unavailable",
         "axioms": None,
     }
+    # PR 37 re-audit: the check recompiles the file cold within its budget, so a file that
+    # timed out times out again; the agent is told to speed the proof up or split it.
+    workspace.lean.verdict = {**workspace.lean.verdict, "reason": "check_timeout"}
+    slow = await call(tools, "lean_check", {"source": PROOF + "\n", "node_id": created["id"]})
+    assert (slow["published"]["rank"], slow["published"]["statement_check"]) == (
+        "partial",
+        "check_timeout",
+    )
+    remedy = slow["published"]["remediation"]
+    assert "faster" in remedy and "split" in remedy and "check it again" not in remedy
 
 
 async def test_lean_check_publishes_only_what_the_statement_check_does_not_reject(lab):

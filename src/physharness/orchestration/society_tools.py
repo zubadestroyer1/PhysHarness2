@@ -73,6 +73,7 @@ from ..workforce import scope_statement_error
 from ..workforce_models import RecruitResearcherRequest
 from .computation import MAX_ARG_CHARS, MAX_ARGS, MAX_TIMEOUT_SECONDS, ComputationRunner
 from .lean_session import (
+    CHECK_TIMEOUT_SECONDS,
     INFRASTRUCTURE_REASONS,
     _unterminated,
     declaration_spans,
@@ -172,6 +173,18 @@ SHARE_LEAN = (
 POST_KINDS = ("question", "finding", "objection", "attempt_failed", "synthesis", "update")
 # Statement-check verdicts that the file does not prove the node's statement: no publication.
 STATEMENT_REJECTIONS = frozenset({"statement_mismatch", "kernel_rejected", "theorem_missing"})
+# What to do about a statement check that could not judge the file, which then ranks
+# partial. The check recompiles the flattened file cold, so a timeout or an oversized file
+# recurs on the same file: checking it again does not help.
+UNJUDGED_REMEDIES = {
+    "check_timeout": "The statement check recompiles the file from scratch within its time "
+    f"limit (at most {CHECK_TIMEOUT_SECONDS} s) and ran out, so the same file times out "
+    "again: make the proof faster (explicit lemmas instead of heavy simp, nlinarith or decide "
+    "calls) or split it into lemmas on their own nodes and import them.",
+    "statement_check_too_large": "The flattened file is too large for the statement check: "
+    "import fewer modules, or split the proof into lemmas on their own nodes.",
+}
+RECHECK = "The statement check could not judge the file; check it again."
 # The axiom names a referee's lean_check shows once modules are inlined: Lean's own, which no
 # module can declare. Any other name may be a module author's text.
 REFEREE_AXIOMS = STANDARD_AXIOMS | {"sorryAx"}
@@ -1194,10 +1207,12 @@ def society_tools(
                 if verdict.get("detail"):
                     refused["detail"] = verdict["detail"]
                 return refused
-            # A check that could not judge leaves the file partial: say why, so it is rerun.
-            unjudged = (
-                {} if verdict is None or verdict["ok"] else {"statement_check": verdict["reason"]}
-            )
+            # A check that could not judge leaves the file partial: say why, and what to do.
+            unjudged = {}
+            if verdict is not None and not verdict["ok"]:
+                reason = verdict["reason"]
+                remedy = UNJUDGED_REMEDIES.get(reason, RECHECK)
+                unjudged = {"statement_check": reason, "remediation": remedy}
             # Refused before any artifact is stored, so a refusal leaves none behind;
             # record_lean_source repeats these checks under the node's lock.
             refusal = node_refusal(node)
@@ -1305,7 +1320,8 @@ def society_tools(
                 "Commons.N<8 hex>, ranked verified (the statement check passed on standard "
                 "axioms), complete (no sorry on standard axioms, for a node with no Lean "
                 "statement to check) or partial (a sorry, other axioms, or a statement check "
-                "that could not judge, named in statement_check: check again); a higher "
+                "that could not judge, named in statement_check with a remediation: a "
+                "check_timeout needs a faster or split proof, not another check); a higher "
                 "rank replaces a lower one, and publishing claims the node. A complete check "
                 "runs the platform's statement check. A published module runs no code where "
                 "it is imported: no #eval-like command (#check, #print and terms such as #s "
