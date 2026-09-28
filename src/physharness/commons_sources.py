@@ -60,9 +60,13 @@ _RUNS_CODE = frozenset(
     "simproc_decl dsimproc_decl".split()
 )
 _REGISTERS = ("builtin_", "declare_", "register_")
-# `unsafe` only outside brackets, as a declaration modifier: inside them it is aesop's rule
-# phase (`aesop (add unsafe 50% apply foo)`, `@[aesop unsafe …]`).
+# `unsafe` modifies a declaration, or makes a term (`unsafe t`) that runs `t` through an
+# unsafe helper; it passes only as aesop's rule phase, in the innermost bracket of an aesop
+# clause and followed by a success probability or a rule builder: `aesop (add unsafe 50%
+# apply foo)`, `@[aesop unsafe 20% apply]`. Names of unsafe escapes (`unsafeBaseIO`,
+# `unsafeCast`, …) are refused as a backstop.
 _OPEN_BRACKETS, _CLOSE_BRACKETS = "([{⟨⦃", ")]}⟩⦄"
+_UNSAFE_NAMES = "unsafe"
 # Notation only as `local`, which ends with the section the inliner wraps the module in;
 # global or `scoped` notation reaches the importer's own lines.
 _NOTATION = frozenset("notation notation3 infix infixl infixr prefix postfix".split())
@@ -127,6 +131,13 @@ _BRACKET = re.compile(r"\s*\[")
 _LOCAL = re.compile(rf"(?<![{_ID_REST}.!?])local\s+$")
 _SCOPED = re.compile(rf"(?<![{_ID_REST}.!?])scoped(?:\s*\[[^\]]*\])?\s+$")
 _ESCAPED_META = re.compile("«(?:" + "|".join(sorted(_META_NAMESPACES)) + ")»")
+_AESOP_PHASE = re.compile(
+    rf"\s*(?:[0-9]+(?:\.[0-9]+)?\s*%|(?:apply|forward|destruct|constructors|cases|simp|unfold"
+    rf"|tactic)(?![{_ID_REST}!?]))"
+)
+_AESOP_CLAUSE = re.compile(rf"\s*(?:add|erase)(?![{_ID_REST}!?])")
+_AESOP_ENTRY = re.compile(rf"\s*(?:(?:local|scoped)\s+)?aesop(?![{_ID_REST}!?])")
+_ATTRIBUTE_COMMAND = re.compile(rf"(?<![{_ID_REST}.!?])attribute\s*$")
 
 
 @dataclass(frozen=True)
@@ -389,10 +400,38 @@ def scope_closers(module, source):
     return [f"end {label}".rstrip() for label in reversed(stack)]
 
 
-def _nesting(code, index):
-    """How many brackets are open at ``index`` of ``code``."""
-    opened = sum(code.count(bracket, 0, index) for bracket in _OPEN_BRACKETS)
-    return opened - sum(code.count(bracket, 0, index) for bracket in _CLOSE_BRACKETS)
+def _aesop_phase(code, start, end):
+    """Whether the ``unsafe`` at ``code[start:end]`` is aesop's rule phase: a success
+    probability or a rule builder follows it, and its innermost bracket is an aesop clause,
+    ``(add …)`` or ``(erase …)``, or an attribute entry starting with ``aesop``."""
+    if not _AESOP_PHASE.match(code, end):
+        return False
+    depth = 0
+    for opened in range(start - 1, -1, -1):
+        if code[opened] in _CLOSE_BRACKETS:
+            depth += 1
+        elif code[opened] in _OPEN_BRACKETS:
+            if not depth:
+                break
+            depth -= 1
+    else:
+        return False
+    if code[opened] == "(":
+        return _AESOP_CLAUSE.match(code, opened + 1) is not None
+    if code[opened] != "[" or not (
+        code.endswith("@", 0, opened)
+        or _ATTRIBUTE_COMMAND.search(code, max(0, opened - 64), opened)
+    ):
+        return False
+    entry, depth = opened + 1, 0  # the attribute entry holding it: after its last comma
+    for index in range(opened + 1, start):
+        if code[index] in _OPEN_BRACKETS:
+            depth += 1
+        elif code[index] in _CLOSE_BRACKETS:
+            depth -= 1
+        elif code[index] == "," and not depth:
+            entry = index + 1
+    return _AESOP_ENTRY.match(code, entry) is not None
 
 
 def _bracketed(code, start):
@@ -417,8 +456,9 @@ def _meta_root(name):
 def refused_command(source):
     """The first command, attribute, option or name in ``source`` after its imports that no
     published module may hold, or None (PR 37 review): a command or modifier that runs code
-    or extends syntax (``_RUNS_CODE``, ``_REGISTERS``, and ``unsafe`` outside brackets, where
-    it modifies a declaration), notation that is not ``local`` (``scoped notation`` is named
+    or extends syntax (``_RUNS_CODE``, ``_REGISTERS``, and ``unsafe`` unless it is aesop's
+    rule phase), a name of an unsafe escape (a component starting with ``unsafe``), notation
+    that is not ``local`` (``scoped notation`` is named
     so), a ``#`` command of ``_RUNS_TERMS``, a code attribute, a ``set_option`` outside the
     module options, or a name rooted in ``_META_NAMESPACES``. ``gate_remedy`` says what to
     write instead.
@@ -462,9 +502,14 @@ def refused_command(source):
             if not _LOCAL.search(code, *before):
                 return word
         elif word == "unsafe":
-            if _nesting(code, match.start()) <= 0:
+            if not _aesop_phase(code, match.start(), end):
                 return word
-        elif word in _RUNS_CODE or word.startswith(_REGISTERS) or _meta_root(word):
+        elif (
+            word in _RUNS_CODE
+            or word.startswith(_REGISTERS)
+            or _meta_root(word)
+            or any(part.startswith(_UNSAFE_NAMES) for part in word.split("."))
+        ):
             return word
     for escaped in _ESCAPED_META.finditer(body):
         prefix = body[: escaped.start()]
@@ -493,6 +538,13 @@ def gate_remedy(command):
         )
     if command.startswith(("@[", "attribute")):
         return "Drop the attribute: it would hand every importer's elaborator code to run."
+    if command == "unsafe":
+        return (
+            "Drop unsafe: it makes an unsafe declaration or term. It is fine only as aesop's "
+            "rule phase, as in aesop (add unsafe 50% apply foo) or @[aesop unsafe 20% apply]."
+        )
+    if any(part.startswith(_UNSAFE_NAMES) for part in command.split(".")):
+        return f"Drop {command}: an unsafe escape can run IO wherever the module is imported."
     if command.startswith("("):
         return "Simplify the nesting of its interpolated strings and syntax quotations."
     if _meta_root(command.strip("«»")) or _ESCAPED_META.fullmatch(command):

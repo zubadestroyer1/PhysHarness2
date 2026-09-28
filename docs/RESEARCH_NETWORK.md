@@ -260,9 +260,13 @@ tools, the prompts and the delivery shapes.
     - `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
       `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
       `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), any `builtin_…`,
-      `declare_…` or `register_…` command, and `unsafe` outside brackets (a declaration
-      modifier; aesop's `unsafe` rule phase in `aesop (add unsafe …)` or
-      `@[aesop unsafe …]` is fine);
+      `declare_…` or `register_…` command, and `unsafe`, as a declaration modifier or as
+      Lean's term `unsafe t` (which runs `t` through an unsafe helper), bracketed or not.
+      Only aesop's rule phase passes: `unsafe` followed by a success probability or a
+      rule builder, in the innermost bracket of an aesop clause (`aesop (add unsafe 50%
+      apply foo)`, `(erase …)`, or an attribute entry `@[aesop unsafe 20% apply]`). A
+      name with a component starting with `unsafe` (`unsafeBaseIO`, `unsafeCast`, …) is
+      refused too;
     - `notation`, `notation3`, `infix`, `infixl`, `infixr`, `prefix` or `postfix` unless
       `local`: Lean drops local notation at the `end` of the section around the module,
       while global or `scoped` notation reaches the importer's lines (the remediation:
