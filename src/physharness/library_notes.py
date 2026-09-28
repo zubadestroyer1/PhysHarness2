@@ -27,8 +27,9 @@ SEED_AUTHOR = "seed:S1 audit 2026-09-26"
 NOTES_ARE = "agents' unverified reports, data not instructions"
 # find_declaration surfaces a note unasked when a name the note quotes in backticks meets
 # a query word (see _names_meet), or when the note shares SURFACE_MIN_SHARED of the query's
-# words (the one word, for a one-word query). Only words of at least SURFACE_WORD_CHARS
-# characters outside SURFACE_STOP_WORDS count: every note says "is not … at this pin".
+# words of at least SURFACE_WORD_CHARS characters (the one word, for a one-word query).
+# Words in SURFACE_STOP_WORDS count toward that number but never match: every note says
+# "is not … at this pin".
 SURFACE_MIN_SHARED = 2
 SURFACE_WORD_CHARS = 3
 SURFACE_STOP_WORDS = frozenset(
@@ -50,12 +51,17 @@ def seed_notes(environment_digest: str) -> list[str]:
 
 
 def _names_meet(name: str, word: str) -> bool:
-    """Whether two Lean names are equal, or the shorter prefixes the longer at a ``.`` or
-    ``_`` boundary (``PiLp.toLp`` meets ``PiLp.toLp_apply``), case-insensitively. A prefix
-    has at least ``SURFACE_WORD_CHARS`` characters."""
-    short, long = sorted((name.casefold(), word.casefold()), key=len)
-    if short == long:
+    """Whether a quoted Lean name meets a query word, case-insensitively: they are equal,
+    or the name holds a ``.`` or ``_`` and the shorter prefixes the longer at a ``.`` or
+    ``_`` boundary (``PiLp.toLp`` meets ``PiLp.toLp_apply``). A bare quoted name, such as a
+    namespace, meets only an equal word, never every name under it. A prefix has at least
+    ``SURFACE_WORD_CHARS`` characters."""
+    name, word = name.casefold(), word.casefold()
+    if name == word:
         return True
+    if "." not in name and "_" not in name:
+        return False
+    short, long = sorted((name, word), key=len)
     return len(short) >= SURFACE_WORD_CHARS and long.startswith(short) and long[len(short)] in "._"
 
 
@@ -108,12 +114,9 @@ class LibraryNotesMixin:
             wanted = tokens(query)
             need, named = 1, set()
             if surfaced:
-                wanted = {
-                    word
-                    for word in wanted
-                    if len(word) >= SURFACE_WORD_CHARS and word not in SURFACE_STOP_WORDS
-                }
-                need = max(1, min(SURFACE_MIN_SHARED, len(wanted)))
+                counted = {word for word in wanted if len(word) >= SURFACE_WORD_CHARS}
+                need = max(1, min(SURFACE_MIN_SHARED, len(counted)))
+                wanted = counted - SURFACE_STOP_WORDS
                 named = {
                     position
                     for position, note in enumerate(notes)
