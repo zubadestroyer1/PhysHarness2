@@ -281,9 +281,15 @@ tools, the prompts and the delivery shapes.
     per call over the graph. An importer inlines the live source either way, and its own
     check judges the file it gets.
   - Higher ranks replace lower ones, and an equal rank replaces its peer, except that a
-    complete or verified source of the current statement is replaced at its rank only by
-    its publisher or the node's author: other nodes' sources may import it and go stale
-    when it is replaced, so no other branch can churn equal-rank sources under them.
+    verified source of the current statement, or a complete one of an elaborated Lean
+    statement, is replaced at its rank only by its publisher or the node's author: other
+    nodes' sources may import it and go stale when it is replaced, so no other branch can
+    churn equal-rank sources under them (it can outrank a complete one with a verified
+    source). Nothing outranks a complete source of a node with no elaborated statement (a
+    definition, say), so there any branch replaces it at its rank: a lock would let the
+    first file, however unrelated, hold the node for good once its publisher and author
+    were gone. The trade-off is churn: each such replacement stales the importers' sources
+    until they republish.
   - Publishing claims the node: a check renews the branch's live claim, and only a
     publication claims afresh (on the branch's prior route), so a refused check never
     re-creates a lapsed or released claim. The source's imports become `depends_on` edges

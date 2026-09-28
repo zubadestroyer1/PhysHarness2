@@ -5,10 +5,10 @@ clean ``lean_check`` against the node publishes the checked file as the node's s
 ranked ``verified`` (the statement check passed on standard axioms), ``complete`` (no
 ``sorry`` on standard axioms, for a node with no Lean statement to check) or ``partial``
 (also when the statement check could not judge). A higher rank replaces a lower
-one; a complete or verified source of the node's current statement is replaced at its rank
-only by its publisher or the node's author (S1 audit #12). A node's first complete source
-of an elaborated Lean statement tells its other claimants to consider stopping their routes
-(S1 audit #22).
+one; a verified source of the node's current statement, or a complete one of an elaborated
+statement, is replaced at its rank only by its publisher or the node's author (S1 audit
+#12). A node's first complete source of an elaborated Lean statement tells its other
+claimants to consider stopping their routes (S1 audit #22).
 
 A file imports node modules with ``import Commons.N…``. The platform inlines them: each
 module's published source, or a ``sorry`` stub of an elaborated statement, goes into one
@@ -175,16 +175,22 @@ def blocking_rank(node: dict, rank: str, branch_id: str | None, state: str) -> s
     ``rank`` from ``branch_id``, else None. ``state`` is the node's ``source_state``: a
     stale source (of another statement, or whose imports changed since) counts as no
     source, so any source of the current statement replaces it. At equal rank the newer
-    source wins, except that a complete or verified source answers only to its publisher
-    and the node's author: other nodes' sources may import it, and each goes stale when it
-    is replaced, so another branch cannot churn equal-rank sources under them."""
+    source wins, except that a verified source, or a complete one of an elaborated Lean
+    statement, answers only to its publisher and the node's author: other nodes' sources
+    may import it, and each goes stale when it is replaced, so another branch cannot churn
+    equal-rank sources under them; it can outrank a complete one with a verified source.
+
+    Nothing outranks a complete source of a node with no elaborated statement (a
+    definition, say), so there any branch replaces it at its rank: a lock would let the
+    first file, however unrelated, hold the node once its publisher and author had gone.
+    The cost is churn: each such replacement stales its importers until they republish."""
     if state not in RANKS:
         return None
     current = node["lean_source"]
     held = current["rank"]
     if RANKS[rank] < RANKS[held] or (
         rank == held
-        and held in COMPLETE_RANKS
+        and (held == "verified" or held == "complete" and has_elaborated_statement(node))
         and branch_id not in (current.get("branch_id"), node.get("branch_id"))
     ):
         return held

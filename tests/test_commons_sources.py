@@ -460,6 +460,23 @@ def test_an_importer_goes_stale_once_its_import_is_replaced(lab):
     assert publish(service, b["id"], alpha, "complete", "a-b", lean_statement_sha256=db)["replaced"]
 
 
+def test_any_branch_replaces_a_complete_source_of_a_node_without_a_statement(lab):
+    """PR 37 re-audit: nothing outranks a complete source on a node with no elaborated Lean
+    statement (a definition), so the equal-rank lock let an unrelated first file hold the
+    node for good. Only a node another branch can outrank keeps the lock."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    gamma = third_branch(service, author, exp)
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="definition", title="D", statement="D."), alpha, "d"
+    )
+    junk = "theorem unrelated : True := trivial\n"
+    assert publish(service, node["id"], beta, "complete", "junk", junk)["recorded"] is True
+    real = "import Mathlib\nnoncomputable def D : ℝ := 1\n"
+    replaced = publish(service, node["id"], gamma, "complete", "real", real)
+    assert (replaced["recorded"], replaced["replaced"]) == (True, True)
+    assert publish(service, node["id"], beta, "partial", "lower")["reason"] == "lower_rank"
+
+
 def test_a_source_stands_only_on_the_lean_its_check_inlined(lab):
     """A change two imports down stales the importer too. A source recording its check's
     closure stands on exactly that Lean, and an import's restatement changes none of it."""
