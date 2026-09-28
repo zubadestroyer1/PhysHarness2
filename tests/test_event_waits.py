@@ -1242,6 +1242,54 @@ async def test_a_woken_wait_keeps_news_on_nodes_it_did_not_watch(lab, monkeypatc
         await client.close()
 
 
+async def test_a_task_wait_between_event_waits_keeps_the_named_event_seen(lab, monkeypatch):
+    """Merge audit: an event wait wakes on X's claim, and the woken request's only call is a
+    wait for its recruit. When that wait wakes, the anchor carries the claim as seen, so the
+    next wait on X does not wake on it again."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    x = lemma(service, exp, beta, "X")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    watch = {"for": "events", "ids": [x["id"]], "timeout_seconds": 3600}
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            helper = {"brief": "Help.", "title": "Helper", "detached": True}
+            return [tool_call("recruit", helper, "r-1")]
+        if phase == 2:  # woken by the claim
+            return [tool_call("wait", {"for": "tasks", "ids": [outputs[0]["task_id"]]}, "w-2")]
+        if phase in (1, 3):
+            return [tool_call("wait", watch, f"w-{phase}")]
+        return [message("Root done.")]
+
+    route, phases = scripted_society_route(root_steps)
+    agent = Principal(
+        id="checker",
+        project_id=author.project_id,
+        role="agent",
+        experiment_id=exp["id"],
+        branch_id=branches[0]["id"],
+    )
+    executor, client = anchoring_executor(service, route)
+    try:
+        await executor.execute(root["id"], author.project_id)  # recruits, waits on X
+        service.claim_node(x["id"], "claim", beta, "claims-x")
+        await executor.execute(root["id"], author.project_id)  # woken: waits for the helper
+        (helper,) = [
+            t for t in service.list_records("task", author, exp["id"]) if t["id"] != root["id"]
+        ]
+        finish_task(service, helper["id"])
+        await executor.execute(root["id"], author.project_id)  # woken: waits on X again
+    finally:
+        await client.close()
+    assert phases["root"] == 4
+    task = service.get_record("task", root["id"], author)
+    status = service.peer_wait_status(task["ready_continuation"]["peer_wait"], agent)
+    assert status["reason"] == "waiting"
+
+
 async def test_a_long_run_of_bare_waits_moves_the_anchor_to_the_named_event(lab):
     """Merge audit: the seen events a woken anchor carries are bounded; past the bound it
     moves on to the named event, as a later anchor would."""

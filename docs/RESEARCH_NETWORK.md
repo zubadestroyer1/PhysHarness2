@@ -521,7 +521,8 @@ tools, the prompts and the delivery shapes.
   another branch changed the graph since, the long pole is compared with the anchored one.
   A woken wait resumes at its own anchor with the note's long pole, and marks the watched
   event its note names as seen (at most 20 such marks along a run of bare waits, then it
-  moves on to the named event). The note names only the first event on the old wait's
+  moves on to the named event); a wait for recruits woken in between keeps those marks.
+  The note names only the first event on the old wait's
   watches, so any other news since that anchor, a node newly watched included, wakes the
   next wait, and the named event never does. A session resumed mid-flight keeps
   its last request's anchor. An early anchor costs at most a spare wake. The ticket carries

@@ -1064,19 +1064,22 @@ class ResearchTaskExecutor:
     def _session_anchor(self, task_id, agent, experiment, woken, wake_status, *, recovering):
         """What a builder session's first request can show (merge audit), before its prompt or
         wake note is built. A session resumed mid-flight keeps its last request's anchor. A
-        natively woken wait keeps its own (a task wait's: the last request's), shows the wake
-        note's long pole, and marks the watched event the note names as seen: the note names
-        the first event on the old wait's watches only, so news before it elsewhere still
-        wakes the next wait, and the named event never does. Otherwise (a fresh prompt) now."""
+        natively woken wait keeps its own (a task or peer wait's: the last request's, with the
+        events it marked seen), shows the wake note's long pole, and marks the watched event
+        the note names as seen: the note names the first event on the old wait's watches only,
+        so news before it elsewhere still wakes the next wait, and the named event never does.
+        Otherwise (a fresh prompt) now."""
         persisted = self.service.get_record("task", task_id, agent).get("request_anchor")
         if recovering and persisted:
             return persisted
         if woken and woken["reason"] in WAIT_REASONS:
             ticket = woken.get("peer_wait") or {}
             if ticket.get("kind") == "events":
-                sequence, seen = ticket.get("event_after"), list(ticket.get("seen_sequences", []))
+                source, sequence = ticket, ticket.get("event_after")
             else:
-                sequence, seen = (persisted or {}).get("event_sequence"), []
+                source = persisted or {}
+                sequence = source.get("event_sequence")
+            seen = list(source.get("seen_sequences", []))
             if (named := (wake_status or {}).get("sequence")) is not None:
                 seen.append(named)
                 if len(seen) > MAX_SEEN_EVENTS:  # a long run of bare waits: move on to it
