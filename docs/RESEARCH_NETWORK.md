@@ -532,7 +532,10 @@ tools, the prompts and the delivery shapes.
   30 s (a PostgreSQL event can commit behind one already seen); and at most once every
   2 s, except at its timeout. A run stops with `SOCIETY_IDLE` when all its agents wait and
   only their timeouts could wake them: no other task of the experiment is queued or
-  running (another runner's or worker's work could still wake them), every task wait has
+  running (another runner's or worker's work could still wake them), except a task
+  another runner parked on a society wait, which counts as waiting once this runner checks
+  its wait the same way, and a task this run may not start (`max_tasks`), which counts as
+  neither and makes the stop `TEAM_TASK_LIMIT`; every task wait has
   a live recruit, no verification receipt is queued, and a synthesis that is due has been
   scheduled first. A due synthesis that admission refuses (the dollar floor or a task cap) is
   logged and tried again at a later tick; it never ends the run. A second such observation at least 1 s after the first, with every

@@ -14,6 +14,7 @@
 > - The event head and the event-wait graph and watch queries inline their JSON path (`storage.event_json_text`, as `record_json_text` does), so SQLite's `events_discussion_experiment_sequence` expression index serves them; a scoped waiter's recruit lookup filters by its experiment.
 > - A society's due synthesis that admission refuses (`ADMISSION_BUDGET`, `TASK_TOTAL_CAP`, `TASK_PENDING_CAP`) is not scheduled at that tick: the runner logs it and ticks again later instead of raising out of `ResearchTeamRunner.run` without a report.
 > - A scoped recruit parked with `wait(for="tasks")` wakes and ends once its work is delivered and no joined recruit of its own is pending, even while detached recruits it waits for are pending (runner wake check, idle check and the executor's pre-check use `scope_delivered`). The detached recruits keep running untold; joined ones must still settle first. This removes a false `SOCIETY_IDLE` that stranded the recruit and its parent.
+> - The idle check no longer counts a society task this run may not start (`max_tasks` reached) as live work; the stop is then `TEAM_TASK_LIMIT`, not `TEAM_TIMEOUT`. A queued task outside the run's selection parked on a society wait (events or recruits) counts as waiting once the runner checks its wait as it checks its own, so two runners of one society each stop idle; one whose wait can wake still keeps the run going.
 
 ## Global Constraints
 

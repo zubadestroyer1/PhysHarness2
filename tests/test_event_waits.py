@@ -864,6 +864,68 @@ async def test_another_live_task_of_the_experiment_keeps_the_run_going(lab, monk
     assert service.get_record("task", root["id"], author)["ready_continuation"]
 
 
+async def test_a_recruit_beyond_max_tasks_stops_the_idle_run_at_the_task_limit(lab, monkeypatch):
+    """Merge audit: a recruit this run may not start (max_tasks reached) is no live work, so
+    once the rest of the society waits the run stops TEAM_TASK_LIMIT instead of sleeping to
+    TEAM_TIMEOUT; the recruit stays queued for a later run."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            helper = {"brief": "Help.", "title": "Helper", "detached": True}
+            return [tool_call("recruit", helper, "r-1")]
+        if phase == 1:
+            wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+            return [tool_call("wait", wait, "w-1")]
+        return [message("Root done.")]
+
+    route, phases = scripted_society_route(root_steps, {"Help": lambda p, o: [message("ok")]})
+    runner, client = society_runner(service, route)
+    started = asyncio.get_running_loop().time()
+    try:
+        report = await runner.run(manifest_for(exp, author, [root], max_tasks=1))
+    finally:
+        await client.close()
+    assert report["stop_reason"] == "TEAM_TASK_LIMIT" and phases == {"root": 2, "referee": 0}
+    assert asyncio.get_running_loop().time() - started < 10
+    (helper,) = [
+        task for task in service.list_records("task", author, exp["id"]) if task["id"] != root["id"]
+    ]
+    assert helper["status"] == "queued" and helper["id"] in report["remaining_task_ids"]
+
+
+@pytest.mark.parametrize("woken", [False, True])
+async def test_another_runners_parked_waiter_counts_as_waiting(lab, monkeypatch, woken):
+    """Merge audit: a task another runner parked on a society wait is waiting, not live work,
+    once this run checks its wait the same way: two runners of one society each stop idle.
+    If its wait can wake (here a message reached it), its runner may act, so no idle stop."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    theirs = service.create_task(
+        TaskCreate(branch_id=branches[1]["id"], objective="Theirs"), author, "theirs"
+    )
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 3600, waits=2))
+    try:
+        first = await runner.run(manifest_for(exp, author, [theirs]))
+        if woken:
+            service.send_society_message(alpha.branch_id, beta.branch_id, "Hi.", [], alpha, "m")
+        mine = service.create_task(
+            TaskCreate(branch_id=branches[0]["id"], objective="Mine"), author, "mine"
+        )
+        report = await runner.run(manifest_for(exp, author, [mine], timeout_seconds=10))
+    finally:
+        await client.close()
+    assert first["stop_reason"] == "SOCIETY_IDLE" and len(payloads) == 2
+    assert report["stop_reason"] == ("TEAM_TIMEOUT" if woken else "SOCIETY_IDLE")
+    for task in (mine, theirs):
+        assert service.get_record("task", task["id"], author)["ready_continuation"]
+
+
 async def test_a_due_synthesis_is_scheduled_before_an_idle_stop(lab, monkeypatch):
     """Posts made just before the last agent parks make a synthesis due; the runner ticks
     the synthesis schedule before it may stop idle, and runs the synthesis."""
