@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import sqlalchemy
 from commons_helpers import set_status, society_lab
 from test_commons_sources import publish
 from test_execution_responses import message
@@ -948,6 +949,52 @@ def test_the_event_head_moves_only_on_events_that_can_wake_a_waiter(lab):
     assert service.event_head(author, exp["id"]) > moved
     stranger = Principal(id="stranger", project_id="elsewhere", role="operator")
     assert service.event_head(stranger, exp["id"]) == 0
+
+
+def query_plans(service, run, marker):
+    """The SQLite plans of the statements containing ``marker`` that ``run()`` executes."""
+    queries = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if marker in statement:
+            queries.append((statement, parameters))
+
+    sqlalchemy.event.listen(service.db.engine, "before_cursor_execute", capture)
+    try:
+        run()
+    finally:
+        sqlalchemy.event.remove(service.db.engine, "before_cursor_execute", capture)
+    assert queries
+    with service.db.engine.connect() as connection:
+        return [
+            [row[-1] for row in connection.exec_driver_sql("EXPLAIN QUERY PLAN " + sql, params)]
+            for sql, params in queries
+        ]
+
+
+async def test_wait_queries_use_the_experiment_indexes(lab):
+    """Merge audit: a bound JSON path never matches an expression index, so the event head and
+    the graph checks inline theirs, and a scoped waiter's recruit lookup names its experiment."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    scoped = await scoped_waiter(service, author, exp, alpha)
+    set_status(service, lemma(service, exp, beta, "Moved")["id"], "abandoned")
+    indexed = "events_discussion_experiment_sequence (project_id=? AND kind=? AND <expr>=?"
+    (head,) = query_plans(service, lambda: service.event_head(author, exp["id"]), "UNION ALL")
+    assert sum(indexed in step for step in head) == len(continuation.WAKE_KINDS)
+    graph = query_plans(
+        service, lambda: service.peer_wait_status(scoped.ticket, scoped.recruit), "events.kind IN"
+    )
+    assert [plan for plan in graph if not any(indexed in step for step in plan)] == []
+    set_status(service, scoped.node["id"], "abandoned")  # delivered: its recruits are read
+    (children,) = query_plans(
+        service,
+        lambda: service.peer_wait_status(scoped.ticket, scoped.recruit),
+        "reply_to_parent_task_id",
+    )
+    assert any(
+        "records_project_kind_experiment_keyset (project_id=? AND kind=? AND <expr>=?)" in step
+        for step in children
+    )
 
 
 async def test_legacy_waits_still_resume_portably(lab, monkeypatch):

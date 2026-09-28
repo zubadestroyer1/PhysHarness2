@@ -10,7 +10,15 @@ from .domain import digest_json, utcnow
 from .errors import HarnessError
 from .execution.types import ExecutionError
 from .execution.workspace_archive import checked_path
-from .storage import BudgetRow, EventRow, LeaseRow, RecordRow, ReservationRow, record_json_text
+from .storage import (
+    BudgetRow,
+    EventRow,
+    LeaseRow,
+    RecordRow,
+    ReservationRow,
+    event_json_text,
+    record_json_text,
+)
 from .worker_authority import current_worker_effects
 
 EVENT_WAIT_MIN_SLEEP_SECONDS = 20  # Debounces a burst of events into one wake.
@@ -65,7 +73,7 @@ def _graph_events(experiment):
     return (
         EventRow.project_id == experiment.project_id,
         EventRow.kind.in_(LONG_POLE_KINDS),
-        EventRow.payload["experiment_id"].as_string() == experiment.id,
+        event_json_text("experiment_id") == experiment.id,
     )
 
 
@@ -1396,8 +1404,9 @@ class ContinuationMixin:
             .where(
                 RecordRow.project_id == actor.project_id,
                 RecordRow.kind == "task",
-                RecordRow.payload["reply_to_parent_task_id"].as_string() == task.id,
-                RecordRow.payload["status"].as_string().not_in(["completed", "failed", "blocked"]),
+                record_json_text("experiment_id") == task.payload["experiment_id"],
+                record_json_text("reply_to_parent_task_id") == task.id,
+                record_json_text("status").not_in(["completed", "failed", "blocked"]),
             )
             .limit(1)
         )
@@ -1422,7 +1431,7 @@ class ContinuationMixin:
             .where(
                 EventRow.project_id == experiment.project_id,
                 EventRow.sequence > peer_wait["event_after"],
-                EventRow.payload["experiment_id"].as_string() == experiment.id,
+                event_json_text("experiment_id") == experiment.id,
                 or_(
                     and_(EventRow.kind.in_(NODE_WATCH_KINDS), EventRow.aggregate_id.in_(nodes)),
                     and_(EventRow.kind.in_(BRANCH_WATCH_KINDS), branch.in_(branches)),
@@ -1483,7 +1492,7 @@ class ContinuationMixin:
         supervisor checks parked event waits again only when it moves."""
         self._research_role(actor)
         project = EventRow.project_id == actor.project_id
-        experiment = EventRow.payload["experiment_id"].as_string() == experiment_id
+        experiment = event_json_text("experiment_id") == experiment_id
         # One indexed maximum per kind: events_discussion_experiment_sequence serves each.
         heads = union_all(
             *(

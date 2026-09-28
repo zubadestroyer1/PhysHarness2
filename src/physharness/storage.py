@@ -89,6 +89,13 @@ class EventRow(Base):
     created_at: Mapped[str] = mapped_column(String(40))
 
 
+def event_json_text(field: str):
+    # As record_json_text: a bound path never matches events_discussion_experiment_sequence.
+    return EventRow.payload[
+        literal(field, type_=JSON.JSONStrIndexType(), literal_execute=True)
+    ].as_string()
+
+
 Index(
     "events_discussion_topic_sequence",
     EventRow.project_id,
