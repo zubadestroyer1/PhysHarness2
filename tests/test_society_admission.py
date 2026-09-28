@@ -128,6 +128,24 @@ def test_society_admits_only_while_one_output_reservation_fits(lab):
     assert error.remediation.startswith("Do not retry")
 
 
+def test_unpriced_admission_needs_dollars_left_above_the_floor(lab):
+    """Merge audit: without a recorded price the first reservation reads as $0, yet nothing is
+    admitted once no dollar remains above the floor."""
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    assert service.model_prices == {}
+    service.recruit_researcher(exp["id"], helper_request(alpha), alpha, "while-funded")
+    service.reserve_resources(exp["id"], "0.999999", 0, OPERATOR, "hold")
+    service.recruit_researcher(exp["id"], helper_request(alpha, "Two"), alpha, "last-micro")
+    service.reserve_resources(exp["id"], "0.000001", 0, OPERATOR, "hold-rest")
+    with pytest.raises(HarnessError) as refused:
+        service.recruit_researcher(exp["id"], helper_request(alpha, "Three"), alpha, "spent")
+    error = refused.value
+    assert error.code == "ADMISSION_BUDGET"
+    assert error.message == "Budget, not input: $0 remains and new work needs more than $0."
+    assert (error.details["remaining_usd"], error.details["minimum_reservation_usd"]) == ("0", "0")
+    assert error.retryable  # the reservations may settle for less
+
+
 def test_admission_prices_the_model_the_task_runs_with(lab):
     # Alpha runs on the cheap model, beta on one whose output reservation exceeds $1.00.
     lab = priced(lab, {"explicit-test-model": "1", "explicit-test-model-1": "1000"})

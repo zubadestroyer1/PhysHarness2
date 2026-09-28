@@ -366,21 +366,23 @@ class WorkforceMixin:
     def _admit_by_budget(self, session, experiment, policy, models):
         """Society work is admitted while the remaining dollars, less the operator's floor,
         cover the first output reservation of each new task (one per entry of ``models``):
-        max_cost - spent - reserved - floor >= the reservations' sum. There is no floor by
-        default (admission_floor_usd is None, read as 0). The refusal is an early, budget-not-
-        input one; the ledger still hard-stops each reservation at max_cost (S1 #16). It can
-        clear when running work settles below its reservations, so it is retryable while
-        releasing them all would admit the work."""
+        max_cost - spent - reserved - floor >= the reservations' sum, and > 0 when the
+        service records no price for the models (the sum is then 0; merge audit). There is no
+        floor by default (admission_floor_usd is None, read as 0). The refusal is an early,
+        budget-not-input one; the ledger still hard-stops each reservation at max_cost (S1
+        #16). It can clear when running work settles below its reservations, so it is
+        retryable while releasing them all would admit the work."""
         budget = session.get(BudgetRow, experiment.id)
         floor = _micro((policy.payload.get("admission_floor_usd") if policy else None) or "0")
         minimum = sum(self._output_reservation(experiment, model) for model in models)
+        needed = max(minimum, 1)  # a micro-dollar: no work is admitted at nothing left
         remaining = max(0, budget.max_cost - budget.spent - budget.reserved)
-        if remaining - floor < minimum:
-            settling = budget.reserved > 0 and budget.max_cost - budget.spent - floor >= minimum
+        if remaining - floor < needed:
+            settling = budget.reserved > 0 and budget.max_cost - budget.spent - floor >= needed
+            need = f"${_usd(floor + minimum)}" if minimum else f"more than ${_usd(floor)}"
             raise HarnessError(
                 "ADMISSION_BUDGET",
-                f"Budget, not input: ${_usd(remaining)} remains and new work needs "
-                f"${_usd(floor + minimum)}.",
+                f"Budget, not input: ${_usd(remaining)} remains and new work needs {need}.",
                 details={
                     "remaining_usd": _usd(remaining),
                     "reserved_usd": _usd(budget.reserved),

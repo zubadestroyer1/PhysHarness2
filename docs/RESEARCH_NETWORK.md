@@ -472,8 +472,9 @@ tools, the prompts and the delivery shapes.
     `PHYSHARNESS_MODEL_PRICES`. That is the API for HTTP and MCP requests, and the worker
     (or `phys run-team`) for work its agents and supervisor start. Compose and the AWS task
     definitions give the API and the worker the same table. A model missing from the
-    admitting process's table counts 0, so only the floor applies to it; a worker whose
-    table lacks the model refuses to run it (`MODEL_PRICE_REQUIRED`).
+    admitting process's table counts 0, so only the floor applies to it: some dollars must
+    still remain above the floor, so nothing is admitted with the budget exhausted. A worker
+    whose table lacks the model refuses to run it (`MODEL_PRICE_REQUIRED`).
   - There is no floor by default: `None` reads as `0`. An operator sets one with
     `configure_workforce`.
   - Admission reserves nothing. The ledger still hard-stops every reservation at
