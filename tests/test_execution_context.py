@@ -1710,6 +1710,32 @@ async def test_a_truncated_head_and_its_recall_join_exactly_after_a_reload(tmp_p
     await second.close()
 
 
+async def test_a_recall_of_an_unknown_id_loads_each_archive_once_per_run():
+    loads = []
+
+    class Archives:
+        async def load_archive(self, owner, archive_id):
+            loads.append(archive_id)
+            key = f"{owner}:c-{archive_id}"
+            return {"tool_results": {key: {"identity": "x", "result": {"n": archive_id}}}}
+
+    client = sdk_client([], [])
+    runtime = ResponsesRuntime(
+        store=Archives(), client=client, dispatcher=observe_dispatcher(), context_budget=BUDGET
+    )
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    state = {"tool_results": {}, "archives": ["a1", "a2"]}
+    for missing in ("nope-1", "nope-2"):
+        assert await runtime._find_tool_result(session, state, missing, match_suffix=True) is None
+    found = await runtime._find_tool_result(session, state, "c-a1", match_suffix=True)
+    assert found["result"] == {"n": "a1"}
+    # The misses read each archive once; the hit skips a2 by its keys and reads only a1.
+    assert loads == ["a2", "a1", "a1"]
+    await client.close()
+
+
 class ObjectStore:
     """Keeps checkpoint objects. The SQLite and chunk encoders reject a lone surrogate anywhere in
     a checkpoint, for every experiment; this isolates what the runtime renders and sends."""

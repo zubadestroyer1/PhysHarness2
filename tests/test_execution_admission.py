@@ -71,6 +71,18 @@ async def test_throttle_pauses_and_cuts_rate_and_cancelled_waiters_leave():
     assert slow.snapshot()["waiting"] == 0
 
 
+async def test_a_grant_that_races_a_cancel_returns_its_tokens():
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=100)  # ~1 token/s
+    first = await governor.admit(key="a", tokens=100, priority=0)
+    waiter = asyncio.create_task(governor.admit(key="b", tokens=100, priority=0))
+    await asyncio.sleep(0.01)
+    governor.release(first)  # grants b synchronously
+    waiter.cancel()  # before b resumes
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    assert governor.snapshot()["level"] >= 99
+
+
 async def test_a_pause_ends_at_the_rate_not_in_a_burst():
     governor = TokenRateGovernor(tokens_per_minute=60_000, burst_tokens=10_000)  # 1,000/s, full
     governor.throttled(0.1)

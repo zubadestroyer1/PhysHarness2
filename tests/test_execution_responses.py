@@ -987,6 +987,31 @@ async def test_a_400_after_a_rate_limit_wait_aborts_once_as_request_invalid(tmp_
     await client.close()
 
 
+async def test_a_first_admission_past_the_deadline_is_a_retryable_rate_limit(tmp_path):
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=5_000)  # ~1 token/s
+    await governor.admit(key="other", tokens=5_000, priority=0)  # drained by another runtime
+    events = []
+
+    async def emit(event):
+        events.append(event.kind)
+
+    client = rate_limited_client([], [])
+    store = SQLiteRuntimeStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, client=client, event_sink=emit, token_governor=governor)
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=2))
+    (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
+    checkpoint = await runtime.checkpoint(session_id)
+    # As a re-queue does: nothing was marked, reserved or sent, and the refusal is retryable.
+    assert (error.value.code, error.value.retryable) == ("PROVIDER_RATE_LIMITED", True)
+    assert (checkpoint.session.status, checkpoint.native_state["pending_operation"]) == (
+        "failed",
+        None,
+    )
+    assert "generation_started" not in events and governor.snapshot()["waiting"] == 0
+    await client.close()
+
+
 @pytest.mark.parametrize("refused", ["create", "count"])
 async def test_immediate_rate_limit_give_up_still_pauses_the_governor(tmp_path, refused):
     order = []

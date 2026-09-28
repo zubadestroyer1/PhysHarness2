@@ -582,6 +582,8 @@ class ResponsesRuntime:
         self._unannounced: dict[str, list[tuple[str, str, str | None, dict[str, Any] | None]]] = {}
         # Each running session's elision block awaiting announcement: its context_elided payload.
         self._elided: dict[str, dict[str, Any]] = {}
+        # Each running session's tool-result keys of the archives it has read: (owner, archive).
+        self._archive_keys: dict[str, dict[tuple[str, str], tuple[str, ...]]] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -1221,6 +1223,7 @@ class ResponsesRuntime:
             self._last_request.pop(session.id, None)
             self._unannounced.pop(session.id, None)
             self._elided.pop(session.id, None)
+            self._archive_keys.pop(session.id, None)
 
     async def _save_failure(self, session: RuntimeSession, state: dict[str, Any]) -> None:
         """`_run`'s failure save, then a best-effort announcement of the elision block and tool
@@ -1628,9 +1631,22 @@ class ResponsesRuntime:
             # Admission precedes the dollar reservation: a request waiting for its first admission
             # holds no dollar reservation, and a target verified while queued sends nothing. A
             # re-queued create keeps its reservation, as a rate-limit wait always did.
-            admission = await self.token_governor.admit(
-                key=session.id, tokens=estimate, priority=self.admission_priority
-            )
+            # Bounded like a re-queue, so a wait that outlasts the run gives the same retryable
+            # refusal; nothing is marked or reserved yet.
+            budget = deadline - asyncio.get_running_loop().time() - REQUEUE_MARGIN_SECONDS
+            try:
+                admission = await asyncio.wait_for(
+                    self.token_governor.admit(
+                        key=session.id, tokens=estimate, priority=self.admission_priority
+                    ),
+                    timeout=max(budget, 0.0),
+                )
+            except TimeoutError:
+                raise ExecutionError(
+                    "PROVIDER_RATE_LIMITED",
+                    "Provider rate governance outlasted the runtime deadline",
+                    retryable=True,
+                ) from None
         try:
             if self.pre_generation_guard is not None and await self.pre_generation_guard():
                 self._release(admission)
@@ -1892,14 +1908,24 @@ class ResponsesRuntime:
                 )
             return results.get(key)
 
+        # An archive never changes, so its keys, once read, tell a later lookup in this run
+        # whether to load it again; a recall of an unknown ID loads each archive at most once.
+        known = self._archive_keys.setdefault(session.id, {})
+
+        async def search(owner: str, archive_id: str) -> dict[str, Any] | None:
+            keys = known.get((owner, archive_id))
+            if keys is not None and pick(dict.fromkeys(keys, True)) is None:
+                return None
+            results = (await self.store.load_archive(owner, archive_id))["tool_results"]
+            known[(owner, archive_id)] = tuple(results)
+            return pick(results)
+
         found = pick(state.get("tool_results", {}))
         for archive_id in reversed(state.get("archives", [])) if found is None else ():
-            found = pick((await self.store.load_archive(session.id, archive_id))["tool_results"])
-            if found is not None:
+            if (found := await search(session.id, archive_id)) is not None:
                 break
         for ref in reversed(state.get("archive_refs", [])) if found is None else ():
-            archive = await self.store.load_archive(ref["session_id"], ref["archive_id"])
-            if (found := pick(archive["tool_results"])) is not None:
+            if (found := await search(ref["session_id"], ref["archive_id"])) is not None:
                 break
         return found
 

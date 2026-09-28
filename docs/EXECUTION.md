@@ -256,7 +256,7 @@ recovers additively by 5% of the limit every 10 s, so one cut is gone in 40 s. W
 releases its admission and re-queues the request behind the pause instead of sleeping. The
 re-queued request keeps the queue age it had built up, so it waits in the priority queue with
 every other request without starting over. A 429 on `input_tokens.count` holds no admission, so
-it pauses and may cut but does not re-queue (F10). A re-queued request must be admitted one second before
+it pauses and may cut but does not re-queue (F10). A request's first admission and a re-queue must both come one second before
 the deadline. Otherwise the give-up is definite, as without a governor:
 `generation_aborted(reason="rate_limited")`, then the marker clears, and the session fails with
 retryable `PROVIDER_RATE_LIMITED`. These exits return the admission, because they certainly sent
@@ -322,7 +322,8 @@ without one. Under a budget:
   the end) and `total_chars`. A page holds as many characters as fit 16,000 once escaped in the
   tool output, which is the form the model reads, so a quote-heavy page holds fewer. It searches the active `tool_results`, then
   the session's own archives, then the inherited ones, and matches the call ID from any session
-  in the lineage; the latest match wins. An unknown ID returns a `RECALL_NOT_FOUND` error
+  in the lineage; the latest match wins. An archive never changes, so a run remembers the keys
+  of each archive it has read, and a recall of an unknown ID reads each archive at most once. An unknown ID returns a `RECALL_NOT_FOUND` error
   envelope. A recall is a pure read. It sets no pending marker, never reaches the dispatcher, is
   never stored in `tool_results` and is never capped; its page is bounded instead. Like any call, it emits `tool_completed`
   (and any stagnation signal, since stagnation counts it as a read) after the save that holds its
