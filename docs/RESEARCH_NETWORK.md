@@ -508,6 +508,14 @@ tools, the prompts and the delivery shapes.
     once its own joined recruits have settled;
   - the timeout (default 1,800 s, at most 3,600 s).
 
+  Watched and long-pole news counts from the agent's last request, not from the wait's
+  registration: just before each builder request is sent, the worker records on the task
+  the latest event sequence and the long pole then (`request_anchor`), and a wait from that
+  request's response starts there. News that committed while the request generated, or
+  while earlier tools of the same response ran, therefore still wakes it; if another
+  branch changed the graph in that window, the long pole is compared with the anchored
+  one. The ticket carries both, so a native resume after a restart keeps them.
+
   The first 20 s are a minimum sleep (shorter only for a shorter timeout), so a burst of
   events wakes once. A graph or subscription limit hit while checking wakes the waiter
   with reason `wait_error` and the error code, instead of ending the run. The long pole is

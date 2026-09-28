@@ -1475,9 +1475,13 @@ class ResearchTaskExecutor:
                 if event.kind == "generation_started":
                     # This is the last synchronous hook before responses.create. An
                     # artifact upload may have outlived the lease or experiment.
-                    with self.service.db.transaction() as session:
-                        self.service._active(session, experiment["id"], actor)
-                        self.service._fenced(session, task_id, holder, lease["fence"])
+                    if society and not referee:
+                        # Also what this request can show a builder: its waits anchor there.
+                        self.service.anchor_request(task_id, holder, lease["fence"], agent)
+                    else:
+                        with self.service.db.transaction() as session:
+                            self.service._active(session, experiment["id"], actor)
+                            self.service._fenced(session, task_id, holder, lease["fence"])
             except Exception:
                 if event.kind == "generation_started" and event.operation_id in reservations:
                     self.service.settle_resources(

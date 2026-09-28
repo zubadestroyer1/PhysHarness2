@@ -314,6 +314,42 @@ def test_the_waiters_own_moves_do_not_wake_it_and_a_peers_do(lab):
     }
 
 
+@pytest.mark.parametrize("mover", ["peer", "own"])
+def test_a_wait_anchors_on_what_the_agents_last_request_showed(lab, mover):
+    """Merge audit: news that commits after the agent's last request was sent (while it
+    generated, or while earlier tools of its response ran) and before its wait registers is
+    still unseen, so it wakes the wait: a watched node's new claimant, and a long pole a peer
+    moved. The waiter's own moves in that response stay no news."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)  # the waiter, on alpha
+    peer = beta if mover == "peer" else agent
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    first, second = lemma(service, exp, peer, "First"), lemma(service, exp, peer, "Second")
+    for target in (first, second):
+        service.link_nodes(
+            exp["id"], goal["id"], "depends_on", target["id"], alpha, f"l-{target['id']}"
+        )
+    anchor = service.anchor_request(context["task_id"], context["holder"], context["fence"], agent)
+    assert set(anchor["long_pole_ids"]) == {first["id"], second["id"]}
+    service.claim_node(second["id"], "claim", peer, "claims-during-generation")
+    service.abandon_node(first["id"], "Dead end.", peer, "moves-during-generation")
+
+    def wait(ids, key):
+        with worker_effects(agent, context["task_id"], context["holder"], context["fence"]):
+            waited = service.request_event_wait(context["task_id"], ids, 600, agent, key)
+        return {**waited["intent"]["peer_wait"], "min_sleep_until": 0}
+
+    watched, unwatched = wait([second["id"]], "watch"), wait([], "no-watch")
+    assert watched["event_after"] == unwatched["event_after"] == anchor["event_sequence"]
+    if mover == "peer":
+        assert set(unwatched["long_pole_ids"]) == {first["id"], second["id"]}
+        assert reason(service, watched, agent) == "watched_event"
+        assert reason(service, unwatched, agent) == "long_pole_changed"
+    else:
+        assert unwatched["long_pole_ids"] == [second["id"]]
+        assert reason(service, watched, agent) == reason(service, unwatched, agent) == "waiting"
+
+
 def test_the_long_pole_is_recomputed_only_when_the_graph_changes(lab, monkeypatch):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
@@ -1012,6 +1048,45 @@ async def test_the_wake_note_carries_the_watched_events_detail(lab, monkeypatch)
     finally:
         await client.close()
     assert parked["status"] == "continuation" and woke["status"] == "completed"
+    assert wake_notes(payloads[1]) == [
+        {
+            "type": "wake",
+            "reason": "watched_event",
+            "detail": {"kind": "commons.node_claim", "aggregate_id": node["id"]},
+        }
+    ]
+
+
+async def test_a_watched_event_during_the_waiters_last_request_wakes_it(lab, monkeypatch):
+    """Merge audit: the worker anchors each builder request just before it is sent, so a
+    claim on a watched node made while the final request generates wakes the wait it asks
+    for (its event_after is the request's, not the wait's registration)."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    node = lemma(service, exp, beta, "Watched")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    claimed = []
+
+    def during_generation():
+        claimed.append(service.claim_node(node["id"], "claim", beta, "beta-claims"))
+
+    payloads = []
+    route = waiting_route(payloads, 3600, ids=[node["id"]], before_wait=during_generation)
+    client = mock_client(route)
+    executor = ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
+        limits=RuntimeLimits(max_turns=30),
+    )
+    try:
+        parked = await executor.execute(root["id"], author.project_id)
+        woke = await executor.execute(root["id"], author.project_id)
+    finally:
+        await client.close()
+    assert claimed and parked["status"] == "continuation" and woke["status"] == "completed"
     assert wake_notes(payloads[1]) == [
         {
             "type": "wake",

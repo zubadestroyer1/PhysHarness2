@@ -1205,9 +1205,31 @@ class ContinuationMixin:
                 select(func.max(EventRow.sequence)).where(*_graph_events(experiment))
             )
             long_pole_ids = self._long_pole_ids_at(session, experiment, actor, graph_head)
+            # Watched and long-pole events wake from what the agent's last request could show
+            # it (its request anchor, merge audit), not from this registration: news that
+            # committed while that request generated, or while earlier tools of its response
+            # ran, is unseen. Without an anchor (no request yet), from now.
+            anchor = task.payload.get("request_anchor") or {}
+            event_after = anchor.get("event_sequence", self._discussion_max_sequence(session))
+            if (
+                anchor.get("long_pole_ids") is not None
+                and session.scalar(
+                    select(EventRow.sequence)
+                    .where(
+                        *_graph_events(experiment),
+                        EventRow.sequence > event_after,
+                        _not_by(actor.branch_id),
+                    )
+                    .limit(1)
+                )
+                is not None
+            ):
+                # Another branch changed the graph since: compare with the pole then. Else
+                # any change since is the waiter's own, which is not news.
+                long_pole_ids = anchor["long_pole_ids"]
             now = utcnow()
             # Updates wake from the acknowledged delivery position, as a peer wait's reply
-            # does; watched and long-pole events only from those after this request.
+            # does.
             reader = self._discussion_reader(session, experiment.id, actor)
             peer_wait = {
                 "kind": "events",
@@ -1217,7 +1239,7 @@ class ContinuationMixin:
                 "watch_node_ids": watched["commons_node"],
                 "watch_branch_ids": watched["branch"],
                 "after_sequence": reader.payload["ack_sequence"] if reader else 0,
-                "event_after": self._discussion_max_sequence(session),
+                "event_after": event_after,
                 "long_pole_ids": sorted(long_pole_ids),
                 "requested_at": now.isoformat(),
                 "deadline_at": now.timestamp() + timeout_seconds,
@@ -1262,6 +1284,43 @@ class ContinuationMixin:
                 session, experiment, actor, self._live_claims(session, experiment)
             )
         return {**result, "long_pole": long_pole}
+
+    def anchor_request(self, task_id, holder, fence, actor):
+        """Record on a society task what the request about to be sent can show its agent
+        (merge audit): the latest event sequence and the goal's long-pole ids (None past a
+        graph limit). An event wait registered from that request's response anchors on them.
+        Also the request's last check that the experiment is active and the lease current."""
+
+        def long_pole(session, experiment, head):
+            try:
+                return sorted(self._long_pole_ids_at(session, experiment, actor, head))
+            except HarnessError:
+                return None
+
+        def graph_head(session, experiment):
+            return session.scalar(
+                select(func.max(EventRow.sequence)).where(*_graph_events(experiment))
+            )
+
+        # The long pole comes from the memo, computed outside the lock for a new graph.
+        with self.db.sessions() as session:
+            task = self._get(session, "task", task_id, actor)
+            experiment = self._get(session, "experiment", task.payload["experiment_id"], actor)
+            head = graph_head(session, experiment)
+            ids = long_pole(session, experiment, head)
+        with self.db.transaction() as session:
+            # Under the experiment lock, so no commons event commits below the anchor.
+            experiment = self._active(session, experiment.id, actor)
+            self._fenced(session, task_id, holder, fence)
+            task = self._get(session, "task", task_id, actor)
+            if graph_head(session, experiment) != head:
+                ids = long_pole(session, experiment, graph_head(session, experiment))
+            anchor = {
+                "event_sequence": self._discussion_max_sequence(session),
+                "long_pole_ids": ids,
+            }
+            self._replace(session, task, {"request_anchor": anchor})
+            return anchor
 
     def _wait_ended(self, session, peer_wait, actor):
         """The waiter's experiment, and whether it was cancelled or the waiting task ended."""
