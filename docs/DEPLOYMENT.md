@@ -57,8 +57,9 @@ Development endpoints bind only loopback:
 To enable real research deliberately, add `OPENAI_API_KEY` and a reviewed exact-model
 `PHYSHARNESS_MODEL_PRICES` JSON object to the private environment. A price entry may add
 `cached_input_usd_per_million`, which bills the provider's reported cache hits at that rate. It
-must not exceed `input_usd_per_million`; without it every input token bills at the input rate, as
-before (`docs/FIRST_LIVE_RUN.md`). Experiment records select the model; the worker never chooses
+must not exceed `input_usd_per_million`, and it requires `cache_write_usd_per_million`, the
+provider's cache-write rate. Without it every input token bills at the input rate, as before
+(`docs/FIRST_LIVE_RUN.md`). Experiment records select the model; the worker never chooses
 a default replacement. E2B tools additionally require the key and an exact separately qualified
 template ID. `PHYSHARNESS_PROVIDER_TOKENS_PER_MINUTE` optionally governs the organisation's
 tokens-per-minute limit in each process that calls the provider (a worker or `run-team`). Set it

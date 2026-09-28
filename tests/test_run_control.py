@@ -122,6 +122,27 @@ def test_preflight_reports_all_missing_inputs_without_allocating(lab, tmp_path):
     assert service.list_records("task", operator) == []
 
 
+def test_preflight_names_a_missing_cache_write_rate(lab, tmp_path):
+    from physharness.run_control import RunPlan, prepare_run, run_preflight
+
+    service, actor, _ = lab
+    source_files(tmp_path)
+    prepared = prepare_run(service, actor, RunPlan.model_validate(plan_input()), tmp_path)
+    operator = Principal(id="controller", project_id="lab", role="operator")
+    experiment = service.get_record("experiment", prepared["experiment_id"], operator)
+    price = {
+        "input_usd_per_million": "2",
+        "output_usd_per_million": "10",
+        "cached_input_usd_per_million": "0.2",
+    }
+    prices = {config["model"]: price for config in experiment["models"]}
+    report = run_preflight(
+        service, operator, prepared["experiment_id"], prices=prices, environment={}
+    )
+    [blocker] = [b for b in report["blockers"] if b["code"] == "MODEL_PRICE_REQUIRED"]
+    assert "cache_write_usd_per_million" in blocker["remediation"]
+
+
 def test_preflight_cannot_be_run_as_an_agent(lab):
     from physharness.run_control import run_preflight
 

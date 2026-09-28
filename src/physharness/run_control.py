@@ -407,10 +407,16 @@ def run_preflight(
             )
         try:
             ModelPrice.model_validate(prices[config["model"]])
-        except (KeyError, ValidationError, TypeError):
+        except (KeyError, TypeError):
             block(
                 "MODEL_PRICE_REQUIRED",
                 f"Configure recorded input/output prices for {config['model']}.",
+            )
+        except ValidationError as exc:
+            problems = "; ".join(error["msg"] for error in exc.errors())
+            block(
+                "MODEL_PRICE_REQUIRED",
+                f"Fix the recorded prices for {config['model']}: {problems}.",
             )
         if experiment.get("execution_profile") == "formal-research":
             try:

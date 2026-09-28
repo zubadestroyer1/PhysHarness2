@@ -261,6 +261,14 @@ def _cached_input_tokens(usage: Any) -> int:
     return cached if type(cached) is int and 0 <= cached <= usage.input_tokens else 0
 
 
+def _cache_write_input_tokens(usage: Any) -> int:
+    """Provider-reported cache writes, or 0 if absent or inconsistent with the cache hits."""
+    written = getattr(getattr(usage, "input_tokens_details", None), "cache_write_tokens", None)
+    if type(written) is not int or written < 0:
+        return 0
+    return written if written + _cached_input_tokens(usage) <= usage.input_tokens else 0
+
+
 def lineage_token_usage(checkpoint: RuntimeCheckpoint) -> tuple[int, int]:
     """Input and output tokens used by a session and every predecessor in its lineage."""
     state = checkpoint.native_state
@@ -331,8 +339,21 @@ def _tool_output_text(
     return text.encode("utf-8", "backslashreplace").decode()
 
 
-def _elision_stub(tool: str, call_id: str, output: str) -> str:
-    """What an elided output leaves in context: its size, digest, head and a recall handle."""
+def _recall_page(text: str, offset: int) -> str:
+    """The page of ``text`` at ``offset``: as many characters as fit RECALL_PAGE_CHARS once
+    escaped in the JSON tool output, which is the form the model reads."""
+    page = text[offset : offset + RECALL_PAGE_CHARS]
+    while (size := len(json.dumps(page, ensure_ascii=False)) - 2) > RECALL_PAGE_CHARS:
+        page = page[: len(page) * RECALL_PAGE_CHARS // size]
+    return page
+
+
+def _elision_stub(tool: str, call_id: str, output: str, offset: int | None = None) -> str:
+    """What an elided output leaves in context: its size, digest, head and a recall handle. A
+    recalled page's handle names the stored output and the page's offset."""
+    recall = {"tool": "recall_output", "call_id": call_id}
+    if offset is not None:
+        recall["offset"] = offset
     return json.dumps(
         {
             "elided": True,
@@ -340,7 +361,7 @@ def _elision_stub(tool: str, call_id: str, output: str) -> str:
             "chars": len(output),
             "sha256": hashlib.sha256(output.encode("utf-8")).hexdigest()[:16],
             "head": output[:160],
-            "recall": {"tool": "recall_output", "call_id": call_id},
+            "recall": recall,
         },
         separators=(",", ":"),
         ensure_ascii=False,
@@ -565,6 +586,8 @@ class ResponsesRuntime:
         self._unannounced: dict[str, list[tuple[str, str, str | None, dict[str, Any] | None]]] = {}
         # Each running session's elision block awaiting announcement: its context_elided payload.
         self._elided: dict[str, dict[str, Any]] = {}
+        # Each running session's tool-result keys of the archives it has read: (owner, archive).
+        self._archive_keys: dict[str, dict[tuple[str, str], tuple[str, ...]]] = {}
         configured = bool(client or os.environ.get("OPENAI_API_KEY"))
         self.capabilities = type(self).capabilities.model_copy(
             update={
@@ -801,6 +824,11 @@ class ResponsesRuntime:
         entries = {
             key.split(":", 1)[1]: entry for key, entry in state.get("tool_results", {}).items()
         }
+        # A recalled page is never stored, but it goes stale like any output; its stub can
+        # rebuild it from the stored output's call ID and the page's offset.
+        pages = state.get("recall_pages", {})
+        for call_id, page in pages.items():
+            entries.setdefault(call_id, {"seq": page["seq"], "name": "recall_output"})
         count = removed = 0
         first = None
         for index, item in enumerate(state["input"]):
@@ -815,7 +843,12 @@ class ResponsesRuntime:
                 or _is_elision_stub(output)
             ):
                 continue
-            stub = _elision_stub(entry.get("name", "unknown"), item["call_id"], output)
+            page = pages.get(item["call_id"])
+            stub = (
+                _elision_stub(entry.get("name", "unknown"), item["call_id"], output)
+                if page is None
+                else _elision_stub("recall_output", page["call_id"], output, page["offset"])
+            )
             if len(stub) >= len(output):  # elision never lengthens an output
                 continue
             item["output"] = stub
@@ -1116,6 +1149,8 @@ class ResponsesRuntime:
             state["context_budget"] = deepcopy(prior["context_budget"])
         if "elision" in prior:  # the response counter is lineage-wide
             state["elision"] = deepcopy(prior["elision"])
+        if "recall_pages" in prior:  # the successor carries the pages in its input
+            state["recall_pages"] = deepcopy(prior["recall_pages"])
         await self._save(session, state)
         return await self._run(session, state, prompt)
 
@@ -1200,6 +1235,7 @@ class ResponsesRuntime:
             self._last_request.pop(session.id, None)
             self._unannounced.pop(session.id, None)
             self._elided.pop(session.id, None)
+            self._archive_keys.pop(session.id, None)
 
     async def _save_failure(self, session: RuntimeSession, state: dict[str, Any]) -> None:
         """`_run`'s failure save, then a best-effort announcement of the elision block and tool
@@ -1300,6 +1336,7 @@ class ResponsesRuntime:
                 input_tokens=response.usage.input_tokens,
                 output_tokens=response.usage.output_tokens,
                 cached_input_tokens=_cached_input_tokens(response.usage),
+                cache_write_input_tokens=_cache_write_input_tokens(response.usage),
                 native_usage=response.usage.model_dump(mode="json"),
                 rate_limit_waits=sent.rate_limit_waits,
                 rate_limit_wait_seconds=sent.rate_limit_wait_seconds,
@@ -1606,15 +1643,31 @@ class ResponsesRuntime:
             # Admission precedes the dollar reservation: a request waiting for its first admission
             # holds no dollar reservation, and a target verified while queued sends nothing. A
             # re-queued create keeps its reservation, as a rate-limit wait always did.
-            admission = await self.token_governor.admit(
-                key=session.id, tokens=estimate, priority=self.admission_priority
-            )
-        if self.pre_generation_guard is not None and await self.pre_generation_guard():
-            self._release(admission)
-            return await self._complete_verified(session, state)
-        operation_id = identifier()
-        state["pending_operation"] = operation_id
-        await self._save(session, state)
+            # Bounded like a re-queue, so a wait that outlasts the run gives the same retryable
+            # refusal; nothing is marked or reserved yet.
+            budget = deadline - asyncio.get_running_loop().time() - REQUEUE_MARGIN_SECONDS
+            try:
+                # Unlike wait_for(0), a timeout context still admits a grantable request.
+                async with asyncio.timeout(max(budget, 0.0)):
+                    admission = await self.token_governor.admit(
+                        key=session.id, tokens=estimate, priority=self.admission_priority
+                    )
+            except TimeoutError:
+                raise ExecutionError(
+                    "PROVIDER_RATE_LIMITED",
+                    "Provider rate governance outlasted the runtime deadline",
+                    retryable=True,
+                ) from None
+        try:
+            if self.pre_generation_guard is not None and await self.pre_generation_guard():
+                self._release(admission)
+                return await self._complete_verified(session, state)
+            operation_id = identifier()
+            state["pending_operation"] = operation_id
+            await self._save(session, state)
+        except BaseException:
+            self._release(admission)  # nothing was sent
+            raise
         if asyncio.get_running_loop().time() >= deadline:
             state["pending_operation"] = None
             self._release(admission)
@@ -1778,10 +1831,22 @@ class ResponsesRuntime:
             else:
                 if recall:
                     result = await self._recall(session, state, arguments)
+                    if isinstance(state.get("elision"), dict) and "text" in result:
+                        state.setdefault("recall_pages", {})[call["call_id"]] = {
+                            "seq": state["elision"]["seq"],
+                            "call_id": result["call_id"],
+                            "offset": result["offset"],
+                        }
                 else:
                     state["pending_operation"] = tool_operation
                     await self._save(session, state)
-                    await self._emit_completed(session)
+                    try:
+                        await self._emit_completed(session)
+                    except BaseException:
+                        # An earlier result's announcement failed before this call ran, so
+                        # nothing about it is uncertain, whatever the durable marker says.
+                        state["pending_operation"] = None
+                        raise
                     result = await self.dispatcher.dispatch(call["name"], arguments, tool_operation)
                 signal = observe_stagnation(
                     state.setdefault("stagnation", {}), call["name"], arguments, result
@@ -1854,14 +1919,24 @@ class ResponsesRuntime:
                 )
             return results.get(key)
 
+        # An archive never changes, so its keys, once read, tell a later lookup in this run
+        # whether to load it again; a recall of an unknown ID loads each archive at most once.
+        known = self._archive_keys.setdefault(session.id, {})
+
+        async def search(owner: str, archive_id: str) -> dict[str, Any] | None:
+            keys = known.get((owner, archive_id))
+            if keys is not None and pick(dict.fromkeys(keys, True)) is None:
+                return None
+            results = (await self.store.load_archive(owner, archive_id))["tool_results"]
+            known[(owner, archive_id)] = tuple(results)
+            return pick(results)
+
         found = pick(state.get("tool_results", {}))
         for archive_id in reversed(state.get("archives", [])) if found is None else ():
-            found = pick((await self.store.load_archive(session.id, archive_id))["tool_results"])
-            if found is not None:
+            if (found := await search(session.id, archive_id)) is not None:
                 break
         for ref in reversed(state.get("archive_refs", [])) if found is None else ():
-            archive = await self.store.load_archive(ref["session_id"], ref["archive_id"])
-            if (found := pick(archive["tool_results"])) is not None:
+            if (found := await search(ref["session_id"], ref["archive_id"])) is not None:
                 break
         return found
 
@@ -1897,7 +1972,7 @@ class ResponsesRuntime:
             ensure_ascii=False,
             sort_keys=True,
         )
-        page = text[offset : offset + RECALL_PAGE_CHARS]
+        page = _recall_page(text, offset)
         end = offset + len(page)
         return {
             "call_id": call_id,

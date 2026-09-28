@@ -1484,14 +1484,26 @@ def creates_of(requests):
     return [payload for path, payload in requests if path.endswith("/responses")]
 
 
+def page_offsets(text, pages):
+    """The offsets a model following next_offset passes for the first ``pages`` pages."""
+    from physharness.execution.responses import _recall_page
+
+    offsets = [0]
+    for _ in range(pages - 1):
+        offsets.append(offsets[-1] + len(_recall_page(text, offsets[-1])))
+    return offsets
+
+
 async def test_oversized_output_is_truncated_and_recalled_exactly(tmp_path):
     requests = []
+    offsets = page_offsets(json.dumps(big_result(40_000), ensure_ascii=False), 3)
     client = sdk_client(
         [
             response([call_item("a")], "r1"),
-            response([recall_item("p1", "a", 0)], "r2"),
-            response([recall_item("p2", "a", 16_000)], "r3"),
-            response([recall_item("p3", "a", 32_000)], "r4"),
+            *[
+                response([recall_item(f"p{n}", "a", offset)], f"r{n + 1}")
+                for n, offset in enumerate(offsets, 1)
+            ],
             response([text_item("done")], "r5"),
         ],
         requests,
@@ -1517,7 +1529,35 @@ async def test_oversized_output_is_truncated_and_recalled_exactly(tmp_path):
     assert view["recall"] == {"tool": "recall_output", "call_id": "a", "next_offset": 10_000}
     pages = [json.loads(outputs[p]) for p in ("p1", "p2", "p3")]
     assert "".join(p["text"] for p in pages) == original
-    assert [p["next_offset"] for p in pages] == [16_000, 32_000, None]
+    assert [p["next_offset"] for p in pages] == [*offsets[1:], None]
+    # A page is at most 16,000 characters as the model reads it, escapes included.
+    assert all(len(json.dumps(p["text"], ensure_ascii=False)) - 2 <= 16_000 for p in pages)
+    await client.close()
+
+
+async def test_a_recalled_page_is_sized_as_the_model_reads_it(tmp_path):
+    """Quotes double when a page is escaped into the tool output: a page of them holds 8,000."""
+    requests = []
+    client = sdk_client(
+        [
+            response([call_item("a")], "r1"),
+            response([recall_item("p1", "a", 0)], "r2"),
+            response([text_item("done")], "r3"),
+        ],
+        requests,
+    )
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "sessions.db"),
+        client=client,
+        dispatcher=observe_dispatcher({"text": '"' * 40_000}),
+        context_budget=BUDGET,
+    )
+    await runtime.start(
+        "work", ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+    )
+    page = outputs_of(creates_of(requests)[-1])["p1"]
+    assert len(page) < 16_200  # the page plus its small envelope
+    assert json.loads(page)["next_offset"] == len(json.loads(page)["text"])
     await client.close()
 
 
@@ -1552,6 +1592,54 @@ async def test_recall_output_after_native_handoff_uses_the_stored_policy(tmp_pat
     assert json.loads(outputs_of(final)["p1"])["text"] == json.dumps(
         big_result(100), ensure_ascii=False
     )
+    await first.close()
+    await second.close()
+
+
+async def test_a_recall_page_carried_across_a_handoff_is_elided_in_the_successor(tmp_path):
+    requests, store = [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"} if checkpoint.native_state.get("recall_pages") else None
+
+    first = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+            response([recall_item("p4", "c1", 0)], "r4"),
+        ],
+        requests,
+    )
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        boundary_hook=boundary,
+        context_budget=ELIDE,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (5, 6, 7)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    successor = ResponsesRuntime(
+        store=store,
+        client=second,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        context_budget=ELIDE,
+    )
+    await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    page = json.loads(outputs_of(creates_of(requests)[-1])["p4"])
+    assert page["elided"] and page["recall"] == {
+        "tool": "recall_output",
+        "call_id": "c1",
+        "offset": 0,
+    }
     await first.close()
     await second.close()
 
@@ -1670,6 +1758,32 @@ async def test_a_truncated_head_and_its_recall_join_exactly_after_a_reload(tmp_p
     await second.close()
 
 
+async def test_a_recall_of_an_unknown_id_loads_each_archive_once_per_run():
+    loads = []
+
+    class Archives:
+        async def load_archive(self, owner, archive_id):
+            loads.append(archive_id)
+            key = f"{owner}:c-{archive_id}"
+            return {"tool_results": {key: {"identity": "x", "result": {"n": archive_id}}}}
+
+    client = sdk_client([], [])
+    runtime = ResponsesRuntime(
+        store=Archives(), client=client, dispatcher=observe_dispatcher(), context_budget=BUDGET
+    )
+    session = RuntimeSession(
+        runtime="openai_responses", model=ModelConfig(model="exact-model"), limits=RuntimeLimits()
+    )
+    state = {"tool_results": {}, "archives": ["a1", "a2"]}
+    for missing in ("nope-1", "nope-2"):
+        assert await runtime._find_tool_result(session, state, missing, match_suffix=True) is None
+    found = await runtime._find_tool_result(session, state, "c-a1", match_suffix=True)
+    assert found["result"] == {"n": "a1"}
+    # The misses read each archive once; the hit skips a2 by its keys and reads only a1.
+    assert loads == ["a2", "a1", "a1"]
+    await client.close()
+
+
 class ObjectStore:
     """Keeps checkpoint objects. The SQLite and chunk encoders reject a lone surrogate anywhere in
     a checkpoint, for every experiment; this isolates what the runtime renders and sends."""
@@ -1717,7 +1831,7 @@ async def test_a_lone_surrogate_under_a_budget_keeps_the_lineage_sendable():
     for call_id in ("a", "p1"):
         assert "notes/\\ud800∀.md" in outputs[call_id]  # escaped surrogate, literal ∀
     assert json.loads(outputs["a"])["head"] == original[:10_000]
-    assert json.loads(outputs["p1"])["text"] == original[:16_000]
+    assert json.loads(outputs["p1"])["text"] == original[: page_offsets(original, 2)[1]]
     await client.close()
 
 
@@ -1849,7 +1963,7 @@ async def test_elision_state_survives_resume_without_reeliding(tmp_path):
     await second.close()
 
 
-async def test_an_elided_output_recalls_in_full_and_a_recall_page_is_never_elided(tmp_path):
+async def test_an_elided_output_recalls_in_full_and_a_stale_page_is_elided_too(tmp_path):
     requests, events = [], []
 
     async def emit(event):
@@ -1884,15 +1998,19 @@ async def test_an_elided_output_recalls_in_full_and_a_recall_page_is_never_elide
         "head": original[:160],
         "recall": {"tool": "recall_output", "call_id": "c1"},
     }
-    # The recall reads the full stored output, and its 2,000-character page is kept whole.
+    # The recall read the full stored output. By block 2 its page is stale too, and its stub
+    # names the stored output and the page's offset, so the page can be read again.
     page = json.loads(outputs["p4"])
-    assert (page["text"], page["next_offset"]) == (original, None)
-    # Block 1 (seq 3): c1 and c2. Block 2 (seq 6): c3 and c5, not the page from response 4.
-    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2, 2]
+    assert (page["elided"], page["tool"]) == (True, "recall_output")
+    assert page["recall"] == {"tool": "recall_output", "call_id": "c1", "offset": 0}
+    assert page["head"].startswith('{"call_id": "c1", "offset": 0, "next_offset": null')
+    # Block 1 (seq 3): c1 and c2. Block 2 (seq 6): c3, the page from response 4, and c5.
+    assert [e.payload["count"] for e in events if e.kind == "context_elided"] == [2, 3]
     assert [call_id for call_id, text in outputs.items() if text.startswith('{"elided"')] == [
         "c1",
         "c2",
         "c3",
+        "p4",
         "c5",
     ]
     state = (await runtime.checkpoint(result.session.id)).native_state

@@ -826,8 +826,8 @@ async def test_rate_limits_pause_the_governor_and_only_a_create_requeues(tmp_pat
     assert len({ident for url, ident in requests if not url.endswith("/input_tokens")}) == 1
     # The re-queue keeps the create's original queue time, so it keeps its age.
     assert admitted[1][0]["enqueued"] == admitted[0][1].enqueued
-    # A full default bucket holds 15 s of tokens; settled at the 15 tokens used.
-    assert governor.snapshot()["level"] >= 249_985
+    # Each 429 spends the bucket; the settlement refunds the estimate beyond the 15 tokens used.
+    assert governor.snapshot()["level"] >= admitted[-1][1].tokens - 15
     await client.close()
 
 
@@ -933,14 +933,15 @@ async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
     (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
     checkpoint = await runtime.checkpoint(session_id)
     # The 1.1 s pause outlasts the re-admission budget (deadline - 1 s): the give-up runs
-    # main's _abandon_refused (emit, then clear) and every admitted token comes back.
+    # main's _abandon_refused (emit, then clear). The 429 spent the bucket, and the release
+    # returned the whole admitted estimate (10 input + 4,096 output).
     assert error.value.code == "PROVIDER_RATE_LIMITED" and error.value.retryable
     assert (checkpoint.session.status, checkpoint.native_state["pending_operation"]) == (
         "failed",
         None,
     )
     assert events == ["generation_started", "provider_throttled", "generation_aborted"]
-    assert governor.snapshot()["level"] == 5_000
+    assert 4_106 <= governor.snapshot()["level"] < 4_110
     await client.close()
 
 
@@ -981,7 +982,47 @@ async def test_a_400_after_a_rate_limit_wait_aborts_once_as_request_invalid(tmp_
     assert (checkpoint.session.status, state["pending_operation"]) == ("failed", None)
     assert state["preflight_error"]["stage"] == "create"
     if governed:
-        assert governor.snapshot()["level"] == 5_000  # the re-admitted estimate came back
+        # The 429 spent the bucket; the re-admitted estimate came back.
+        assert 4_106 <= governor.snapshot()["level"] < 4_200
+    await client.close()
+
+
+async def test_a_grantable_first_admission_at_the_deadline_margin_still_sends(tmp_path):
+    # A full bucket admits at once, even with no budget left before the re-queue margin.
+    governor = TokenRateGovernor(tokens_per_minute=6_000_000)
+    client = rate_limited_client([(200, response([message("done")]), {})], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, token_governor=governor
+    )
+    result = await runtime.start(
+        "x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=1)
+    )
+    assert result.session.status == "completed"
+    await client.close()
+
+
+async def test_a_first_admission_past_the_deadline_is_a_retryable_rate_limit(tmp_path):
+    governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=5_000)  # ~1 token/s
+    await governor.admit(key="other", tokens=5_000, priority=0)  # drained by another runtime
+    events = []
+
+    async def emit(event):
+        events.append(event.kind)
+
+    client = rate_limited_client([], [])
+    store = SQLiteRuntimeStore(tmp_path / "s.db")
+    runtime = ResponsesRuntime(store=store, client=client, event_sink=emit, token_governor=governor)
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=2))
+    (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
+    checkpoint = await runtime.checkpoint(session_id)
+    # As a re-queue does: nothing was marked, reserved or sent, and the refusal is retryable.
+    assert (error.value.code, error.value.retryable) == ("PROVIDER_RATE_LIMITED", True)
+    assert (checkpoint.session.status, checkpoint.native_state["pending_operation"]) == (
+        "failed",
+        None,
+    )
+    assert "generation_started" not in events and governor.snapshot()["waiting"] == 0
     await client.close()
 
 
@@ -1022,7 +1063,8 @@ async def test_immediate_rate_limit_give_up_still_pauses_the_governor(tmp_path, 
     # refusal still pauses and cuts the governor, before main's abandon (emit, then clear).
     assert error.value.code == "PROVIDER_RATE_LIMITED"
     assert 19 < snapshot["paused_seconds"] <= 20 and snapshot["effective_tokens_per_minute"] == 48
-    assert snapshot["level"] == 5_000
+    # The refusal spent the bucket; only a released admission (the create's) came back.
+    assert snapshot["level"] == (4_106 if refused == "create" else 0)
     assert order == (
         ["generation_started", "throttled", "generation_aborted", "release"]
         if refused == "create"
@@ -1286,6 +1328,31 @@ async def test_batch_failing_before_a_marker_announces_earlier_results_after_the
         ("tool_completed", "call_1", failure_save, 1),
         ("stagnation_warning", "call_1", failure_save, 1),
     ]
+    await client.close()
+
+
+async def test_sink_failure_before_a_call_runs_leaves_that_call_certain(tmp_path):
+    """call_1 is announced after call_2's marker save; if that announcement fails, call_2 never
+    ran, so the session fails without naming it as uncertain."""
+    seen = []
+    store = RecordingStore(tmp_path / "s.db")
+
+    async def emit(event):
+        if event.kind == "tool_completed":
+            raise RuntimeError("event sink down")
+
+    client = client_for([response([double_call("call_1"), double_call("call_2", 3)])], [])
+    runtime = ResponsesRuntime(
+        store=store, dispatcher=double_dispatcher(seen), client=client, event_sink=emit
+    )
+    with pytest.raises(ExecutionError) as error:
+        await runtime.start("x", ModelConfig(model="exact-model"), RuntimeLimits())
+    [session_id] = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
+    saved = await store.load(session_id)
+    assert seen == [f"{session_id}:call_1"]
+    assert error.value.operation_id is None
+    assert saved.session.status == "failed"
+    assert saved.native_state["pending_operation"] is None
     await client.close()
 
 

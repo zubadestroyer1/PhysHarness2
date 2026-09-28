@@ -86,10 +86,10 @@ class TokenRateGovernor:
         return min(float(self.limit), self._cut_rate + recovered)
 
     def _refill(self, now: float) -> None:
-        if self._updated is not None and now > self._updated:
-            self.level = min(
-                self.capacity, self.level + (now - self._updated) * self._rate(now) / 60
-            )
+        # Nothing accrues during a pause, so admission resumes at the rate, not in a burst.
+        start = None if self._updated is None else max(self._updated, self.paused_until)
+        if start is not None and now > start:
+            self.level = min(self.capacity, self.level + (now - start) * self._rate(now) / 60)
         self._updated = now
 
     async def admit(
@@ -147,6 +147,9 @@ class TokenRateGovernor:
             self._cut_at is None or now - self._cut_at >= CUT_COOLDOWN_SECONDS
         ):
             self._cut_rate, self._cut_at = max(1.0, self._rate(now) * THROTTLE_RATE_FACTOR), now
+        # The provider's window is full whatever the bucket thinks, e.g. from traffic this
+        # process cannot see: spend what the bucket holds, so the backlog is not resent at once.
+        self.level = min(self.level, 0.0)
         self.paused_until = max(self.paused_until, now + max(0.0, wait_seconds))
         self._pump()
 

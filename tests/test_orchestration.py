@@ -513,36 +513,60 @@ def test_cached_input_rate_is_optional_bounded_and_exact():
         input_usd_per_million="2.50",
         output_usd_per_million="10",
         cached_input_usd_per_million="0.25",
+        cache_write_usd_per_million="3",
     )
     assert cached.cost(1000, 10, 900) == Decimal("0.000575")  # 100·2.50 + 900·0.25 + 10·10
-    with pytest.raises(ValueError):
-        ModelPrice(
-            input_usd_per_million="1", output_usd_per_million="1", cached_input_usd_per_million="2"
-        )
-    for bad in (11, -1):
+    # 100·2.50 + 800·0.25 + 100·3 + 10·10
+    assert cached.cost(1000, 10, 800, 100) == Decimal("0.000850")
+    assert cached.reservation_cost(1000, 10) == Decimal("0.003100")  # 1000·3 + 10·10
+    assert plain.reservation_cost(1000, 10) == plain.cost(1000, 10)
+    for fields in (
+        {"cached_input_usd_per_million": "2", "cache_write_usd_per_million": "2"},
+        # A cache hit discount without the write rate would under-settle cache writes.
+        {"cached_input_usd_per_million": "0.1"},
+    ):
         with pytest.raises(ValueError):
-            plain.cost(10, 1, bad)
+            ModelPrice(input_usd_per_million="1", output_usd_per_million="1", **fields)
+    for bad in ((11, 0), (-1, 0), (6, 5), (0, -1)):
+        with pytest.raises(ValueError):
+            plain.cost(10, 1, *bad)
 
 
 @pytest.mark.asyncio
-async def test_worker_settles_cached_input_at_the_cached_rate(lab):
+async def test_worker_settles_cached_input_at_the_cached_rate(lab, monkeypatch):
     from physharness.orchestration.research_worker import ResearchTaskExecutor
 
     class CachedUsage(UsageRuntime):
-        usage = {"input_tokens": 10, "output_tokens": 5, "cached_input_tokens": 8}
+        usage = {
+            "input_tokens": 10,
+            "output_tokens": 5,
+            "cached_input_tokens": 4,
+            "cache_write_input_tokens": 6,
+        }
 
     service, actor, experiment, task = started_task(lab)
+    reserved = []
+    reserve = service.reserve_resources
+
+    def recording(experiment_id, cost, *args, **kwargs):
+        reserved.append(Decimal(cost))
+        return reserve(experiment_id, cost, *args, **kwargs)
+
+    monkeypatch.setattr(service, "reserve_resources", recording)
     prices = {
         "explicit-test-model": {
             **PRICES["explicit-test-model"],
             "cached_input_usd_per_million": "0.1",
+            "cache_write_usd_per_million": "3",
         }
     }
     await ResearchTaskExecutor(service, prices=prices, runtime_factory=CachedUsage).execute(
         task["id"], actor.project_id
     )
+    # Reserved: every input token at the cache-write rate, the highest input rate.
+    assert Decimal("0.000070") in reserved  # (10·3 + 20·2)/1e6
     ledger = service.ledger(experiment["id"], actor)
-    assert ledger["spent_cost_usd"] == "0.000013"  # (2·1 + 8·0.1 + 5·2)/1e6, rounded up
+    assert ledger["spent_cost_usd"] == "0.000029"  # (4·0.1 + 6·3 + 5·2)/1e6, rounded up
     assert (ledger["tokens_spent"], ledger["tokens_reserved"]) == (15, 0)
     assert all(p["cached_input_usd_per_million"] == "0.1" for p in price_provenance(service, actor))
 

@@ -109,10 +109,13 @@ No aliases or substitute models are selected by the adapter. Parameters supporte
 fail at the provider.
 
 Reserving less than the window under `context_management` rests on two provider assumptions.
-- **Compaction fires only above the threshold.** Server compaction fires only when a request's
-  input exceeds `compact_threshold`, so a request under the gate cannot compact, and every
-  compaction pass, which may bill more than the counted or bounded input, falls on a request that
-  reserved the whole window. If a response to a request reserved below the window does carry a
+- **Compaction fires only above the threshold.** The gate assumes server compaction never fires
+  on a request whose input is at or below `compact_threshold`, so a request under the gate cannot
+  compact, and every compaction pass, which may bill more than the counted or bounded input,
+  falls on a request that reserved the whole window. S1 is consistent with this but shows the
+  trigger is not billed input: one session billed 185,264 tokens against a 183,808 threshold
+  without compacting, and compacted on the next turn. Only the direction the gate relies on is
+  assumed, and the first paid run's smoke check (`work/society-s1/RUN_PLAN.md`) re-checks it. If a response to a request reserved below the window does carry a
   compaction item, the runtime logs a warning and emits `bound_reservation_compacted`
   (`response_id`, `input_tokens_reserved`, `input_tokens` and `compact_threshold`). It does so
   once the response is durable and before `usage` is emitted, so before the ledger settles it
@@ -184,9 +187,12 @@ callback failed, reconcile from the saved native response. The adapter does not 
 transactional outbox or monetary pricing; those belong to the controller/ledger. `usage` also
 carries `cached_input_tokens`, the provider's reported cache hits (0 when absent or inconsistent).
 The ledger settles them at the price's optional `cached_input_usd_per_million`, which may not
-exceed the input rate, and at the full input rate without one. Every reservation stays at the full
-input rate, since a cache hit is never guaranteed in advance, so a reservation still bounds its
-settlement (`docs/FIRST_LIVE_RUN.md`).
+exceed the input rate, and at the full input rate without one. It also carries
+`cache_write_input_tokens`, the reported cache writes (0 when absent or inconsistent), which
+settle at `cache_write_usd_per_million`; a price with a cached rate must give that rate. Every
+reservation charges each input token at the higher of the input and cache-write rates, since
+neither a hit nor a write is known in advance, so a reservation still bounds its settlement
+(`docs/FIRST_LIVE_RUN.md`).
 
 The session is checkpointed before each external request and host tool. A turn saves at:
 - **A**, the generation marker, which also carries any turn note;
@@ -239,7 +245,11 @@ Roots and joined children, which a parent waits on, are admitted first, then ref
 everything else. A waiting request ages one class per 30 s, so nothing starves.
 
 Every 429 pauses all admission for its wait. That includes a 429 the runtime gives up on at once
-because the wait would pass the deadline. A 429 also cuts the rate by 20%, but at most once per
+because the wait would pass the deadline. A 429 also spends whatever the bucket holds, since the
+provider's window is full whatever the bucket thinks, and nothing refills during the pause, so
+admission resumes at the rate instead of releasing a burst. Refunds from requests still in flight
+are credited as they settle, even while paused, so a pause that ends while many settle can still
+admit what they returned at once. A 429 also cuts the rate by 20%, but at most once per
 30 s (`CUT_COOLDOWN_SECONDS`). A 429 that arrives while admission is paused, or within 30 s of the
 last cut, only extends the pause if its wait is longer. A burst of refusals therefore cuts once,
 and isolated refusals from traffic the governor cannot see cannot ratchet the rate down. The rate
@@ -248,12 +258,13 @@ recovers additively by 5% of the limit every 10 s, so one cut is gone in 40 s. W
 releases its admission and re-queues the request behind the pause instead of sleeping. The
 re-queued request keeps the queue age it had built up, so it waits in the priority queue with
 every other request without starting over. A 429 on `input_tokens.count` holds no admission, so
-it pauses and may cut but does not re-queue (F10). A re-queued request must be admitted one second before
+it pauses and may cut but does not re-queue (F10). A request's first admission and a re-queue must both come one second before
 the deadline. Otherwise the give-up is definite, as without a governor:
 `generation_aborted(reason="rate_limited")`, then the marker clears, and the session fails with
 retryable `PROVIDER_RATE_LIMITED`. These exits return the admission, because they certainly sent
 nothing:
 - a target verified while queued;
+- a failed pre-generation guard or marker save;
 - a timeout before the send;
 - a failed `generation_started`;
 - a 400;
@@ -309,12 +320,14 @@ without one. Under a budget:
   in `tool_results`, and replay is unchanged. This one per-output cap also covers whole-file
   reads (R7).
 - **`recall_output(call_id, offset)`.** This built-in tool is appended to the tools array that is
-  sent. It returns up to 16,000 characters of a stored output's text from `offset`, with
-  `next_offset` (null at the end) and `total_chars`. It searches the active `tool_results`, then
+  sent. It returns a page of a stored output's text from `offset`, with `next_offset` (null at
+  the end) and `total_chars`. A page holds as many characters as fit 16,000 once escaped in the
+  tool output, which is the form the model reads, so a quote-heavy page holds fewer. It searches the active `tool_results`, then
   the session's own archives, then the inherited ones, and matches the call ID from any session
-  in the lineage; the latest match wins. An unknown ID returns a `RECALL_NOT_FOUND` error
+  in the lineage; the latest match wins. An archive never changes, so a run remembers the keys
+  of each archive it has read, and a recall of an unknown ID reads each archive at most once. An unknown ID returns a `RECALL_NOT_FOUND` error
   envelope. A recall is a pure read. It sets no pending marker, never reaches the dispatcher, is
-  never stored in `tool_results` and is never capped. Like any call, it emits `tool_completed`
+  never stored in `tool_results` and is never capped; its page is bounded instead. Like any call, it emits `tool_completed`
   (and any stagnation signal, since stagnation counts it as a read) after the save that holds its
   output, so tool-call metrics count recalls. It is not part of the society tool catalog, and a
   dispatcher that registers its own `recall_output` under a budget fails with `INVALID_CONFIG`.
@@ -324,9 +337,11 @@ without one. Under a budget:
   `{"elided":true,"tool","chars","sha256","head","recall":{"tool":"recall_output","call_id"}}`.
   `chars` is the replaced text's length, `sha256` the first 16 hex digits of its digest and
   `head` its first 160 characters. The full result stays in `tool_results`, so `recall_output`
-  on the stub's call ID pages it back. An output is replaced only when its stub is strictly
-  shorter, so elision never lengthens an output and `chars_removed` is always positive. Never
-  elided are recall pages, stubs, outputs stored without a `seq` (before this feature), and
+  on the stub's call ID pages it back. A recall page goes stale like any output. Its stub's
+  `recall` names the stored output's call ID and the page's `offset`, so the page can be read
+  again, and recalls cannot grow the context for good. An output is replaced only when its stub
+  is strictly shorter, so elision never lengthens an output and `chars_removed` is always
+  positive. Never elided are stubs, outputs stored without a `seq` (before this feature), and
   outputs whose `tool_results` entries a compaction archived. Between blocks the input only
   grows, so its prefix is byte-stable and provider prefix caching holds; a block breaks the
   prefix once, at its first newly elided item. A block that elides anything emits
@@ -367,13 +382,18 @@ experiments too.
 - The `provider_throttled` events.
 - Stored responses keep only `STORED_RESPONSE_FIELDS` plus `request_echo_sha256`.
 - A `tool_results` entry omits an unchanged `visible_output`.
+- Checkpointed native state has sorted object keys, since `RuntimeCheckpoint.build` copies it
+  through the digest's sorted serialization. A session continued from a reloaded checkpoint
+  therefore sends input items whose keys are sorted: the same content, but not `main`'s bytes.
 - `generation_started` carries `input_tokens_estimate` (the exact count or the margin-inclusive
   bound) and `input_tokens_counted`.
 - `preflight_error.stage` may be `create`, with the generation's operation ID, after a 400 from
   `create`; its `generation_aborted` has `reason="request_invalid"`.
 - `usage.cached_input_tokens`: the provider's reported cache hit (0 when absent or inconsistent).
   The controller/ledger settles those tokens at an optional cached rate, while every reservation
-  stays at the full input rate, since a cache hit is never guaranteed in advance.
+  stays at the full input rate or above, since a cache hit is never guaranteed in advance.
+- `usage.cache_write_input_tokens`: the provider's reported cache writes (0 when absent or
+  inconsistent), settled at `cache_write_usd_per_million`.
 - A checkpoint chunk has no `artifact.created` event and no command row of its own; each save is
   one `runtime.save` transaction.
 - The `native_checkpoint` manifest row has no `artifact.created` event and no
@@ -389,7 +409,11 @@ experiments too.
 - The `bound_reservation_compacted` alarm event.
 - Fewer saves per turn: 4 for a single call, 3 + k for k calls. `tool_completed` is emitted after
   the save that made its output durable. Settlement rides on the next save, so a crash between
-  `usage` and that save leaves the session `uncertain` (save B holds the generation marker).
+  `usage` and that save leaves the session `uncertain` (save B holds the generation marker). The
+  ledger's settled reservation stays authoritative, so nothing is charged twice, but a
+  compaction-only response in that window is not routed to compaction recovery. If an earlier
+  result's `tool_completed` fails after the next call's marker save, that call never ran: the
+  session fails without naming it.
 - A deadline abort before the send emits `generation_aborted` before it clears the marker, so a
   failed release leaves the session `uncertain`, not `failed`.
 - `ToolDispatcher.dispatch` escapes a lone surrogate in a tool result, keys included, as
