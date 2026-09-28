@@ -249,13 +249,17 @@ tools, the prompts and the delivery shapes.
     redefined `#print axioms`). `lean_check` and `record_lean_source` (whoever calls it)
     refuse a source that holds, outside comments and literals (`refused_command`, naming
     the `command` and a `remediation`, what to write instead). The lists are denylists:
-    - a `#` command that evaluates or runs a term or another command, wherever it
-      appears: `#eval`, `#exit`, `#exec`, `#guard` (and `#guard_expr`, `#guard_msgs`),
-      `#html`, `#widget`, `#test`, `#sample`, `#time`, `#count_heartbeats`, `#help`,
-      `#find`, `#norm_num`, `#simp`, `#conv`, `#whnf`, `#reduce` (for its cost),
-      `#check_tactic`, `#check_simp`, `#lint`, `#list_linters`, `#leansearch`, `#loogle`,
-      `#moogle`, `#min_imports`, `#unfold?`, and any word that starts with one (Lean
-      reads `#evalx` as `#eval x`). Any other `#ident` is a term, such as Mathlib's `#s`
+    - a `#` command that evaluates or runs a term or another command, reaches a search
+      service over the network, touches files, lake or git, or costs a scan of the whole
+      environment, wherever it appears: `#eval`, `#exit`, `#exec`, `#guard` (and
+      `#guard_expr`, `#guard_msgs`), `#html`, `#widget`, `#test`, `#sample`, `#time`,
+      `#count_heartbeats`, `#help`, `#find`, `#norm_num`, `#simp`, `#conv`, `#whnf`,
+      `#reduce` and `#grind_lint` (for their cost), `#check_tactic`, `#check_simp`,
+      `#lint`, `#list_linters`, LeanSearchClient's `#leansearch`, `#search`,
+      `#statesearch`, `#loogle` and `#moogle` (commands, terms or tactics), Mathlib's
+      `#min_imports`, `#import_bumps`, `#clear_deprecations` (it rewrites files and runs
+      `lake build`) and `#create_deprecated_module`, `#unfold?`, and any word that
+      starts with one (Lean reads `#evalx` as `#eval x`). Any other `#ident` is a term, such as Mathlib's `#s`
       for a finset's card, and `#check`, `#print` and `#synth` are fine;
     - `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
       `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,

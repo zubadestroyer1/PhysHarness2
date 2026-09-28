@@ -87,10 +87,12 @@ _CODE_ATTRIBUTE_SUFFIXES = (
     "_formatter",
     "_parenthesizer",
 )
-# A denylist: the `#` commands that evaluate or run a term or another command (`#reduce`
-# for its cost), wherever they appear; any other `#ident` is a term, such as Mathlib's `#s`
-# for a finset's card. Lean reads the longest token, so `#evalx` is `#eval x`: a word that
-# starts with one of these is that command.
+# A denylist: the `#` commands that evaluate or run a term or another command, reach a
+# search service over the network (LeanSearchClient's, as commands, terms or tactics),
+# touch files, lake or git (Mathlib's deprecation and import tools), or cost a scan of the
+# whole environment (`#reduce`, `#grind_lint`), wherever they appear; any other `#ident` is
+# a term, such as Mathlib's `#s` for a finset's card. Lean reads the longest token, so
+# `#evalx` is `#eval x`: a word that starts with one of these is that command.
 _RUNS_TERMS = (
     "#eval",
     "#exit",
@@ -109,6 +111,7 @@ _RUNS_TERMS = (
     "#conv",
     "#whnf",
     "#reduce",
+    "#grind_lint",
     "#check_tactic",
     "#check_simp",
     "#lint",
@@ -116,7 +119,12 @@ _RUNS_TERMS = (
     "#leansearch",
     "#loogle",
     "#moogle",
+    "#search",
+    "#statesearch",
     "#min_imports",
+    "#import_bumps",
+    "#clear_deprecations",
+    "#create_deprecated_module",
     "#unfold",
 )
 # Options a module may set besides a node header's: they only steer elaboration. `trace.*`

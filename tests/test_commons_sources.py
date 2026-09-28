@@ -806,6 +806,14 @@ REFUSED = {
     "#guard 1 = 1\n": "#guard",
     "#guard_msgs in\n#check 1\n": "#guard_msgs",
     "#reduce (2 : Nat) ^ 64\n": "#reduce",
+    # Checks every grind E-match theorem in the environment: Mathlib's is large.
+    "#grind_lint check\n": "#grind_lint",
+    # Search services, over the network (LeanSearchClient), in any position.
+    '#search "sum of squares"\n': "#search",
+    "theorem a : True := by\n  #statesearch\n": "#statesearch",
+    # Mathlib commands that write files, run lake or git, or read files.
+    '#clear_deprecations "2024-01-01" "2025-01-01" really\n': "#clear_deprecations",
+    "#import_bumps\n": "#import_bumps",
     # Lean reads the longest token, so this is `#eval IO.getEnv "HOME"`.
     '#evalIO.getEnv "HOME"\n': "#evalIO",
     "theorem a : True := by\n  run_tac pure ()\n": "run_tac",
