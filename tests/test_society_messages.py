@@ -75,6 +75,21 @@ def test_message_rate_limit_is_a_budget_and_the_window_slides(lab):
     service.send_society_message(alpha.branch_id, beta.branch_id, "Hi", [], alpha, "m3")
 
 
+def test_message_rate_limit_is_per_sender(lab):
+    """Merge audit: one sender's messages never spend another's budget."""
+    service, _, exp, _, (alpha, beta) = society_lab(lab, messages_per_minute=2)
+    for index in range(2):
+        service.send_society_message(alpha.branch_id, beta.branch_id, "Hi", [], alpha, f"a{index}")
+    for index in range(2):
+        service.send_society_message(beta.branch_id, alpha.branch_id, "Yo", [], beta, f"b{index}")
+    for sender, recipient in ((alpha, beta), (beta, alpha)):
+        with pytest.raises(HarnessError) as limited:
+            service.send_society_message(
+                sender.branch_id, recipient.branch_id, "More", [], sender, f"{sender.id}-3"
+            )
+        assert limited.value.details == {"limit": 2, "used": 2, "requested": 1}
+
+
 @pytest.mark.parametrize("field", ["lab_size_max", "cross_lab_direct_messages"])
 def test_society_policy_names_removed_lab_fields(field):
     with pytest.raises(ValidationError) as error:
