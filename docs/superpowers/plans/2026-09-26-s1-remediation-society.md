@@ -13,6 +13,7 @@
 > **Merge audit (2026-09-27).** Fixes from the society PR's final review:
 > - Nothing is pushed to a referee: no auto-subscription (citing its own node included) and no self-subscription (`REFEREE_ISOLATED`) reaches a referee branch, and a referee's worker gets no update source.
 > - A compact update line renders its excerpt, like its node title, as a quoted JSON string, so a peer cannot forge a platform-looking segment inside its own line.
+> - `commons_read`'s thread digest quotes each post's text, and the platform's note for an author's abandonment names the author and quotes its reason.
 
 ## Global Constraints
 

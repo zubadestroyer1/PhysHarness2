@@ -531,7 +531,8 @@ class CommonsMixin:
 
     def _thread_digest(self, session, row, actor, before):
         """The node thread's newest posts as one line each, oldest first, and the sequence
-        that pages older ones (None when there are none)."""
+        that pages older ones (None when there are none). A post's text is a quoted JSON
+        string, so it cannot pose as another line or as the platform's words."""
         topic_id = row.payload.get("topic_id")
         if not topic_id:
             return [], None
@@ -555,7 +556,7 @@ class CommonsMixin:
             text = " ".join((p.get("abstract") or p["content"]).split())[:200]
             lines.append(
                 f"{post.id[:8]} [{p['post_kind']}] from "
-                f"{(p.get('branch_id') or 'platform')[:8]}: {text}"
+                f"{(p.get('branch_id') or 'platform')[:8]}: " + json.dumps(text, ensure_ascii=False)
             )
         return lines, shown[-1].sequence if len(events) > RECENT_POSTS else None
 

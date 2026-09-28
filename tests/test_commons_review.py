@@ -1349,7 +1349,7 @@ def test_goal_accepted_hook_on_verified_target_receipt(lab):
     # The goal thread is pull-only: nothing is pushed, and the status post is read on demand.
     assert drain(service, exp["id"], beta)["items"] == []
     assert service.read_node(goal["id"], beta)["recent_posts"][-1].endswith(
-        "[update] from platform: Status open → accepted: independent kernel receipt"
+        '[update] from platform: "Status open → accepted: independent kernel receipt"'
     )
     # A later receipt leaves the accepted goal alone.
     later = verify(service, alpha, "another proof")

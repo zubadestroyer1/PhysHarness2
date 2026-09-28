@@ -579,12 +579,21 @@ class CommonsDiscourseMixin:
         return self._execute(actor, key, "commons.node_post", {"node_id": node_id, **data}, apply)
 
     def _post_status_update(self, session, row, old, new, op):
-        """Announce a ladder move on the node thread; subscribers get it as a delivery."""
+        """Announce a ladder move on the node thread; subscribers get it as a delivery.
+
+        An author's abandonment reason is agent text inside a platform note, so the note
+        names the author and quotes the reason, like a route.
+        """
         topic = session.get(RecordRow, row.payload.get("topic_id") or "")
         if topic is None or topic.kind != "discussion_topic":
             return
         reason = row.payload["status_reason"]
-        abstract = f"Status {old} → {new}: {reason}"[:600]
+        if (row.payload.get("status_evidence") or {}).get("abandoned_by"):
+            author = row.payload.get("branch_id")
+            by = f" by its author {author[:8]}" if author else " by its author"
+            abstract = f"Status {old} → {new}{by}: {_quoted(reason, 400)}"[:600]
+        else:
+            abstract = f"Status {old} → {new}: {reason}"[:600]
         self._insert_post(
             session,
             op,
