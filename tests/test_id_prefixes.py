@@ -54,6 +54,35 @@ def test_unique_prefix_resolves_and_anything_else_passes_through(lab):
     assert service.resolve_id(hidden["id"][:8], alpha, NODE) == hidden["id"][:8]
 
 
+def test_prefix_neither_resolves_to_nor_lists_an_unreadable_record(lab, monkeypatch):
+    """Records of the same experiment that the agent cannot read stay out of both answers."""
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    counter = itertools.count(1)
+    with monkeypatch.context() as patch:
+        patch.setattr(domain, "new_id", lambda: f"abcdef12-0000-4000-8000-{next(counter):012d}")
+        mine = service.create_task(
+            TaskCreate(branch_id=branches[0]["id"], objective="A"), author, "a"
+        )
+        theirs = service.create_task(
+            TaskCreate(branch_id=branches[1]["id"], objective="B"), author, "b"
+        )
+    assert service.resolve_id("abcdef12", alpha, ("task",)) == mine["id"]
+    assert service.resolve_id("abcdef12", beta, ("task",)) == theirs["id"]
+
+
+async def test_inbox_acknowledges_a_delivery_by_prefix(lab):
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context)
+    node = await call(tools, "commons_node", lemma_args())
+    other, other_context = running(service, author, exp, beta.branch_id)
+    question = {"node_id": node["id"], "kind": "question", "abstract": "Why?"}
+    await call(profile(service, other, other_context), "commons_post", question)
+    delivery = (await call(tools, "inbox", {}))["delivery_id"]
+    acked = await call(tools, "inbox", {"ack_delivery_id": delivery[:8]})
+    assert acked["acknowledged_delivery_id"] == delivery
+
+
 def test_ambiguous_prefix_lists_the_candidates(lab):
     service, _, exp, _, (alpha, _) = society_lab(lab)
     first = node_with_id(service, exp, alpha, "abcdef12-0000-4000-8000-000000000001", "A")

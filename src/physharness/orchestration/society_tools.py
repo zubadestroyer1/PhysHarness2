@@ -1286,7 +1286,11 @@ def society_tools(
 
     add(
         "inbox",
-        {"ack_delivery_id": text(200, "A delivery you have read, or null.", nullable=True)},
+        {
+            "ack_delivery_id": ident(
+                "A delivery you have read, or null.", ("discussion_delivery",), nullable=True
+            )
+        },
         inbox,
         "Acknowledge a read delivery (optional), then read your next bounded delivery of "
         "subscribed thread posts, status changes and messages; urgent items come first.",
