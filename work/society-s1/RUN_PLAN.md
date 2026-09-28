@@ -150,12 +150,16 @@ Criteria:
    chosen, so none is derived from a reference. If a skill spells out the reference
    route, record it: `energy-lyapunov` already describes the xᵀPx Lyapunov-equation
    method, and `sos-certificates` describes sum-of-squares decompositions.
-8. **Library-note seed overlap checked** (after the S1 remediation). Every project at the
-   pin reads the checked-in seed (`src/physharness/knowledge/library_notes_seed.json`),
-   benchmark arms included. It holds library facts only, and the S1 targets' proof
-   routes were removed from it. Before freezing a target, read the seed for any note that
-   names the chosen target's route or a step of its reference proof, and record or remove
-   it.
+8. **Library-note seed overlap checked** (after the S1 remediation). Every society
+   project at the pin reads the checked-in seed
+   (`src/physharness/knowledge/library_notes_seed.json`), benchmark arms included. It
+   holds facts about the pin only: the S1 targets' proof routes and S1's search history
+   were removed from it. Before freezing a target, read the seed for any note that names
+   the chosen target's route or a step of its reference proof, and record or remove it.
+   Only society agents read library notes: in Design A the legacy arms 1 and I have no
+   `library_notes` tool, an asymmetry to report beside the literature one. A note an
+   agent appends is read only within its own experiment, so Design B's arm I experiments
+   share none, even on one problem.
 
 **Candidate targets (proposals only).** None has been elaborated, checked against the
 pinned libraries or given a reference proof.

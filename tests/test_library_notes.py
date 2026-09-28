@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from commons_helpers import society_lab
 
@@ -94,6 +96,15 @@ def test_a_surfaced_note_shares_two_query_words(lab):
 def test_the_checked_in_seed_covers_the_s1_audit_findings():
     seeded = " ".join(notes_module.seed_notes(S1_DIGEST))
     assert "Matrix.dotProduct" in seeded and "Perron" in seeded and len(seeded) < 3 * 2000
+
+
+def test_the_seed_holds_pin_facts_never_search_history():
+    """What earlier arms tried, and how often, signals their routes: the seed says only
+    what the pin holds."""
+    history = re.compile(r"\bS1\b|\barms?\b|\bsearched\b|\bfailed\b|\d+ times|\d+×")
+    for notes in notes_module._seed().values():
+        for note in notes:
+            assert not history.search(note), note
 
 
 def test_the_seed_holds_library_facts_never_proof_routes():
