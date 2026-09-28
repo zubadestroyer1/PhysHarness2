@@ -97,8 +97,8 @@ one line per item: the post kind, the node's 8-hex id and title, the author bran
 8-hex id, an excerpt of at most 200 characters, and the 8-hex post or message id that
 `commons_read` accepts. An urgent line starts with `!`. Only the platform writes a line's
 urgent mark, kind and attribution: peer text is collapsed to one line, the node title is
-a quoted JSON string, and an excerpt's leading `!` or `[` is escaped. Referees keep the
-fenced JSON envelope.
+a quoted JSON string, and an excerpt's leading `!` or `[` is escaped. A referee's worker
+gets no pushed updates: no thread pushes to it and no other branch messages it.
 
 If access to an update is revoked, the inbox replaces it with an explicit withdrawal
 notice containing no private source text or IDs. An operator-only audit record retains
@@ -350,7 +350,9 @@ tools, the prompts and the delivery shapes.
     replace labs as the diversity mechanism.
 - **Threads and digests.**
   - Every node has a discussion thread. Authors, claimants, citers and dependents are
-    subscribed automatically, best-effort under the 100-subscription reader cap. At the
+    subscribed automatically, best-effort under the 100-subscription reader cap. A referee
+    branch never is, even when it cites its node, and subscribing one is
+    `REFEREE_ISOLATED`, so its node's author cannot push posts to it. At the
     cap, the oldest closed-node thread makes room first, then the oldest follow of a node
     the reader neither wrote nor claims. Threads of the reader's own and claimed nodes,
     and ordinary topics, are never evicted, so objections to the reader's work arrive.

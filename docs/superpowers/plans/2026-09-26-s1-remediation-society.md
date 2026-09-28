@@ -10,6 +10,9 @@
 
 **Spec:** `work/society-s1/audit-2026-09-26/AUDIT.md` (merged in #33), with its reports `society.md`, `scaffolding.md`, `proofpath.md` and `tools.md` in the same directory. The binding rulings are summarised in this plan's Global Constraints.
 
+> **Merge audit (2026-09-27).** Fixes from the society PR's final review:
+> - Nothing is pushed to a referee: no auto-subscription (citing its own node included) and no self-subscription (`REFEREE_ISOLATED`) reaches a referee branch, and a referee's worker gets no update source.
+
 ## Global Constraints
 
 - **G1.** Society changes REPLACE the S1 society behaviour; there is no dual "S1 vs lean" mode. Legacy experiments stay byte-identical: `test_legacy_catalog_unchanged`, `test_worker_legacy_prompt_unchanged` (`tests/test_society_tools.py`) and `test_legacy_discussion_delivery_shape_unchanged` (`tests/test_commons_discourse.py`) must pass unmodified after every task. The A/B baseline is the recorded S-r2 run, or `d9a9179` run from a separate worktree.

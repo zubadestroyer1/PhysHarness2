@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from .commons import MAX_PAGE, PLATFORM, _platform
 from .commons_models import NodePostCreate, is_open
+from .commons_review import is_referee_branch
 from .domain import utcnow
 from .errors import HarnessError
 from .storage import RecordRow, record_json_text
@@ -409,9 +410,10 @@ class CommonsDiscourseMixin:
         Never pushes the reader past its 100-subscription cap. At the cap it frees one slot
         (see ``_release_evictable_thread``); failing that it returns False instead of
         raising, so the reader's inbox keeps working. Another branch's reader is written by
-        the platform.
+        the platform. A referee branch is never subscribed: its node's author posts on the
+        thread, and nothing the author writes may be pushed to its referee.
         """
-        if not topic_id or not branch_id:
+        if not topic_id or not branch_id or is_referee_branch(session, branch_id):
             return False
         topic = session.get(RecordRow, topic_id)
         if topic is None or topic.kind != "discussion_topic":

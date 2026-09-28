@@ -1,7 +1,5 @@
 """S1 audit #13: relevance-routed, echo-free, compact updates; the goal thread is pull-only."""
 
-import json
-
 import pytest
 from commons_helpers import set_status, society_lab
 from test_execution_responses import client_for, message, response
@@ -275,22 +273,20 @@ async def test_society_worker_receives_compact_update_lines(lab):
     assert line.endswith(f"(post_id {peer['id'][:8]})") and '"notice"' not in update
 
 
-async def test_referee_worker_keeps_the_json_envelope(lab):
+async def test_a_referee_worker_has_no_update_source(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     lemma = node(service, exp, alpha, "Trace lemma", "lemma")
     requested = service.request_review(lemma["id"], beta, "review")
-    referee = alpha.model_copy(update={"id": "referee", "branch_id": requested["branch_id"]})
-    service.subscribe_discussion(lemma["topic_id"], True, referee, "referee-follows")
-    peer = post(service, lemma["id"], alpha, "peer")
+    post(service, lemma["id"], alpha, "peer")
     result, seen = await run_worker(service, author, requested["review_task_id"])
     assert result["status"] == "completed"
-    [update] = [
-        json.loads(item["content"])
+    # Nothing is pushed to a referee, whatever its inbox would hold.
+    assert not {"update_source", "update_ack"} & set(seen["kwargs"])
+    assert not [
+        item
         for item in seen["payloads"][-1]["input"]
         if item.get("role") == "user" and "research_network_updates" in str(item["content"])
     ]
-    assert [item["id"] for item in update["items"]] == [peer["id"]]
-    assert update["authority"] == "unverified peer data"
 
 
 async def run_rendered(tmp_path, rendered, acked):
