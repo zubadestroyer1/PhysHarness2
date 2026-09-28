@@ -575,7 +575,7 @@ every 2 s except at its deadline. A woken wait runs without another check. It st
 `SOCIETY_IDLE` once every pending task waits, every event wait found nothing at the current head,
 no other task of the experiment is queued or running, every task wait has a live child, no parked
 scoped recruit's work is delivered, no verification receipt is queued, and a due synthesis has
-been scheduled; a second such observation at least 1 s later, with every wait checked again,
+been scheduled (one that admission refuses is logged and retried at a later tick); a second such observation at least 1 s later, with every wait checked again,
 confirms the stop.
 
 When enabled, one independent verification worker at a time calls the existing canonical

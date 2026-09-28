@@ -73,6 +73,9 @@ EVENT_WAIT_MIN_RECHECK_SECONDS = 2
 # An idle stop needs a second idle observation this long after the first, with every event
 # wait checked again in between: an event that committed behind the head is then found.
 SOCIETY_IDLE_CONFIRM_SECONDS = 1
+# Admission refusals of a society's due synthesis (the dollar floor or a task cap): nothing is
+# scheduled, its sample stays pending, and a later tick tries again.
+SYNTHESIS_REFUSALS = frozenset({"ADMISSION_BUDGET", "TASK_TOTAL_CAP", "TASK_PENDING_CAP"})
 # Endings a resumed society session takes before its first request. result_returned is not
 # one: a resumed joined recruit reads its children's results first.
 SCOPE_ENDINGS = frozenset({"scope_proved", "scope_closed"})
@@ -2428,6 +2431,7 @@ class ResearchTeamRunner:
         scheduled_synthesis_ids = set()
         own_synthesis_ids = set()  # Scheduled by this run, not adopted from another.
         next_synthesis_tick = 0.0
+        synthesis_refused = None  # The last tick's admission refusal, logged once per streak.
 
         def platform_lineage_task_ids(tasks):
             """Tasks in lineages rooted at referee or parentless synthesis branches.
@@ -2669,9 +2673,22 @@ class ResearchTeamRunner:
                         ]
                         > 0
                     ):
-                        synthesis = self.service.schedule_research_synthesis(
-                            experiment["id"], actor, f"run-synthesis:{manifest.run_id}:{new_id()}"
-                        )
+                        try:
+                            synthesis = self.service.schedule_research_synthesis(
+                                experiment["id"],
+                                actor,
+                                f"run-synthesis:{manifest.run_id}:{new_id()}",
+                            )
+                        except HarnessError as error:
+                            if error.code not in SYNTHESIS_REFUSALS or not experiment.get(
+                                "society"
+                            ):
+                                raise  # Legacy runs keep their behaviour.
+                            if error.code != synthesis_refused:
+                                log.info("Due synthesis not admitted: %s", error.code)
+                            synthesis, synthesis_refused = {"scheduled": False}, error.code
+                        else:
+                            synthesis_refused = None
                         if synthesis.get("scheduled"):
                             branch_parents = {
                                 branch["id"]: branch.get("parent_id")

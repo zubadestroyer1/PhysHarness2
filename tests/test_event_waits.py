@@ -897,6 +897,37 @@ async def test_a_due_synthesis_is_scheduled_before_an_idle_stop(lab, monkeypatch
     assert service.get_record("task", root["id"], author)["ready_continuation"]
 
 
+async def test_a_due_synthesis_refused_admission_is_not_scheduled(lab, monkeypatch):
+    """Merge audit: near the end of a budget, dollar admission refuses a due synthesis. The
+    tick schedules nothing, the run stops idle and writes its report instead of raising."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+
+    def discuss():
+        for title in ("Trace lemma", "Gap lemma", "Cut lemma", "Sum lemma"):
+            set_status(service, lemma(service, exp, beta, title)["id"], "abandoned")
+        request = ConfigureWorkforceRequest(
+            synthesis_interval_posts=4, admission_floor_usd="1000000"
+        )
+        service.configure_workforce(exp["id"], request, OPERATOR, "synthesis-on")
+
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 3600, before_wait=discuss))
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["stop_reason"] == "SOCIETY_IDLE" and len(payloads) == 1
+    tasks = service.list_records("task", author, exp["id"])
+    assert not any(task.get("synthesis") for task in tasks)
+    assert service.get_record("artifact", report["artifact_id"], author)["artifact_kind"] == (
+        "team_run_report"
+    )
+
+
 async def test_the_wake_note_carries_the_watched_events_detail(lab, monkeypatch):
     monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
     service, author, exp, branches, (_, beta) = society_lab(lab)

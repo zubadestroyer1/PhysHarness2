@@ -532,7 +532,8 @@ tools, the prompts and the delivery shapes.
   only their timeouts could wake them: no other task of the experiment is queued or
   running (another runner's or worker's work could still wake them), every task wait has
   a live recruit, no verification receipt is queued, and a synthesis that is due has been
-  scheduled first. A second such observation at least 1 s after the first, with every
+  scheduled first. A due synthesis that admission refuses (the dollar floor or a task cap) is
+  logged and tried again at a later tick; it never ends the run. A second such observation at least 1 s after the first, with every
   wait checked again, confirms the stop. The constitution and the `wait` tool tell agents
   that a run whose agents all wait ends. The waits keep their tickets, so a later run
   resumes them.
