@@ -12,12 +12,9 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from sqlalchemy import select
 
-from ..commons_review import (
-    REFEREE_FRONTIER_NOTE,
-    REFEREE_HAT,
-    fence_author_data,
-    is_referee_task,
-)
+from ..commons_discourse import compact_update_lines
+from ..commons_review import REFEREE_HAT, is_referee_task
+from ..continuation import MAX_SEEN_EVENTS, scope_ending, scope_restated
 from ..domain import (
     ArtifactCreate,
     BranchCreate,
@@ -27,6 +24,7 @@ from ..domain import (
     canonical_json,
     digest_json,
     new_id,
+    utcnow,
 )
 from ..errors import HarnessError
 from ..execution import (
@@ -53,14 +51,8 @@ from .research_network import (
     register_network_tools,
     root_lineage,
 )
-from .society_prompt import (
-    checkin_note,
-    constitution,
-    referee_checkin_note,
-    referee_constitution,
-    referee_stagnation_suggestions,
-    stagnation_suggestions,
-)
+from .society_brief import society_prompt_view
+from .society_prompt import constitution, referee_constitution
 from .workspace_tools import WorkspaceTools
 
 log = logging.getLogger(__name__)
@@ -71,6 +63,22 @@ FATAL_TOOL_CODES = frozenset(
 )
 # Another runner leased, or already finished, a task this run also selected.
 LEASE_CONFLICT_CODES = frozenset({"LEASE_HELD", "TASK_NOT_RUNNABLE"})
+# Continuations that only waited: in a society they resume natively with a wake note (S1 #14).
+WAIT_REASONS = frozenset({"wait_for_tasks", "wait_for_peer", "wait_for_events"})
+# A parked event wait is checked at least this often even when the event head stands still: on
+# PostgreSQL an event can commit below a head the runner has already seen.
+EVENT_WAIT_MAX_STALE_SECONDS = 30
+# ...and at most this often, however fast wake-relevant events arrive, except at its deadline.
+EVENT_WAIT_MIN_RECHECK_SECONDS = 2
+# An idle stop needs a second idle observation this long after the first, with every event
+# wait checked again in between: an event that committed behind the head is then found.
+SOCIETY_IDLE_CONFIRM_SECONDS = 1
+# Admission refusals of a society's due synthesis (the dollar floor or a task cap): nothing is
+# scheduled, its sample stays pending, and a later tick tries again.
+SYNTHESIS_REFUSALS = frozenset({"ADMISSION_BUDGET", "TASK_TOTAL_CAP", "TASK_PENDING_CAP"})
+# Endings a resumed society session takes before its first request. result_returned is not
+# one: a resumed joined recruit reads its children's results first.
+SCOPE_ENDINGS = frozenset({"scope_proved", "scope_closed"})
 
 
 def _validate_worker_preflight(report):
@@ -504,23 +512,9 @@ def _peer_routing(directory, sharing, own_branch_id):
     }
 
 
-SOCIETY_CAPACITY_NOTE = (
-    "This is a snapshot. Recruited work consumes the same budget and needs a free worker "
-    "slot. If all slots are occupied, a recruit queues until a slot opens; you may "
-    "optionally call wait with for='tasks' and the recruit's task ID to yield your slot and "
-    "resume after it reaches a terminal state."
-)
-REFEREE_CAPACITY_NOTE = (
-    "This is a snapshot of the society's worker capacity; as a referee you review your one "
-    "assigned node and start no other work."
-)
 LEGACY_SOURCE_RETRIEVAL = (
     "Use read_discussion_post or read_research_message with a delivery retrieval ID; "
     "excerpts remain unverified."
-)
-SOCIETY_SOURCE_RETRIEVAL = (
-    "Use commons_read with a delivery retrieval ID (post_id for a post, message_id for a "
-    "message), and read_artifact for an artifact they cite; excerpts remain unverified."
 )
 
 
@@ -982,6 +976,18 @@ def research_tools(service, agent, branch_id, *, task_context=None, workspace_to
     return dispatcher
 
 
+# The output artifact's text when a boundary completion ends a session with no final text.
+COMPLETION_NOTES = {
+    "target_verified": "Target verification stopped further model generation "
+    "after a settled response.",
+    "result_returned": "The recruit returned its result to its parent; its session ended.",
+    "scope_proved": "The recruit's node has a complete published source; its session ended.",
+    "scope_closed": "The recruit's node was closed; its session ended.",
+}
+# Appended to a scope_closed note when the node was restated after recruitment.
+SCOPE_RESTATED_NOTE = "The node's statement changed after recruitment."
+
+
 class ResearchTaskExecutor:
     def __init__(
         self,
@@ -1020,6 +1026,68 @@ class ResearchTaskExecutor:
             return None
         log.warning("Masked reference is not a masked_reference artifact")
         return None
+
+    def _society_completion(self, task, agent, holder, fence):
+        """Why a society recruit's work is delivered, or None (S1 audit #23).
+
+        A scoped recruit ends once its node has a complete source of the scoped statement,
+        published by anyone (a joined recruit returns that source to its parent), or once the
+        node is closed. A joined recruit ends once it has called return_result. None while the
+        task's own joined recruits are pending: finish_task would refuse it, so the
+        joined-children handoff waits for them and the resumed task may amend its result.
+        """
+        joined = bool(task.get("reply_to_parent_task_id"))
+        scope, reason, source = task.get("scope"), None, None
+        if scope:
+            node, state = self.service.node_source_state(scope["node_id"], agent)
+            reason = scope_ending(scope, node, state)
+            source = node.get("lean_source")
+        if reason is None and joined and task.get("return_result"):
+            reason = "result_returned"
+        if reason is None or self.service.joined_task_statuses(task["id"], agent)["pending_ids"]:
+            return None
+        if reason == "scope_proved" and joined and not task.get("return_result"):
+            with worker_effects(agent, task["id"], holder, fence):
+                self.service.return_result(
+                    task["id"],
+                    evidence_status="unverified",
+                    artifact_ids=[source["artifact_id"]],
+                    unresolved_obligations=[],
+                    summary=f"Node {scope['node_id'][:8]} is proved as {scope['module']}; "
+                    "import it.",
+                    execution_failure=None,
+                    actor=agent,
+                    key=f"scope-result:{task['id']}",
+                )
+        return reason
+
+    def _session_anchor(self, task_id, agent, experiment, woken, wake_status, *, recovering):
+        """What a builder session's first request can show (merge audit), before its prompt or
+        wake note is built. A session resumed mid-flight keeps its last request's anchor. A
+        natively woken wait keeps its own (a task or peer wait's: the last request's, with the
+        events it marked seen), shows the wake note's long pole, and marks the watched event
+        the note names as seen: the note names the first event on the old wait's watches only,
+        so news before it elsewhere still wakes the next wait, and the named event never does.
+        Otherwise (a fresh prompt) now."""
+        persisted = self.service.get_record("task", task_id, agent).get("request_anchor")
+        if recovering and persisted:
+            return persisted
+        if woken and woken["reason"] in WAIT_REASONS:
+            ticket = woken.get("peer_wait") or {}
+            if ticket.get("kind") == "events":
+                source, sequence = ticket, ticket.get("event_after")
+            else:
+                source = persisted or {}
+                sequence = source.get("event_sequence")
+            seen = list(source.get("seen_sequences", []))
+            if (named := (wake_status or {}).get("sequence")) is not None:
+                seen.append(named)
+                if len(seen) > MAX_SEEN_EVENTS:  # a long run of bare waits: move on to it
+                    sequence, seen = named, []
+            if sequence is not None:
+                anchor = {"event_sequence": sequence, "long_pole_ids": None}  # set by wake_note
+                return {**anchor, "seen_sequences": seen} if seen else anchor
+        return self.service.event_anchor(experiment["id"], agent)
 
     async def execute(self, task_id: str, project_id: str, *, stop_on_verified_target=True):
         actor = Principal(id="research-controller", project_id=project_id, role="operator")
@@ -1170,6 +1238,7 @@ class ResearchTaskExecutor:
                     "before explicit continuation."
                 ),
             )
+        wake_status = None  # The pre-check's wake reason, when a wait ticket was checked.
         if ready:
             matches = [
                 r for r in prior_sessions if r["native_record_id"] == ready["source_session_id"]
@@ -1193,7 +1262,10 @@ class ResearchTaskExecutor:
                         branch_id=task["branch_id"],
                     ),
                 )
-                if not child_status["all_terminal"]:
+                # A scoped recruit whose work is delivered ends without its detached recruits.
+                if not child_status["all_terminal"] and not (
+                    task.get("scope") and self.service.scope_delivered(task_id, actor)
+                ):
                     return {"task_id": task_id, "status": "waiting", "code": "CHILDREN_PENDING"}
             if ready.get("peer_wait"):
                 waiter = Principal(
@@ -1203,8 +1275,8 @@ class ResearchTaskExecutor:
                     experiment_id=task["experiment_id"],
                     branch_id=task["branch_id"],
                 )
-                peer_status = self.service.peer_wait_status(ready["peer_wait"], waiter)
-                if not peer_status["ready"]:
+                wake_status = self.service.peer_wait_status(ready["peer_wait"], waiter)
+                if not wake_status["ready"]:
                     return {"task_id": task_id, "status": "waiting", "code": "PEER_PENDING"}
         experiment = self.service.get_record("experiment", task["experiment_id"], actor)
         branch = self.service.get_record("branch", task["branch_id"], actor)
@@ -1335,6 +1407,8 @@ class ResearchTaskExecutor:
                     record_stagnation,
                 )
             if event.kind == "generation_started":
+                if delivered is not None:
+                    delivered["sent"] = True  # this request goes out: stop asking
                 inp, out = (
                     event.payload["input_tokens_reserved"],
                     event.payload["output_tokens_reserved"],
@@ -1434,9 +1508,17 @@ class ResearchTaskExecutor:
                 if event.kind == "generation_started":
                     # This is the last synchronous hook before responses.create. An
                     # artifact upload may have outlived the lease or experiment.
-                    with self.service.db.transaction() as session:
-                        self.service._active(session, experiment["id"], actor)
-                        self.service._fenced(session, task_id, holder, lease["fence"])
+                    if society and not referee:
+                        # A builder's waits anchor on what this request can show, captured
+                        # before its admission and reservation waits (view).
+                        self.service.anchor_request(
+                            task_id, holder, lease["fence"], view["anchor"], agent
+                        )
+                        view["anchor"] = None
+                    else:
+                        with self.service.db.transaction() as session:
+                            self.service._active(session, experiment["id"], actor)
+                            self.service._fenced(session, task_id, holder, lease["fence"])
             except Exception:
                 if event.kind == "generation_started" and event.operation_id in reservations:
                     self.service.settle_resources(
@@ -1561,6 +1643,15 @@ class ResearchTaskExecutor:
                     experiment["id"], actor
                 ):
                     return {"complete_reason": "target_verified"}
+                if society and not referee:
+                    reason = self._society_completion(
+                        self.service.get_record("task", task_id, actor),
+                        agent,
+                        holder,
+                        lease["fence"],
+                    )
+                    if reason:
+                        return {"complete_reason": reason}
                 stagnation = checkpoint.native_state.get("stagnation") or {}
                 if stagnation.get("exhausted"):
                     raise HarnessError(
@@ -1637,39 +1728,47 @@ class ResearchTaskExecutor:
             elif society:
                 research_instructions = constitution(society, literature_enabled=literature_enabled)
 
-            def society_context():
-                lab = branch.get("lab")
-                frontier = self.service.query_nodes(
-                    experiment["id"], agent, frontier=True, limit=10
+            def society_view():
+                return society_prompt_view(
+                    self.service,
+                    experiment=experiment,
+                    task=task,
+                    agent=agent,
+                    referee=referee,
+                    ready=ready,
+                    handoff_notes=PortableMemory(self.service).handoff_notes(
+                        branch["id"], agent, task_id=task_id
+                    ),
+                    instructions=research_instructions,
                 )
-                if referee:
-                    # Node titles and statements are author text (possibly the reviewed
-                    # node's author): a referee reads them fenced, like its review packet.
-                    frontier = {
-                        "note": REFEREE_FRONTIER_NOTE,
-                        "data": fence_author_data(frontier["items"]),
-                    }
-                return {
-                    "commons_frontier": frontier,
-                    "lab": self.service.lab_members(experiment["id"], lab, agent) if lab else None,
-                    "focus_nodes": self.service.branch_claims(experiment["id"], agent, limit=10),
-                    "review_assignment": task.get("review_assignment"),
+
+            def wake_note():
+                """What a society wait resumes with instead of a fresh prompt (S1 audit #14): the
+                transcript is kept, so only the wake reason and its detail, the awaited recruits'
+                statuses and the long pole. Agent-authored text stays JSON values, never
+                platform lines."""
+                wake = {
+                    "type": "wake",
+                    "reason": (wake_status or {}).get("reason") or ready["reason"],
                 }
+                if (wake_status or {}).get("detail"):
+                    # A watched event's kind and aggregate, or a wait_error's code.
+                    wake["detail"] = wake_status["detail"]
+                if ready["wait_task_ids"]:
+                    wake["children"] = self.service.delegated_task_statuses(
+                        task_id, ready["wait_task_ids"], agent
+                    )
+                long_pole = self.service.query_nodes(
+                    experiment["id"], agent, frontier=True, limit=1
+                ).get("long_pole")
+                if long_pole:
+                    wake["long_pole"] = long_pole
+                if view["anchor"] is not None:  # the long pole this request shows
+                    view["anchor"]["long_pole_ids"] = sorted(item["id"] for item in long_pole or [])
+                return canonical_json(wake)
 
             def collaboration_context():
                 capacity = self.service.research_capacity(experiment["id"], agent)
-                if society:
-                    return {
-                        "task_contract": _task_contract(task, branch),
-                        "research_capacity": capacity,
-                        "capacity_guidance": {
-                            **_capacity_guidance(capacity),
-                            # A referee delegates nothing, so it has no task to wait for.
-                            "optional_wait_for_delegated_task": not referee,
-                            "note": REFEREE_CAPACITY_NOTE if referee else SOCIETY_CAPACITY_NOTE,
-                        },
-                        **society_context(),
-                    }
                 directory = self.service.research_directory(experiment["id"], agent, limit=10)
                 return {
                     "task_contract": _task_contract(task, branch),
@@ -1693,6 +1792,8 @@ class ResearchTaskExecutor:
                         raise HarnessError(
                             "TARGET_CHANGED", "Compaction anchor target/review changed."
                         )
+                if society:
+                    return canonical_json(society_view())
                 memory = PortableMemory(self.service)
                 return canonical_json(
                     {
@@ -1708,20 +1809,12 @@ class ResearchTaskExecutor:
                         "working_context": memory.working_context(
                             branch["id"], agent, task_id=task_id
                         ),
-                        **(
-                            {}
-                            if society
-                            else {
-                                "discussion_topics": self.service.discussion_page(
-                                    experiment["id"], agent, limit=10
-                                )
-                            }
+                        "discussion_topics": self.service.discussion_page(
+                            experiment["id"], agent, limit=10
                         ),
                         "mailbox": self.service.mailbox_page(branch["id"], agent),
                         "peer_update_delivery": "automatic_at_settled_responses_boundaries",
-                        "peer_source_retrieval": (
-                            SOCIETY_SOURCE_RETRIEVAL if society else LEGACY_SOURCE_RETRIEVAL
-                        ),
+                        "peer_source_retrieval": LEGACY_SOURCE_RETRIEVAL,
                         "handoff_notes": memory.handoff_notes(branch["id"], agent, task_id=task_id),
                         "joined_results": self.service.delegated_task_statuses(
                             task_id,
@@ -1741,6 +1834,11 @@ class ResearchTaskExecutor:
             ).get("review_id")
 
             tool_context = {"task_id": task_id, "holder": holder, "fence": lease["fence"]}
+            # What a builder's next request can show (``event_anchor``), taken when its content
+            # is captured and recorded at generation_started (merge audit): at the session's
+            # start, then at the first tool call of each response, whose results the next
+            # request carries. Earlier is only a spare wake; later would lose one.
+            view = {"anchor": None}
             if society:
                 # Imported here: the society profile builds on this module's tool registrar.
                 from .society_tools import society_tools
@@ -1761,6 +1859,13 @@ class ResearchTaskExecutor:
                     workspace_tools=workspace_tools,
                     literature=literature,
                 )
+                if not referee:
+
+                    def capture_view():
+                        if view["anchor"] is None:
+                            view["anchor"] = self.service.event_anchor(experiment["id"], agent)
+
+                    dispatcher.before_dispatch = capture_view
             else:
                 dispatcher = research_tools(
                     self.service,
@@ -1790,7 +1895,10 @@ class ResearchTaskExecutor:
             )
             native_compatible = bool(
                 ready
-                and ready["reason"] == "joined_children"
+                and (
+                    ready["reason"] == "joined_children"
+                    or (society and ready["reason"] in WAIT_REASONS)
+                )
                 and ready["model"] == model_config.model_dump(mode="json")
                 and ready["runtime_limits"] == runtime_limits.model_dump(mode="json")
                 and ready.get("tool_definition_digest") == store.tool_definition_digest
@@ -1801,15 +1909,37 @@ class ResearchTaskExecutor:
                 dispatcher=dispatcher,
                 event_sink=accounting,
             )
-            if stop_on_verified_target and (
+            # A society builder asks _society_completion at the start of every session until
+            # its first model request is sent, at the loop top and again once the TPM governor
+            # admits it: a recruit whose work was delivered while it was queued or asleep makes
+            # no request. A later session ends only for its scope (SCOPE_ENDINGS).
+            delivered = {} if society and not referee else None
+            if (stop_on_verified_target or delivered is not None) and (
                 "pre_generation_guard" in parameters
                 or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
             ):
 
-                async def verified_guard():
-                    return self.service.verified_target_receipt(experiment["id"], actor) is not None
+                async def pre_generation_guard():
+                    if (
+                        stop_on_verified_target
+                        and self.service.verified_target_receipt(experiment["id"], actor)
+                        is not None
+                    ):
+                        return True
+                    if delivered is None or delivered.get("sent"):
+                        return False
+                    reason = self._society_completion(
+                        self.service.get_record("task", task_id, actor),
+                        agent,
+                        holder,
+                        lease["fence"],
+                    )
+                    if reason is None or (prior_sessions and reason not in SCOPE_ENDINGS):
+                        return False
+                    delivered["reason"] = reason
+                    return True
 
-                runtime_kwargs["pre_generation_guard"] = verified_guard
+                runtime_kwargs["pre_generation_guard"] = pre_generation_guard
             if "boundary_hook" in parameters or any(
                 p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
             ):
@@ -1824,11 +1954,18 @@ class ResearchTaskExecutor:
                 runtime_kwargs["stagnation_state"] = (
                     ready.get("stagnation_state", {}) if ready else task.get("stagnation_state")
                 )
-            if ("update_source" in parameters and "update_ack" in parameters) or any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+            # A referee follows no thread and no other branch messages it: nothing is pushed.
+            if not referee and (
+                ("update_source" in parameters and "update_ack" in parameters)
+                or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in parameters.values())
             ):
                 update_source, update_ack = discussion_delivery_hooks(
-                    self.service, agent, task_id, holder, lease["fence"]
+                    self.service,
+                    agent,
+                    task_id,
+                    holder,
+                    lease["fence"],
+                    render=compact_update_lines if society else None,
                 )
                 runtime_kwargs["update_source"] = update_source
                 runtime_kwargs["update_ack"] = update_ack
@@ -1837,24 +1974,6 @@ class ResearchTaskExecutor:
                 runtime_kwargs["admission_priority"] = _admission_priority(task, branch)
             if pass_budget:
                 runtime_kwargs["context_budget"] = ContextBudget.model_validate(context_budget)
-            if society:
-                scaffolding = society["scaffolding"]
-                every = scaffolding["checkin_every_turns"]
-                if every and ("turn_note" in parameters or accepts_any):
-
-                    async def turn_note(turns_completed):
-                        if turns_completed > 0 and turns_completed % every == 0:
-                            return referee_checkin_note() if referee else checkin_note()
-                        return None
-
-                    runtime_kwargs["turn_note"] = turn_note
-                if scaffolding["stagnation_nudges"] and (
-                    "stagnation_suggestions" in parameters or accepts_any
-                ):
-                    suggest = referee_stagnation_suggestions if referee else stagnation_suggestions
-                    runtime_kwargs["stagnation_suggestions"] = suggest(
-                        literature_enabled=literature_enabled
-                    )
             runtime = self.runtime_factory(**runtime_kwargs)
             native_compatible = native_compatible and callable(
                 getattr(runtime, "start_from_handoff", None)
@@ -1895,9 +2014,19 @@ class ResearchTaskExecutor:
                     successor_runtime_limits=runtime_limits.model_dump(mode="json"),
                     continuation_mode="native" if native_compatible else "portable",
                 )
+            if society and not referee:
+                view["anchor"] = self._session_anchor(
+                    task_id,
+                    agent,
+                    experiment,
+                    ready if native_compatible else None,
+                    wake_status,
+                    recovering=bool(recovering_successor or recovering_first_session),
+                )
             memory = PortableMemory(self.service)
-            brief = memory.working_context(branch["id"], agent, task_id=task_id)
-            brief["assumptions"] = brief["target"]["assumptions"]
+            if not society:
+                brief = memory.working_context(branch["id"], agent, task_id=task_id)
+                brief["assumptions"] = brief["target"]["assumptions"]
             handoff_notes = memory.handoff_notes(branch["id"], agent, task_id=task_id)
             if ready and ready.get("portable_checkpoint"):
                 expected = ready["portable_checkpoint"]
@@ -1908,7 +2037,9 @@ class ResearchTaskExecutor:
                 ):
                     raise HarnessError("CONTINUATION_STALE", "Bound portable checkpoint changed.")
             prompt = canonical_json(
-                {
+                society_view()
+                if society
+                else {
                     "objective": task["objective"],
                     **collaboration_context(),
                     "assigned_source_post_ids": task.get("discussion_refs", []),
@@ -1917,19 +2048,11 @@ class ResearchTaskExecutor:
                     "research_brief": brief,
                     "continuation": ready,
                     "handoff_notes": handoff_notes,
-                    **(
-                        {}
-                        if society
-                        else {
-                            "discussion_topics": self.service.discussion_page(
-                                experiment["id"], agent, limit=10
-                            )
-                        }
+                    "discussion_topics": self.service.discussion_page(
+                        experiment["id"], agent, limit=10
                     ),
                     "mailbox": self.service.mailbox_page(branch["id"], agent),
-                    "peer_source_retrieval": (
-                        SOCIETY_SOURCE_RETRIEVAL if society else LEGACY_SOURCE_RETRIEVAL
-                    ),
+                    "peer_source_retrieval": LEGACY_SOURCE_RETRIEVAL,
                     "peer_update_delivery": (
                         "automatic_at_settled_responses_boundaries"
                         if "update_source" in runtime_kwargs
@@ -1966,8 +2089,10 @@ class ResearchTaskExecutor:
                         runtime.continue_session(recovering_session, prompt)
                     )
             elif native_compatible:
+                # A society wait keeps its transcript and appends only a wake note.
+                resume = wake_note() if society and ready["reason"] in WAIT_REASONS else prompt
                 running = asyncio.create_task(
-                    runtime.start_from_handoff(handoff_source, prompt, model_config, runtime_limits)
+                    runtime.start_from_handoff(handoff_source, resume, model_config, runtime_limits)
                 )
             elif ready:
                 # Portable context is fresh, but a numeric token guard stays cumulative
@@ -1993,6 +2118,9 @@ class ResearchTaskExecutor:
             if renewal in done:
                 await renewal
             result = await running
+            if (delivered or {}).get("reason") and result.completion_reason == "target_verified":
+                # The runtime names every guard completion target_verified.
+                result = result.model_copy(update={"completion_reason": delivered["reason"]})
             if result.continuation:
                 continuation = result.continuation
                 if any(op not in settled for op in reservations):
@@ -2046,18 +2174,18 @@ class ResearchTaskExecutor:
                     "status": "continuation",
                     "continuation_count": issued["ready_continuation"]["ordinal"],
                 }
+            content = result.output_text or COMPLETION_NOTES.get(result.completion_reason, "")
+            if result.completion_reason == "scope_closed" and scope_restated(
+                task["scope"],
+                self.service.get_record("commons_node", task["scope"]["node_id"], agent),
+            ):
+                content = f"{content} {SCOPE_RESTATED_NOTE}"
             artifact = self.service.create_artifact(
                 ArtifactCreate(
                     experiment_id=experiment["id"],
                     branch_id=branch["id"],
                     kind="research_output",
-                    content=result.output_text
-                    or (
-                        "Target verification stopped further model generation "
-                        "after a settled response."
-                        if result.completion_reason == "target_verified"
-                        else ""
-                    ),
+                    content=content,
                     provenance={
                         "task_id": task_id,
                         "session_id": result.session.id,
@@ -2347,7 +2475,21 @@ class ResearchTeamRunner:
             f"team-manifest:{manifest.run_id}",
         )
         outcomes, active, attempted = {}, {}, set()
+        # Referees run in their own slots inside max_concurrency, per runner process; with no
+        # slots (none set, or concurrency 1) every task shares one pool. max_tasks counts
+        # research tasks only (S1 #16).
+        slots = min(
+            (experiment.get("society") or {}).get("referee_slots", 0), manifest.max_concurrency - 1
+        )
+        active_referees, research_attempted = set(), set()
         checks, checked_ids, verification_errors = {}, set(), []
+        # Each event wait's last check, (event head, wall time, reason, ready), until its task
+        # runs: see wait_check_due (S1 #14). A woken wait runs without another check.
+        wait_checks = {}
+        # Each scoped task wait's last undelivered scope check, (event head, wall time).
+        scope_checks = {}
+        # The wall time of the first of two idle observations an idle stop needs, or None.
+        idle_since = None
         stop_reason = None
         deadline = asyncio.get_running_loop().time() + manifest.timeout_seconds
         branch_parents = {
@@ -2359,6 +2501,7 @@ class ResearchTeamRunner:
         scheduled_synthesis_ids = set()
         own_synthesis_ids = set()  # Scheduled by this run, not adopted from another.
         next_synthesis_tick = 0.0
+        synthesis_refused = None  # The last tick's admission refusal, logged once per streak.
 
         def platform_lineage_task_ids(tasks):
             """Tasks in lineages rooted at referee or parentless synthesis branches.
@@ -2431,6 +2574,147 @@ class ResearchTeamRunner:
                 lineages = grown
             return [task for task in tasks if task["id"] in selected_ids]
 
+        def wait_check_due(ticket, last, wall):
+            """Whether a parked event wait is checked this pass (S1 #14): always at its
+            deadline; otherwise at most every EVENT_WAIT_MIN_RECHECK_SECONDS, and only once
+            the event head moved, its minimum sleep ended, the check is
+            EVENT_WAIT_MAX_STALE_SECONDS old, or an idle observation awaits confirmation."""
+            if last is None or wall >= ticket.get("deadline_at", 0):
+                return True
+            if wall - last[1] < EVENT_WAIT_MIN_RECHECK_SECONDS:
+                return False
+            return (
+                last[0] != head
+                or wall - last[1] >= EVENT_WAIT_MAX_STALE_SECONDS
+                or last[1] < ticket.get("min_sleep_until", 0) <= wall
+                or (
+                    idle_since is not None
+                    and last[1] < idle_since + SOCIETY_IDLE_CONFIRM_SECONDS <= wall
+                )
+            )
+
+        def scope_wakes(task, wall):
+            """Whether a scoped recruit parked on its recruits can end now, its work delivered
+            and no joined recruit pending (merge audit): checked again once the event head
+            moves or the last check is EVENT_WAIT_MAX_STALE_SECONDS old."""
+            if not experiment.get("society") or not task.get("scope"):
+                return False
+            last = scope_checks.get(task["id"])
+            if last and last[0] == head and wall - last[1] < EVENT_WAIT_MAX_STALE_SECONDS:
+                return False
+            if self.service.scope_delivered(task["id"], actor):
+                return True
+            scope_checks[task["id"]] = (head, wall)
+            return False
+
+        def check_wait(task, ticket, wall):
+            """A parked wait's wake status, read as its branch; an event wait's check is kept
+            in wait_checks."""
+            waiter = Principal(
+                id="team-peer-wait-reader",
+                project_id=actor.project_id,
+                role="agent",
+                experiment_id=experiment["id"],
+                branch_id=task["branch_id"],
+            )
+            status = self.service.peer_wait_status(ticket, waiter)
+            if ticket.get("kind") == "events":
+                wait_checks[task["id"]] = (head, wall, status["reason"], status["ready"])
+            return status
+
+        def society_wait(task):
+            """A queued task's society wait ticket (on events, or on recruits), or None."""
+            ticket = task.get("ready_continuation") or {}
+            peer_wait = ticket.get("peer_wait")
+            if task["status"] != "queued" or not ticket:
+                return None
+            if (peer_wait or {}).get("kind") == "events" or (
+                ticket.get("wait_task_ids") and not peer_wait
+            ):
+                return ticket
+            return None
+
+        def all_waiting(pending, head, checked_after=0, *, own=(), capped=()):
+            """Whether the society is idle (S1 #14): every pending task waits, at least one on
+            events; every event wait found nothing at this head (checked at or after
+            ``checked_after``), which is still current; and in a fresh read of the store no
+            other task of the experiment is queued or running, every task wait has a live
+            recruit, no scoped recruit's work is delivered and no verification receipt is
+            queued. Neither this run nor another runner, worker or verifier can then act, so
+            no event can come to wake it. Two exceptions (merge audit): ``capped`` tasks, this
+            run's own that it may not start (``max_tasks``), neither act nor wait while they
+            stay queued; and a queued task outside this run's selection (``own``) that is
+            parked on a society wait counts as waiting once its wait is checked the same way,
+            since the runner that owns it can wake it only for what wakes this run's."""
+            terminal = {"completed", "failed", "blocked"}
+            tickets = {task["id"]: task.get("ready_continuation") or {} for task in pending}
+            events = [
+                task_id
+                for task_id, ticket in tickets.items()
+                if (ticket.get("peer_wait") or {}).get("kind") == "events"
+            ]
+            checked = [wait_checks.get(task_id) for task_id in events]
+            if not (
+                events
+                and all(t.get("peer_wait") or t.get("wait_task_ids") for t in tickets.values())
+                and all(
+                    c is not None and (c[0], c[2]) == (head, "waiting") and c[1] >= checked_after
+                    for c in checked
+                )
+                and self.service.event_head(actor, experiment["id"]) == head
+            ):
+                return False
+            tasks = list(self._records("task", actor, experiment["id"]))
+            statuses = {task["id"]: task["status"] for task in tasks}
+            wall = utcnow().timestamp()
+            waiters = dict(tickets)
+            for task in tasks:
+                if task["status"] in terminal or (
+                    task["id"] in capped and task["status"] == "queued"
+                ):
+                    continue
+                if task["id"] in tickets:
+                    if (
+                        task["status"] != "queued"
+                        or task.get("ready_continuation") != tickets[task["id"]]
+                    ):
+                        return False
+                    continue
+                ticket = society_wait(task) if task["id"] not in own else None
+                if ticket is None:
+                    return False  # live work, this run's or another runner's or worker's
+                waiters[task["id"]] = ticket
+                if ticket.get("peer_wait"):
+                    last = wait_checks.get(task["id"])
+                    if wait_check_due(ticket["peer_wait"], last, wall):
+                        check_wait(task, ticket["peer_wait"], wall)
+                        last = wait_checks[task["id"]]
+                    if (last[0], last[2]) != (head, "waiting") or last[1] < checked_after:
+                        return False
+            if not all(
+                any(statuses.get(child) not in {None, *terminal} for child in child_ids)
+                for child_ids in (t.get("wait_task_ids") for t in waiters.values())
+                if child_ids
+            ):
+                return False
+            joined_pending = {
+                task.get("reply_to_parent_task_id")
+                for task in tasks
+                if task["status"] not in terminal
+            }
+            for task in tasks:
+                # Event and task waits alike: a delivered recruit ends however its wait stands.
+                if task["id"] in waiters and task.get("scope") and task["id"] not in joined_pending:
+                    node, state = self.service.node_source_state(task["scope"]["node_id"], actor)
+                    if scope_ending(task["scope"], node, state) is not None:
+                        wait_checks.pop(task["id"], None)  # check it at once: it can end
+                        scope_checks.pop(task["id"], None)
+                        return False
+            return not any(
+                receipt["status"] == "queued"
+                for receipt in self._records("verification", actor, experiment["id"])
+            )
+
         def yield_synthesis(task_id):
             """Leave a synthesis this run scheduled or adopted to the society runner that won
             it: drop it from this run's selection and record no outcome. Every society runner
@@ -2438,6 +2722,7 @@ class ResearchTeamRunner:
             later, this run may adopt it again."""
             scheduled_synthesis_ids.discard(task_id)
             attempted.discard(task_id)
+            research_attempted.discard(task_id)
 
         async def cancel_active():
             for future in active:
@@ -2485,6 +2770,12 @@ class ResearchTeamRunner:
                 if asyncio.get_running_loop().time() >= deadline:
                     stop_reason = "TEAM_TIMEOUT"
                     break
+                # Event waits exist only in a society; legacy runs never read the head.
+                head = (
+                    self.service.event_head(actor, experiment["id"])
+                    if experiment.get("society")
+                    else None
+                )
                 accepted = (
                     self.service.verified_target_receipt(experiment["id"], actor)
                     if manifest.stop_on_verified_target
@@ -2506,7 +2797,8 @@ class ResearchTeamRunner:
                     for task in all_tasks
                     if task["id"] not in platform_ids
                 }
-                if not accepted and now >= next_synthesis_tick:
+                synthesis_ticked = not accepted and now >= next_synthesis_tick
+                if synthesis_ticked:
                     next_synthesis_tick = now + 5.0
                     if (
                         all_root_lineages <= own_root_lineages
@@ -2515,9 +2807,22 @@ class ResearchTeamRunner:
                         ]
                         > 0
                     ):
-                        synthesis = self.service.schedule_research_synthesis(
-                            experiment["id"], actor, f"run-synthesis:{manifest.run_id}:{new_id()}"
-                        )
+                        try:
+                            synthesis = self.service.schedule_research_synthesis(
+                                experiment["id"],
+                                actor,
+                                f"run-synthesis:{manifest.run_id}:{new_id()}",
+                            )
+                        except HarnessError as error:
+                            if error.code not in SYNTHESIS_REFUSALS or not experiment.get(
+                                "society"
+                            ):
+                                raise  # Legacy runs keep their behaviour.
+                            if error.code != synthesis_refused:
+                                log.info("Due synthesis not admitted: %s", error.code)
+                            synthesis, synthesis_refused = {"scheduled": False}, error.code
+                        else:
+                            synthesis_refused = None
                         if synthesis.get("scheduled"):
                             branch_parents = {
                                 branch["id"]: branch.get("parent_id")
@@ -2591,26 +2896,41 @@ class ResearchTeamRunner:
                         outcomes[task_id] = {"task_id": task_id, "status": task["status"]}
                         continue
                     ready_ticket = task.get("ready_continuation")
-                    if ready_ticket and any(
-                        task_states.get(child_id) not in {"completed", "failed", "blocked"}
-                        for child_id in ready_ticket.get("wait_task_ids", [])
+                    if (
+                        ready_ticket
+                        and any(
+                            task_states.get(child_id) not in {"completed", "failed", "blocked"}
+                            for child_id in ready_ticket.get("wait_task_ids", [])
+                        )
+                        and not scope_wakes(task, utcnow().timestamp())
                     ):
                         continue
                     if ready_ticket and ready_ticket.get("peer_wait"):
-                        waiter = Principal(
-                            id="team-peer-wait-reader",
-                            project_id=actor.project_id,
-                            role="agent",
-                            experiment_id=experiment["id"],
-                            branch_id=task["branch_id"],
-                        )
-                        if not self.service.peer_wait_status(ready_ticket["peer_wait"], waiter)[
-                            "ready"
-                        ]:
-                            continue
-                    if len(active) >= manifest.max_concurrency:
-                        break
-                    if task_id not in attempted and len(attempted) >= manifest.max_tasks:
+                        ticket = ready_ticket["peer_wait"]
+                        events = ticket.get("kind") == "events"  # legacy tickets poll every loop
+                        wall = utcnow().timestamp()
+                        last = wait_checks.get(task_id)
+                        if not (events and last is not None and last[3]):  # woken: run it
+                            if events and not wait_check_due(ticket, last, wall):
+                                continue  # Nothing new since the last check.
+                            if not check_wait(task, ticket, wall)["ready"]:
+                                continue
+                    is_referee = task.get("hat") == REFEREE_HAT
+                    if not slots:
+                        if len(active) >= manifest.max_concurrency:
+                            break
+                    elif is_referee and len(active_referees) >= slots:
+                        continue
+                    elif (
+                        not is_referee
+                        and len(active) - len(active_referees) >= manifest.max_concurrency - slots
+                    ):
+                        continue
+                    if (
+                        not is_referee
+                        and task_id not in research_attempted
+                        and len(research_attempted) >= manifest.max_tasks
+                    ):
                         continue
                     if any(task_states.get(dep) != "completed" for dep in task["dependency_ids"]):
                         continue
@@ -2625,6 +2945,12 @@ class ResearchTeamRunner:
                         selected = [item for item in selected if item["id"] != task_id]
                         continue
                     attempted.add(task_id)
+                    wait_checks.pop(task_id, None)  # its next ticket is checked afresh
+                    scope_checks.pop(task_id, None)
+                    if is_referee:
+                        active_referees.add(task_id)
+                    else:
+                        research_attempted.add(task_id)
                     if manifest.stop_on_verified_target:
                         future = asyncio.create_task(
                             self.executor.execute(task_id, actor.project_id)
@@ -2641,8 +2967,39 @@ class ResearchTeamRunner:
                     if accepted:
                         break
                     pending = [task for task in selected if task["id"] not in outcomes]
+                    society = experiment.get("society")
+                    # A society's research tasks this run may not start (max_tasks): its idle
+                    # stop is then TEAM_TASK_LIMIT, as a legacy run's stop is.
+                    capped = {
+                        task["id"]
+                        for task in pending
+                        if society
+                        and task.get("hat") != REFEREE_HAT
+                        and task["id"] not in research_attempted
+                        and len(research_attempted) >= manifest.max_tasks
+                    }
+                    waiting = [task for task in pending if task["id"] not in capped]
+                    idle_scope = {"own": {task["id"] for task in selected}, "capped": capped}
+                    if (
+                        society
+                        and idle_since is not None
+                        and all_waiting(
+                            waiting, head, idle_since + SOCIETY_IDLE_CONFIRM_SECONDS, **idle_scope
+                        )
+                    ):
+                        # A second idle observation, every wait checked again since the first.
+                        if synthesis_ticked:
+                            # Every agent waits with nothing admissible: stop rather than sleep
+                            # out the timeouts. The tasks keep their tickets for a later run.
+                            stop_reason = "TEAM_TASK_LIMIT" if capped else "SOCIETY_IDLE"
+                            break
+                        next_synthesis_tick = 0.0  # a synthesis due now is work: tick first
+                    elif society and all_waiting(waiting, head, **idle_scope):
+                        idle_since = idle_since or utcnow().timestamp()
+                    else:
+                        idle_since = None
                     if any(
-                        (task.get("ready_continuation") or {}).get("peer_wait") for task in pending
+                        (task.get("ready_continuation") or {}).get("peer_wait") for task in waiting
                     ):
                         # The prior handoff has settled its worker slot. Keep this
                         # finite supervisor alive for a message or absolute timeout.
@@ -2651,10 +3008,11 @@ class ResearchTeamRunner:
                     if pending:
                         stop_reason = (
                             "TEAM_TASK_LIMIT"
-                            if len(attempted) >= manifest.max_tasks
+                            if len(research_attempted) >= manifest.max_tasks
                             else "DEPENDENCIES_PENDING"
                         )
                     break
+                idle_since = None  # work is running: an idle stop starts its observations anew
                 # Poll canonical cancellation while model calls are in flight.
                 completed, _ = await asyncio.wait(
                     [*active, *checks],
@@ -2675,6 +3033,7 @@ class ResearchTeamRunner:
                             )
                         continue
                     task_id = active.pop(future)
+                    active_referees.discard(task_id)
                     try:
                         task_result = future.result()
                         if task_result["status"] not in {"continuation", "waiting"}:

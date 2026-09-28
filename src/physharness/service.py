@@ -22,6 +22,7 @@ from .collaboration import CollaborationMixin
 from .commons import CommonsMixin
 from .commons_discourse import CommonsDiscourseMixin
 from .commons_review import CommonsReviewMixin
+from .commons_sources import CommonsSourceMixin
 from .continuation import ContinuationMixin
 from .discussion import DiscussionMixin
 from .domain import (
@@ -37,6 +38,8 @@ from .domain import (
     utcnow,
 )
 from .errors import HarnessError
+from .library_notes import LibraryNotesMixin
+from .orchestration.pricing import ModelPrice
 from .research import ResearchMixin
 from .storage import (
     BudgetRow,
@@ -121,8 +124,10 @@ class HarnessService(
     CommonsDiscourseMixin,
     CommonsMixin,
     CommonsReviewMixin,
+    CommonsSourceMixin,
     ContinuationMixin,
     DiscussionMixin,
+    LibraryNotesMixin,
     ResearchMixin,
     WorkforceMixin,
 ):
@@ -433,8 +438,13 @@ class HarnessService(
                 )
         return branch
 
-    def __init__(self, db: Database, artifacts: ArtifactStore, verifier=None):
+    def __init__(self, db: Database, artifacts: ArtifactStore, verifier=None, model_prices=None):
         self.db, self.artifacts, self.verifier = db, artifacts, verifier
+        # The worker's price table (settings.model_prices); society admission prices each new
+        # task's first output reservation with it.
+        self.model_prices = {
+            name: ModelPrice.model_validate(price) for name, price in (model_prices or {}).items()
+        }
         self._cursor_keys: tuple[bytes, bytes] | None = None
 
     def _page_cursor_keys(self) -> tuple[bytes, bytes]:
@@ -518,24 +528,29 @@ class HarnessService(
         with self.db.sessions() as session:
             return copy.deepcopy(self._get(session, kind, identifier, actor).payload)
 
-    def _route_target(self, session, row, route):
+    def _route_target(self, session, row, route, actor):
         """Whether the routing tool named by ``route`` accepts ``row`` as its target: the
-        target checks of ``_deliver_message``, ``request_handoff`` and ``request_peer_wait``."""
+        target checks of ``send_society_message``, ``request_handoff`` and
+        ``request_event_wait``."""
         name, anchor = route
         if name == "child_task":  # anchor: the waiting task
             return row.payload.get("delegated_from_task_id") == anchor
-        if name == "peer":  # anchor: the waiting branch
-            return row.id != anchor
+        if name == "watch":  # anchor: the waiting task
+            try:  # any node or branch of the experiment but another branch's referee
+                self._guard_referee_branch(row, actor)
+            except HarnessError:
+                return False
+            return True
         if name == "recipient":  # anchor: the sending branch
             sender = session.get(RecordRow, anchor)
             if sender is None or sender.payload.get("experiment_id") != row.payload.get(
                 "experiment_id"
             ):
                 return False
-            experiment = session.get(RecordRow, sender.payload["experiment_id"])
+            if row.kind == "commons_node":  # the tool messages whoever works on it
+                return True
             try:
                 self._guard_referee_recipient(sender, row)
-                self._lab_route(experiment, sender, row)
             except HarnessError:
                 return False
             return True
@@ -557,7 +572,7 @@ class HarnessService(
             .limit(MAX_PREFIX_CANDIDATES + 1)
         ).all()
         if route is not None:
-            return [row for row in rows if self._route_target(session, row, route)]
+            return [row for row in rows if self._route_target(session, row, route, actor)]
         return [row for row in rows if self._in_scope(session, row, actor)]
 
     def _resolve_prefix(self, session, identifier, actor, kinds, route=None):
@@ -594,8 +609,9 @@ class HarnessService(
 
         Routing is not permission to read, so ``route=(name, anchor)`` resolves a routing
         argument among exactly the records its tool accepts instead: ``("recipient", sending
-        branch)`` for a direct message, ``("child_task", waiting task)`` and ``("peer",
-        waiting branch)`` for waits. A prefix naming none or several of them passes through."""
+        branch)`` for a message to a branch or a node, ``("child_task", waiting task)`` and
+        ``("watch", waiting task)`` for waits. A prefix naming none or several of them
+        passes through."""
         if not isinstance(identifier, str) or not ID_PREFIX.fullmatch(identifier):
             return identifier
         with self.db.sessions() as session:
@@ -1413,9 +1429,6 @@ class HarnessService(
                     "status": "open",
                     "execution_identity": new_id(),
                     "model_configuration": selected_model,
-                    # Society roots found a lab; forks join their parent's lab, which an
-                    # agent may join only when it is the agent's own.
-                    **self._branch_lab(session, experiment, parent, branch_id, actor=actor),
                 },
                 record_id=branch_id,
             )

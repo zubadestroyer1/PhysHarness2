@@ -364,11 +364,11 @@ without one. Under a budget:
   A/B; block sizes (`elide_every_turns`) of 8 to 20 are recommended for it. Larger blocks break
   the cache less often but keep stale outputs longer.
 - **Tool digest.** The session record's `tool_definition_digest` covers the tools actually sent,
-  including `recall_output`. If the digest changes between a joined-children wait and its wake,
-  for example because the runtime stops accepting the budget, that in-flight native handoff falls
-  back to a portable continuation. A budgeted wait whose digest is unchanged still resumes
-  natively. The bound above treats the tools array as one element, so adding the recall tool is
-  counted once, at its full size.
+  including `recall_output`. If the digest changes between a joined-children or society wait and
+  its wake, for example because the runtime stops accepting the budget, that in-flight native
+  handoff falls back to a portable continuation. A budgeted wait whose digest is unchanged still
+  resumes natively. The bound above treats the tools array as one element, so adding the recall
+  tool is counted once, at its full size.
 
 The `research_lean` context profile sets the compaction threshold to
 `min(96,000, window − max_output − 8,192)`. It is independent of `context_budget`, but is meant to
@@ -589,6 +589,20 @@ canonical child tasks, artifacts, checkpoints, reservations, and receipts availa
 controller. An abruptly lost process can leave worker slots and model requests reserved until
 operator reconciliation; absence of a process does not prove a remote request or VM stopped.
 The report lists queued tasks left by a task-count limit or unmet dependencies.
+
+In a society, a wait (`wait_for_events`, `wait_for_tasks`) resumes natively: the transcript is
+kept and a short wake note (reason, detail, children, long pole) is appended. Other continuations
+are unchanged. The supervisor checks a parked event wait again only when the experiment's
+wake-event head moves (events that can wake a waiter; model-turn `resources.*` accounting never
+moves it), its minimum sleep or deadline passes, or its last check is 30 s old, and at most once
+every 2 s except at its deadline. A woken wait runs without another check. It stops with
+`SOCIETY_IDLE` once every pending task waits, every event wait found nothing at the current head,
+no other task of the experiment is queued or running (a task another runner parked on a society
+wait counts as waiting once its wait is checked the same way; a task this run may not start under
+`max_tasks` counts as neither, and the stop is then `TEAM_TASK_LIMIT`), every task wait has a live
+child, no parked scoped recruit's work is delivered, no verification receipt is queued, and a due
+synthesis has been scheduled (one that admission refuses is logged and retried at a later tick); a
+second such observation at least 1 s later, with every wait checked again, confirms the stop.
 
 When enabled, one independent verification worker at a time calls the existing canonical
 `process_verification` route under a verifier identity. It handles receipts on the selected

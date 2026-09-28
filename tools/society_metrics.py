@@ -37,6 +37,7 @@ from pathlib import Path
 
 FORMAT = "physharness.society-metrics.v1"
 ACCEPTED = "accepted"
+COMPLETE_RANKS = frozenset({"complete", "verified"})
 MAX_MANIFEST_BYTES = 200_000_000  # The bound reproduction.validate_export applies.
 MAX_ARTIFACT_BYTES = 20_000_000
 DEFAULT_CLAIM_TTL_SECONDS = 900
@@ -51,6 +52,7 @@ COMMONS_SOCIETY = frozenset(
         "commons_node",
         "commons_post",
         "commons_claim",
+        "commons_fetch",
         "inbox",
         "recruit",
         "message",
@@ -99,6 +101,7 @@ MATH_LEAN_COMPUTATION = frozenset(
         "run_computation",
         "lean_check",
         "lean_sketch",
+        "find_declaration",
         "search_library",
         "read_source",
         "submit_for_verification",
@@ -131,8 +134,11 @@ OTHER = frozenset(
         "search_literature",
         "fetch_source",
         "notebook",
+        "library_notes",
         "load_skill",
         "read_artifact",
+        # Runtime built-in (context budget), in either profile.
+        "recall_output",
         # Legacy profile.
         "checkpoint_context",
         "checkpoint_research_notes",
@@ -149,6 +155,11 @@ OTHER = frozenset(
         "working_context",
     }
 )
+# Society tools retired after S1: gone from the catalog, still bucketed, since S1 exports
+# record calls to them.
+RETIRED_SOCIETY_TOOLS = frozenset(
+    {"inbox", "lean_sketch", "load_skill", "search_library", "read_source"}
+)
 BUCKETS = {
     "commons_society": COMMONS_SOCIETY,
     "math_lean_computation": MATH_LEAN_COMPUTATION,
@@ -162,6 +173,7 @@ LEAN_FORMALIZATION = frozenset(
         # Society profile.
         "lean_check",
         "lean_sketch",
+        "find_declaration",
         "search_library",
         "read_source",
         # Legacy profile.
@@ -418,6 +430,111 @@ def _tool_calls(records, read_artifact):
     return mix, sum(count for name, count in tools.items() if name in LEAN_CHECKS)
 
 
+def _statement_digest(node):
+    """``physharness.commons._lean_digest`` of the node's current Lean statement: SHA-256 of
+    the compact JSON array [header, name, statement], or None without a statement."""
+    if node.get("lean_statement") is None:
+        return None
+    encoded = json.dumps(
+        [node.get("lean_header") or "", node.get("lean_name"), node["lean_statement"]],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode()).hexdigest()
+
+
+def _source_state(node):
+    """``physharness.commons_sources.source_state``: the published source's rank, or
+    ``stale`` when it was checked against another statement than the node's current one
+    (so it is never complete); else ``stub`` for an elaborated Lean statement, else
+    ``none``."""
+    source = node.get("lean_source")
+    if source:
+        stale = source.get("lean_statement_sha256") != _statement_digest(node)
+        return "stale" if stale else source["rank"]
+    if node.get("lean_statement") is not None and node.get("lean_elaborated"):
+        return "stub"
+    return "none"
+
+
+def _latest(stamps):
+    """The latest of these ISO timestamps as recorded, or None."""
+    stamps = [stamp for stamp in stamps if stamp]
+    return max(stamps, key=_epoch) if stamps else None
+
+
+def _proved(node):
+    """``physharness.commons._open_work``'s proof rule: a complete or verified source of the
+    node's current, elaborated Lean statement, or of a definition."""
+    elaborated = node.get("lean_statement") is not None and node.get("lean_elaborated")
+    return _source_state(node) in COMPLETE_RANKS and bool(
+        elaborated or node.get("node_type") == "definition"
+    )
+
+
+def _progress(nodes, receipts):
+    """RUN_PLAN stop rule 4's clocks: when a node was last proved (``_proved``; a stale
+    source, or a statement-less lemma's clean file, is no progress), and when the last
+    verification receipt of any status was submitted."""
+    return {
+        "last_source_progress_at": _latest(
+            node["lean_source"].get("recorded_at") for node in nodes if _proved(node)
+        ),
+        "last_receipt_at": _latest(receipt.get("created_at") for receipt in receipts),
+    }
+
+
+def _source_provenance(nodes, artifacts, receipt):
+    """Reuse by provenance (S1 audit #12): nodes by source state, cross-branch imports and
+    the modules inlined into the accepted proof, used by it or not (nothing checks which
+    constants a proof uses, so an unused import counts).
+
+    An import is cross-branch when different branches published the importing source and
+    the imported node's source. The accepted proof's modules are the receipt's
+    ``commons_modules``, which only the platform's flattening writes, each weighed by its
+    published source's ``size_bytes``; a receipt without that key (legacy) falls back to the
+    candidate artifact's ``provenance.commons`` and its ``chars``. Stale modules (a source of
+    an older statement) are left out. A module is cross-branch when a branch other than the
+    candidate's published it. ``provenance_source`` names the record read; the accepted-
+    proof figures are None when neither lists modules.
+    """
+    publisher = {node["id"]: (node.get("lean_source") or {}).get("branch_id") for node in nodes}
+    cross_imports = sum(
+        1
+        for node in nodes
+        for entry in (node.get("lean_source") or {}).get("imports") or []
+        if publisher.get(entry["node_id"]) not in (None, node["lean_source"].get("branch_id"))
+    )
+    wanted = receipt["artifact_id"] if receipt else None
+    candidate = next((artifact for artifact in artifacts if artifact["id"] == wanted), None)
+    provenance = (candidate or {}).get("provenance") or {}
+    listed = source = None
+    if receipt is not None and "commons_modules" in receipt:
+        sizes = {a["sha256"]: a.get("size_bytes") for a in artifacts if a.get("sha256")}
+        listed = [{**m, "size": sizes.get(m["sha256"])} for m in receipt["commons_modules"]]
+        source = "receipt"
+    elif provenance.get("commons"):
+        listed = [{**m, "size": m.get("chars")} for m in provenance["commons"]]
+        source = "artifact"
+    modules = cross = share = None
+    if listed is not None:
+        live = [m for m in listed if not m.get("stale")]
+        home = candidate.get("branch_id") if candidate else None
+        cross_sizes = [m["size"] for m in live if m.get("branch_id") != home]
+        sizes = [m["size"] for m in live]
+        modules, cross = len(live), len(cross_sizes)
+        if sizes and all(isinstance(size, int) for size in sizes) and sum(sizes):
+            share = round(sum(cross_sizes) / sum(sizes), 4)
+    return {
+        "nodes_by_source": _sorted(Counter(_source_state(node) for node in nodes)),
+        "cross_branch_imports": cross_imports,
+        "accepted_proof_modules": modules,
+        "accepted_proof_cross_branch_modules": cross,
+        "accepted_proof_cross_branch_char_share": share,
+        "provenance_source": source,
+    }
+
+
 def compute_metrics(manifest, read_artifact=None, *, as_of=None):
     """PLAN §9 metrics from one export manifest.
 
@@ -475,6 +592,8 @@ def compute_metrics(manifest, read_artifact=None, *, as_of=None):
         "citations": citations,
         "cross_branch_citations": cross_citations,
         "cross_branch_dependencies": _cross_branch_dependencies(edges, nodes),
+        **_source_provenance(nodes, records.get("artifact", []), receipt),
+        **_progress(nodes, records.get("verification", [])),
         # Society health.
         **_reviews(records.get("commons_review", [])),
         "branches": {

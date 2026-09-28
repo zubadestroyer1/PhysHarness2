@@ -249,7 +249,6 @@ def test_legacy_plan_prepares_exactly_as_before(lab, tmp_path):
 
 SOCIETY = {
     "claim_ttl_seconds": 900,
-    "lab_size_max": 6,
     "referee_quorum": 1,
     "literature": {"mode": "open"},
 }
@@ -289,6 +288,7 @@ def test_society_plan_prepares_a_society_experiment(lab, tmp_path):
         ({"sharing": "verified"}, "requires ideas sharing"),
         ({"society": {**SOCIETY, "literature": {"mode": "benchmark"}}}, "masked_reference"),
         ({"society": {**SOCIETY, "unknown": True}}, "society.unknown"),
+        ({"society": {**SOCIETY, "lab_size_max": 6}}, "SocietyPolicy.lab_size_max was removed"),
     ],
 )
 def test_society_plan_is_checked_before_any_record(lab, update, fragment):

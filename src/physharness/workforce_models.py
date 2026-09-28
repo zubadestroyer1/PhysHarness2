@@ -4,21 +4,27 @@ from typing import Literal
 
 from pydantic import Field, model_validator
 
-from .domain import StrictModel
-
-# Society lab names: generated as "lab-" + branch id prefix, or chosen from existing labs.
-LAB_PATTERN = r"^[a-z0-9-]{1,40}$"
+from .domain import Money, StrictModel
 
 
 class ConfigureWorkforceRequest(StrictModel):
-    max_total_tasks: int = Field(ge=1, le=100_000)
-    max_pending_tasks: int = Field(ge=1, le=100_000)
+    # Count caps: required for a legacy experiment (configure_workforce refuses a request
+    # without both, 422); optional in a society, as an operator guard that ignores referees.
+    max_total_tasks: int | None = Field(default=None, ge=1, le=100_000)
+    max_pending_tasks: int | None = Field(default=None, ge=1, le=100_000)
     expected_revision: int | None = Field(default=None, ge=1)
     synthesis_interval_posts: int = Field(default=0, ge=0, le=100)
+    # Society experiments only: dollars that must remain per new task. None is no floor
+    # (read as 0) and is omitted from fingerprints and the stored policy.
+    admission_floor_usd: Money | None = None
 
     @model_validator(mode="after")
     def valid_caps(self):
-        if self.max_pending_tasks > self.max_total_tasks:
+        if (
+            self.max_pending_tasks is not None
+            and self.max_total_tasks is not None
+            and self.max_pending_tasks > self.max_total_tasks
+        ):
             raise ValueError("max_pending_tasks cannot exceed max_total_tasks")
         if 0 < self.synthesis_interval_posts < 4:
             raise ValueError("synthesis_interval_posts must be zero or at least four")
@@ -54,10 +60,9 @@ class RecruitResearcherRequest(StrictModel):
     synthesis: bool = False
     detached: bool = False
     public_summary: str | None = Field(default=None, max_length=1000)
-    # Society experiments only: None joins the parent's lab, "new" founds a lab,
-    # any other value names an existing lab (an agent may name only its own).
-    # Omitted from fingerprints when None.
-    lab: str | None = Field(default=None, pattern=LAB_PATTERN)
+    # Society until_proved recruits: the node whose complete source ends the task. None is
+    # no scope and is omitted from fingerprints.
+    scope_node_id: str | None = None
 
     @model_validator(mode="after")
     def nonblank(self):

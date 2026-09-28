@@ -81,9 +81,8 @@
   "society": {
     "tool_profile": "society",
     "claim_ttl_seconds": 900,
-    "lab_size_max": 6,
-    "cross_lab_direct_messages": false,
     "referee_quorum": 1,
+    "referee_slots": 2,
     "literature": {
       "mode": "benchmark",
       "blocked_sources": [
@@ -93,10 +92,7 @@
       "overlap_threshold": 0.02
     },
     "scaffolding": {
-      "playbook": true,
-      "skills": true,
-      "checkin_every_turns": 12,
-      "stagnation_nudges": true
+      "playbook": true
     }
   }
 }

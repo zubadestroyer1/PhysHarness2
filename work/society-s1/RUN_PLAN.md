@@ -8,6 +8,11 @@ society tools with no model. Every item marked **USER DECISION REQUIRED** or lis
 [Prerequisites and approvals](#8-prerequisites-and-approvals) needs the user before
 anything is spent.
 
+**Update, 2026-09-27.** S1 ran on 2026-09-26; its society arm is S-r2
+([results](results-2026-09-26/REPORT.md)). The S1 remediation then changed the society
+([audit](audit-2026-09-26/AUDIT.md)): statements below that hold only for S1 say so. The
+paid A/B of the remediated society against S-r2 needs its own budget.
+
 Files:
 - `work/society-s1/run-plan.example.json`: the society-arm manifest skeleton for
   `phys prepare-run`. Its placeholders are labelled `USER DECISION REQUIRED`. A plan
@@ -23,20 +28,23 @@ at matched cost. The metrics are an accepted root, less duplicated work than the
 run, and observed lemma reuse.
 
 The question: at the same dollar ceiling, does a society sharing a commons (claims,
-node threads, referees, labs) reach an independently accepted root more often, sooner or
-more cheaply than one agent or than agents working alone? A single repetition per arm
-gives descriptive evidence only. It does not support a causal claim.
+node threads, referees, and in S1 labs) reach an independently accepted root more often,
+sooner or more cheaply than one agent or than agents working alone? A single repetition
+per arm gives descriptive evidence only. It does not support a causal claim.
 
 ## 2. Arms at matched budget
 
 Every arm gets the same dollar ceiling **B** (see [the budget table](#5-budget)), the same
 frozen target, masked reference, source freeze, workbench image, verifier bundle and
 price table. Each arm uses a fresh project and database, so no arm can retrieve another
-arm's work. The model families are the same: family A and family B.
+arm's work. The model families are the same: family A and family B. A SQLite database
+that `phys init` made before the S1 remediation gains the `library_notes` table when the
+API, a worker or a CLI command next starts; run `alembic upgrade head` on a PostgreSQL
+or other Alembic-managed database.
 
 | Arm | Experiment shape | Agents | Concurrency | Wall-clock ceiling |
 |---|---|---|---|---|
-| **S. Society** | One society experiment (`sharing="ideas"`, society policy as in the example). Policy `independent` with 8 model entries (4 per family) seeds 8 roots. Each root founds a lab, and recruits join labs (`lab_size_max` 6). Referees are platform-created, cross-model and isolated (ruling R18). | 8 seeded roots, up to 16 research agents, plus referee tasks | 12 (8 roots and 4 slots for referees and recruits) | W |
+| **S. Society** | One society experiment (`sharing="ideas"`, society policy as in the example). Policy `independent` with 8 model entries (4 per family) seeds 8 roots. In S1 each root founded a lab and recruits joined labs (`lab_size_max` 6); labs were removed after S1 (audit #15). Referees are platform-created, cross-model and isolated (ruling R18). | 8 seeded roots, up to 16 research agents, plus referee tasks | 12 (8 roots and 4 slots for referees and recruits) | W |
 | **I. Independent attempts** | 8 roots (4 per family) that share nothing | 8 | 8 | B / (8 × $40) hours |
 | **1. Single agent** | One root, family A | 1 | 1 | B / $40 hours (at most 24 h), or earlier when it finishes |
 
@@ -58,16 +66,17 @@ run.
 ### Design choice: tool matching (USER DECISION REQUIRED)
 
 The S1 toolkit exists only in the society profile. That includes the persistent Lean
-session with automation, `lean_sketch`, `run_computation`, brokered literature and
-skills. A society policy requires `sharing="ideas"`, so there are two ways to build the
-single and independent arms:
+session with automation (opt-in since the remediation), Lean skeletons (S1's
+`lean_sketch` holes, now `lean_check(stubs=true)` stubs), `run_computation` and brokered
+literature; S1's technique skills were removed. A society policy requires
+`sharing="ideas"`, so there are two ways to build the single and independent arms:
 
 - **Design A: legacy baseline.** Arm 1 is a legacy experiment (policy `direct`,
   `sharing="none"`, one model). Arm I is one legacy experiment with policy
   `independent`, `sharing="none"` and 8 model entries. This matches the earlier pilots
   and the arm names literally, but it confounds collaboration with tools: the legacy
-  63-tool profile has no Lean session, sketching, computation runner, literature or
-  skills. Legacy agents can still delegate, so set `max_total_tasks` to the number of
+  63-tool profile has no Lean session, skeletons, computation runner or literature.
+  Legacy agents can still delegate, so set `max_total_tasks` to the number of
   roots to keep each arm free of helpers.
 - **Design B: tool matched (recommended).** Every arm uses the society profile. Arm 1
   is one society experiment with one root (policy `direct`, models `[A, B]`, so that
@@ -77,8 +86,9 @@ single and independent arms:
 
 Design B has two limits:
 - S1 has no switch that removes `recruit` from the society profile. In arms 1 and I, set
-  the workforce admission cap (`max_total_tasks` = 1 + referee allowance) and report any
-  recruit as a protocol deviation.
+  the workforce admission cap (S1 only: `max_total_tasks` = 1 + referee allowance) and
+  report any recruit as a protocol deviation. After the S1 remediation, society count caps
+  ignore referee tasks, so the cap is `max_total_tasks` = 1.
 - `prepare-run` creates one campaign, problem and experiment per plan. Eight independent
   experiments therefore need either eight plans (eight target reviews and eight verifier
   registry entries of identical content) or an operator script that creates eight
@@ -90,16 +100,26 @@ paid from the arm's ceiling B.
 ### Operator configuration of arm S
 
 - Prepare it from `run-plan.example.json` once every placeholder is filled.
-- Before starting, call `configure_workforce(max_total_tasks=40, max_pending_tasks=20,
-  synthesis_interval_posts=0)`. That allows 16 research agents plus up to 24 referee
-  tasks.
-- S1 cannot cap research agents separately from referee tasks. Both count toward
-  `max_total_tasks`, so report the split from the export (`branches.agents`,
-  `branches.referees`).
+- S1 only: before starting, call `configure_workforce(max_total_tasks=40,
+  max_pending_tasks=20, synthesis_interval_posts=0)`. That allows 16 research agents plus
+  up to 24 referee tasks. S1 cannot cap research agents separately from referee tasks.
+  Both count toward `max_total_tasks`, so report the split from the export
+  (`branches.agents`, `branches.referees`).
+- After the S1 remediation, society work is admitted by dollars: a new task needs one
+  model turn's output reservation left above an optional `admission_floor_usd`. Count
+  caps are optional, ignore referee tasks and bound research agents alone
+  (`max_total_tasks=16` for the arm above). Referees run in the policy's `referee_slots`
+  (2 in the example) of the run's concurrency, and `--max-tasks` counts research tasks
+  only.
 - Launch with `phys run-team <experiment> --max-tasks 40 --concurrency 12
   --timeout-seconds <W>`. `run-team` runs the preflight first. The preflight now also
   blocks benchmark mode without a readable `masked_reference` artifact
   (`MASKED_REFERENCE_REQUIRED`).
+- After the S1 remediation, `referee_slots` is a strict reservation inside
+  `--concurrency`: builders never take a referee slot, even when no referee work is
+  queued. The runner reserves min(`referee_slots`, concurrency − 1) slots, so the
+  default 2 leaves 1 builder at concurrency 3 and 2 at concurrency 4. Arm S at 12 runs up
+  to 10 builders and 2 referees.
 - `ResearchTeamRunner` runs:
   - the referee tasks requested by its own lineages (ruling R20);
   - the synthesis tasks it schedules (R21);
@@ -128,10 +148,21 @@ Criteria:
 6. **Clean provenance.** Agents can read the problem record, so `target.source`, the
    title and the informal statement must not name or paraphrase the known-solution
    source. Keep the provenance in the operator's private notes.
-7. **Skill overlap recorded.** The technique skills were written before any target was
+7. **Skill overlap recorded** (S1 only; technique skills were removed in the S1
+   remediation). The technique skills were written before any target was
    chosen, so none is derived from a reference. If a skill spells out the reference
    route, record it: `energy-lyapunov` already describes the xᵀPx Lyapunov-equation
    method, and `sos-certificates` describes sum-of-squares decompositions.
+8. **Library-note seed overlap checked** (after the S1 remediation). Every society
+   project at the pin reads the checked-in seed
+   (`src/physharness/knowledge/library_notes_seed.json`), benchmark arms included. It
+   holds facts about the pin only: the S1 targets' proof routes and S1's search history
+   were removed from it. Before freezing a target, read the seed for any note that names
+   the chosen target's route or a step of its reference proof, and record or remove it.
+   Only society agents read library notes: in Design A the legacy arms 1 and I have no
+   `library_notes` tool, an asymmetry to report beside the literature one. A note an
+   agent appends is read only within its own experiment, so Design B's arm I experiments
+   share none, even on one problem.
 
 **Candidate targets (proposals only).** None has been elaborated, checked against the
 pinned libraries or given a reference proof.
@@ -384,15 +415,40 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
    most 24 h: the `run-team --timeout-seconds` value and the plan's `max_runtime_seconds`.
 4. **Stagnation (operator rule).** S1 has no automated stagnation stop; CampaignRuntime
    in S2 adds one. So the operator exports every 15 minutes and runs
-   `tools/society_metrics.py`. The operator stops the arm when no node has moved up the
-   ladder (`nodes_by_status`) and no receipt has been accepted in the last 25% of B or
-   45 minutes, whichever comes first.
+   `tools/society_metrics.py`. The operator stops the arm when no node has gained a new
+   source that proves it, and no new receipt has arrived, in the last 45 minutes:
+   both `last_source_progress_at` and `last_receipt_at` (null when none) are more than 45
+   minutes old. `last_source_progress_at` is the latest `recorded_at` of a source that
+   proves its node: a complete or verified source of the node's current, elaborated Lean
+   statement, or of a definition. A stale source, or a clean file on a node without such a
+   statement, is no progress. `last_receipt_at` is the latest submission of a
+   verification receipt of any status.
+   Node statuses no longer move before acceptance (S1 audit #17).
 5. **Fault.** On `BUDGET_RECONCILIATION_REQUIRED`, an uncertain external operation or a
    quarantined workspace, pause the experiment, audit, and ask the user before resuming.
    Earlier pilots did the same.
 6. **Contamination.** On a confirmed leak (section 4), the arm keeps running only if the
    user agrees, and it is labelled contaminated.
 7. **Operator stop** at the user's request.
+8. **Idle society (`SOCIETY_IDLE`, automatic after the S1 remediation).** The runner
+   stops when every agent waits and only the waits' own timeouts could still wake them:
+   no other task of the experiment is running or queued (this runner's, another runner's or
+   a worker's; a task another runner parked on a society wait counts as waiting once this
+   runner checks its wait, and a task this run may not start under `max_tasks` makes the
+   stop `TEAM_TASK_LIMIT` instead), every pending society task waits (on events, at least
+   one, or on a recruit that is still live), each event wait found nothing at the current
+   wake-event head (counting from what the agent's last request could show, so news that
+   arrived while it waited for admission or generated is found), which has not moved
+   since (model-turn accounting never moves it), no parked scoped recruit's node is
+   proved, closed or restated (whether it waits on events or on recruits), and no
+   verification receipt is queued. A due synthesis that dollar
+   admission refuses near the end of the budget is logged and retried at a later tick,
+   never a crash of the run. A second such observation at least 1 s after the first, with
+   every wait checked again, confirms it. The runner then stops rather than sleep out
+   those timeouts (up to 3,600 s) or burn wall clock until W; the constitution and the
+   `wait` tool tell agents that such a run ends. The waits keep their tickets, so a later
+   `run-team` resumes them. Export and report as for any stop, and ask the user before
+   resuming.
 
 Every stop produces an honest report of the frontier, obstacles and partial results
 (PLAN §4.7).
@@ -412,26 +468,28 @@ proof and transcript bytes, so keep them private.
 | Duplicated-work fraction | `duplicate_claim_fraction`, `claimed_nodes`, `duplicate_claimed_nodes` | An upper bound: a claim record keeps only its first claim and last expiry. There is no claim-based baseline for the last run, so compare against the audited overlap in the arm reports. |
 | Idle and waiting fraction; post-acceptance spend | Not computed | Needs event timelines, which the export does not contain. Use the database event log, as the earlier pilot evaluators did. |
 | Coordination versus mathematics | `tool_call_mix` (`commons_society`, `math_lean_computation`, `other`, `unclassified`, `by_tool`; Lean effort: `lean_formalization`, `lean_formalization_share`, `lean_formalization_share_of_math`) | Counts calls, not tokens. It needs the runtime-event artifact bytes in the export directory; otherwise `available` is false. The buckets are listed below the table. |
-| Citation and reuse rate | `citations`, `cross_branch_citations`, `cross_branch_dependencies` | Confirm lemma reuse in the accepted proof by manual audit, as in the Duffing report. |
+| Citation and reuse rate | `citations`, `cross_branch_citations`, `cross_branch_dependencies`; by provenance: `nodes_by_source`, `cross_branch_imports`, `accepted_proof_modules`, `accepted_proof_cross_branch_modules`, `accepted_proof_cross_branch_char_share`, `provenance_source` | `nodes_by_source` counts a source checked against an older statement than its node's current one as `stale`, never as complete or verified. An import is cross-branch when different branches published the importing and the imported source. The accepted-proof figures read the receipt's platform-written `commons_modules` (stale modules left out), each module weighed by its source's `size_bytes`; a receipt without that key falls back to the candidate's `provenance.commons` and its `chars`, and `provenance_source` (`receipt`, `artifact` or null) says which. They are null when the accepted proof inlined no modules, as in S1; there, confirm lemma reuse by manual audit, as in the Duffing report. |
 | Retrieval hit rate | Not computed | S1 has no accepted non-root nodes to retrieve. |
-| Live approach families | `branches.labs`, `nodes_by_type` | Proxies. The count over time needs periodic exports. |
-| Referee catch rate; fidelity failure rate | `referee_negative_share`, `fidelity_failure_share`, `reviews_by_verdict`, `cross_model_share`, `stale_reviews` | These are negative-verdict shares. A true catch rate needs ground truth. |
+| Live approach families | `branches.labs` (S1 only; there are no labs after the remediation), `nodes_by_type` | Proxies. The count over time needs periodic exports. |
+| Referee catch rate; fidelity failure rate | `referee_negative_share`, `fidelity_failure_share` (S1 only; the remediation removed fidelity reviews), `reviews_by_verdict`, `cross_model_share`, `stale_reviews` | These are negative-verdict shares. A true catch rate needs ground truth. |
+| Source and receipt progress (stop rule 4) | `last_source_progress_at`, `last_receipt_at` | Timestamps as recorded, or null when there are none. Only a source that proves its node counts (stop rule 4), so a stale source or a statement-less lemma's clean file is not progress; a receipt counts whatever its status. |
 | Stale-claim rate | `stale_claim_count`, `live_claim_count`, `claims_as_of`, `claims_as_of_source` | Unreleased claims past expiry at `--as-of`. Without `--as-of`, claims are judged at the run's end (the latest activity in the export), so claims that merely outlived the run are not counted. Stale counts are meaningful only for in-run exports (the 15-minute checks) or with an explicit `--as-of`. A post-run count misses a lapse that the same branch later re-claimed, because the claim record is overwritten. |
 | Lean iterations per accepted node | `lean_checks_per_accepted_result` | Needs runtime events. |
 | Automation hit rate | Not computed | `lean_check` results are not persisted as records. |
-| Skill and literature usage; contamination flags | `tool_call_mix.by_tool` (`load_skill`, `search_literature`, `fetch_source`), `literature_fetches`, `literature_by_status`, `contamination_flags` | Whether cited sources contributed is a manual audit. |
+| Skill and literature usage; contamination flags | `tool_call_mix.by_tool` (`load_skill` in S1, `library_notes` after the remediation, `search_literature`, `fetch_source`), `literature_fetches`, `literature_by_status`, `contamination_flags` | Whether cited sources contributed is a manual audit. |
 | Honest separation of evidence | `evidence.model_sessions`, `evidence.runtime_event_artifacts` | The operator labels each export as simulated, mocked-provider or live. |
 
-**Tool buckets.** Every tool of the society profile and of the 63-tool legacy profile is in
-exactly one bucket; `tests/test_society_metrics.py` enforces this. A tool in no bucket
-(one added later) counts as `unclassified`.
+**Tool buckets.** Every tool of the society profile, of the 63-tool legacy profile and
+built into the runtime is in exactly one bucket; `tests/test_society_metrics.py` enforces
+this. A tool in no bucket (one added later) counts as `unclassified`.
 - `commons_society`: commons, inbox, messaging, recruitment, waiting, delegation,
   discussion, return and review tools.
 - `math_lean_computation`: shell, file, Lean, library, computation, candidate and
   verification tools. The Lean and library tools also count as `lean_formalization`;
   `shell` calls that run `lake` or `lean` do not, because events carry only tool names.
 - `other` (memory, knowledge, literature and skills): society `search_literature`,
-  `fetch_source`, `notebook`, `load_skill`, `read_artifact`; legacy `checkpoint_context`,
+  `fetch_source`, `notebook`, `library_notes`, `load_skill`, `read_artifact`; the
+  runtime's `recall_output` (context budget only); legacy `checkpoint_context`,
   `checkpoint_research_notes`, `history_page`, `index_page`, `read_artifact`,
   `read_artifact_chunk`, `read_dependency_bundle`, `read_scientific_record`,
   `research_graph_page`, `restart_brief`, `restore_context`, `search_knowledge`,
@@ -506,7 +564,7 @@ Each item needs the user. None has been started.
    - Start the VM or E2B, pre-warm the VM (item 9), and start the monitor.
    - Each of these needs the approvals above. No VM or paid call is started without them.
 9. **Pre-warm the workbench VM (`local_docker`), before any arm and after every VM start.**
-   The statement check behind every recorded local compile requires it
+   The statement check behind every `verified` source rank requires it
    (docs/FORMAL_ENVIRONMENT.md). Read every `.olean`, `.ilean`, `.olean.server` and
    `.olean.private` file under `/opt` once, in a throwaway container on the workbench
    digest, through the worker's own Docker endpoint:
@@ -524,39 +582,45 @@ Each item needs the user. None has been started.
      2 GiB: cold, about 80 seconds, so the three-step check times out at 240 seconds;
      `.olean` and `.ilean` only, about 31–38 seconds (101 seconds per check); all four
      parts, about 2.4 seconds.
-   - A timed-out check records no local compile and logs no ERROR. The checker's
-     `import Lean` self-test cannot detect a cold VM: it loads only Lean core, and
-     passes cold in about 4 seconds.
+   - A timed-out check leaves the source at most `complete` and logs no ERROR. The
+     checker's `import Lean` self-test cannot detect a cold VM: it loads only Lean core,
+     and passes cold in about 4 seconds.
 
 ## 9. Known limitations going in
 
-- No live evidence exists for any society path: tools, referees, labs, literature, the
-  Lean session or sketching. Earlier live pilots used the legacy profile only.
+- Going in to S1, no live evidence existed for any society path: tools, referees, labs,
+  literature, the Lean session or sketching. Earlier live pilots used the legacy profile
+  only. The remediated society has no live evidence yet.
 - **Unreachable statuses.** Non-root `accepted` is deferred to S2/S4, and `refuted` has
   no platform path in S1. A `wrong` verdict leaves an objection but does not refute the
   node.
-- **Agents see their own posts.** An agent's own node-thread posts are delivered back to
-  its inbox, as in the legacy discussion delivery. That spends digest budget, and the
-  simulation shows it.
-- **Goal hole names.** Hole nodes sketched from the goal are named `node_hole_<i>`,
-  because the goal node has no Lean name.
-- **Local compiles rest on the statement check.** `lean_check` records a local compile
-  only when the platform's statement check passes (docs/RESEARCH_NETWORK.md). The kernel
-  re-checks every declaration of the compiled file. The theorem's elaborated type must
-  equal the node statement's under `lean_header` alone, each with its own file's
-  definitions (such as `match` matchers) unfolded. The axioms the check collects itself
-  must be within `propext`, `Classical.choice` and `Quot.sound` (R23).
+- **Agents see their own posts (S1 only).** An agent's own node-thread posts were
+  delivered back to its inbox, as in the legacy discussion delivery. That spent digest
+  budget. The remediation never pushes them (S1 audit #13).
+- **Goal hole names (S1 only).** Hole nodes sketched from the goal were named
+  `node_hole_<i>`, because the goal node has no Lean name. A stub now takes its sorry
+  lemma's own name (S1 audit #21).
+- **Published ranks rest on the statement check.** `lean_check` with `node_id` publishes
+  the file as the node's source, ranked `verified` only when the platform's statement
+  check passes (docs/RESEARCH_NETWORK.md); otherwise `complete` or `partial`, or nothing
+  when the check rejects the file. The kernel re-checks every declaration of the compiled
+  file. The theorem's elaborated type must equal the node statement's under `lean_header`
+  alone, each with its own file's definitions (such as `match` matchers) unfolded. The
+  axioms the check collects itself must be within `propext`, `Classical.choice` and
+  `Quot.sound` (R23).
   - Node headers: import, open, set_option and universe lines, no command keyword among
     their names, and set_option only for elaboration limits, auto-bound implicits, `pp.*`
     and `linter.*`.
-  - Cost: each recorded compile runs three more Lean processes in the VM (the file, the
-    reference statement, the checker), each importing the header.
+  - Cost: each complete check of a node with a Lean statement runs three more Lean
+    processes in the VM (the file, the reference statement, the checker), each importing
+    the header.
   - It needs `python3` and `lake` in the VM, as the REPL daemon and the one-shot
     fallback already do, and runs the same way on v1 and v2.
-  - `compiles_locally` stays VM-attested. The checker process loads the file only as data
-    and defeats elaboration-level tricks (instances, macros, `#print axioms` overrides,
-    skipped kernel checks). But compiling the file runs its compile-time code (`#eval`,
-    `run_cmd`) in the VM, which, like a `shell` command, can tamper with the checker,
-    the reference or the imported `.olean` files.
+  - A `verified` rank stays VM-attested and advisory; only a verifier receipt is
+    authority. The checker process loads the file only as data and defeats
+    elaboration-level tricks (instances, macros, `#print axioms` overrides, skipped kernel
+    checks). But compiling the file runs its compile-time code (`#eval`, `run_cmd`) in the
+    VM, which, like a `shell` command, can tamper with the checker, the reference or the
+    imported `.olean` files.
 - **E2B file cap.** On E2B, `write_file` is capped at 32,768 bytes per file (R23), and the
   workspace archive at 64 KiB (section 8, item 7).

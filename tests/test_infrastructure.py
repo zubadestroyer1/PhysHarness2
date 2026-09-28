@@ -35,6 +35,7 @@ def test_migration_creates_real_schema_and_can_revert(tmp_path, monkeypatch):
         "reservations",
         "leases",
         "dependencies",
+        "library_notes",
     }
     with engine.begin() as connection:
         connection.execute(
@@ -106,6 +107,7 @@ def test_postgresql_offline_migration_generates_real_sql(monkeypatch):
     sql = output.getvalue()
     assert "CREATE TABLE records" in sql
     assert "CREATE TABLE reservations" in sql
+    assert "CREATE TABLE library_notes" in sql
     assert "SERIAL" in sql
     assert "COMMIT" in sql
     assert "CREATE INDEX records_project_kind_keyset ON records (project_id, kind, id)" in sql

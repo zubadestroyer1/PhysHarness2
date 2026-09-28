@@ -166,8 +166,8 @@ definition until v2 is rebuilt and qualified, and pilot freeze manifests referen
 On the v1 image, `run_computation` reports the new packages as `null`, and `lean_check`
 uses its one-shot fallback.
 
-On both images, a local compile (`lean_check` with `node_id`) also runs the harness
-statement check with the image's own `lake --offline env lean`. It needs no REPL. It
+On both images, publishing a node's source (`lean_check` with `node_id`) also runs the
+harness statement check with the image's own `lake --offline env lean`. It needs no REPL. It
 compiles the file and a reference statement to `.olean` files. Then it runs
 `statement_check.lean` with `lean --run`, which loads both only as data. The checker:
 
@@ -176,12 +176,13 @@ compiles the file and a reference statement to `.olean` files. Then it runs
   definitions and theorems (such as `match` matchers) unfolded;
 - collects the theorem's axioms itself.
 
-That check, not the file's `#print axioms` output, is what `compiles_locally` rests on. It
-defeats elaboration-level tricks in the file (instances, macros, `#print axioms`
+That check, not the file's `#print axioms` output, is what a `verified` source rank rests
+on. It defeats elaboration-level tricks in the file (instances, macros, `#print axioms`
 overrides, skipped kernel checks). But compiling the file runs its compile-time code
 (`#eval`, `run_cmd`, its own elaborators and tactics) in the agent-controlled VM, where,
 like any shell command, it can alter the checker, the reference or the imported `.olean`
-files the checker trusts. So the result is VM-attested evidence, not an acceptance receipt.
+files the checker trusts. So the result is VM-attested evidence, not an acceptance
+receipt.
 
 The checker runs from its upload in the workspace (`.physharness/`); the workbench root,
 `/tmp` included, is read-only. Each check uploads the two checker files afresh and removes
@@ -283,7 +284,14 @@ silently enable physics imports in the smaller core image.
 Only the selected import closure is built, not every declaration in the upstream monorepo.
 If a challenge imports another module, extend the builder's explicit roots, rebuild, audit
 that closure, and separately qualify the changed image. Never allow Lake to retrieve a
-missing dependency during checking.
+missing dependency during checking. A society submission that imports commons node
+modules (`import Commons.N…`) is flattened by the platform into one self-contained
+candidate before verification, so the verifier never resolves a `Commons` import. On
+`physharness-pilot` with the workbench-v2 digest, after the full pre-warm, a flattened
+two-module `Mathlib.Data.Real.Basic` file (sections, a closed namespace and hoisted
+imports) compiled in 0.8 s and passed the statement check in 2.9 s, with no OOM
+(`tests/test_real_commons_flattening.py`). The independent verifier has not yet run on a
+flattened candidate; the first A/B smoke run does that.
 
 ## Declaration audit
 

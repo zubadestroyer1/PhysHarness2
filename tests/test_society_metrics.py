@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
+from physharness.commons import _lean_digest
 from physharness.domain import digest_json
+from physharness.execution.responses import RECALL_OUTPUT_TOOL
 from physharness.orchestration.society_tools import SOCIETY_TOOL_NAMES
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -129,6 +131,7 @@ def society_export(*, accepted=True, events=EVENTS):
         },
         "problem": problem,
         "records": {
+            # S1-shaped: stored S1 branches carry labs, which the metrics still count.
             "branch": [
                 {"id": A, "lab": "lab-a"},
                 {"id": B, "lab": "lab-a"},
@@ -231,6 +234,11 @@ def test_metrics_over_a_society_export_directory(tmp_path):
     # Knowledge.
     assert metrics["citations"] == 4 and metrics["cross_branch_citations"] == 2
     assert metrics["cross_branch_dependencies"] == 1  # lemma-a (A) depends on lemma-b (B)
+    # S1-shaped nodes publish no sources, and the accepted candidate inlined no modules.
+    assert metrics["nodes_by_source"] == {"none": 5} and metrics["cross_branch_imports"] == 0
+    assert metrics["last_source_progress_at"] is None
+    assert metrics["last_receipt_at"] == stamp(1000)
+    assert metrics["accepted_proof_modules"] is None and metrics["provenance_source"] is None
     # Reviews.
     assert metrics["reviews_by_verdict"] == {
         "faithful": 1,
@@ -261,6 +269,155 @@ def test_metrics_over_a_society_export_directory(tmp_path):
     assert mix["runtime_events"] == mix["runtime_events_read"] == len(EVENTS)
     assert metrics["lean_checks_per_accepted_result"] == 2.0
     assert metrics["evidence"] == {"model_sessions": 1, "runtime_event_artifacts": len(EVENTS)}
+
+
+def test_source_provenance_counts_cross_branch_reuse():
+    nodes = [
+        {"id": "n1", "lean_source": {"rank": "verified", "branch_id": "b1", "imports": []}},
+        {
+            "id": "n2",
+            "lean_source": {
+                "rank": "complete",
+                "branch_id": "b2",
+                "imports": [{"module": "Commons.Nn1", "node_id": "n1", "sha256": "x"}],
+            },
+        },
+        {"id": "n3", "lean_elaborated": True, "lean_name": "t", "lean_statement": ": True"},
+        {"id": "n4"},
+    ]
+    commons = [
+        {"module": "Commons.Nn1", "node_id": "n1", "branch_id": "b1", "chars": 300},
+        {"module": "Commons.Nn2", "node_id": "n2", "branch_id": "b2", "chars": 100},
+    ]
+    artifacts = [{"id": "flat", "branch_id": "b2", "provenance": {"commons": commons}}]
+    result = metrics_tool._source_provenance(nodes, artifacts, {"artifact_id": "flat"})
+    assert result["nodes_by_source"] == {"complete": 1, "none": 1, "stub": 1, "verified": 1}
+    assert result["cross_branch_imports"] == 1
+    assert result["accepted_proof_modules"] == 2
+    assert result["accepted_proof_cross_branch_modules"] == 1
+    assert result["accepted_proof_cross_branch_char_share"] == 0.75
+    # A receipt without commons_modules (legacy) falls back to the artifact's provenance.
+    assert result["provenance_source"] == "artifact"
+    legacy = metrics_tool._source_provenance([{"id": "n"}], [], None)
+    assert legacy["accepted_proof_modules"] is None and legacy["nodes_by_source"] == {"none": 1}
+    assert legacy["provenance_source"] is None
+    assert legacy["accepted_proof_cross_branch_char_share"] is None
+
+
+CHECKED = ": (1 : Nat) + 1 = 2"
+
+
+def stated_node(identifier, rank, recorded, statement=CHECKED):
+    """A node whose source was checked against ``CHECKED``; another ``statement`` restated it
+    after the check, which makes the source stale."""
+    name = identifier.replace("-", "_")
+    return {
+        "id": identifier,
+        "node_type": "lemma",
+        "status": "open",
+        "branch_id": A,
+        "lean_header": "import Mathlib",
+        "lean_name": name,
+        "lean_statement": statement,
+        "lean_elaborated": True,
+        "lean_source": {
+            "rank": rank,
+            "branch_id": B,
+            "imports": [],
+            "recorded_at": stamp(recorded),
+            "lean_statement_sha256": _lean_digest("import Mathlib", name, CHECKED),
+        },
+    }
+
+
+def test_progress_counts_a_stated_lemma_or_a_definition_as_proved():
+    """As on the platform's frontier: a statement-less lemma's clean file proves nothing
+    the verifier checks, while a definition's complete source finishes it."""
+    source = {"rank": "complete", "imports": [], "recorded_at": stamp(700)}
+    loose = {"id": "loose", "node_type": "lemma", "lean_source": source}
+    definition = {**loose, "id": "definition", "node_type": "definition"}
+    unelaborated = {**stated_node("unelaborated", "verified", 800), "lean_elaborated": False}
+    stated = stated_node("stated", "complete", 100)
+    assert metrics_tool._progress([loose, unelaborated, stated], [])[
+        "last_source_progress_at"
+    ] == stamp(100)
+    assert metrics_tool._progress([loose, definition, stated], [])[
+        "last_source_progress_at"
+    ] == stamp(700)
+
+
+def test_statement_digest_reproduces_the_platforms():
+    for header, name, statement in (
+        ("import Mathlib", "t", ": (1 : Nat) + 1 = 2"),
+        (None, "t'", ": ∀ x : ℝ, x ^ 2 ≥ 0"),
+        ("", "Foo.bar", ': "quoted" = "quoted"'),
+    ):
+        node = {"lean_header": header, "lean_name": name, "lean_statement": statement}
+        assert metrics_tool._statement_digest(node) == _lean_digest(header, name, statement)
+    assert metrics_tool._statement_digest({"lean_name": "t"}) is None
+
+
+def test_stale_sources_are_neither_counted_complete_nor_progress():
+    manifest = society_export()
+    nodes = manifest["records"]["commons_node"]
+    nodes += [
+        stated_node("verified", "verified", 100),
+        stated_node("complete", "complete", 300),
+        # Restated after its check: the source proves nothing of the current statement.
+        stated_node("restated", "verified", 900, statement=": (2 : Nat) + 2 = 4"),
+        stated_node("partial", "partial", 1200),
+    ]
+    manifest["records"]["verification"] += [
+        {"id": "queued", "status": "queued", "created_at": stamp(2400)},
+        {"id": "rejected", "status": "rejected", "created_at": stamp(1500)},
+    ]
+    metrics = metrics_tool.compute_metrics(manifest, as_of=T0)
+    assert metrics["nodes_by_source"] == {
+        "complete": 1,
+        "none": 5,
+        "partial": 1,
+        "stale": 1,
+        "verified": 1,
+    }
+    # Stop rule 4's clocks: the latest proving source, and the latest receipt of any status.
+    assert metrics["last_source_progress_at"] == stamp(300)
+    assert metrics["last_receipt_at"] == stamp(2400)
+    legacy = metrics_tool.compute_metrics({**manifest, "records": {}}, as_of=T0)
+    assert legacy["last_source_progress_at"] is None and legacy["last_receipt_at"] is None
+
+
+def test_source_provenance_prefers_the_receipts_commons_modules():
+    """The receipt's commons_modules, written only by the platform's flattening, decide; a
+    forged provenance on the candidate artifact changes nothing."""
+    forged = [
+        {"module": "Commons.Nn1", "node_id": "n1", "branch_id": "b2", "chars": 1},
+        {"module": "Commons.Nn9", "node_id": "n9", "branch_id": "b1", "chars": 99_999},
+    ]
+    artifacts = [
+        {"id": "flat", "branch_id": "b2", "provenance": {"commons": forged}},
+        # The modules' published sources: their platform-written sizes weigh the share.
+        {"id": "s1", "branch_id": "b1", "sha256": "1" * 64, "size_bytes": 300},
+        {"id": "s2", "branch_id": "b2", "sha256": "2" * 64, "size_bytes": 100},
+        {"id": "s3", "branch_id": "b1", "sha256": "3" * 64, "size_bytes": 5000},
+    ]
+    modules = [
+        {"module": "Commons.Nn1", "node_id": "n1", "sha256": "1" * 64, "branch_id": "b1"},
+        {"module": "Commons.Nn2", "node_id": "n2", "sha256": "2" * 64, "branch_id": "b2"},
+        # A stale module proves an older statement than its node's: it is not counted.
+        {"module": "Commons.Nn3", "node_id": "n3", "sha256": "3" * 64, "branch_id": "b1"},
+    ]
+    for entry, stale in zip(modules, (False, False, True), strict=True):
+        entry["stale"] = stale
+    receipt = {"artifact_id": "flat", "commons_modules": modules}
+    result = metrics_tool._source_provenance([], artifacts, receipt)
+    assert result["provenance_source"] == "receipt"
+    assert result["accepted_proof_modules"] == 2
+    assert result["accepted_proof_cross_branch_modules"] == 1
+    assert result["accepted_proof_cross_branch_char_share"] == 0.75
+    # An empty list is still the receipt's answer: nothing was inlined.
+    empty = metrics_tool._source_provenance([], artifacts, {**receipt, "commons_modules": []})
+    assert (empty["provenance_source"], empty["accepted_proof_modules"]) == ("receipt", 0)
+    assert empty["accepted_proof_cross_branch_char_share"] is None
 
 
 def test_bare_manifest_reports_the_tool_mix_unavailable(tmp_path):
@@ -374,19 +531,24 @@ def legacy_tool_names():
 
 
 def test_every_catalog_tool_has_a_documented_bucket():
-    """Each society and legacy tool is in exactly one bucket; RUN_PLAN lists the other one."""
+    """Each society, legacy and runtime tool is in exactly one bucket; RUN_PLAN lists the
+    other one."""
     buckets = {
         "commons_society": metrics_tool.COMMONS_SOCIETY,
         "math_lean_computation": metrics_tool.MATH_LEAN_COMPUTATION,
         "other": metrics_tool.OTHER,
     }
-    catalog = set(SOCIETY_TOOL_NAMES) | legacy_tool_names()
+    # The runtime's built-in tools (recall_output under a context budget) are announced as
+    # tool calls like any other.
+    catalog = set(SOCIETY_TOOL_NAMES) | legacy_tool_names() | {RECALL_OUTPUT_TOOL["name"]}
     assert len(legacy_tool_names()) == 63
-    for name in catalog:
+    for name in catalog | metrics_tool.RETIRED_SOCIETY_TOOLS:
         homes = [bucket for bucket, names in buckets.items() if name in names]
         assert len(homes) == 1, (name, homes)
-    # No bucket names a tool that no catalog has.
-    assert set().union(*buckets.values()) == catalog
+    # No bucket names a tool that no catalog has, except the retired society tools that
+    # S1 exports still carry.
+    assert not metrics_tool.RETIRED_SOCIETY_TOOLS & catalog
+    assert set().union(*buckets.values()) == catalog | metrics_tool.RETIRED_SOCIETY_TOOLS
     plan = (ROOT / "work/society-s1/RUN_PLAN.md").read_text()
     section = plan.split("## 7.", 1)[1].split("## 8.", 1)[0]
     assert all(f"`{name}`" in section for name in metrics_tool.OTHER)
@@ -395,5 +557,8 @@ def test_every_catalog_tool_has_a_documented_bucket():
 def test_lean_formalization_is_catalogued_mathematics():
     lean = metrics_tool.LEAN_FORMALIZATION
     assert lean < metrics_tool.MATH_LEAN_COMPUTATION
-    assert lean <= set(SOCIETY_TOOL_NAMES) | legacy_tool_names()
+    assert (
+        lean <= set(SOCIETY_TOOL_NAMES) | legacy_tool_names() | metrics_tool.RETIRED_SOCIETY_TOOLS
+    )
+    assert {"find_declaration", "lean_check"} <= lean
     assert metrics_tool.LEAN_CHECKS <= lean

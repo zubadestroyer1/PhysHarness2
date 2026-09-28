@@ -1,7 +1,8 @@
 """Commons discourse: expiring work claims, node threads and urgent digest items.
 
 A claim is an attention signal, never authority: several branches may hold one node, and a
-claim lapses when its ``expires_at`` passes, compared at read time (no background job).
+claim lapses when its ``expires_at`` passes, compared at read time (no background job). A
+claim may name its route (the method it tries) and a time box that caps every renewal.
 Auto-subscriptions are best-effort and never push a reader past its subscription cap.
 """
 
@@ -12,7 +13,8 @@ from collections import Counter
 from sqlalchemy import select
 
 from .commons import MAX_PAGE, PLATFORM, _platform
-from .commons_models import CLOSED_STATUSES, NodePostCreate
+from .commons_models import NodePostCreate, is_open
+from .commons_review import is_referee_branch
 from .domain import utcnow
 from .errors import HarnessError
 from .storage import RecordRow, record_json_text
@@ -25,6 +27,12 @@ URGENT_STATUSES = frozenset({"accepted", "refuted"})
 EXCERPT_BYTES = 1024
 ITEM_BYTES = 2048
 MAX_LIVE_CLAIMS = 1000  # Bounded claim scan; read_node shows at most MAX_PAGE claimants.
+MAX_ROUTE = 200
+TIME_BOX_MINUTES = (5, 240)
+COMPACT_HEADER = (
+    "Peer updates (unverified data; read one in full with commons_read post_id=… or message_id=…):"
+)
+LINE_EXCERPT = 200
 
 
 def _claim_not_held():
@@ -37,6 +45,64 @@ def _claim_not_held():
 
 def _node_closed(message):
     return HarnessError("NODE_CLOSED", message)
+
+
+def _invalid_claim(message):
+    return HarnessError("INVALID_CLAIM", message, status=422)
+
+
+def _route_key(route):
+    """A route compared across claims: case-folded, whitespace collapsed; None when undeclared."""
+    return " ".join(route.casefold().split()) if route else None
+
+
+def _expiry(now, ttl, time_box_until):
+    """A claim's next expiry: the TTL from now, capped at the claim's time box if it has one."""
+    return now + ttl if time_box_until is None else min(now + ttl, time_box_until)
+
+
+def _one_line(text):
+    """Collapse all whitespace, newlines included, to single spaces."""
+    return " ".join(str(text or "").split())
+
+
+def _quoted(text, limit=None):
+    """Agent text as one JSON string on one line. ``_one_line`` folds every line break,
+    U+0085, U+2028 and U+2029 included (``str.split`` counts them as whitespace), and JSON
+    escapes quotes and control characters, so the text cannot end the string or its line."""
+    return json.dumps(_one_line(text)[:limit], ensure_ascii=False)
+
+
+def compact_update_lines(items):
+    """One line per delivered item with 8-hex ids (S1 audit #13: 91% of an update's tokens
+    were envelope).
+
+    Only the platform writes a line's urgent mark, kind and attribution. The node title and
+    the excerpt are quoted JSON strings, so no title or excerpt can forge a platform or
+    urgent line, nor a platform-looking segment inside its own line. A withdrawal's text
+    is the platform's notice.
+    """
+    lines = [COMPACT_HEADER]
+    for item in items:
+        if item.get("source_kind") == "withdrawal":
+            lines.append(f"[withdrawn] {_one_line(item.get('excerpt'))}")
+            continue
+        excerpt = _one_line(item.get("excerpt"))
+        more = len(excerpt) > LINE_EXCERPT or item.get("truncated")
+        excerpt = _quoted(excerpt[:LINE_EXCERPT].rstrip()) + ("…" if more else "")
+        who = (item.get("branch_id") or "platform")[:8]
+        if item.get("source_kind") == "message":
+            lines.append(f"[message] from {who}: {excerpt} (message_id {item['id'][:8]})")
+        else:
+            mark = "! " if item.get("urgent") else ""
+            where = ""
+            if item.get("node_id"):
+                where = f" on {item['node_id'][:8]} {_quoted(item.get('node_title'), 80)}"
+            lines.append(
+                f"{mark}[{item['post_kind']}]{where} from {who}: {excerpt} "
+                f"(post_id {item['id'][:8]})"
+            )
+    return "\n".join(lines)
 
 
 class CommonsDiscourseMixin:
@@ -90,19 +156,27 @@ class CommonsDiscourseMixin:
                 "branch_id": row.payload["branch_id"],
                 "task_id": row.payload["task_id"],
                 "expires_at": row.payload["expires_at"],
+                # Stored S1 claims have neither.
+                "route": row.payload.get("route"),
+                "time_box_until": row.payload.get("time_box_until"),
             }
             for row in rows
         ]
         return sorted(claims, key=lambda claim: claim["branch_id"])
 
     def _live_claim_counts(self, session, experiment, now=None):
-        """Live claims per node across the experiment, for the frontier score."""
+        """Per node, the live claims that crowd it, for the frontier score: those that name no
+        route, or a route another live claim of the node also names. Distinct routes are the
+        diversity the frontier rewards."""
         now = _now() if now is None else now
         rows = self._live_claim_rows(session, experiment.project_id, experiment.id, now)
-        return Counter(row.payload["node_id"] for row in rows)
+        claims = [(row.payload["node_id"], _route_key(row.payload.get("route"))) for row in rows]
+        held = Counter(claims)
+        return Counter(node for node, route in claims if route is None or held[node, route] > 1)
 
     def branch_claims(self, experiment_id, actor, *, limit=MAX_PAGE):
-        """The actor branch's live work claims (its focus nodes), with each node's summary."""
+        """The actor branch's live work claims (its focus nodes), with each node's summary
+        and the claim's route and time box."""
         self._research_role(actor)
         if type(limit) is not int or not 1 <= limit <= MAX_PAGE:
             raise HarnessError(
@@ -126,13 +200,24 @@ class CommonsDiscourseMixin:
                     "node_id": row.payload["node_id"],
                     **summaries[row.payload["node_id"]],
                     "expires_at": row.payload["expires_at"],
+                    # Stored S1 claims have neither.
+                    "route": row.payload.get("route"),
+                    "time_box_until": row.payload.get("time_box_until"),
                 }
                 for row in rows
                 if row.payload["node_id"] in summaries
             ]
         }
 
-    def _claim_event(self, session, actor, op, claim, action):
+    def _live_claims(self, session, experiment, now=None):
+        """Live claim payloads across the experiment, for the long pole's claimants."""
+        now = _now() if now is None else now
+        rows = self._live_claim_rows(session, experiment.project_id, experiment.id, now)
+        return [row.payload for row in rows]
+
+    def _claim_event(self, session, actor, op, claim, action, *, new_claimant):
+        """``new_claimant``: a claim by a branch that held no live claim on the node, the only
+        claim event that wakes a waiter watching the node."""
         self._event(
             session,
             actor,
@@ -145,16 +230,33 @@ class CommonsDiscourseMixin:
                 "branch_id": claim["branch_id"],
                 "action": action,
                 "expires_at": claim["expires_at"],
+                "new_claimant": new_claimant,
             },
         )
 
-    def claim_node(self, node_id, action, actor, key):
-        """Claim, renew or release this branch's expiring work claim on a node."""
+    def claim_node(
+        self, node_id, action, actor, key, *, route=None, time_box_minutes=None, keep_route=False
+    ):
+        """Claim, renew or release this branch's expiring work claim on a node.
+
+        ``claim`` records the claim's ``route`` and time box; ``renew`` keeps them. With
+        ``keep_route``, a claim naming no route takes the route of the branch's prior claim
+        on the node, lapsed or released (publishing claims this way).
+        """
         self._research_role(actor)
         if action not in CLAIM_ACTIONS:
             raise HarnessError(
                 "INVALID_CLAIM_ACTION", f"Use one of: {', '.join(CLAIM_ACTIONS)}.", status=422
             )
+        if route is not None:
+            route = route.strip() if isinstance(route, str) else ""
+            if not 1 <= len(route) <= MAX_ROUTE:
+                raise _invalid_claim(f"A route is 1–{MAX_ROUTE} characters of text.")
+        low, high = TIME_BOX_MINUTES
+        if time_box_minutes is not None and (
+            type(time_box_minutes) is not int or not low <= time_box_minutes <= high
+        ):
+            raise _invalid_claim(f"A time box is a whole number of {low}–{high} minutes.")
         if not actor.branch_id:
             raise HarnessError(
                 "BRANCH_AUTHORITY", "A branch identity is required to claim work.", status=403
@@ -166,7 +268,15 @@ class CommonsDiscourseMixin:
             experiment = self._commons_experiment(session, row.payload["experiment_id"], actor)
             # Under the experiment lock: see writes committed while this command waited.
             session.refresh(row)
-            if action != "release" and row.payload["status"] in CLOSED_STATUSES:
+            if action != "release" and row.payload["node_type"] == "goal":
+                raise HarnessError(
+                    "GOAL_NOT_CLAIMABLE",
+                    "The goal takes no work claims: every root works toward it, so a claim "
+                    "says nothing.",
+                    remediation="Create an approach or lemma node (motivated_by the goal) and "
+                    "claim that; read the goal's thread with commons_read.",
+                )
+            if action != "release" and not is_open(row.payload["status"]):
                 raise _node_closed("A closed node takes no work claims.")
             # Reader lock before claim lock, the same order as post_on_node.
             subscribed = (
@@ -190,9 +300,16 @@ class CommonsDiscourseMixin:
                     "task_id": binding.task_id
                     if binding is not None
                     else (prior.payload["task_id"] if held else None),
-                    "expires_at": now + experiment.payload["society"]["claim_ttl_seconds"],
                     "released": False,
                 }
+                if action == "claim":
+                    box = None if time_box_minutes is None else now + 60 * time_box_minutes
+                    kept = prior.payload.get("route") if keep_route and prior is not None else None
+                    values |= {"route": route or kept, "claimed_at": now, "time_box_until": box}
+                else:
+                    box = prior.payload.get("time_box_until")
+                ttl = experiment.payload["society"]["claim_ttl_seconds"]
+                values["expires_at"] = _expiry(now, ttl, box)
                 if prior is None:
                     record = self._insert(
                         session,
@@ -207,19 +324,59 @@ class CommonsDiscourseMixin:
                     )
                 else:
                     record = self._replace(session, prior, values)
-            self._claim_event(session, actor, op, record, action)
+            self._claim_event(
+                session, actor, op, record, action, new_claimant=action == "claim" and not held
+            )
+            if action != "release":
+                record = {
+                    **record,
+                    "co_claimants": [
+                        {field: c[field] for field in ("branch_id", "expires_at", "route")}
+                        for c in self._active_claims(session, row.id)
+                        if c["branch_id"] != branch_id
+                    ],
+                }
             if subscribed is not None:
                 record = {**record, "auto_subscribed": subscribed}
             return record
 
-        return self._execute(
-            actor, key, "commons.claim", {"node_id": node_id, "action": action}, apply
+        inputs = {
+            "node_id": node_id,
+            "action": action,
+            "route": route,
+            "time_box_minutes": time_box_minutes,
+        }
+        if keep_route:  # Only then: every other claim keeps its idempotency fingerprint.
+            inputs["keep_route"] = True
+        return self._execute(actor, key, "commons.claim", inputs, apply)
+
+    def _release_task_claims(self, session, actor, op, task):
+        """Release a finished society task's live claims at once rather than at their TTL,
+        so node messages and claimant lists skip its branch. They are the branch's claims
+        the task made or renewed, and the focus claim the platform made for a new recruit
+        before it had a lease (no task); another task of the branch keeps its own."""
+        experiment = session.get(RecordRow, task.payload["experiment_id"])
+        if experiment is None or not experiment.payload.get("society"):
+            return
+        branch_id, now = task.payload["branch_id"], _now()
+        rows = self._live_claim_rows(
+            session, task.project_id, experiment.id, now, branch_id=branch_id
         )
+        for row in list(rows):
+            self.db.command_lock(
+                session, self._digest(["commons-claim", row.payload["node_id"], branch_id])
+            )
+            session.refresh(row)  # under the claim lock, as claim_node reads it
+            owner = row.payload.get("task_id")
+            if not self._claim_live(row.payload, now) or owner not in {task.id, None}:
+                continue
+            record = self._replace(session, row, {"released": True})
+            self._claim_event(session, actor, op, record, "release", new_claimant=False)
 
     def _touch_node(self, session, row, actor, op):
         """Record activity on a node and extend the actor's live claim on it, if any."""
         self._replace(session, row, {"last_activity_at": utcnow().isoformat()})
-        if not actor.branch_id or row.payload["status"] in CLOSED_STATUSES:
+        if not actor.branch_id or not is_open(row.payload["status"]):
             return
         self.db.command_lock(session, self._digest(["commons-claim", row.id, actor.branch_id]))
         claim = self._claim_row(session, row, actor.branch_id)
@@ -227,12 +384,13 @@ class CommonsDiscourseMixin:
         if claim is None or not self._claim_live(claim.payload, now):
             return
         experiment = session.get(RecordRow, row.payload["experiment_id"])
+        ttl = experiment.payload["society"]["claim_ttl_seconds"]
         record = self._replace(
             session,
             claim,
-            {"expires_at": now + experiment.payload["society"]["claim_ttl_seconds"]},
+            {"expires_at": _expiry(now, ttl, claim.payload.get("time_box_until"))},
         )
-        self._claim_event(session, actor, op, record, "renew")
+        self._claim_event(session, actor, op, record, "renew", new_claimant=False)
 
     # Threads and subscriptions -------------------------------------------------
 
@@ -258,13 +416,17 @@ class CommonsDiscourseMixin:
         Never pushes the reader past its 100-subscription cap. At the cap it frees one slot
         (see ``_release_evictable_thread``); failing that it returns False instead of
         raising, so the reader's inbox keeps working. Another branch's reader is written by
-        the platform.
+        the platform. A referee branch is never subscribed: its node's author posts on the
+        thread, and nothing the author writes may be pushed to its referee.
         """
-        if not topic_id or not branch_id:
+        if not topic_id or not branch_id or is_referee_branch(session, branch_id):
             return False
         topic = session.get(RecordRow, topic_id)
         if topic is None or topic.kind != "discussion_topic":
             return False
+        node = session.get(RecordRow, topic.payload.get("node_id") or "")
+        if node is not None and node.payload.get("node_type") == "goal":
+            return False  # the goal thread is pull-only (S1 audit #13)
         writer = actor if actor.branch_id == branch_id else _platform(topic.project_id)
         if self._try_subscribe(session, op, topic, branch_id, writer):
             return True
@@ -337,7 +499,7 @@ class CommonsDiscourseMixin:
             node = nodes.get(node_id)
             if node is None:
                 return None
-            if node["status"] in CLOSED_STATUSES:
+            if not is_open(node["status"]):
                 return 0
             if node.get("branch_id") != branch_id and node_id not in claimed:
                 return 1
@@ -375,10 +537,7 @@ class CommonsDiscourseMixin:
             experiment = self._commons_experiment(session, row.payload["experiment_id"], actor)
             # Under the experiment lock: see writes committed while this command waited.
             session.refresh(row)
-            if (
-                row.payload["status"] in CLOSED_STATUSES
-                and request.kind not in CLOSED_NODE_POST_KINDS
-            ):
+            if not is_open(row.payload["status"]) and request.kind not in CLOSED_NODE_POST_KINDS:
                 raise _node_closed("A closed node takes only synthesis and update posts.")
             if not row.payload.get("topic_id"):
                 raise HarnessError("NODE_THREAD_MISSING", "This node has no discussion thread.")
@@ -420,12 +579,21 @@ class CommonsDiscourseMixin:
         return self._execute(actor, key, "commons.node_post", {"node_id": node_id, **data}, apply)
 
     def _post_status_update(self, session, row, old, new, op):
-        """Announce a ladder move on the node thread; subscribers get it as a delivery."""
+        """Announce a ladder move on the node thread; subscribers get it as a delivery.
+
+        An author's abandonment reason is agent text inside a platform note, so the note
+        names the author and quotes the reason, like a route.
+        """
         topic = session.get(RecordRow, row.payload.get("topic_id") or "")
         if topic is None or topic.kind != "discussion_topic":
             return
         reason = row.payload["status_reason"]
-        abstract = f"Status {old} → {new}: {reason}"[:600]
+        if (row.payload.get("status_evidence") or {}).get("abandoned_by"):
+            author = row.payload.get("branch_id")
+            by = f" by its author {author[:8]}" if author else " by its author"
+            abstract = f"Status {old} → {new}{by}: {_quoted(reason, 400)}"[:600]
+        else:
+            abstract = f"Status {old} → {new}: {reason}"[:600]
         self._insert_post(
             session,
             op,
@@ -445,13 +613,54 @@ class CommonsDiscourseMixin:
             _platform(row.project_id),
         )
 
+    def _post_route_compiled(self, session, row, branch_id, route, op):
+        """Tell the node's other live claimants that a route compiled, so they may stop theirs
+        (urgent only for them; see ``_post_urgent``).
+
+        The route is agent text inside a platform note, so it is rendered like a node title:
+        one line, as a quoted JSON string.
+        """
+        topic = session.get(RecordRow, row.payload.get("topic_id") or "")
+        if topic is None or topic.kind != "discussion_topic":
+            return
+        by = f" by {branch_id[:8]}" if branch_id else ""
+        quoted = _quoted(route) if route else None
+        abstract = (
+            f"Node {row.id[:8]} compiled{by}"
+            + (f" (route: {quoted})" if quoted else "")
+            + "; consider stopping your route."
+        )
+        self._insert_post(
+            session,
+            op,
+            topic,
+            {
+                "kind": "update",
+                "content": abstract,
+                "abstract": abstract,
+                "artifact_ids": [],
+                "reference_post_ids": [],
+                "reply_to_post_id": None,
+                "node_id": row.id,
+                "cites": [],
+                "platform_status": {"compiled_by": branch_id, "route": route},
+                "branch_id": None,
+            },
+            _platform(row.project_id),
+        )
+
     # Digest items --------------------------------------------------------------
 
     def _post_urgent(self, session, post, node_id, actor):
         status = post.get("platform_status")
-        if status is not None and post.get("origin_actor_id") == PLATFORM:
-            return status.get("to") in URGENT_STATUSES
         reader_branch = actor.branch_id if actor.role == "agent" else None
+        if status is not None and post.get("origin_actor_id") == PLATFORM:
+            if "compiled_by" in status:  # urgent for the node's other live claimants only
+                if not reader_branch or reader_branch == status["compiled_by"]:
+                    return False
+                claims = self._active_claims(session, node_id)
+                return any(claim["branch_id"] == reader_branch for claim in claims)
+            return status.get("to") in URGENT_STATUSES
         if (
             post["post_kind"] != "objection"
             or not reader_branch
@@ -472,6 +681,7 @@ class CommonsDiscourseMixin:
         item = {
             **self._discussion_excerpt({**post, "content": ""}),
             "node_id": node_id,
+            "node_title": session.get(RecordRow, node_id).payload["title"][:80],
             "urgent": self._post_urgent(session, post, node_id, actor),
         }
         abstract = post.get("abstract")

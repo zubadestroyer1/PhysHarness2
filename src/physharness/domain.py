@@ -41,6 +41,31 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, validate_default=True)
 
 
+def _refuse_removed(data: Any, removed: dict[str, str], model: str) -> Any:
+    """A ``mode="before"`` guard: an old plan that sets a removed field gets a message that
+    names it, not extra="forbid"'s generic one (S1 audit remediation, ruling G2)."""
+    if isinstance(data, dict):
+        present = sorted(set(data) & set(removed))
+        if present:
+            field = present[0]
+            raise ValueError(
+                f"{model}.{field} was removed ({removed[field]}). Delete it from the plan."
+            )
+    return data
+
+
+REMOVED_SCAFFOLDING_FIELDS = {
+    "checkin_every_turns": "check-ins were acted on 20% of the time and fed the broadcast",
+    "stagnation_nudges": "nudges never fired; the stagnation detector stays",
+    "skills": "technique notes were never loaded in S1",
+}
+
+REMOVED_SOCIETY_FIELDS = {
+    "lab_size_max": "labs were removed; message a branch or a node instead",
+    "cross_lab_direct_messages": "labs were removed; any branch may be messaged",
+}
+
+
 class Principal(StrictModel):
     id: str = Field(min_length=1, max_length=200)
     project_id: str = Field(min_length=1, max_length=200)
@@ -106,9 +131,11 @@ class LiteraturePolicy(StrictModel):
 
 class ScaffoldingPolicy(StrictModel):
     playbook: bool = True
-    skills: bool = True
-    checkin_every_turns: int | None = Field(default=12, ge=2, le=200)
-    stagnation_nudges: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def removed_fields(cls, data: Any) -> Any:
+        return _refuse_removed(data, REMOVED_SCAFFOLDING_FIELDS, "ScaffoldingPolicy")
 
 
 class SocietyPolicy(StrictModel):
@@ -116,11 +143,18 @@ class SocietyPolicy(StrictModel):
 
     tool_profile: Literal["society"] = "society"
     claim_ttl_seconds: int = Field(default=900, ge=60, le=86400)
-    lab_size_max: int = Field(default=8, ge=1, le=32)
-    cross_lab_direct_messages: bool = False
+    messages_per_minute: int = Field(default=12, ge=1, le=600)
     referee_quorum: int = Field(default=1, ge=1, le=5)
+    # Runner slots reserved for referee tasks inside max_concurrency (S1 #16). Stored S1
+    # policies without it read as 0: one shared pool.
+    referee_slots: int = Field(default=2, ge=0, le=32)
     literature: LiteraturePolicy = Field(default_factory=LiteraturePolicy)
     scaffolding: ScaffoldingPolicy = Field(default_factory=ScaffoldingPolicy)
+
+    @model_validator(mode="before")
+    @classmethod
+    def removed_fields(cls, data: Any) -> Any:
+        return _refuse_removed(data, REMOVED_SOCIETY_FIELDS, "SocietyPolicy")
 
 
 class ContextBudget(StrictModel):

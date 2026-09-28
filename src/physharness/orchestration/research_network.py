@@ -281,8 +281,12 @@ def register_network_tools(register, service, agent, branch_id):
     )
 
 
-def discussion_delivery_hooks(service, agent, task_id, holder, fence):
-    """The runtime persists each returned batch before calling the acknowledgement."""
+def discussion_delivery_hooks(service, agent, task_id, holder, fence, *, render=None):
+    """The runtime persists each returned batch before calling the acknowledgement.
+
+    With ``render`` a non-empty batch also carries ``rendered``, the text the runtime
+    persists instead of its JSON envelope (society builders' compact update lines).
+    """
 
     def check_fence():
         with service.db.sessions() as session:
@@ -292,7 +296,10 @@ def discussion_delivery_hooks(service, agent, task_id, holder, fence):
     async def source(checkpoint):
         check_fence()
         with worker_effects(agent, task_id, holder, fence):
-            return service.discussion_updates(agent.experiment_id, agent, limit=10)
+            batch = service.discussion_updates(agent.experiment_id, agent, limit=10)
+        if render is not None and batch["items"]:
+            batch = {**batch, "rendered": render(batch["items"])}
+        return batch
 
     async def acknowledge(delivery_id):
         check_fence()

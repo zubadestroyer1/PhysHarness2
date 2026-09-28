@@ -105,6 +105,7 @@ class Activities:
                             "remediation": error.remediation,
                         },
                     )
+                    self.service._release_task_claims(session, actor, op, row)
                     self.service._event(
                         session, actor, op, "task.blocked", row.id, {"code": error.code}
                     )

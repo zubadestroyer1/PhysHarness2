@@ -70,19 +70,6 @@ def test_prefix_neither_resolves_to_nor_lists_an_unreadable_record(lab, monkeypa
     assert service.resolve_id("abcdef12", beta, ("task",)) == theirs["id"]
 
 
-async def test_inbox_acknowledges_a_delivery_by_prefix(lab):
-    service, author, exp, branches, (alpha, beta) = society_lab(lab)
-    agent, context = running(service, author, exp, alpha.branch_id)
-    tools = profile(service, agent, context)
-    node = await call(tools, "commons_node", lemma_args())
-    other, other_context = running(service, author, exp, beta.branch_id)
-    question = {"node_id": node["id"], "kind": "question", "abstract": "Why?"}
-    await call(profile(service, other, other_context), "commons_post", question)
-    delivery = (await call(tools, "inbox", {}))["delivery_id"]
-    acked = await call(tools, "inbox", {"ack_delivery_id": delivery[:8]})
-    assert acked["acknowledged_delivery_id"] == delivery
-
-
 def test_ambiguous_prefix_lists_the_candidates(lab):
     service, _, exp, _, (alpha, _) = society_lab(lab)
     first = node_with_id(service, exp, alpha, "abcdef12-0000-4000-8000-000000000001", "A")
@@ -145,7 +132,7 @@ async def recruited_pair(service, author, exp, branches, **recruit):
 
 
 async def test_routing_arguments_resolve_prefixes_among_their_targets(lab):
-    """A routed record need not be readable: a recruit's task, a parent or a peer branch."""
+    """A routed record need not be readable: a recruit's task, a parent or a watched branch."""
     service, author, exp, branches, _ = society_lab(lab)
     (alpha, tools), (_, child_tools), recruited = await recruited_pair(
         service, author, exp, branches
@@ -155,13 +142,11 @@ async def test_routing_arguments_resolve_prefixes_among_their_targets(lab):
     sent = await call(
         child_tools, "message", {"to": branches[0]["id"][:8], "content": "Base case holds."}
     )
-    assert sent["to"] == branches[0]["id"] and sent["message_id"]
+    assert sent["to"] == branches[0]["id"] and sent["message_ids"]
     inbox = service.mailbox_page(branches[0]["id"], alpha)["items"]
     assert [item["content"] for item in inbox] == ["Base case holds."]
-    peer = await call(
-        tools, "wait", {"for": "peer", "ids": [branches[1]["id"][:8]], "timeout_seconds": 60}
-    )
-    assert peer["intent"]["peer_wait"]["recipient_branch_id"] == branches[1]["id"]
+    watched = await call(tools, "wait", {"for": "events", "ids": [branches[1]["id"][:8]]})
+    assert watched["intent"]["peer_wait"]["watch_branch_ids"] == [branches[1]["id"]]
 
 
 async def test_routing_prefix_outside_the_targets_fails_like_an_unknown_id(lab):
@@ -174,11 +159,43 @@ async def test_routing_prefix_outside_the_targets_fails_like_an_unknown_id(lab):
     assert error(missing)[0] == "HANDOFF_CHILD_SCOPE"
     hidden = await call(tools, "wait", {"for": "tasks", "ids": [unrelated["id"][:8]]})
     assert error(hidden) == error(missing)
-    # beta is in another lab: its full id is refused as cross-lab, its prefix as unknown.
+    # A watch takes this experiment's nodes and branches; a task's prefix names neither, and
+    # another experiment's node is outside it.
+    missing = await call(tools, "wait", {"for": "events", "ids": [UNKNOWN]})
+    assert error(missing)[0] == "EVENT_WAIT_SCOPE"
+    hidden = await call(tools, "wait", {"for": "events", "ids": [unrelated["id"][:8]]})
+    assert error(hidden) == error(missing)
+    _, _, other, _, (gamma, _) = society_lab(lab, prefix="other")
+    foreign = service.create_node(
+        other["id"], NodeCreate(node_type="lemma", title="F", statement="F holds."), gamma, "f"
+    )
+    hidden = await call(tools, "wait", {"for": "events", "ids": [foreign["id"][:8]]})
+    assert error(hidden) == error(missing)
+    # A referee's branch: its full id is refused as isolated, its prefix as unknown.
+    with service.db.transaction() as session:
+        payload = {"title": "R", "objective": "R", "experiment_id": exp["id"], "status": "open"}
+        referee = service._insert(session, "branch", author, {**payload, "hat": "referee"})
+    isolated = await call(tools, "message", {"to": referee["id"], "content": "Hi."})
+    assert error(isolated)[0] == "REFEREE_ISOLATED"
     missing = await call(tools, "message", {"to": UNKNOWN, "content": "Hi."})
     assert error(missing) == ("NOT_FOUND", "Recipient branch was not found.")
-    hidden = await call(tools, "message", {"to": branches[1]["id"][:8], "content": "Hi."})
+    hidden = await call(tools, "message", {"to": referee["id"][:8], "content": "Hi."})
     assert error(hidden) == error(missing)
+
+
+async def test_a_watch_refuses_a_referee_branch_like_a_message(lab):
+    """Referee isolation covers event waits: no builder wakes on a referee's work."""
+    service, author, exp, branches, _ = society_lab(lab)
+    (_, tools), _, _ = await recruited_pair(service, author, exp, branches)
+    with service.db.transaction() as session:
+        payload = {"title": "R", "objective": "R", "experiment_id": exp["id"], "status": "open"}
+        referee = service._insert(session, "branch", author, {**payload, "hat": "referee"})
+    isolated = await call(tools, "wait", {"for": "events", "ids": [referee["id"]]})
+    assert error(isolated)[0] == "REFEREE_ISOLATED"
+    missing = await call(tools, "wait", {"for": "events", "ids": [UNKNOWN]})
+    hidden = await call(tools, "wait", {"for": "events", "ids": [referee["id"][:8]]})
+    assert error(hidden) == error(missing)
+    assert referee["id"] not in str(hidden)
 
 
 async def test_ambiguous_routing_prefix_is_refused_like_an_unknown_id(lab, monkeypatch):
@@ -195,5 +212,8 @@ async def test_ambiguous_routing_prefix_is_refused_like_an_unknown_id(lab, monke
     unknown = await call(tools, "wait", {"for": "tasks", "ids": [UNKNOWN]})
     assert error(ambiguous) == error(unknown)
     assert "abcdef12" not in str(ambiguous)  # no candidate list
+    ambiguous = await call(tools, "wait", {"for": "events", "ids": ["abcdef12"]})
+    unknown = await call(tools, "wait", {"for": "events", "ids": [UNKNOWN]})
+    assert error(ambiguous) == error(unknown) and "abcdef12" not in str(ambiguous)
     both = await call(tools, "wait", {"for": "tasks", "ids": [first["task_id"], second["task_id"]]})
     assert both["intent"]["wait_task_ids"] == [first["task_id"], second["task_id"]]

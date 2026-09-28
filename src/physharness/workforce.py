@@ -1,17 +1,18 @@
 """Atomic research recruitment with central task admission and opt-in discovery."""
 
 import copy
-import re
+from decimal import Decimal
 
-from sqlalchemy import func, select
+from pydantic import ValidationError
+from sqlalchemy import func, or_, select
 
 from .commons_review import REFEREE_HAT
+from .commons_sources import _statement_digest, node_module, node_refusal
 from .domain import Principal, make_record, new_id, utcnow
 from .errors import HarnessError
 from .storage import BudgetRow, EdgeRow, EventRow, LeaseRow, RecordRow, record_json_text
 from .worker_authority import current_worker_effects
 from .workforce_models import (
-    LAB_PATTERN,
     ConfigureWorkforceRequest,
     JoinResearchTeamRequest,
     PublishResearchProfileRequest,
@@ -22,6 +23,43 @@ from .workforce_models import (
 
 DEFAULT_MAX_TOTAL_TASKS = 10_000
 DEFAULT_MAX_PENDING_TASKS = 10_000
+
+
+def _micro(value):
+    return int(Decimal(str(value)) * 1_000_000)
+
+
+def _usd(units):
+    return format(Decimal(units) / 1_000_000, "f")
+
+
+def _task_caps(experiment, policy):
+    """The count caps admission enforces. A society's are the operator's optional guard
+    (None: no cap); a legacy experiment's default to 10,000 each."""
+    stored = policy.payload if policy else {}
+    total, pending = stored.get("max_total_tasks"), stored.get("max_pending_tasks")
+    if experiment.payload.get("society"):
+        return total, pending
+    return (
+        DEFAULT_MAX_TOTAL_TASKS if total is None else total,
+        DEFAULT_MAX_PENDING_TASKS if pending is None else pending,
+    )
+
+
+def _branch_model(experiment, model_index=None, branch=None):
+    """The model configuration a new task runs with, selected as _new_branch_task and the
+    worker select it: the indexed model, else the branch's (a new branch's parent's), else
+    the experiment's default (first) model."""
+    models = experiment.payload["models"]
+    if model_index is not None and model_index < len(models):
+        return models[model_index]
+    if (
+        branch is not None
+        and branch.kind == "branch"
+        and branch.payload.get("experiment_id") == experiment.id
+    ):
+        return branch.payload.get("model_configuration") or models[0]
+    return models[0]
 
 
 def _cap_reached(code, what, limit, used):
@@ -43,7 +81,23 @@ def _cap_reached(code, what, limit, used):
     )
 
 
-LAB_NAME = re.compile(LAB_PATTERN)
+def scope_statement_error(node: dict | None) -> HarnessError | None:
+    """``SCOPE_NEEDS_STATEMENT`` unless ``node`` can scope an until_proved recruit: an open
+    node that takes a published source and has an elaborated Lean statement (S1 audit #23)."""
+    if (
+        node is not None
+        and node_refusal(node) is None
+        and node.get("lean_elaborated")
+        and node.get("lean_name")
+        and node.get("lean_statement")
+    ):
+        return None
+    return HarnessError(
+        "SCOPE_NEEDS_STATEMENT",
+        "until_proved needs a focus node with an elaborated Lean statement.",
+        status=422,
+        remediation="Record the statement with set_lean_statement first.",
+    )
 
 
 def _extended(payload, extra):
@@ -53,15 +107,6 @@ def _extended(payload, extra):
     if payload.keys() & extra.keys():
         raise ValueError("Extra fields cannot replace canonical fields")
     return {**payload, **copy.deepcopy(extra)}
-
-
-def _lab_not_found():
-    return HarnessError(
-        "LAB_NOT_FOUND",
-        "No branch in this experiment belongs to that lab.",
-        status=404,
-        remediation="Use the lab of an existing branch, or recruit with lab='new'.",
-    )
 
 
 class WorkforceMixin:
@@ -303,34 +348,93 @@ class WorkforceMixin:
         # use BEGIN IMMEDIATE; PostgreSQL uses this FOR UPDATE lock.
         return self._active(session, experiment_id, actor)
 
-    def _admit_research_tasks(self, session, experiment_id, actor, count=1):
-        self._workforce_lock(session, experiment_id, actor)
+    def _output_reservation(self, experiment, model):
+        """Micro-USD of one model turn's output reservation at full price, as the worker
+        reserves it: max_output_tokens at the model's recorded output rate. 0 when the service
+        records no price for the model: the worker runs no unpriced model."""
+        from .execution.types import RuntimeLimits  # The runtime package loads lazily.
+
+        price = self.model_prices.get(model["model"])
+        if price is None:
+            return 0
+        try:
+            limits = RuntimeLimits.model_validate(experiment.payload.get("runtime_limits") or {})
+        except ValidationError:
+            return 0  # The worker refuses these limits (INVALID_CONFIG) before any model call.
+        return _micro(price.reservation_cost(0, limits.max_output_tokens))
+
+    def _admit_by_budget(self, session, experiment, policy, models):
+        """Society work is admitted while the remaining dollars, less the operator's floor,
+        cover the first output reservation of each new task (one per entry of ``models``):
+        max_cost - spent - reserved - floor >= the reservations' sum, and > 0 when the
+        service records no price for the models (the sum is then 0; merge audit). There is no
+        floor by default (admission_floor_usd is None, read as 0). The refusal is an early,
+        budget-not-input one; the ledger still hard-stops each reservation at max_cost (S1
+        #16). It can clear when running work settles below its reservations, so it is
+        retryable while releasing them all would admit the work."""
+        budget = session.get(BudgetRow, experiment.id)
+        floor = _micro((policy.payload.get("admission_floor_usd") if policy else None) or "0")
+        minimum = sum(self._output_reservation(experiment, model) for model in models)
+        needed = max(minimum, 1)  # a micro-dollar: no work is admitted at nothing left
+        remaining = max(0, budget.max_cost - budget.spent - budget.reserved)
+        if remaining - floor < needed:
+            settling = budget.reserved > 0 and budget.max_cost - budget.spent - floor >= needed
+            need = f"${_usd(floor + minimum)}" if minimum else f"more than ${_usd(floor)}"
+            raise HarnessError(
+                "ADMISSION_BUDGET",
+                f"Budget, not input: ${_usd(remaining)} remains and new work needs {need}.",
+                details={
+                    "remaining_usd": _usd(remaining),
+                    "reserved_usd": _usd(budget.reserved),
+                    "floor_usd": _usd(floor),
+                    "minimum_reservation_usd": _usd(minimum),
+                    "count": len(models),
+                },
+                remediation=(
+                    f"${_usd(budget.reserved)} is reserved for running work, which usually "
+                    "settles for less: retry once running work settles, and until then "
+                    "continue with work already running."
+                    if settling
+                    else "Do not retry; continue with work already running, or finish."
+                ),
+                retryable=settling,
+            )
+
+    def _admit_research_tasks(
+        self, session, experiment_id, actor, count=1, *, referee=False, models=None
+    ):
+        """Admit ``count`` new tasks; ``models`` lists the model configuration each runs with
+        (None, or a None entry, is the experiment's default model)."""
+        experiment = self._workforce_lock(session, experiment_id, actor)
         policy = self._workforce_policy(session, experiment_id, actor)
-        total_limit = policy.payload["max_total_tasks"] if policy else DEFAULT_MAX_TOTAL_TASKS
-        pending_limit = policy.payload["max_pending_tasks"] if policy else DEFAULT_MAX_PENDING_TASKS
-        total = session.scalar(
-            select(func.count())
-            .select_from(RecordRow)
-            .where(
-                RecordRow.project_id == actor.project_id,
-                RecordRow.kind == "task",
-                record_json_text("experiment_id") == experiment_id,
+        society = bool(experiment.payload.get("society"))
+        if society:
+            default = experiment.payload["models"][0]
+            models = [model or default for model in models] if models else [default] * count
+            self._admit_by_budget(session, experiment, policy, models)
+            if referee:
+                return  # Referees fill no count cap.
+        total_limit, pending_limit = _task_caps(experiment, policy)
+        tasks = [
+            RecordRow.project_id == actor.project_id,
+            RecordRow.kind == "task",
+            record_json_text("experiment_id") == experiment_id,
+        ]
+        if society:
+            hat = record_json_text("hat")
+            tasks.append(or_(hat.is_(None), hat != REFEREE_HAT))
+        if total_limit is not None:
+            total = session.scalar(select(func.count()).select_from(RecordRow).where(*tasks))
+            if total + count > total_limit:
+                raise _cap_reached("TASK_TOTAL_CAP", "task total", total_limit, total)
+        if pending_limit is not None:
+            pending = session.scalar(
+                select(func.count())
+                .select_from(RecordRow)
+                .where(*tasks, record_json_text("status").in_(["queued", "running"]))
             )
-        )
-        pending = session.scalar(
-            select(func.count())
-            .select_from(RecordRow)
-            .where(
-                RecordRow.project_id == actor.project_id,
-                RecordRow.kind == "task",
-                record_json_text("experiment_id") == experiment_id,
-                record_json_text("status").in_(["queued", "running"]),
-            )
-        )
-        if total + count > total_limit:
-            raise _cap_reached("TASK_TOTAL_CAP", "task total", total_limit, total)
-        if pending + count > pending_limit:
-            raise _cap_reached("TASK_PENDING_CAP", "pending task", pending_limit, pending)
+            if pending + count > pending_limit:
+                raise _cap_reached("TASK_PENDING_CAP", "pending task", pending_limit, pending)
 
     def configure_workforce(
         self, experiment_id: str, request: ConfigureWorkforceRequest, actor: Principal, key: str
@@ -339,21 +443,51 @@ class WorkforceMixin:
             raise HarnessError(
                 "FORBIDDEN", "Only an operator can set admission policy.", status=403
             )
-        data = request.model_dump(mode="json")
+        # Fingerprints that predate the admission floor stay valid while it is unset.
+        floor = request.admission_floor_usd
+        data = request.model_dump(
+            mode="json", exclude={"admission_floor_usd"} if floor is None else None
+        )
 
         def action(session, op):
-            self._workforce_lock(session, experiment_id, actor)
+            experiment = self._workforce_lock(session, experiment_id, actor)
+            if floor is not None and not experiment.payload.get("society"):
+                raise HarnessError(
+                    "ADMISSION_FLOOR_REQUIRES_SOCIETY",
+                    "admission_floor_usd applies to society experiments only; this experiment "
+                    "admits work by its task caps.",
+                    status=422,
+                    remediation="Omit admission_floor_usd, or set max_total_tasks and "
+                    "max_pending_tasks.",
+                )
+            if not experiment.payload.get("society") and None in (
+                request.max_total_tasks,
+                request.max_pending_tasks,
+            ):
+                # The legacy contract: only a society's count caps are optional (merge audit).
+                raise HarnessError(
+                    "WORKFORCE_CAPS_REQUIRED",
+                    "max_total_tasks and max_pending_tasks are required; only a society "
+                    "experiment may omit them.",
+                    status=422,
+                    remediation="Set both max_total_tasks and max_pending_tasks.",
+                )
             budget = session.get(BudgetRow, experiment_id)
             if budget is None:
                 raise HarnessError("NOT_FOUND", "Experiment ledger is missing.", status=404)
-            # This policy contains only task queue caps; the immutable experiment
-            # envelope and BudgetRow still authorize money, time and concurrency.
+            # This policy contains only task queue caps and a society's admission floor; the
+            # immutable experiment envelope and BudgetRow still authorize money, time and
+            # concurrency.
             existing = self._workforce_policy(session, experiment_id, actor)
             values = {
                 "max_total_tasks": request.max_total_tasks,
                 "max_pending_tasks": request.max_pending_tasks,
                 "synthesis_interval_posts": request.synthesis_interval_posts,
             }
+            if floor is not None:
+                values["admission_floor_usd"] = format(floor, "f")
+            elif existing and existing.payload.get("admission_floor_usd") is not None:
+                values["admission_floor_usd"] = None  # An update without a floor clears it.
             if existing:
                 if request.expected_revision is None:
                     raise HarnessError("REVISION_REQUIRED", "Supply current policy revision.")
@@ -413,7 +547,6 @@ class WorkforceMixin:
         synthesis_scope=None,
         detached=False,
         public_summary=None,
-        lab="inherit",
         task_extra=None,
         branch_extra=None,
     ):
@@ -462,7 +595,6 @@ class WorkforceMixin:
                     "status": "open",
                     "execution_identity": new_id(),
                     "model_configuration": selected_model,
-                    **self._branch_lab(session, experiment, parent, branch_id, lab, actor),
                 },
                 branch_extra,
             ),
@@ -542,108 +674,6 @@ class WorkforceMixin:
         )
         return {"branch": branch, "task": task}
 
-    @staticmethod
-    def _lab_filter(experiment, lab):
-        return (
-            RecordRow.project_id == experiment.project_id,
-            RecordRow.kind == "branch",
-            record_json_text("experiment_id") == experiment.id,
-            record_json_text("lab") == lab,
-        )
-
-    def _branch_lab(self, session, experiment, parent, branch_id, lab="inherit", actor=None):
-        """Resolve a new branch's lab and admit it under the cap.
-
-        Returns the payload fields to merge: ``{}`` for legacy experiments (their branch
-        payloads carry no lab key) and ``{"lab": name_or_None}`` for society experiments.
-        ``"inherit"`` joins the parent's lab (a root founds one), ``"new"`` founds
-        ``"lab-" + branch_id[:8]``, a name joins that existing lab, and ``None`` records an
-        unaffiliated branch (e.g. an independent referee) that no lab counts. An agent joins a
-        branch only to its own branch's lab, whether it names the lab or inherits it from the
-        parent (so a branchless orchestrator forking another branch joins none); operators and
-        researchers place a branch in any lab. Otherwise an outsider could fill a lab against
-        its members, or plant a child there to relay around the cross-lab message block.
-        """
-        policy = experiment.payload.get("society")
-        if not policy:
-            if lab not in {"inherit", None}:
-                raise HarnessError(
-                    "SOCIETY_DISABLED",
-                    "Labs exist only in research-society experiments.",
-                    remediation="Omit the lab for experiments without a society policy.",
-                )
-            return {}
-        if lab == "inherit":
-            lab = "new" if parent is None else parent.payload.get("lab")
-        if lab is None:
-            return {"lab": None}
-        if lab == "new":
-            return {"lab": "lab-" + branch_id[:8]}
-        if not isinstance(lab, str) or not LAB_NAME.fullmatch(lab):
-            raise HarnessError("INVALID_LAB", "Lab names match ^[a-z0-9-]{1,40}$.", status=422)
-        own = (
-            session.get(RecordRow, actor.branch_id)
-            if actor is not None and actor.role == "agent" and actor.branch_id
-            else None
-        )
-        if (
-            actor is not None
-            and actor.role == "agent"
-            and (own.payload.get("lab") if own is not None and own.kind == "branch" else None)
-            != lab
-        ):
-            raise HarnessError(
-                "LAB_MEMBERSHIP",
-                "An agent recruits only into its own lab; only lab members add members.",
-                status=403,
-                remediation="Recruit into your lab (lab=null) or found a new one (lab='new').",
-            )
-        # Serialize joins per lab so concurrent recruits cannot overshoot the cap.
-        self.db.command_lock(session, self._digest(["lab", experiment.id, lab]))
-        members = session.scalar(
-            select(func.count()).select_from(RecordRow).where(*self._lab_filter(experiment, lab))
-        )
-        if not members:
-            raise _lab_not_found()
-        if members >= policy["lab_size_max"]:
-            raise HarnessError(
-                "LAB_FULL",
-                f"Lab {lab} already has {members} of {policy['lab_size_max']} members.",
-                status=409,
-                remediation="Recruit into a new lab (lab='new') or another lab with room.",
-            )
-        return {"lab": lab}
-
-    def lab_members(self, experiment_id, lab, actor) -> dict:
-        """Bounded roster of one society lab: branch id, title and status per member."""
-        self._research_role(actor)
-        if not isinstance(lab, str) or not LAB_NAME.fullmatch(lab):
-            raise HarnessError("INVALID_LAB", "Lab names match ^[a-z0-9-]{1,40}$.", status=422)
-        with self.db.sessions() as session:
-            experiment = self._commons_experiment(session, experiment_id, actor, active=False)
-            size_max = experiment.payload["society"]["lab_size_max"]
-            # Joins are capped, so the roster never exceeds size_max rows.
-            rows = session.scalars(
-                select(RecordRow)
-                .where(*self._lab_filter(experiment, lab))
-                .order_by(record_json_text("created_at"), RecordRow.id)
-                .limit(size_max)
-            ).all()
-            if not rows:
-                raise _lab_not_found()
-            return {
-                "lab": lab,
-                "members": [
-                    {
-                        "branch_id": row.id,
-                        "title": row.payload["title"],
-                        "status": row.payload["status"],
-                    }
-                    for row in rows
-                ],
-                "size_max": size_max,
-            }
-
     def seed_portfolio(
         self, experiment_id: str, request: SeedPortfolioRequest, actor: Principal, key: str
     ) -> dict:
@@ -653,7 +683,13 @@ class WorkforceMixin:
 
         def action(session, op):
             experiment = self._workforce_lock(session, experiment_id, actor)
-            self._admit_research_tasks(session, experiment_id, actor, len(request.roots))
+            self._admit_research_tasks(
+                session,
+                experiment_id,
+                actor,
+                len(request.roots),
+                models=[_branch_model(experiment, root.model_index) for root in request.roots],
+            )
             roots = [
                 self._new_branch_task(
                     session,
@@ -684,8 +720,10 @@ class WorkforceMixin:
         self, experiment_id: str, request: RecruitResearcherRequest, actor: Principal, key: str
     ) -> dict:
         self._research_role(actor)
-        # Legacy command fingerprints predate labs; the key appears only when supplied.
-        data = request.model_dump(mode="json", exclude={"lab"} if request.lab is None else None)
+        # A request without a scope keeps its pre-scope fingerprint.
+        data = request.model_dump(
+            mode="json", exclude={"scope_node_id"} if request.scope_node_id is None else None
+        )
 
         def action(session, op):
             experiment = self._workforce_lock(session, experiment_id, actor)
@@ -703,7 +741,22 @@ class WorkforceMixin:
                     raise HarnessError(
                         "DISCUSSION_SCOPE", "Source post targets another experiment."
                     )
-            self._admit_research_tasks(session, experiment_id, actor)
+            scope = None
+            if request.scope_node_id is not None:
+                node = self._commons_node(
+                    session, request.scope_node_id, actor, experiment_id
+                ).payload
+                refusal = scope_statement_error(node)
+                if refusal is not None:
+                    raise refusal
+                scope = {
+                    "node_id": node["id"],
+                    "lean_statement_sha256": _statement_digest(node),
+                    "module": node_module(node),
+                }
+            parent = session.get(RecordRow, request.parent_branch_id)
+            model = _branch_model(experiment, request.model_index, parent)
+            self._admit_research_tasks(session, experiment_id, actor, models=[model])
             result = self._new_branch_task(
                 session,
                 op,
@@ -718,7 +771,7 @@ class WorkforceMixin:
                 synthesis=request.synthesis,
                 detached=request.detached,
                 public_summary=request.public_summary,
-                lab="inherit" if request.lab is None else request.lab,
+                task_extra={"scope": scope} if scope is not None else None,
             )
             return {"experiment_id": experiment_id, **result}
 
@@ -971,9 +1024,10 @@ class WorkforceMixin:
     def research_capacity(self, experiment_id: str, actor: Principal) -> dict:
         self._research_role(actor)
         with self.db.sessions() as session:
-            self._get(session, "experiment", experiment_id, actor)
+            experiment = self._get(session, "experiment", experiment_id, actor)
             budget = session.get(BudgetRow, experiment_id)
             policy = self._workforce_policy(session, experiment_id, actor)
+            total_limit, pending_limit = _task_caps(experiment, policy)
             statuses = dict(
                 session.execute(
                     select(
@@ -1007,12 +1061,8 @@ class WorkforceMixin:
                 "queued_tasks": queued,
                 "running_tasks": running,
                 "total_tasks": sum(statuses.values()),
-                "max_total_tasks": policy.payload["max_total_tasks"]
-                if policy
-                else DEFAULT_MAX_TOTAL_TASKS,
-                "max_pending_tasks": policy.payload["max_pending_tasks"]
-                if policy
-                else DEFAULT_MAX_PENDING_TASKS,
+                "max_total_tasks": total_limit,
+                "max_pending_tasks": pending_limit,
                 "synthesis_interval_posts": policy.payload.get("synthesis_interval_posts", 0)
                 if policy
                 else 0,
@@ -1229,7 +1279,9 @@ class WorkforceMixin:
                     "eligible_posts": eligible_count,
                     "through_sequence": through,
                 }
-            self._admit_research_tasks(session, experiment_id, actor)
+            parent = session.get(RecordRow, parent_branch_id or "")
+            model = _branch_model(experiment, branch=parent)
+            self._admit_research_tasks(session, experiment_id, actor, models=[model])
             objective = (
                 "Compare only the sampled, attributed posts in discussion_refs. "
                 "Preserve disagreements and objections present in those sampled posts "
@@ -1255,8 +1307,6 @@ class WorkforceMixin:
                 },
                 detached=True,
                 public_summary="Synthesis of sampled public research discussions",
-                # Synthesizers review across labs; they neither join nor fill the source lab.
-                lab=None,
             )
             self._replace(
                 session,

@@ -1,12 +1,13 @@
-"""Blueprint commons: society policy, attributed nodes, typed edges and the platform ladder."""
+"""Blueprint commons: society policy, attributed nodes, typed edges and open statuses."""
 
 from datetime import timedelta
 
 import pytest
-from commons_helpers import set_status, society_lab
+from commons_helpers import publish, set_status, society_lab, state_lean
 from pydantic import ValidationError
 from sqlalchemy import event, select
 from test_core import setup_experiment
+from test_event_waits import park
 from test_sharing import approaches, artifact
 
 from physharness import commons
@@ -21,6 +22,7 @@ from physharness.domain import (
 )
 from physharness.errors import HarnessError
 from physharness.storage import EdgeRow, RecordRow, record_json_text
+from physharness.workforce_models import RecruitResearcherRequest
 
 
 def lemma(title="Trace lemma", statement="The trace is additive.", **extra):
@@ -95,37 +97,45 @@ def test_create_node_attribution_and_event(lab):
         alpha,
         "node",
     )
-    assert node["status"] == "informal"
+    assert node["status"] == "open"
     assert node["lean_elaborated"] is False
     assert node["branch_id"] == alpha.branch_id == branches[0]["id"]
     assert node["origin_actor_id"] == alpha.id
     assert node["experiment_id"] == exp["id"]
     assert node["target_digest"] == exp["target_digest"]
     # Every node opens its discussion thread in the same transaction (Task 2).
-    assert node["topic_id"] and node["lab"] == branches[0]["lab"]
+    assert node["topic_id"] and "lab" not in node
     assert node["citation_count"] == 0 and node["status_evidence"] == {}
     assert len(node["lean_statement_sha256"]) == 64
     created = events(service, beta, "commons.node_created")
     assert [e["payload"] for e in created] == [
-        {"experiment_id": exp["id"], "node_id": node["id"], "node_type": "lemma"}
+        {
+            "experiment_id": exp["id"],
+            "node_id": node["id"],
+            "node_type": "lemma",
+            "branch_id": alpha.branch_id,
+        }
     ]
     plain = service.create_node(exp["id"], lemma(title="Plain"), alpha, "plain")
     assert plain["lean_statement_sha256"] is None
 
 
-def test_node_carries_its_author_branch_lab(lab):
-    """Regression (Task 10 simulation): node lab was always None although authors have labs."""
+def test_stored_s1_lab_keys_are_ignored(lab):
+    """S1 stored branch and node labs (audit #15): the records still read; no lab spreads."""
     service, author, exp, branches, (alpha, beta) = society_lab(lab)
-    assert branches[0]["lab"] and branches[0]["lab"] != branches[1]["lab"]
-    alpha_node = service.create_node(exp["id"], lemma(), alpha, "alpha-node")
-    beta_node = service.create_node(exp["id"], lemma(title="Beta"), beta, "beta-node")
-    unattributed = service.create_node(exp["id"], lemma(title="Operator"), author, "operator")
-    assert alpha_node["lab"] == branches[0]["lab"] and beta_node["lab"] == branches[1]["lab"]
-    assert unattributed["branch_id"] is None and unattributed["lab"] is None
+    node = service.create_node(exp["id"], lemma(), alpha, "node")
+    with service.db.transaction() as session:
+        for identifier in (branches[0]["id"], node["id"]):
+            row = session.get(RecordRow, identifier)
+            row.payload = {**row.payload, "lab": "lab-" + branches[0]["id"][:8]}
     frontier = service.query_nodes(exp["id"], beta, frontier=True)["items"]
-    labs = {item["id"]: item["lab"] for item in frontier}
-    assert labs[alpha_node["id"]] == branches[0]["lab"]
-    assert service.read_node(beta_node["id"], alpha)["node"]["lab"] == branches[1]["lab"]
+    assert node["id"] in {item["id"] for item in frontier}
+    assert not any("lab" in item for item in frontier)
+    assert service.read_node(node["id"], beta)["node"]["id"] == node["id"]
+    request = RecruitResearcherRequest(
+        parent_branch_id=branches[0]["id"], title="Kid", objective="Kid"
+    )
+    assert "lab" not in service.recruit_researcher(exp["id"], request, author, "kid")["branch"]
 
 
 def test_agent_without_branch_cannot_author_nodes(lab):
@@ -159,7 +169,7 @@ def test_tangent_requires_motivation(lab):
             "relation": "motivated_by",
             "node_id": root["id"],
             "title": root["title"],
-            "status": "informal",
+            "status": "open",
         }
     ]
 
@@ -222,6 +232,7 @@ def test_depends_on_cycle_rejected(lab):
         "source_id": c["id"],
         "relation": "generalizes",
         "target_id": b["id"],
+        "branch_id": beta.branch_id,  # the branch that added it
     }
     with service.db.sessions() as session:
         relations = set(
@@ -317,7 +328,7 @@ def test_goal_node_idempotent(lab):
     assert first["id"] == second["id"]
     assert first["node_type"] == "goal" and first["branch_id"] is None
     assert first["origin_actor_id"] == PLATFORM
-    assert first["status"] == "formally_stated" and first["status_reason"] == "reviewed target"
+    assert first["status"] == "open" and first["status_reason"] == "reviewed target"
     assert first["formal_target"] is True and first["lean_statement"] is None
     problem = service.get_record("problem", exp["problem_id"], author)
     assert first["problem_revision_id"] == problem["id"]
@@ -343,7 +354,7 @@ def test_goal_node_idempotent(lab):
 def test_query_creates_goal_lazily_without_status_writes(lab):
     service, _, exp, _, (alpha, _) = society_lab(lab)
     items = service.query_nodes(exp["id"], alpha)["items"]
-    assert [(n["node_type"], n["status"]) for n in items] == [("goal", "formally_stated")]
+    assert [(n["node_type"], n["status"]) for n in items] == [("goal", "open")]
 
 
 def test_goal_node_accepted_when_target_receipt_exists(lab, monkeypatch):
@@ -359,10 +370,12 @@ def test_goal_node_accepted_when_target_receipt_exists(lab, monkeypatch):
     read = service.read_node(goal["id"], alpha)["node"]
     assert read["status"] == "accepted" and read["status_derived"] is True
     assert read["status_evidence"] == {"receipt_id": "receipt"}
+    # rests_on counts source ranks: the goal has no source of its own.
     assert service.read_node(a["id"], alpha)["rests_on"] == {
-        "counts": {"accepted": 1},
-        "conditional": False,
+        "counts": {"none": 1},
+        "conditional": True,
         "truncated": False,
+        "stubs": [],
     }
     listed = service.query_nodes(exp["id"], alpha, node_type="goal")["items"]
     assert listed[0]["status"] == "accepted" and listed[0]["status_derived"] is True
@@ -370,43 +383,62 @@ def test_goal_node_accepted_when_target_receipt_exists(lab, monkeypatch):
     frontier = service.query_nodes(exp["id"], alpha, frontier=True)["items"]
     assert goal["id"] not in [n["id"] for n in frontier]
     # Reads never persist the derived status.
-    assert service.get_record("commons_node", goal["id"], author)["status"] == "formally_stated"
+    assert service.get_record("commons_node", goal["id"], author)["status"] == "open"
     assert not events(service, author, "commons.node_status")
 
 
-def test_rests_on_counts_dependency_statuses(lab):
+def test_rests_on_counts_sources(lab):
     service, _, exp, _, (alpha, beta) = society_lab(lab)
-    c = service.create_node(exp["id"], lemma("C"), alpha, "c")
-    b = service.create_node(
-        exp["id"], lemma("B", edges=[{"relation": "depends_on", "target_id": c["id"]}]), alpha, "b"
-    )
-    a = service.create_node(
-        exp["id"], lemma("A", edges=[{"relation": "depends_on", "target_id": b["id"]}]), beta, "a"
-    )
-    set_status(service, c["id"], "formally_stated", "accepted")
-    set_status(service, b["id"], "refereed")
-    read = service.read_node(a["id"], alpha)
+    ids = chain(service, exp["id"], alpha, 6, "s")  # each node depends on the one before
+    elaborated = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
+    service.set_lean_statement(ids[1], None, "s1", ": True", elaborated, alpha, "stub")
+    for identifier, rank in zip(ids[2:5], ("partial", "complete", "verified"), strict=True):
+        publish(service, identifier, alpha, rank, f"src-{rank}")
+    read = service.read_node(ids[5], beta)
     assert read["rests_on"] == {
-        "counts": {"refereed": 1, "accepted": 1},
+        "counts": {"verified": 1, "complete": 1, "partial": 1, "stub": 1, "none": 1},
         "conditional": True,
         "truncated": False,
+        "stubs": [ids[1]],
     }
     assert read["claimants"] == []
     assert read["edges_out"] == [
-        {"relation": "depends_on", "node_id": b["id"], "title": "B", "status": "refereed"}
+        {"relation": "depends_on", "node_id": ids[4], "title": "s 4", "status": "open"}
     ]
-    assert service.read_node(b["id"], beta)["rests_on"] == {
-        "counts": {"accepted": 1},
+    assert service.read_node(ids[4], beta)["edges_in"] == [
+        {"relation": "depends_on", "node_id": ids[5], "title": "s 5", "status": "open"}
+    ]
+    # Resting only on complete and verified sources is unconditional.
+    proved = []
+    for rank in ("complete", "verified"):
+        proved.append(service.create_node(exp["id"], lemma(rank), alpha, rank)["id"])
+        publish(service, proved[-1], alpha, rank, f"proved-{rank}")
+    top = service.create_node(
+        exp["id"],
+        lemma("Top", edges=[{"relation": "depends_on", "target_id": i} for i in proved]),
+        beta,
+        "top",
+    )
+    assert service.read_node(top["id"], alpha)["rests_on"] == {
+        "counts": {"verified": 1, "complete": 1},
         "conditional": False,
         "truncated": False,
+        "stubs": [],
     }
-    assert service.read_node(b["id"], beta)["edges_in"] == [
-        {"relation": "depends_on", "node_id": a["id"], "title": "A", "status": "informal"}
-    ]
-    assert service.read_node(c["id"], beta)["rests_on"] == {
+    # A source of an older statement proves nothing of the current one: resting on it is
+    # conditional again.
+    service.set_lean_statement(proved[0], None, "p0", ": True", elaborated, alpha, "restate")
+    assert service.read_node(top["id"], alpha)["rests_on"] == {
+        "counts": {"verified": 1, "stale": 1},
+        "conditional": True,
+        "truncated": False,
+        "stubs": [],
+    }
+    assert service.read_node(ids[0], beta)["rests_on"] == {
         "counts": {},
         "conditional": False,
         "truncated": False,
+        "stubs": [],
     }
 
 
@@ -414,30 +446,37 @@ def test_illegal_transition_rejected(lab):
     service, author, exp, _, (alpha, _) = society_lab(lab)
     node = service.create_node(exp["id"], lemma(), alpha, "node")
     with pytest.raises(HarnessError) as err:
-        set_status(service, node["id"], "accepted")
+        set_status(service, node["id"], "open")
     assert err.value.code == "ILLEGAL_STATUS_TRANSITION"
-    accepted = set_status(service, node["id"], "formally_stated", "accepted")
+    accepted = set_status(service, node["id"], "accepted")
     assert accepted["status"] == "accepted"
     assert accepted["status_reason"] == "platform test"
     assert accepted["status_evidence"] == {"fixture": True}
     with pytest.raises(HarnessError) as err:
-        set_status(service, node["id"], "informal")
+        set_status(service, node["id"], "refuted")
     assert err.value.code == "ILLEGAL_STATUS_TRANSITION"
+    # An S1 ladder value is open, and closes like any open node.
+    legacy = service.create_node(exp["id"], lemma("Legacy"), alpha, "legacy")
+    with service.db.transaction() as session:
+        service._replace(session, session.get(RecordRow, legacy["id"]), {"status": "refereed"})
+    set_status(service, legacy["id"], "refuted")
     moves = [e["payload"] for e in events(service, author, "commons.node_status")]
     assert moves == [
         {
             "experiment_id": exp["id"],
             "node_id": node["id"],
-            "from": "informal",
-            "to": "formally_stated",
+            "from": "open",
+            "to": "accepted",
             "reason": "platform test",
+            "branch_id": None,  # a platform move
         },
         {
             "experiment_id": exp["id"],
-            "node_id": node["id"],
-            "from": "formally_stated",
-            "to": "accepted",
+            "node_id": legacy["id"],
+            "from": "refereed",
+            "to": "refuted",
             "reason": "platform test",
+            "branch_id": None,  # a platform move
         },
     ]
 
@@ -500,7 +539,6 @@ def test_frontier_orders_root_path_and_dependents_first(lab):
         "node_type",
         "title",
         "status",
-        "lab",
         "statement",
         "lean_name",
         "citation_count",
@@ -510,6 +548,162 @@ def test_frontier_orders_root_path_and_dependents_first(lab):
     assert [
         i["id"] for i in service.query_nodes(exp["id"], beta, frontier=True, limit=2)["items"]
     ] == order[:2]
+
+
+def test_proved_nodes_leave_the_frontier(lab):
+    """A lemma is proved by a complete source of its elaborated Lean statement (only the goal
+    is ever accepted): it is no longer open work, nor an open dependent that waits on
+    another node."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    ids = {
+        name: service.create_node(exp["id"], lemma(name), alpha, name)["id"]
+        for name in ("A", "B", "C")
+    }
+    digests = {name: state_lean(service, ids[name], alpha, f"lean-{name}") for name in "AC"}
+    service.link_nodes(exp["id"], goal["id"], "depends_on", ids["A"], beta, "goal-a")
+    service.link_nodes(exp["id"], ids["C"], "depends_on", ids["B"], beta, "c-b")
+
+    def frontier():
+        return service.query_nodes(exp["id"], beta, frontier=True)["items"]
+
+    before = frontier()
+    assert [item["id"] for item in before] == [ids["A"], goal["id"], ids["B"], ids["C"]]
+    assert before[2]["score_components"]["waiting_dependents"] == 1.0
+    for name in "AC":
+        publish(service, ids[name], beta, "complete", name, lean_statement_sha256=digests[name])
+    after = frontier()
+    assert [item["id"] for item in after] == [goal["id"], ids["B"]]
+    assert after[1]["score_components"]["waiting_dependents"] == 0.0
+
+
+def test_a_file_proves_only_a_stated_lemma_or_a_definition(lab):
+    """A statement-less lemma's clean file proves nothing the verifier checks: it stays
+    open work, on the frontier and the long pole. A definition states nothing to prove, so
+    its complete source finishes it."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    loose = service.create_node(exp["id"], lemma("Loose"), alpha, "loose")
+    definition = service.create_node(
+        exp["id"],
+        NodeCreate(node_type="definition", title="Gap", statement="The spectral gap."),
+        alpha,
+        "definition",
+    )
+    for node in (loose, definition):
+        service.link_nodes(exp["id"], goal["id"], "depends_on", node["id"], beta, node["id"])
+    publish(service, loose["id"], beta, "complete", "loose-source")
+    publish(service, definition["id"], beta, "complete", "definition-source")
+    page = service.query_nodes(exp["id"], beta, frontier=True)
+    listed = {item["id"] for item in page["items"]}
+    assert loose["id"] in listed and definition["id"] not in listed
+    assert [item["id"] for item in page["long_pole"]] == [loose["id"]]
+
+
+def test_frontier_reports_the_long_pole_and_a_hint(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    ids = {
+        name: service.create_node(exp["id"], lemma(name), alpha, name)["id"]
+        for name in ("A", "B", "C", "D")
+    }
+
+    def frontier():
+        return service.query_nodes(exp["id"], beta, frontier=True)
+
+    def link(source, target):
+        service.link_nodes(exp["id"], source, "depends_on", target, beta, f"{source}-{target}")
+
+    # No open node has an open dependent: a hint, never every open node.
+    page = frontier()
+    assert page["long_pole"] == []
+    assert page["long_pole_hint"] == (
+        "Link depends_on edges from the goal to its parts to show its long pole."
+    )
+    # Without goal edges, the most-waited-on open nodes, ties kept, oldest first.
+    link(ids["B"], ids["A"])
+    link(ids["D"], ids["C"])
+    page = frontier()
+    assert [item["id"] for item in page["long_pole"]] == [ids["A"], ids["C"]]
+    assert "long_pole_hint" not in page
+    link(ids["D"], ids["A"])
+    assert [item["id"] for item in frontier()["long_pole"]] == [ids["A"]]
+    # With goal edges, the goal's open parts that wait on no other open node.
+    link(goal["id"], ids["B"])
+    service.abandon_node(ids["A"], "Dead end.", alpha, "abandon-a")
+    service.claim_node(ids["B"], "claim", beta, "claim-b")
+    assert frontier()["long_pole"] == [
+        {
+            "id": ids["B"],
+            "node_type": "lemma",
+            "title": "B",
+            "open_minutes": 0,
+            "claimants": [{"branch_id": beta.branch_id, "route": None}],
+        }
+    ]
+
+
+def test_the_long_pole_skips_the_parts_of_closed_routes(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    ids = {
+        name: service.create_node(exp["id"], lemma(name), alpha, name)["id"]
+        for name in ("Dead", "Under dead", "Proved", "Under proved", "Live")
+    }
+    for source, target in (
+        (goal["id"], ids["Dead"]),
+        (ids["Dead"], ids["Under dead"]),
+        (goal["id"], ids["Proved"]),
+        (ids["Proved"], ids["Under proved"]),
+        (goal["id"], ids["Live"]),
+    ):
+        service.link_nodes(exp["id"], source, "depends_on", target, beta, f"{source}-{target}")
+    service.abandon_node(ids["Dead"], "A dead route.", alpha, "abandon")
+    # A lemma is proved by a complete source of its elaborated Lean statement; only the goal
+    # is ever accepted.
+    digest = state_lean(service, ids["Proved"], alpha)
+    publish(service, ids["Proved"], beta, "complete", "prove", lean_statement_sha256=digest)
+    pole = service.query_nodes(exp["id"], beta, frontier=True)["long_pole"]
+    assert [item["id"] for item in pole] == [ids["Live"]]
+
+
+def test_proving_a_pole_lemma_moves_the_pole_and_wakes_waiters(lab):
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    goal = service.ensure_goal_node(exp["id"], author)
+    stated = {
+        "lean_header": "import Mathlib",
+        "lean_name": "under",
+        "lean_statement": ": (1 : Nat) + 1 = 2",
+    }
+    elaborated = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
+    part = service.create_node(exp["id"], lemma("A"), beta, "A")
+    under = service.create_node(exp["id"], lemma("B"), beta, "B")
+    service.set_lean_statement(under["id"], *stated.values(), elaborated, beta, "state")
+    for source, target in ((goal, part), (part, under)):
+        service.link_nodes(exp["id"], source["id"], "depends_on", target["id"], beta, target["id"])
+
+    def pole():
+        page = service.query_nodes(exp["id"], alpha, frontier=True)
+        return [item["id"] for item in page["long_pole"]]
+
+    def woken(ticket):
+        return service.peer_wait_status(ticket, agent)["reason"]
+
+    assert pole() == [under["id"]]
+    agent, ticket = park(service, author, exp, alpha.branch_id)
+    digest = commons._lean_digest(*stated.values())
+    publish(service, under["id"], beta, "partial", "partial", lean_statement_sha256=digest)
+    assert pole() == [under["id"]] and woken(ticket) == "waiting"
+    publish(service, under["id"], beta, "complete", "complete", lean_statement_sha256=digest)
+    assert pole() == [part["id"]] and woken(ticket) == "long_pole_changed"
+    # A source of an older statement proves nothing: the restated lemma is back on the pole,
+    # and waiters see that move too, though not the branch that restated it.
+    _, ticket = park(service, author, exp, alpha.branch_id)
+    restater, own = park(service, author, exp, beta.branch_id)
+    changed = {**stated, "lean_statement": ": (2 : Nat) + 2 = 4"}
+    service.set_lean_statement(under["id"], *changed.values(), elaborated, beta, "restate")
+    assert pole() == [under["id"]] and woken(ticket) == "long_pole_changed"
+    assert service.peer_wait_status(own, restater)["reason"] == "waiting"
 
 
 def test_query_filters_and_keyset_pages(lab):
@@ -589,7 +783,7 @@ def test_read_node_statement_count_is_independent_of_closure_size(lab):
         event.listen(service.db.engine, "before_cursor_execute", count)
         read = service.read_node(ids[-1], beta)
         event.remove(service.db.engine, "before_cursor_execute", count)
-        assert read["rests_on"]["counts"] == {"informal": size - 1}
+        assert read["rests_on"]["counts"] == {"none": size - 1}
         assert [e["node_id"] for e in read["edges_out"]] == [ids[-2]]
         costs[size] = len(statements)
         statements.clear()
@@ -600,13 +794,28 @@ def test_truncated_rests_on_is_conditional(lab, monkeypatch):
     service, _, exp, _, (alpha, _) = society_lab(lab)
     ids = chain(service, exp["id"], alpha, 4, "t")
     for identifier in ids[:3]:
-        set_status(service, identifier, "formally_stated", "accepted")
+        publish(service, identifier, alpha, "complete", f"src-{identifier}")
     monkeypatch.setattr(commons, "MAX_RESTS_ON", 2)
     assert service.read_node(ids[-1], alpha)["rests_on"] == {
-        "counts": {"accepted": 2},
+        "counts": {"complete": 2},
         "conditional": True,
         "truncated": True,
+        "stubs": [],
     }
+
+
+def test_rests_on_lists_stubs_nearest_first_and_bounded(lab, monkeypatch):
+    service, _, exp, _, (alpha, _) = society_lab(lab)
+    ids = chain(service, exp["id"], alpha, 4, "b")
+    elaborated = {"ok": True, "backend": "lean-repl", "diagnostics_sha256": "e" * 64}
+    for index in range(3):
+        service.set_lean_statement(
+            ids[index], None, f"b{index}", ": True", elaborated, alpha, f"stub-{index}"
+        )
+    assert service.read_node(ids[3], alpha)["rests_on"]["stubs"] == [ids[2], ids[1], ids[0]]
+    monkeypatch.setattr(commons, "MAX_EDGE_LIST", 2)
+    rests_on = service.read_node(ids[3], alpha)["rests_on"]
+    assert rests_on["stubs"] == [ids[2], ids[1]] and rests_on["counts"] == {"stub": 3}
 
 
 def test_new_node_edges_skip_cycle_walk_but_links_do_not(lab, monkeypatch):

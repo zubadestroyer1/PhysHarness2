@@ -1,0 +1,7 @@
+{
+  "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f": [
+    "`Matrix.dotProduct` is not a declaration at this pin: the dot product is the root-namespace `dotProduct`, notation `⬝ᵥ`. `Matrix.vecMul_mul` and `Matrix.vecMul_pow` are not declarations either; look names up with find_declaration first.",
+    "No Perron–Frobenius theorem and no Brouwer or Schauder fixed-point theorem is declared at this pin.",
+    "`PiLp.toLp` and `PiLp.ofLp` are not declarations at this pin; the renamed API lives under `WithLp` (`WithLp.ofLp`). Check with find_declaration."
+  ]
+}

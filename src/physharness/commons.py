@@ -1,7 +1,8 @@
-"""Blueprint commons: attributed research nodes, typed edges and a platform-only ladder.
+"""Blueprint commons: attributed research nodes and typed edges.
 
-Agents propose nodes and relationships. Status moves only through ``_set_node_status``,
-which platform code calls; the single author-initiated move is abandonment with a reason.
+Agents propose nodes and relationships. A node is open until it closes through
+``_set_node_status``: platform acceptance or refutation, or abandonment by its author with a
+reason (S1 audit #17). Stored S1 ladder values read as open (``public_status``).
 """
 
 import copy
@@ -15,16 +16,25 @@ from sqlalchemy import select
 
 from .commons_models import (
     ALLOWED_TRANSITIONS,
-    CLOSED_STATUSES,
     EDGE_RELATIONS,
     NODE_TYPES,
     STATUSES,
     NodeCreate,
+    is_open,
+    public_status,
+)
+from .commons_sources import (
+    COMPLETE_RANKS,
+    SOURCE_STATES,
+    Closures,
+    has_elaborated_statement,
+    node_module,
+    source_state,
 )
 from .domain import Principal, digest_json, new_id, utcnow
 from .errors import HarnessError
 from .knowledge.index import tokens
-from .storage import EdgeRow, RecordRow, record_json_text
+from .storage import EdgeRow, EventRow, RecordRow, record_json_text
 
 PLATFORM = "commons-platform"  # Principal id used for platform-authored inserts/posts
 EDGE_PREFIX = "commons:"
@@ -40,6 +50,7 @@ ROOT_PATH_SCORE = 3.0
 MAX_WAITING_DEPENDENTS = 5
 NEGLECT_MINUTES = 30
 MAX_NEGLECT = 3.0
+RECENT_POSTS = 10  # read_node's pull digest of a node's thread
 
 
 def _platform(project_id):
@@ -98,6 +109,19 @@ def _dependency_children(edges, within=None):
         if within is None or (source in within and target in within):
             children[source].append(target)
     return children
+
+
+def _open_work(node, closures):
+    """Whether a node is still open work: no status closed it, and it is not proved (only
+    the goal is ever accepted). A complete or verified source of the node's current,
+    elaborated Lean statement proves it, and so does any such source of a definition, which
+    states nothing to prove; a stale one (``source_state``) proves nothing. Another node's
+    clean file without such a statement proves nothing the verifier checks (as for
+    REVIEW_UNNEEDED), so the node stays open work."""
+    proved = source_state(node, closures) in COMPLETE_RANKS and (
+        has_elaborated_statement(node) or node["node_type"] == "definition"
+    )
+    return is_open(node["status"]) and not proved
 
 
 def _depends_closure(children, start, limit):
@@ -161,10 +185,11 @@ class CommonsMixin:
             "lean_statement_sha256": _lean_digest(header, name, statement),
             "lean_elaborated": False,
             "lean_writer": fields.get("lean_writer"),
+            "lean_module": fields.get("lean_module"),
+            "lean_source": None,
             "status": fields["status"],
             "status_reason": fields["status_reason"],
             "status_evidence": dict(fields.get("status_evidence") or {}),
-            "lab": None,
             "topic_id": None,
             "artifact_ids": list(fields.get("artifact_ids", [])),
             "citation_count": 0,
@@ -228,7 +253,7 @@ class CommonsMixin:
                     title=problem["title"],
                     statement=problem["informal_statement"][:8000],
                     assumptions=[a[:512] for a in problem.get("assumptions", [])[:32]],
-                    status="formally_stated",
+                    status="open",
                     status_reason="reviewed target",
                     status_evidence={"review_id": problem.get("review_id")},
                 ),
@@ -266,14 +291,16 @@ class CommonsMixin:
         self.ensure_goal_node(experiment_id, actor)
 
     def _goal_receipt(self, experiment_id, actor, items):
-        if any(i["node_type"] == "goal" and i["status"] != "accepted" for i in items):
+        if any(i["node_type"] == "goal" and is_open(i["status"]) for i in items):
             return self.verified_target_receipt(experiment_id, actor)
         return None
 
     @staticmethod
     def _goal_view(item, receipt):
-        """Report (never persist) acceptance evidenced by a current independent receipt."""
-        if receipt is None or item["node_type"] != "goal" or item["status"] == "accepted":
+        """The item with its public status, reporting (never persisting) acceptance evidenced
+        by a current independent receipt."""
+        item = {**item, "status": public_status(item["status"])}
+        if receipt is None or item["node_type"] != "goal" or not is_open(item["status"]):
             return item
         return {
             **item,
@@ -295,6 +322,28 @@ class CommonsMixin:
                 "EVIDENCE_SCOPE", "A referenced artifact is private or outside the experiment."
             )
 
+    def _new_module(self, session, experiment, node_id):
+        """`Commons.N` + 8 hex of the id, lengthened to 12 or 16 when an experiment node
+        already holds that name (S1 audit #12; 8 hex collide at ~0.3% for 5,000 nodes)."""
+        hexid = node_id.replace("-", "")
+        for width in (8, 12, 16):
+            module = "Commons.N" + hexid[:width]
+            taken = (
+                select(RecordRow.id)
+                .where(
+                    RecordRow.project_id == experiment.project_id,
+                    RecordRow.kind == "commons_node",
+                    record_json_text("experiment_id") == experiment.id,
+                    RecordRow.id.startswith(node_id[:8])
+                    if width == 8
+                    else record_json_text("lean_module") == module,
+                )
+                .limit(1)
+            )
+            if session.scalar(taken) is None:
+                return module
+        raise HarnessError("COMMONS_MODULE_COLLISION", "No unique module name for this node.")
+
     def create_node(self, experiment_id, request: NodeCreate, actor, key):
         self._research_role(actor)
         if request.node_type == "goal":
@@ -311,8 +360,7 @@ class CommonsMixin:
             experiment = self._commons_experiment(session, experiment_id, actor)
             for identifier in request.artifact_ids:
                 self._node_evidence(session, identifier, experiment, actor)
-            # The node belongs to its author branch's lab (None for lab-less authors).
-            author = session.get(RecordRow, actor.branch_id) if actor.branch_id else None
+            node_id = new_id()  # The module name derives from the id.
             record = self._insert(
                 session,
                 "commons_node",
@@ -321,13 +369,14 @@ class CommonsMixin:
                     **self._node_payload(
                         experiment,
                         **{k: data[k] for k in data if k != "edges"},
-                        status="informal",
+                        status="open",
                         status_reason="proposed",
                         lean_writer=_writer(actor) if request.lean_statement else None,
+                        lean_module=self._new_module(session, experiment, node_id),
                     ),
                     "branch_id": actor.branch_id,
-                    "lab": author.payload.get("lab") if author is not None else None,
                 },
+                record_id=node_id,
             )
             self._event(
                 session,
@@ -339,6 +388,7 @@ class CommonsMixin:
                     "experiment_id": experiment_id,
                     "node_id": record["id"],
                     "node_type": request.node_type,
+                    "branch_id": actor.branch_id,
                 },
             )
             record = self._open_node_thread(session, op, experiment, record, actor)
@@ -405,6 +455,7 @@ class CommonsMixin:
                 "source_id": source_id,
                 "relation": relation,
                 "target_id": target_id,
+                "branch_id": actor.branch_id,
             },
         )
         if relation == "depends_on":
@@ -461,12 +512,19 @@ class CommonsMixin:
         ]
 
     def _node_summaries(self, session, experiment, actor, identifiers):
-        """Type, title and status of visible same-experiment nodes, in one statement."""
+        """Type, title, public status and source rank of visible same-experiment nodes, in
+        one statement."""
         if not identifiers:
             return {}
         rows = session.scalars(select(RecordRow).where(RecordRow.id.in_(sorted(identifiers))))
+        closures = Closures.reading(session, experiment.id)
         return {
-            row.id: {key: row.payload[key] for key in ("node_type", "title", "status")}
+            row.id: {
+                "node_type": row.payload["node_type"],
+                "title": row.payload["title"],
+                "status": public_status(row.payload["status"]),
+                "source": source_state(row.payload, closures),
+            }
             for row in rows
             if row.kind == "commons_node"
             and row.project_id == actor.project_id
@@ -474,7 +532,38 @@ class CommonsMixin:
             and self._in_scope(session, row, actor)
         }
 
-    def read_node(self, node_id, actor):
+    def _thread_digest(self, session, row, actor, before):
+        """The node thread's newest posts as one line each, oldest first, and the sequence
+        that pages older ones (None when there are none). A post's text is a quoted JSON
+        string, so it cannot pose as another line or as the platform's words."""
+        topic_id = row.payload.get("topic_id")
+        if not topic_id:
+            return [], None
+        query = select(EventRow).where(
+            EventRow.project_id == row.project_id,
+            EventRow.kind == "discussion.post_created",
+            EventRow.aggregate_id == topic_id,
+        )
+        if before is not None:
+            query = query.where(EventRow.sequence < before)
+        events = list(
+            session.scalars(query.order_by(EventRow.sequence.desc()).limit(RECENT_POSTS + 1))
+        )
+        shown = events[:RECENT_POSTS]
+        lines = []
+        for event in reversed(shown):
+            post = session.get(RecordRow, event.payload["post_id"])
+            if post is None or not self._in_scope(session, post, actor):
+                continue
+            p = post.payload
+            text = " ".join((p.get("abstract") or p["content"]).split())[:200]
+            lines.append(
+                f"{post.id[:8]} [{p['post_kind']}] from "
+                f"{(p.get('branch_id') or 'platform')[:8]}: " + json.dumps(text, ensure_ascii=False)
+            )
+        return lines, shown[-1].sequence if len(events) > RECENT_POSTS else None
+
+    def read_node(self, node_id, actor, *, before=None):
         self._research_role(actor)
         with self.db.sessions() as session:
             # Hold the scope rows so per-row authorization does not reload them.
@@ -485,6 +574,7 @@ class CommonsMixin:
             experiment_id = row.payload["experiment_id"]
             experiment = self._commons_experiment(session, experiment_id, actor, active=False)
             node = copy.deepcopy(row.payload)
+            node["source"] = source_state(node, Closures.reading(session, experiment.id))
             edges_out = self._edge_pairs(session, row.id, actor, outgoing=True)
             edges_in = self._edge_pairs(session, row.id, actor, outgoing=False)
             children = _dependency_children(self._experiment_dependencies(session, experiment))
@@ -496,6 +586,7 @@ class CommonsMixin:
                 {identifier for _, identifier in edges_out + edges_in} | set(rests_on),
             )
             claimants = self._active_claims(session, row.id)[:MAX_PAGE]
+            recent_posts, older_before = self._thread_digest(session, row, actor, before)
         receipt = self._goal_receipt(experiment_id, actor, [node, *summaries.values()])
         views = {i: self._goal_view(summary, receipt) for i, summary in summaries.items()}
 
@@ -511,17 +602,27 @@ class CommonsMixin:
                 if identifier in views
             ]
 
-        statuses = [views[i]["status"] for i in rests_on if i in views]
+        sources = [views[i]["source"] for i in rests_on if i in views]
+        # An abandoned stub takes no source: it is never left to fill.
+        stubs = [
+            i
+            for i in rests_on
+            if i in views and views[i]["source"] == "stub" and views[i]["status"] != "abandoned"
+        ]
         return {
             "node": self._goal_view(node, receipt),
             "edges_out": edges(edges_out),
             "edges_in": edges(edges_in),
             "rests_on": {
-                "counts": dict(Counter(statuses)),
-                "conditional": truncated or any(status != "accepted" for status in statuses),
+                "counts": dict(Counter(sources)),
+                "conditional": truncated or any(rank not in COMPLETE_RANKS for rank in sources),
                 "truncated": truncated,
+                # What is left to fill, nearest first; counts has the total.
+                "stubs": stubs[:MAX_EDGE_LIST],
             },
             "claimants": claimants,
+            "recent_posts": recent_posts,
+            "older_before": older_before,
         }
 
     def _experiment_nodes(self, session, experiment, actor):
@@ -594,22 +695,27 @@ class CommonsMixin:
         ]
 
     @staticmethod
-    def _node_item(node):
+    def _node_item(node, closures):
         item = {
             key: node[key]
-            for key in ("id", "node_type", "title", "status", "lab", "lean_name", "citation_count")
+            for key in ("id", "node_type", "title", "status", "lean_name", "citation_count")
         }
+        item["status"] = public_status(item["status"])
         item["statement"] = node["statement"][:300]
+        # Nothing imports the goal: it has no module to list.
+        item["module"] = None if node["node_type"] == "goal" else node_module(node)
+        item["source"] = source_state(node, closures)
         if node.get("status_derived"):
             item["status_derived"] = True
         return item
 
     @staticmethod
     def _frontier(nodes, selected, dependencies, limit, claims=None):
-        """Transparent ranking of open work: root path, waiting dependents, neglect, claims."""
-        claims = claims or {}
+        """Transparent ranking of open work (``_open_work``: a proved node is none): root
+        path, waiting dependents, neglect, claims."""
+        claims, closures = claims or {}, Closures.over(nodes)
         visible = {node["id"] for node in nodes}
-        open_ids = {node["id"] for node in nodes if node["status"] not in CLOSED_STATUSES}
+        open_ids = {node["id"] for node in nodes if _open_work(node, closures)}
         waiting = Counter(
             target for source, target in dependencies if source in open_ids and target in visible
         )
@@ -621,24 +727,94 @@ class CommonsMixin:
         now = utcnow()
         items = []
         for node in selected:
-            if node["status"] in CLOSED_STATUSES:
+            if not _open_work(node, closures):
                 continue
             idle = (now - datetime.fromisoformat(node["last_activity_at"])).total_seconds()
             components = {
                 "on_root_path": ROOT_PATH_SCORE if node["id"] in root_path else 0.0,
                 "waiting_dependents": float(min(waiting[node["id"]], MAX_WAITING_DEPENDENTS)),
                 "neglect": round(min(max(idle, 0) / 60 / NEGLECT_MINUTES, MAX_NEGLECT), 4),
-                "claimants": float(-claims.get(node["id"], 0)),  # -1.0 per live work claim
+                # -1.0 per live claim without a distinct route (see _live_claim_counts).
+                "claimants": float(-claims.get(node["id"], 0)),
             }
-            items.append(
-                {
-                    **CommonsMixin._node_item(node),
-                    "score": round(sum(components.values()), 4),
-                    "score_components": components,
-                }
-            )
+            item = {
+                **CommonsMixin._node_item(node, closures),
+                "score": round(sum(components.values()), 4),
+                "score_components": components,
+            }
+            current = (node.get("lean_source") or {}).get("sha256")
+            proofs = [p for p in node.get("in_verified_proof") or [] if p["sha256"] == current]
+            if proofs:
+                # Provenance only: independently verified proofs that imported (inlined, used
+                # or not) this source.
+                item["in_verified_proof"] = len(proofs)
+            items.append(item)
         items.sort(key=lambda item: (-item["score"], item["id"]))
         return items[:limit]
+
+    @staticmethod
+    def _long_pole(nodes, dependencies, claims, limit=3):
+        """Where help counts most (S1 audit #14): ``(items, hint)``.
+
+        Here open means open work (``_open_work``: a proved node is none). The open non-goal
+        nodes the goal reaches through open depends_on paths that wait on no other open node,
+        oldest first. Without such nodes, the open nodes most open nodes depend on (at least
+        one; ties kept). Without those either, no items and a hint to link the goal's parts.
+        ``claims`` are live claim payloads.
+        """
+        closures = Closures.over(nodes)
+        open_ids = {node["id"] for node in nodes if _open_work(node, closures)}
+        goal = next((node["id"] for node in nodes if node["node_type"] == "goal"), None)
+        waiting_on_open = {s for s, t in dependencies if s in open_ids and t in open_ids}
+        parts = set()
+        if goal is not None:
+            # Only through open nodes: the parts of an abandoned or proved route are moot.
+            children = _dependency_children(dependencies, within=open_ids | {goal})
+            parts = set(_depends_closure(children, goal, MAX_GRAPH_NODES)[0])
+        chosen = (parts & open_ids) - waiting_on_open
+        if not chosen:
+            dependents = Counter(
+                t for s, t in dependencies if s in open_ids and t in open_ids and t != goal
+            )
+            most = max(dependents.values(), default=0)
+            chosen = {node_id for node_id, count in dependents.items() if count == most}
+        if not chosen:
+            return [], "Link depends_on edges from the goal to its parts to show its long pole."
+        now = utcnow()
+        pole = sorted(
+            (node for node in nodes if node["id"] in chosen),
+            key=lambda node: (node["created_at"], node["id"]),
+        )[:limit]
+        return [
+            {
+                "id": node["id"],
+                "node_type": node["node_type"],
+                "title": node["title"],
+                "open_minutes": int(
+                    max((now - datetime.fromisoformat(node["created_at"])).total_seconds(), 0) // 60
+                ),
+                "claimants": sorted(
+                    (
+                        {"branch_id": claim["branch_id"], "route": claim.get("route")}
+                        for claim in claims
+                        if claim["node_id"] == node["id"]
+                    ),
+                    key=lambda claimant: claimant["branch_id"],
+                ),
+            }
+            for node in pole
+        ], None
+
+    def _goal_long_pole(self, session, experiment, actor, claims=(), graph=None):
+        """The long pole over the experiment's visible nodes and depends_on edges, the one
+        reading the frontier, event waits and their wake checks share. ``graph`` is
+        ``(nodes, dependencies)`` when the caller has already read them."""
+        if graph is None:
+            graph = (
+                [row.payload for row in self._experiment_nodes(session, experiment, actor)],
+                self._experiment_dependencies(session, experiment),
+            )
+        return self._long_pole(*graph, claims)
 
     def query_nodes(
         self,
@@ -651,6 +827,7 @@ class CommonsMixin:
         frontier=False,
         after=None,
         limit=20,
+        source=None,
     ):
         self._research_role(actor)
         if type(limit) is not int or not 1 <= limit <= MAX_PAGE:
@@ -660,11 +837,14 @@ class CommonsMixin:
         if (
             (status is not None and status not in STATUSES)
             or (node_type is not None and node_type not in NODE_TYPES)
+            or (source is not None and source not in SOURCE_STATES)
             or (text is not None and (not isinstance(text, str) or len(text) > MAX_QUERY_TEXT))
             or (after is not None and not isinstance(after, str))
         ):
             raise HarnessError(
-                "INVALID_QUERY", "Use a known status and node type and bounded text.", status=422
+                "INVALID_QUERY",
+                "Use a known status, node type and source and bounded text.",
+                status=422,
             )
         if frontier and after is not None:
             raise HarnessError(
@@ -677,8 +857,14 @@ class CommonsMixin:
             nodes = [row.payload for row in self._experiment_nodes(session, experiment, actor)]
             dependencies = self._experiment_dependencies(session, experiment) if frontier else []
             claims = self._live_claim_counts(session, experiment) if frontier else None
+            if frontier:
+                live_claims = self._live_claims(session, experiment)
+                long_pole, hint = self._goal_long_pole(
+                    session, experiment, actor, live_claims, graph=(nodes, dependencies)
+                )
         receipt = self._goal_receipt(experiment_id, actor, nodes)
         nodes = [self._goal_view(node, receipt) for node in nodes]
+        closures = Closures.over(nodes)
         wanted = tokens(text) if text is not None else None
 
         def matches(node):
@@ -686,17 +872,30 @@ class CommonsMixin:
                 return False
             if node_type is not None and node["node_type"] != node_type:
                 return False
+            if source is not None and source_state(node, closures) != source:
+                return False
             if wanted is None:
                 return True
-            corpus = f"{node['title']} {node['statement']} {node.get('lean_statement') or ''}"
+            corpus = " ".join(
+                (
+                    node["title"],
+                    node["statement"],
+                    node.get("lean_statement") or "",
+                    node.get("lean_name") or "",
+                    # Without "Commons.", which every module shares and would match any node.
+                    node_module(node).removeprefix("Commons."),
+                )
+            )
             return bool(wanted & tokens(corpus))
 
         selected = [node for node in nodes if matches(node)]
         if frontier:
-            return {
+            page = {
                 "items": self._frontier(nodes, selected, dependencies, limit, claims),
                 "next_cursor": None,
+                "long_pole": long_pole,
             }
+            return {**page, "long_pole_hint": hint} if hint else page
         # Order and cursor in one comparison domain, independent of database collation.
         selected = sorted(
             (node for node in selected if after is None or node["id"] > after),
@@ -704,11 +903,11 @@ class CommonsMixin:
         )
         page = selected[:limit]
         return {
-            "items": [self._node_item(node) for node in page],
+            "items": [self._node_item(node, closures) for node in page],
             "next_cursor": page[-1]["id"] if len(selected) > limit else None,
         }
 
-    # Ladder --------------------------------------------------------------------
+    # Status --------------------------------------------------------------------
 
     def abandon_node(self, node_id, reason, actor, key):
         """The author branch's only status move: close its own open node with a reason."""
@@ -736,7 +935,7 @@ class CommonsMixin:
                 raise HarnessError(
                     "NODE_AUTHORITY", "Only the author branch may abandon a node.", status=403
                 )
-            if row.payload["status"] in CLOSED_STATUSES:
+            if not is_open(row.payload["status"]):
                 raise HarnessError("NODE_CLOSED", "The node is already closed.")
             return self._set_node_status(
                 session,
@@ -745,14 +944,16 @@ class CommonsMixin:
                 reason=reason,
                 evidence={"abandoned_by": actor.id},
                 op=op,
+                branch_id=actor.branch_id,
             )
 
         return self._execute(
             actor, key, "commons.node_abandon", {"node_id": node_id, "reason": reason}, action
         )
 
-    def _set_node_status(self, session, row, status, *, reason, evidence, op):
-        """The single ladder gate; platform code only (plus author abandonment)."""
+    def _set_node_status(self, session, row, status, *, reason, evidence, op, branch_id=None):
+        """The single status gate; platform code only (plus author abandonment). ``branch_id``
+        is the branch whose action caused the move, None for a platform decision."""
         old = row.payload["status"]
         if status not in ALLOWED_TRANSITIONS.get(old, ()):
             raise HarnessError(
@@ -784,9 +985,10 @@ class CommonsMixin:
                 "from": old,
                 "to": status,
                 "reason": reason,
+                "branch_id": branch_id,
             },
         )
-        self._node_hooks_after_status(session, row, old, status, op)
+        self._node_hooks_after_status(session, row, public_status(old), status, op)
         return record
 
     def _node_hooks_after_status(self, session, row, old, new, op):

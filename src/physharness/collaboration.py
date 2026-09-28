@@ -1,13 +1,17 @@
 """Durable delegation, fenced completion, mailboxes and evidence-preserving restart briefs."""
 
 import copy
+from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
+from .commons_review import REFEREE_HAT
 from .domain import Principal, TaskCreate, canonical_json, utcnow
 from .errors import HarnessError
 from .storage import EdgeRow, EventRow, LeaseRow, RecordRow, ReservationRow, record_json_text
 from .worker_authority import current_worker_effects
+
+MAX_NODE_RECIPIENTS = 8  # A node message's fan-out: its author and live claimants.
 
 
 def controller_only(actor):
@@ -67,6 +71,7 @@ class CollaborationMixin:
                     "ready_continuation": None,
                 },
             )
+            self._release_task_claims(session, actor, op, task)
             self._event(
                 session,
                 actor,
@@ -387,7 +392,9 @@ class CollaborationMixin:
         def action(session, op):
             branch = self._writable_branch(session, request.branch_id, actor, delegation=True)
             experiment_id = branch.payload["experiment_id"]
-            self._admit_research_tasks(session, experiment_id, actor)
+            # The task runs with its branch's model (older branches: the default model).
+            model = branch.payload.get("model_configuration")
+            self._admit_research_tasks(session, experiment_id, actor, models=[model])
             if len(set(request.dependency_ids)) != len(request.dependency_ids):
                 raise HarnessError(
                     "DUPLICATE_DEPENDENCY", "Task dependencies must be unique.", status=422
@@ -701,6 +708,7 @@ class CollaborationMixin:
                     else task.payload.get("return_result"),
                 },
             )
+            self._release_task_claims(session, actor, op, task)
             if (
                 status == "blocked"
                 and task.payload.get("research_progress_status") == "recovery_exhausted"
@@ -897,32 +905,10 @@ class CollaborationMixin:
                 "INVALID_MESSAGE", "Messages require 1–20,000 characters.", status=422
             )
 
-    @staticmethod
-    def _lab_route(experiment, sender, recipient):
-        """Society direct messages stay in a lab or parent/child pair unless policy opens them."""
-        policy = experiment.payload.get("society")
-        if not policy or policy.get("cross_lab_direct_messages") or sender.id == recipient.id:
-            return
-        lab = sender.payload.get("lab")
-        if lab is not None and recipient.payload.get("lab") == lab:
-            return
-        if sender.id == recipient.payload.get("parent_id") or recipient.id == sender.payload.get(
-            "parent_id"
-        ):
-            return
-        raise HarnessError(
-            "CROSS_LAB_MESSAGE",
-            "Direct messages reach only your lab and your parent or child branches.",
-            status=403,
-            remediation=(
-                "Post on the relevant commons node; cross-lab discourse goes through the commons."
-            ),
-        )
-
     def _deliver_message(
-        self, session, op, actor, experiment, sender, recipient_id, content, artifact_ids, extra
+        self, session, op, actor, sender, recipient_id, content, artifact_ids, extra
     ):
-        """Insert one routed message and its event; shared by direct and lab sends."""
+        """Insert one routed message and its event; shared by direct and society sends."""
         # Recipient routing is not permission to read the recipient's private branch record.
         recipient = session.get(RecordRow, recipient_id)
         if not recipient or recipient.kind != "branch" or recipient.project_id != actor.project_id:
@@ -933,7 +919,6 @@ class CollaborationMixin:
                 "MAILBOX_SCOPE", "Branches must share an experiment to exchange messages."
             )
         self._guard_referee_recipient(sender, recipient)
-        self._lab_route(experiment, sender, recipient)
         self._recipient_visible_artifacts(
             session, artifact_ids, experiment_id, recipient_id, actor, strict=True
         )
@@ -973,7 +958,7 @@ class CollaborationMixin:
                     status=403,
                 )
             return self._deliver_message(
-                session, op, actor, experiment, sender, recipient_id, content, artifact_ids, {}
+                session, op, actor, sender, recipient_id, content, artifact_ids, {}
             )
 
         return self._execute(
@@ -989,62 +974,101 @@ class CollaborationMixin:
             action,
         )
 
-    def send_lab_message(self, branch_id, content, artifact_ids, actor, key):
-        """Fan one attributed message out to every other member of the sender's lab."""
+    def _node_workers(self, session, node, sender_id):
+        """A node's author branch, then its live claimants: never the sender or a referee."""
+        candidates = [node.payload.get("branch_id")] + [
+            claim["branch_id"] for claim in self._active_claims(session, node.id)
+        ]
+        recipients = []
+        for branch_id in candidates:
+            if branch_id is None or branch_id == sender_id or branch_id in recipients:
+                continue
+            branch = session.get(RecordRow, branch_id)
+            if branch is None or branch.payload.get("hat") == REFEREE_HAT:
+                continue
+            recipients.append(branch_id)
+            if len(recipients) == MAX_NODE_RECIPIENTS:
+                break
+        return recipients
+
+    @staticmethod
+    def _message_budget(session, experiment, sender_id, count):
+        """A per-sender sliding one-minute window over society messages (S1 audit #15)."""
+        limit = experiment.payload["society"].get("messages_per_minute", 12)
+        used = session.scalar(
+            select(func.count())
+            .select_from(RecordRow)
+            .where(
+                RecordRow.project_id == experiment.project_id,
+                RecordRow.kind == "message",
+                record_json_text("experiment_id") == experiment.id,
+                record_json_text("sender_branch_id") == sender_id,
+                record_json_text("created_at") >= (utcnow() - timedelta(seconds=60)).isoformat(),
+            )
+        )
+        if used + count > limit:
+            raise HarnessError(
+                "MESSAGE_RATE_LIMIT",
+                f"Message rate reached (budget, not input: limit {limit} per minute, used {used}).",
+                status=429,
+                retryable=True,
+                details={"limit": limit, "used": used, "requested": count},
+                remediation="Wait before messaging again, or post on the node's thread "
+                "(posts are not rate-limited).",
+            )
+
+    def send_society_message(self, branch_id, to, content, artifact_ids, actor, key):
+        """Message one branch, or whoever works on a node (its author and live claimants)."""
         self._research_role(actor)
         self._message_text(content)
 
         def action(session, op):
             sender = self._writable_branch(session, branch_id, actor)
-            experiment = self._commons_experiment(
-                session, sender.payload["experiment_id"], actor, active=False
-            )
-            lab = sender.payload.get("lab")
-            if lab is None:
-                raise HarnessError(
-                    "LAB_NOT_FOUND",
-                    "This branch belongs to no lab.",
-                    status=404,
-                    remediation="Message your parent directly or post on a commons node.",
-                )
-            # Membership is capped at lab_size_max, which bounds the fan-out.
-            recipients = session.scalars(
-                select(RecordRow.id)
-                .where(*self._lab_filter(experiment, lab), RecordRow.id != branch_id)
-                .order_by(record_json_text("created_at"), RecordRow.id)
-                .limit(experiment.payload["society"]["lab_size_max"])
-            ).all()
-            if not recipients:
-                raise HarnessError(
-                    "LAB_EMPTY",
-                    "The lab has no other members.",
-                    remediation="Recruit a lab member or post on a commons node.",
-                )
+            # _active's experiment row lock (FOR UPDATE) serializes the budget count and insert.
+            experiment = self._commons_experiment(session, sender.payload["experiment_id"], actor)
+            target = session.get(RecordRow, to)
+            node_id = None
+            if (
+                target is not None
+                and target.kind == "commons_node"
+                and target.project_id == actor.project_id
+                and target.payload.get("experiment_id") == experiment.id
+            ):
+                node_id, recipients = target.id, self._node_workers(session, target, sender.id)
+                if not recipients:
+                    raise HarnessError(
+                        "NO_RECIPIENTS",
+                        "Nobody else works on this node now.",
+                        remediation="Post on the node's thread; its followers read it.",
+                    )
+            else:
+                recipients = [to]
+            self._message_budget(session, experiment, sender.id, len(recipients))
             records = [
                 self._deliver_message(
                     session,
                     op,
                     actor,
-                    experiment,
                     sender,
                     recipient,
                     content,
                     artifact_ids,
-                    {"lab": lab, "delivery_key": f"{key}:{recipient}"},
+                    {"node_id": node_id, "delivery_key": f"{key}:{recipient}"} if node_id else {},
                 )
                 for recipient in recipients
             ]
-            return {"lab": lab, "message_ids": [record["id"] for record in records]}
+            return {
+                "to": to,
+                "node_id": node_id,
+                "message_ids": [record["id"] for record in records],
+                "recipients": recipients,
+            }
 
         return self._execute(
             actor,
             key,
-            "message.lab-send",
-            {
-                "branch_id": branch_id,
-                "content": content,
-                "artifact_ids": artifact_ids,
-            },
+            "message.society-send",
+            {"branch_id": branch_id, "to": to, "content": content, "artifact_ids": artifact_ids},
             action,
         )
 

@@ -10,9 +10,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from commons_helpers import society_lab
+from commons_helpers import society_lab, state_lean
 from sqlalchemy import create_engine, event
 from sqlalchemy.dialects import postgresql
+from test_commons_sources import publish
+from test_event_waits import park
 
 from physharness.artifacts import LocalArtifactStore
 from physharness.commons import CommonsMixin
@@ -23,7 +25,6 @@ from physharness.domain import Principal
 from physharness.errors import HarnessError
 from physharness.service import HarnessService
 from physharness.storage import Database
-from physharness.workforce_models import RecruitResearcherRequest
 
 
 def _lab(db, tmp_path):
@@ -74,7 +75,7 @@ def rejected(call):
 
 
 def test_commons_smoke(backend_lab):
-    service, author, exp, branches, (alpha, beta) = society_lab(backend_lab, lab_size_max=1)
+    service, author, exp, _, (alpha, beta) = society_lab(backend_lab, messages_per_minute=1)
     goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
     lemma = service.create_node(
         exp["id"],
@@ -118,8 +119,8 @@ def test_commons_smoke(backend_lab):
     assert batch["items"][0]["id"] == objection["id"] and batch["items"][0]["urgent"] is True
     service.acknowledge_discussion_updates(exp["id"], batch["delivery_id"], alpha, "ack")
     # Review requests deduplicate on an open, unsubmitted referee task (NOT EXISTS).
-    first = service.request_review(lemma["id"], "informal", beta, "review-1")
-    again = service.request_review(lemma["id"], "informal", alpha, "review-2")
+    first = service.request_review(lemma["id"], beta, "review-1")
+    again = service.request_review(lemma["id"], alpha, "review-2")
     assert again["deduplicated"] is True and again["review_task_id"] == first["review_task_id"]
     referee = Principal(
         id="referee",
@@ -131,14 +132,18 @@ def test_commons_smoke(backend_lab):
     service.submit_review(
         first["review_task_id"], "gaps", "Step 2 is missing.", ["Step 2."], referee, "gaps"
     )
-    fresh = service.request_review(lemma["id"], "informal", beta, "review-3")
+    fresh = service.request_review(lemma["id"], beta, "review-3")
     assert fresh["deduplicated"] is False and fresh["review_task_id"] != first["review_task_id"]
-    # The lab cap holds under the lab lock: alpha's one-member lab is full.
-    recruit = RecruitResearcherRequest(
-        parent_branch_id=branches[0]["id"], title="Helper", objective="Help."
-    )
-    assert rejected(lambda: service.recruit_researcher(exp["id"], recruit, author, "r")) == (
-        "LAB_FULL"
+    # A node message reaches the live claimant; the per-sender window counts JSON timestamps.
+    sent = service.send_society_message(alpha.branch_id, lemma["id"], "Step 2?", [], alpha, "m1")
+    assert sent["recipients"] == [beta.branch_id]
+    assert (
+        rejected(
+            lambda: service.send_society_message(
+                alpha.branch_id, beta.branch_id, "Hi", [], alpha, "m2"
+            )
+        )
+        == "MESSAGE_RATE_LIMIT"
     )
     # The export carries the commons records and the edges between visible nodes.
     manifest = service.export_experiment(exp["id"], author)
@@ -156,6 +161,53 @@ def test_commons_smoke(backend_lab):
         ("depends_on", lemma["id"], helper["id"]),
         ("motivated_by", lemma["id"], goal["id"]),
     ]
+
+
+def test_library_notes_on_the_backend(backend_lab):
+    service, _, exp, _, (alpha, beta) = society_lab(backend_lab)
+    appended = service.append_library_note("`Foo.bar` was renamed `Foo.baz`.", alpha, "n1")
+    again = service.append_library_note("`Foo.bar` was renamed `Foo.baz`.", alpha, "n1")
+    assert again == appended
+    found = service.library_notes(beta, query="Foo.bar")
+    assert [note["text"] for note in found["notes"]] == ["`Foo.bar` was renamed `Foo.baz`."]
+
+
+def test_event_wait_filters_run_on_the_backend(backend_lab):
+    """The wake filters (a JSON boolean, rank CASEs over JSON text) and the routed-update
+    scan, run against the database rather than only compiled."""
+    service, author, exp, _, (alpha, beta) = society_lab(backend_lab)
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="Watched", statement="W."), beta, "node"
+    )
+    mine = service.create_node(
+        exp["id"], NodeCreate(node_type="lemma", title="Mine", statement="M."), alpha, "mine"
+    )
+    service.link_nodes(exp["id"], goal["id"], "depends_on", node["id"], alpha, "goal-node")
+    service.claim_node(node["id"], "claim", beta, "claim")
+    # A complete source proves the node only once it has an elaborated Lean statement.
+    stated = {"lean_statement_sha256": state_lean(service, node["id"], beta)}
+    publish(service, node["id"], beta, "partial", "partial", **stated)
+
+    def reason(ticket):
+        return service.peer_wait_status(ticket, agent)["reason"]
+
+    agent, renewed = park(service, author, exp, alpha.branch_id, ids=[node["id"]])
+    _, pole = park(service, author, exp, alpha.branch_id)
+    service.claim_node(node["id"], "renew", beta, "renew")
+    publish(service, node["id"], beta, "partial", "retry", **stated)
+    assert reason(renewed) == reason(pole) == "waiting"
+    publish(service, node["id"], beta, "complete", "complete", **stated)
+    assert reason(renewed) == "watched_event"
+    # The complete source proves the node, so it leaves the long pole.
+    assert reason(pole) == "long_pole_changed"
+    _, claimed = park(service, author, exp, alpha.branch_id, ids=[node["id"]])
+    service.claim_node(node["id"], "release", beta, "release")
+    service.claim_node(node["id"], "claim", beta, "claim-again")
+    assert reason(claimed) == "watched_event"
+    _, routed = park(service, author, exp, alpha.branch_id)
+    service.post_on_node(mine["id"], NodePostCreate(kind="objection", abstract="Gap."), beta, "p")
+    assert reason(routed) == "relevant_update"
 
 
 class _Capture:
@@ -186,8 +238,10 @@ def test_resolve_id_prefix(backend_lab):
         assert service.resolve_id(prefix, alpha, ("commons_node",)) == node["id"]
     assert service.resolve_id(node["id"][:8], alpha, ("branch",)) == node["id"][:8]
     peer = branches[1]["id"]
-    route = ("peer", alpha.branch_id)
+    route = ("recipient", alpha.branch_id)
     assert service.resolve_id(peer[:8], alpha, ("branch",), route=route) == peer
+    watch = ("watch", None)  # any node or branch of the experiment but a referee's
+    assert service.resolve_id(peer[:8], alpha, ("commons_node", "branch"), route=watch) == peer
 
 
 def test_commons_queries_compile_for_postgresql():
@@ -196,26 +250,22 @@ def test_commons_queries_compile_for_postgresql():
     experiment = SimpleNamespace(project_id="p", id="e", payload={"society": {"referee_quorum": 1}})
     assignment = {
         "node_id": "n",
-        "scope": "fidelity",
+        "scope": "informal",
         "statement_sha256": "s",
         "lean_statement_sha256": "l",
-        "lean_writer": "w",
     }
-    node = SimpleNamespace(project_id="p", id="n", payload={"experiment_id": "e"})
     CommonsReviewMixin._open_review_task(session, experiment, assignment)
     list(CommonsDiscourseMixin._live_claim_rows(session, "p", "e", 1.0, node_id="n"))
     CommonsMixin._experiment_dependencies(session, experiment)
     CommonsMixin._commons_edges(session, "p", "e", {"n"})
-    # The referee panel bound (per Lean statement, then per writer) and claimant families.
+    # The referee panel bound per text version.
     assert CommonsReviewMixin._review_panel(session, experiment, assignment) == []
-    assert CommonsReviewMixin._claimant_families(session, node, [{}]) == set()
     compiled = [
         str(statement.compile(dialect=postgresql.dialect())) for statement in session.statements
     ]
-    assert len(compiled) == 7
+    assert len(compiled) == 5
     assert "NOT (EXISTS" in compiled[0]
-    assert all(" OR (EXISTS" in text for text in compiled[4:6])
-    assert " IN (SELECT" in compiled[6]
+    assert " OR (EXISTS" in compiled[4]
     # The earlier same-statement node search orders by the node-creation event sequence.
     owner = _Capture()
     owner.scalar = lambda statement: owner.statements.append(statement) or 1
@@ -230,14 +280,8 @@ def test_commons_queries_compile_for_postgresql():
             "lean_statement_sha256": "f" * 64,
         },
     )
-    assert CommonsReviewMixin._statement_owner(owner, row, "informal") is None
+    assert CommonsReviewMixin._statement_owner(owner, row) is None
     compiled = [
         str(statement.compile(dialect=postgresql.dialect())) for statement in owner.statements
     ]
     assert len(compiled) == 2 and all("min(events.sequence)" in text for text in compiled)
-    # The fidelity search adds one Lean-digest filter; it must also compile for PostgreSQL.
-    owner.statements.clear()
-    assert CommonsReviewMixin._statement_owner(owner, row, "fidelity") is None
-    fidelity = str(owner.statements[-1].compile(dialect=postgresql.dialect()))
-    assert "min(events.sequence)" in fidelity
-    assert fidelity.count(" AND ") == compiled[1].count(" AND ") + 1

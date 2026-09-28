@@ -253,7 +253,7 @@ def _block_comment_end(source: str, index: int) -> int:
     return len(source)
 
 
-def _string_end(source: str, index: int, interpolated: bool) -> int:
+def _string_end(source: str, index: int, interpolated: bool, escapes=None) -> int:
     index += 1
     while index < len(source):
         character = source[index]
@@ -262,7 +262,7 @@ def _string_end(source: str, index: int, interpolated: bool) -> int:
         elif character == '"':
             return index + 1
         elif interpolated and character == "{":
-            index = _scan(source, index + 1, [], "}")
+            index = _scan(source, index + 1, [], "}", escapes)
         else:
             index += 1
     return len(source)
@@ -275,11 +275,13 @@ def _opaque(text: str) -> str:
     )
 
 
-def _scan(source: str, index: int, out: list, close: str | None) -> int:
+def _scan(source: str, index: int, out: list, close: str | None, escapes=None) -> int:
     """Copy code into ``out`` from ``index`` until an unmatched ``close`` (or the end).
 
     Comments become whitespace; string, character and raw-string literals, escaped
-    identifiers and syntax quotations become opaque tokens.
+    identifiers and syntax quotations become opaque tokens. ``escapes``, when given,
+    collects the text of each escaped identifier read as code (in interpolations and
+    quotations too).
     """
     depth = 0
     while index < len(source):
@@ -292,7 +294,7 @@ def _scan(source: str, index: int, out: list, close: str | None) -> int:
             end = _block_comment_end(source, index)
             out.append(" " + "\n" * source.count("\n", index, end))
         elif character == '"':
-            end = _string_end(source, index, _interpolation_prefix(source, index))
+            end = _string_end(source, index, _interpolation_prefix(source, index), escapes)
             out.append(_opaque(source[index:end]))
         elif (
             character == "r"
@@ -309,10 +311,12 @@ def _scan(source: str, index: int, out: list, close: str | None) -> int:
         elif character == "«":
             end = source.find("»", index + 1)
             end = len(source) if end < 0 else end + 1
+            if escapes is not None:
+                escapes.append(source[index:end])
             out.append(_opaque(source[index:end]))
         elif character == "`" and source.startswith(("`(", "``("), index):
             start = source.index("(", index) + 1
-            end = _scan(source, start, [], ")")
+            end = _scan(source, start, [], ")", escapes)
             out.append(_opaque(source[index:end]))
         else:
             if close is not None:
@@ -548,6 +552,34 @@ def top_level_declarations(code: str) -> list[tuple[str, str, str]]:
             if name is not None:
                 found.append((keyword, name.group(1), code[name.end() :]))
     return found
+
+
+def declaration_spans(source: str) -> list[tuple[str, str, int, int]] | None:
+    """(keyword, name, first_line, last_line) of each top-level declaration, 1-based and
+    inclusive; None when comments or literals change the line structure.
+
+    A declaration runs to the line before the next command, so the last one runs to the end
+    of the file, trailing blank lines included.
+    """
+    code = lean_code(source)
+    if code.count("\n") != source.count("\n"):
+        return None
+    starts, blocks = [], 0
+    for match in _COMMAND.finditer(code):
+        keyword, line = match.group(1), code.count("\n", 0, match.start()) + 1
+        if keyword in _BLOCKS:
+            blocks += 1
+        elif keyword == "end":
+            blocks = max(0, blocks - 1)
+        named = keyword not in (*_BLOCKS, "end", "variable") and not blocks
+        name = _NAME.match(code, match.end()) if named else None
+        starts.append((keyword if name else None, name.group(1) if name else None, line))
+    total, spans = source.count("\n") + 1, []
+    for index, (keyword, name, line) in enumerate(starts):
+        if keyword is not None:
+            end = starts[index + 1][2] - 1 if index + 1 < len(starts) else total
+            spans.append((keyword, name, line, max(line, end)))
+    return spans
 
 
 def _with_universes(header: str, universes) -> str:

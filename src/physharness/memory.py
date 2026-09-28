@@ -42,6 +42,33 @@ def _error(code, message, **details):
     return HarnessError(code, message, details=details)
 
 
+def checked_target(service, session, experiment, reader):
+    """The experiment's target row and its canonical review (None while pending), refused
+    unless their identities are consistent: the check before any prompt or context is built
+    on the target. The review is the one the target names, read whatever the reader's
+    branch visibility; general review browsing stays subject to it."""
+    target = service._get(session, "problem", experiment.payload["problem_id"], reader)
+    if target.payload["target_digest"] != experiment.payload["target_digest"]:
+        raise _error("CONTEXT_TARGET_INVALID", "Experiment and target identities differ.")
+    if not target.payload.get("review_id"):
+        if target.payload.get("semantic_review") != "pending":
+            raise _error(
+                "CONTEXT_REVIEW_INVALID", "A reviewed target requires its canonical review."
+            )
+        return target, None
+    row = session.get(RecordRow, target.payload["review_id"])
+    if (
+        not row
+        or row.kind != "review"
+        or row.project_id != reader.project_id
+        or row.payload.get("problem_id") != target.id
+        or row.payload.get("target_digest") != target.payload["target_digest"]
+        or row.payload.get("decision") != target.payload.get("semantic_review")
+    ):
+        raise _error("CONTEXT_REVIEW_INVALID", "Target review identity is inconsistent.")
+    return target, copy.deepcopy(row.payload)
+
+
 def _encoded(value):
     return canonical_json(value).encode("utf-8")
 
@@ -158,28 +185,7 @@ class PortableMemory:
 
     def _core(self, session, branch, reader):
         experiment = self.service._get(session, "experiment", reader.experiment_id, reader)
-        target = self.service._get(session, "problem", experiment.payload["problem_id"], reader)
-        review = None
-        if target.payload.get("review_id"):
-            # This exception reads only the assigned target's canonical review. General
-            # review browsing remains subject to the service's branch visibility policy.
-            row = session.get(RecordRow, target.payload["review_id"])
-            if (
-                not row
-                or row.kind != "review"
-                or row.project_id != reader.project_id
-                or row.payload.get("problem_id") != target.id
-                or row.payload.get("target_digest") != target.payload["target_digest"]
-                or row.payload.get("decision") != target.payload.get("semantic_review")
-            ):
-                raise _error("CONTEXT_REVIEW_INVALID", "Target review identity is inconsistent.")
-            review = copy.deepcopy(row.payload)
-        elif target.payload.get("semantic_review") != "pending":
-            raise _error(
-                "CONTEXT_REVIEW_INVALID", "A reviewed target requires its canonical review."
-            )
-        if target.payload["target_digest"] != experiment.payload["target_digest"]:
-            raise _error("CONTEXT_TARGET_INVALID", "Experiment and target identities differ.")
+        target, review = checked_target(self.service, session, experiment, reader)
         tasks = [
             row
             for row in self._records(session, "task", reader)
@@ -429,28 +435,7 @@ class PortableMemory:
         with self.service.db.sessions() as session:
             branch, reader = self._reader(session, branch_id, actor)
             experiment = self.service._get(session, "experiment", reader.experiment_id, reader)
-            target = self.service._get(session, "problem", experiment.payload["problem_id"], reader)
-            if target.payload["target_digest"] != experiment.payload["target_digest"]:
-                raise _error("CONTEXT_TARGET_INVALID", "Experiment and target identities differ.")
-            review = None
-            if target.payload.get("review_id"):
-                row = session.get(RecordRow, target.payload["review_id"])
-                if (
-                    not row
-                    or row.kind != "review"
-                    or row.project_id != reader.project_id
-                    or row.payload.get("problem_id") != target.id
-                    or row.payload.get("target_digest") != target.payload["target_digest"]
-                    or row.payload.get("decision") != target.payload.get("semantic_review")
-                ):
-                    raise _error(
-                        "CONTEXT_REVIEW_INVALID", "Target review identity is inconsistent."
-                    )
-                review = copy.deepcopy(row.payload)
-            elif target.payload.get("semantic_review") != "pending":
-                raise _error(
-                    "CONTEXT_REVIEW_INVALID", "A reviewed target requires its canonical review."
-                )
+            target, review = checked_target(self.service, session, experiment, reader)
             current_task = None
             if task_id is not None:
                 row = self.service._get(session, "task", task_id, reader)
@@ -517,6 +502,11 @@ class PortableMemory:
                         record_json_text("experiment_id") == reader.experiment_id,
                         record_json_text("branch_id") == branch_id,
                         record_json_text("artifact_kind") == "lean_source",
+                        # A node module (provenance names a commons node) is that node's
+                        # lemma, and a flattened submission (provenance names the file it
+                        # expanded) is the platform's copy: neither is the branch's own source.
+                        RecordRow.payload[("provenance", "node_id")].as_string().is_(None),
+                        RecordRow.payload[("provenance", "expanded_from")].as_string().is_(None),
                     )
                     .order_by(record_json_text("created_at").desc(), RecordRow.id.desc())
                     .limit(1)

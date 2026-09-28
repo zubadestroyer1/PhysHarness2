@@ -1,5 +1,6 @@
 """Model-facing VM tools: fixed authority, lazy budgeted allocation, explicit cleanup."""
 
+import copy
 import hashlib
 import json
 import logging
@@ -7,6 +8,7 @@ import os
 import re
 import subprocess
 from decimal import Decimal
+from importlib import resources
 from pathlib import Path
 
 from pydantic import Field
@@ -15,7 +17,8 @@ from ..domain import Digest, StrictModel, digest_json
 from ..errors import HarnessError
 from ..execution import CommandRequest
 from ..execution.types import GUEST_PYTHON
-from .lean_session import LeanSession
+from ..formal_tools.declaration_index import MAX_RESULTS, MAX_ROW
+from .lean_session import LeanSession, _clip
 
 log = logging.getLogger(__name__)
 
@@ -56,6 +59,76 @@ def _checker_unavailable(template_id):
     )
 
 
+# find_declaration: the guest header-index script and a host cache of its query answers.
+DECLARATION_SCRIPT = ".physharness/declaration_index.py"
+MAX_DECLARATION_QUERIES = 512
+MAX_SUGGESTIONS = 5
+# (workspace, digest, mode, query), oldest first. A VM's answer is agent-controlled (its
+# shell can plant the index or overwrite the script), so no other workspace ever reads it.
+_DECLARATION_QUERIES: dict[tuple[str, str, str, str], dict] = {}
+# A declaration or module name as the guest's header scan captures one, bounded.
+_DECLARATION_NAME = re.compile(rf"[^\s\x00-\x1f\x7f\ud800-\udfff:({{\[⦃]{{1,{MAX_ROW}}}")
+_LIBRARY_ROOTS = ("--root", "/opt/sources/physlib", "--root", "/opt/sources/mathlib")
+_RG_FALLBACK = "use `shell` with `rg <query> /opt/sources/mathlib /opt/sources/physlib` instead."
+
+
+def _library_path(path, remediation) -> str:
+    """The guest path of a canonical ``mathlib/…`` or ``physlib/…`` Lean source path;
+    ``remediation`` names where the calling tool's paths come from."""
+    if (
+        not isinstance(path, str)
+        or "\x00" in path
+        or not path.endswith(".lean")
+        or not any(path.startswith(prefix) for prefix in ("mathlib/", "physlib/"))
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+    ):
+        raise HarnessError(
+            "UNSAFE_PATH",
+            "Library path must name a Mathlib or Physlib Lean source.",
+            remediation=remediation + ", such as mathlib/Mathlib/Analysis/Example.lean; "
+            "absolute and bare module paths are invalid.",
+        )
+    return "/opt/sources/" + path
+
+
+def _invalid_query(message):
+    return HarnessError("INVALID_QUERY", message, status=422)
+
+
+def _json_object(result):
+    """A guest script's one JSON object on stdout, or None."""
+    try:
+        observed = json.loads(result.get("stdout") or "")
+    except ValueError:
+        return None
+    return observed if isinstance(observed, dict) else None
+
+
+def _declaration_name(value):
+    return value if isinstance(value, str) and _DECLARATION_NAME.fullmatch(value) else None
+
+
+def _declaration_answer(observed):
+    """A guest query answer re-typed to the script's schema: at most MAX_RESULTS rows of at
+    most MAX_ROW characters, a top row naming a declaration and its module (or None), and
+    nothing else. An answer without a well-formed top row is not exact."""
+    rows = observed.get("rows") if isinstance(observed.get("rows"), list) else []
+    rows = [row for row in (_clip(row, MAX_ROW) for row in rows[:MAX_RESULTS]) if row]
+    top = observed.get("top") if isinstance(observed.get("top"), dict) else {}
+    top = {key: _declaration_name(top.get(key)) for key in ("name", "module")}
+    top = top if all(top.values()) else None
+    names = observed.get("did_you_mean")
+    names = names[:MAX_SUGGESTIONS] if isinstance(names, list) else []
+    indexed = observed.get("indexed")
+    return {
+        "rows": rows,
+        "exact": observed.get("exact") is True and top is not None,
+        "top": top,
+        "did_you_mean": [name for name in names if _declaration_name(name)],
+        "indexed": indexed if type(indexed) is int and indexed >= 0 else 0,
+    }
+
+
 class WorkspacePolicy(StrictModel):
     template_id: str = Field(min_length=1)
     environment_digest: Digest
@@ -67,6 +140,7 @@ class WorkspacePolicy(StrictModel):
 
 class WorkspaceTools:
     checker_self_test = False  # society_tools() enables it for tasks that publish Lean
+    _declaration_script_placed = False
 
     def __init__(self, broker, policy: WorkspacePolicy):
         self.broker, self.policy, self.workspace = broker, policy, None
@@ -388,21 +462,7 @@ print(json.dumps({'hits': hits, 'available_roots': available}, ensure_ascii=Fals
 
     async def lookup_library_source(self, arguments, operation_id):
         path = arguments["path"]
-        if (
-            not isinstance(path, str)
-            or "\x00" in path
-            or not path.endswith(".lean")
-            or not any(path.startswith(prefix) for prefix in ("mathlib/", "physlib/"))
-            or any(part in {"", ".", ".."} for part in path.split("/"))
-        ):
-            raise HarnessError(
-                "UNSAFE_PATH",
-                "Library path must name a Mathlib or Physlib Lean source.",
-                remediation="Use an unchanged search_library_source hits[].path, such as "
-                "mathlib/Mathlib/Analysis/Example.lean; absolute and bare module paths "
-                "are invalid.",
-            )
-        guest = "/opt/sources/" + path
+        guest = _library_path(path, "Use an unchanged search_library_source hits[].path")
         code = """
 import hashlib, json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
@@ -439,6 +499,106 @@ print(json.dumps({
             "guest_path": guest,
             "environment_digest": self.policy.environment_digest,
             "reason_code": None,
+        }
+
+    async def find_declaration(self, arguments, operation_id):
+        """Ranked pinned Mathlib and Physlib declarations, or a bounded read around one.
+
+        The guest script keeps a header index per environment digest under ``/work/.cache``,
+        which checkpoints never archive; this host caches the answers to repeated queries,
+        re-typed, per workspace.
+        """
+        query, path, line = arguments.get("query"), arguments.get("path"), arguments.get("line")
+        mode = arguments.get("mode", "name")
+        if path is None and line is None and query is not None:
+            if not isinstance(query, str) or not query.strip() or len(query) > 200:
+                raise _invalid_query("Supply a declaration query of 1 to 200 characters.")
+            if "\x00" in query:
+                raise _invalid_query("A declaration query cannot contain a NUL character.")
+            if mode not in ("name", "type"):
+                raise _invalid_query("mode must be name or type.")
+        elif query is None and path is not None and line is not None:
+            _library_path(path, "Use a path from a find_declaration row")
+            if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+                raise _invalid_query("line must be a positive line number.")
+        else:
+            raise _invalid_query("Supply exactly a query, or a path with a line.")
+        digest = self.policy.environment_digest
+        shown = {"environment_digest": digest, "mechanism": "declaration_header_index"}
+        if query is None:
+            argv = ["read", *_LIBRARY_ROOTS, path, str(line)]
+            result = await self._run_declaration_index(argv, operation_id)
+            observed = _json_object(result)
+            if result["exit_code"] or observed is None:
+                return {
+                    "path": path,
+                    "line": line,
+                    "reason_code": "declaration_read_failed",
+                    "diagnostics": result,
+                    **shown,
+                }
+            return {**observed, **shown}
+        found = _DECLARATION_QUERIES.get(((self.workspace or {}).get("id"), digest, mode, query))
+        if found is None:
+            index = f".cache/physharness/decls-{digest[:16]}.tsv"
+            argv = ["query", "--index", index, *_LIBRARY_ROOTS, "--mode", mode, "--", query]
+            result = await self._run_declaration_index(argv, operation_id)
+            observed = _json_object(result)
+            if result["exit_code"] or observed is None:
+                if (observed or {}).get("error") == "index_too_large":
+                    remediation = "Past the header-index cap; " + _RG_FALLBACK
+                else:
+                    remediation = "Retry once; if it fails again, " + _RG_FALLBACK
+                return {
+                    "rows": [],
+                    "reason_code": "declaration_index_failed",
+                    "diagnostics": result,
+                    "remediation": remediation,
+                    **shown,
+                }
+            key = (self.workspace["id"], digest, mode, query)  # the VM that answered
+            found = _DECLARATION_QUERIES[key] = {**_declaration_answer(observed), **shown}
+            while len(_DECLARATION_QUERIES) > MAX_DECLARATION_QUERIES:
+                del _DECLARATION_QUERIES[next(iter(_DECLARATION_QUERIES))]
+        found = copy.deepcopy(found)
+        if arguments.get("verify") and found["exact"]:
+            found["verified"] = await self._verify_declaration(found["top"], operation_id)
+        return found
+
+    async def _run_declaration_index(self, argv, operation_id):
+        if not self._declaration_script_placed:
+            script = resources.files("physharness.formal_tools") / "declaration_index.py"
+            await self.write(
+                {"path": DECLARATION_SCRIPT, "content": script.read_text("utf-8")},
+                operation_id + ":declaration-index-upload",
+            )
+            self._declaration_script_placed = True
+        result = await self.run(
+            {
+                "argv": [*GUEST_PYTHON, DECLARATION_SCRIPT, *argv],
+                "cwd": ".",
+                "timeout_seconds": min(self.policy.timeout_seconds, 120),
+            },
+            operation_id,
+        )
+        if result["exit_code"]:
+            self._declaration_script_placed = False  # a restored VM may have lost the script
+        return result
+
+    async def _verify_declaration(self, top, operation_id):
+        """``#check`` the top row in Lean; a name Lean syntax cannot take is reported."""
+        try:
+            checked = await self.lookup_library_declaration(
+                {"name": top["name"], "imports": [top["module"]]}, operation_id + ":verify"
+            )
+        except HarnessError as error:
+            if error.code not in ("INVALID_DECLARATION", "INVALID_IMPORTS"):
+                raise
+            return {"name": top["name"], "ok": False, "output": error.message}
+        return {
+            "name": top["name"],
+            "ok": checked["reason_code"] is None,
+            "output": checked["diagnostics"]["stdout"][:2000],
         }
 
     def polynomial(self, arguments, operation_id):

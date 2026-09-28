@@ -27,6 +27,9 @@ def build_service(settings: Settings) -> HarnessService:
     database = Database(settings.database_url)
     if settings.auto_create_schema:
         database.create_schema()
+    else:
+        # A `phys init` development database gains the tables added since it was made.
+        database.complete_development_schema()
     artifacts = (
         S3ArtifactStore(settings.artifact_bucket)
         if settings.artifact_bucket
@@ -84,4 +87,4 @@ def build_service(settings: Settings) -> HarnessService:
                 resource_profile_source_sha256=resource_source_sha256,
             )
         )
-    return HarnessService(database, artifacts, verifier)
+    return HarnessService(database, artifacts, verifier, model_prices=settings.model_prices)

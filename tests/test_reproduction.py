@@ -219,7 +219,7 @@ def test_society_export_adds_commons_records_edges_and_fetches(lab):
     )
     service.link_nodes(exp["id"], goal["id"], "depends_on", lemma["id"], alpha, "link")
     service.claim_node(lemma["id"], "claim", beta, "claim")
-    requested = service.request_review(lemma["id"], "informal", alpha, "review")
+    requested = service.request_review(lemma["id"], alpha, "review")
     referee = Principal(
         id="referee",
         role="agent",
@@ -261,7 +261,7 @@ def test_society_export_adds_commons_records_edges_and_fetches(lab):
         {"source": lemma["id"], "target": goal["id"], "relation": "motivated_by"},
     ]
     assert list(manifest).index("edges") == list(manifest).index("records") + 1
-    assert all(branch.get("lab") for branch in records["branch"] if branch.get("hat") is None)
+    assert not any("lab" in branch for branch in records["branch"])
     private = {"literature_screen", "masked_reference"}
     kinds = {artifact["artifact_kind"] for artifact in records["artifact"]}
     assert private <= kinds  # the operator's export holds the screen and the reference

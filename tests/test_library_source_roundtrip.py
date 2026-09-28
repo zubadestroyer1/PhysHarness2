@@ -160,6 +160,7 @@ async def test_lookup_rejects_unsafe_or_noncanonical_paths_without_running(sourc
     with pytest.raises(HarnessError) as error:
         await tools.lookup_library_source({"path": path}, "unsafe")
     assert error.value.code == "UNSAFE_PATH"
+    assert error.value.remediation.startswith("Use an unchanged search_library_source hits[].path")
     assert broker.calls == 0
 
 

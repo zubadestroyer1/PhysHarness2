@@ -1,9 +1,9 @@
-"""Local compiles rest on the harness statement check, never on the file's own output.
+"""Verified source ranks rest on the harness statement check, never on the file's output.
 
 Lean-marked tests run real Lean (``PHYSHARNESS_LEAN_CMD``, else elan's v4.33.0 toolchain)
 through the society ``lean_check`` tool and ``LeanSession.verify_statement``. They show that
-elaboration-level tricks in plain Lean source cannot move a false or axiom-dirty statement
-to ``compiles_locally``: an instance or macro that changes what the statement's text means,
+elaboration-level tricks in plain Lean source cannot publish a false or axiom-dirty statement
+as a ``verified`` source: an instance or macro that changes what the statement's text means,
 an elaborator that forges the ``#print axioms`` report, and a declaration added with
 ``debug.skipKernelTC``. (Compile-time code that writes VM files, like a shell command, can
 tamper with the check itself: the result is VM-attested.) They also show that honest
@@ -24,12 +24,15 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from commons_helpers import set_status, society_lab
+from commons_helpers import society_lab
 from test_lean_session import FakeWorkspaceTools, RealLeanScratchTools, lean_env  # noqa: F401
 from test_society_tools import FakeWorkspace, call, lemma_args, profile, running
 
+from physharness import commons_sources
+from physharness.commons_sources import refused_command
 from physharness.errors import HarnessError
 from physharness.formal_tools import statement_check as driver
+from physharness.orchestration import society_tools
 from physharness.orchestration import workspace_tools as workspace_tools_module
 from physharness.orchestration.lean_session import (
     CHECK_BACKEND,
@@ -43,7 +46,7 @@ from physharness.orchestration.workspace_tools import WorkspaceTools
 FALSE = {"lean_header": "import Lean", "lean_name": "bad", "lean_statement": ": (2 : Nat) + 2 = 5"}
 TRUE = {"lean_header": "import Lean", "lean_name": "good", "lean_statement": ": (2 : Nat) + 2 = 4"}
 # Each forgery is ordinary Lean source submitted through lean_check; before the statement
-# check, each moved the false node to compiles_locally (Lean 4.33, one-shot backend).
+# check, each moved the false node to the S1 status compiles_locally (Lean 4.33, one-shot).
 FORGERIES = {
     "instance_shadowing": (
         "import Lean\n\n"
@@ -72,11 +75,21 @@ FORGERIES = {
         "theorem bad : (2 : Nat) + 2 = 5 := lemmaFalse.elim\n"
     ),
 }
-FORGERY_REASONS = {
+# What lean_check does with each forgery: the refusal reason, or the rank it publishes (never
+# verified: the check finds the added axiom).
+FORGERY_OUTCOMES = {
     "instance_shadowing": "statement_mismatch",
     "macro_rules": "statement_mismatch",
-    "print_axioms_override": "nonstandard_axioms",
+    "print_axioms_override": "partial",
     "skip_kernel_tc": "kernel_rejected",
+}
+# The command the publication gate names for each forgery (PR 37 review): it refuses all but
+# the instance before any check, since an importer would run the rest.
+GATED = {
+    "instance_shadowing": None,
+    "macro_rules": "macro_rules",
+    "print_axioms_override": "Lean",
+    "skip_kernel_tc": "Lean",
 }
 HONEST = (
     "import Lean\n\n"
@@ -152,7 +165,6 @@ async def _formal_node(tools, service, node):
         tools, "commons_node", {"action": "set_lean_statement", "node_id": created["id"], **node}
     )
     assert stated["lean_elaborated"] is True, stated
-    set_status(service, created["id"], "formally_stated")
     return created["id"]
 
 
@@ -161,7 +173,13 @@ async def _formal_node(tools, service, node):
 
 @pytest.mark.lean
 @pytest.mark.parametrize("backend", ["one_shot", "repl_inline", "repl"])
-async def test_elaboration_tricks_cannot_forge_a_local_compile(lab, real_lean, backend):
+async def test_elaboration_tricks_cannot_forge_a_verified_source(
+    lab, real_lean, backend, monkeypatch
+):
+    assert {label: refused_command(source) for label, source in FORGERIES.items()} == GATED
+    # With the gate lifted, the statement check must still stop each one on its own.
+    for module in (commons_sources, society_tools):
+        monkeypatch.setattr(module, "refused_command", lambda source: None)
     service, author, exp, branches, _ = society_lab(lab)
     alpha, context = running(service, author, exp, branches[0]["id"])
     session = LeanSession(_tools(real_lean, backend))
@@ -170,20 +188,121 @@ async def test_elaboration_tricks_cannot_forge_a_local_compile(lab, real_lean, b
     for label, source in FORGERIES.items():
         checked = await call(tools, "lean_check", {"source": source, "node_id": node})
         # The session's own report may say complete with no axioms; it does not decide.
-        assert checked["local_compile"]["recorded"] is False, (label, checked)
-        assert checked["local_compile"]["reason"] == FORGERY_REASONS[label], (label, checked)
-        assert service.get_record("commons_node", node, alpha)["status"] == "formally_stated"
+        published = checked["published"]
+        outcome = published.get("rank") if published["recorded"] else published["reason"]
+        assert outcome == FORGERY_OUTCOMES[label], (label, checked)
+        stored = service.read_node(node, alpha)["node"]
+        assert (stored["lean_source"] or {}).get("rank") != "verified", (label, stored)
     assert session._backend == backend
-    # An honest proof of a true statement still compiles locally, on the check's axioms.
+    # An honest proof of a true statement is published verified, on the check's axioms.
     honest = await _formal_node(tools, service, TRUE)
     checked = await call(tools, "lean_check", {"source": HONEST, "node_id": honest})
-    assert checked["local_compile"]["recorded"] is True, checked
-    assert checked["local_compile"]["status_evidence"] == {
-        "source_sha256": checked["source_sha256"],
-        "backend": CHECK_BACKEND,
-        "axioms": {"good": []},
-    }
-    assert service.get_record("commons_node", honest, alpha)["status"] == "compiles_locally"
+    assert checked["published"]["rank"] == "verified", checked
+    stored = service.read_node(honest, alpha)["node"]
+    assert stored["lean_source"]["statement_check"] == {"ok": True, "reason": None, "axioms": []}
+    assert stored["status"] == "open"  # only the independent verifier accepts
+
+
+@pytest.mark.lean
+async def test_a_skeleton_ranks_partial_until_its_stubs_are_filled(lab, real_lean):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    session = LeanSession(_tools(real_lean, "one_shot"))
+    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean=session))
+    node = await _formal_node(tools, service, TRUE)
+    skeleton = (
+        "import Lean\n\n"
+        "theorem step : (2 : Nat) + 2 = 4 := sorry\n\n"
+        "theorem good : (2 : Nat) + 2 = 4 := step\n"
+    )
+    checked = await call(tools, "lean_check", {"source": skeleton, "node_id": node, "stubs": True})
+    (stub,) = checked["stubs"]
+    assert stub["created"] is True, checked
+    # The published text has no sorry of its own; the stub it imports inlines as sorry.
+    assert "sorry" not in checked["skeleton_source"]
+    assert checked["complete"] is False and checked["published"]["rank"] == "partial", checked
+    # Filled under the skeleton's plain header, the stub passes the statement check, and the
+    # republished skeleton is verified.
+    filled = "import Lean\n\ntheorem step : (2 : Nat) + 2 = 4 := rfl\n"
+    proved = await call(tools, "lean_check", {"source": filled, "node_id": stub["node_id"]})
+    assert proved["published"]["rank"] == "verified", proved
+    source = checked["skeleton_source"]
+    again = await call(tools, "lean_check", {"source": source, "node_id": node})
+    assert again["published"]["rank"] == "verified", again
+
+
+@pytest.mark.lean
+async def test_stub_headers_refuse_auto_bound_definition_names(lab, real_lean):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    session = LeanSession(_tools(real_lean, "one_shot"))
+    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean=session))
+    node = await _formal_node(tools, service, TRUE)
+    # Lean's default binds an unknown non-function name as a variable: false, yet it elaborates.
+    # (An unknown applied name, f 0, is refused either way.)
+    auto = await session.elaborate_statements(
+        "import Lean", [("two_eq", ": two = 2", ()), ("f0", ": f 0 = 1", ())], operation_id="a"
+    )
+    assert [result["ok"] for result in auto] == [True, False], auto
+    skeleton = (
+        "import Lean\n\n"
+        "def two : Nat := 2\n\n"
+        "def f (n : Nat) : Nat := n\n\n"
+        "theorem two_eq : two = 2 := sorry\n\n"
+        "theorem f0 : f 0 = 1 := sorry\n\n"
+        "theorem good : (2 : Nat) + 2 = 4 := rfl\n"
+    )
+    checked = await call(tools, "lean_check", {"source": skeleton, "node_id": node, "stubs": True})
+    assert [(s["lean_name"], s["created"], s["reason"]) for s in checked["stubs"]] == [
+        ("two_eq", False, "stub_needs_skeleton_definition"),
+        ("f0", False, "stub_needs_skeleton_definition"),
+    ], checked
+    assert checked["skeleton_source"] == skeleton and checked["published"]["rank"] == "partial"
+    # The skeleton's own autoImplicit true does not reach the stub elaboration.
+    permissive = skeleton.replace("\n\ndef two", "\nset_option autoImplicit true\n\ndef two", 1)
+    checked = await call(
+        tools, "lean_check", {"source": permissive, "node_id": node, "stubs": True}
+    )
+    reasons = [s["reason"] for s in checked["stubs"]]
+    assert reasons == ["stub_needs_skeleton_definition"] * 2, checked
+
+
+@pytest.mark.lean
+async def test_node_statements_elaborate_without_auto_bound_names(lab, real_lean):
+    service, author, exp, branches, _ = society_lab(lab)
+    alpha, context = running(service, author, exp, branches[0]["id"])
+    session = LeanSession(_tools(real_lean, "one_shot"))
+    tools = profile(service, alpha, context, workspace=FakeWorkspace(lean=session))
+    node = (await call(tools, "commons_node", lemma_args()))["id"]
+
+    async def state(header, signature):
+        fields = {"lean_header": header, "lean_name": "gap", "lean_statement": signature}
+        return await call(
+            tools, "commons_node", {"action": "set_lean_statement", "node_id": node, **fields}
+        )
+
+    # Lean's default binds the unknown spectralGap as a variable: the statement elaborates.
+    permissive = "import Lean\nset_option autoImplicit true"
+    unbound = "(n : Nat) : n + spectralGap ≤ n + 1"
+    auto = await session.elaborate_statement(permissive, "gap", unbound, operation_id="auto")
+    assert auto["ok"] is True, auto
+    # A node statement elaborates with it off, whatever the header sets: Lean refuses it.
+    refused = await state(permissive, unbound)
+    assert refused["lean_elaborated"] is False, refused
+    assert any("spectralGap" in m["text"] for m in refused["elaboration"]["messages"])
+    # So is an undeclared universe; a header universe line declares it.
+    assert (await state("import Lean", "{α : Type u} (a : α) : a = a"))["lean_elaborated"] is False
+    # Explicitly bound, the same text means the same to the statement check, whose
+    # reference keeps Lean's default: a proof of it publishes verified.
+    for header, signature, proof in (
+        ("import Lean", "(n g : Nat) (h : g ≤ 1) : n + g ≤ n + 1", "by omega"),
+        ("import Lean\nuniverse u", "{α : Type u} (a : α) : a = a", "rfl"),
+    ):
+        stated = await state(header, signature)
+        assert stated["lean_elaborated"] is True, stated
+        source = f"{header}\n\ntheorem gap {signature} := {proof}\n"
+        checked = await call(tools, "lean_check", {"source": source, "node_id": node})
+        assert checked["published"]["rank"] == "verified", checked
 
 
 @pytest.mark.lean
@@ -202,7 +321,7 @@ async def test_statement_check_verdicts_on_real_lean(real_lean):
             assert verdict["ok"] is True and verdict["axioms"] == ["cheat"], verdict
         else:
             assert verdict["ok"] is False, (label, verdict)
-            assert verdict["reason"] == FORGERY_REASONS[label], (label, verdict)
+            assert verdict["reason"] == FORGERY_OUTCOMES[label], (label, verdict)
     classical = (
         "import Lean\n\ntheorem good : (2 : Nat) + 2 = 4 ∧ (True ∨ ¬True) :=\n"
         "  ⟨rfl, Classical.em True⟩\n"
