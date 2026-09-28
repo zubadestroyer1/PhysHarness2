@@ -266,9 +266,11 @@ tools, the prompts and the delivery shapes.
       `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), any `builtin_…`,
       `declare_…` or `register_…` command, and `unsafe`, as a declaration modifier or as
       Lean's term `unsafe t` (which runs `t` through an unsafe helper), bracketed or not.
-      Only aesop's rule phase passes: `unsafe` followed by a success probability or a
-      rule builder, in the innermost bracket of an aesop clause (`aesop (add unsafe 50%
-      apply foo)`, `(erase …)`, or an attribute entry `@[aesop unsafe 20% apply]`). A
+      Only aesop's rule phase passes: `unsafe` followed by a success probability written
+      `N%` (no space) or a rule builder, in the innermost bracket of a clause of an
+      aesop-family tactic (`aesop (add unsafe 50% apply foo)`, `aesop? (config := …)
+      (erase …)`, `aesop_cat …`: the tactic's word comes right before the clause or its
+      earlier clauses) or of an attribute entry `@[aesop unsafe 20% apply]`. A
       name with a component starting with `unsafe` (`unsafeBaseIO`, `unsafeCast`, …) is
       refused too;
     - `notation`, `notation3`, `infix`, `infixl`, `infixr`, `prefix` or `postfix` unless

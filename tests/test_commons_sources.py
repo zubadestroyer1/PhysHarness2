@@ -905,6 +905,11 @@ def test_the_gate_allows_unsafe_only_as_aesops_rule_phase():
     hints = (
         "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50% apply id)\n",
         "theorem t (p : Prop) (h : p) : p := by\n  aesop (add safe apply id, unsafe apply id)\n",
+        # After earlier clauses of the same call, and from aesop's other tactics.
+        "theorem t (p : Prop) (h : p) : p := by\n"
+        "  aesop (config := { terminal := true }) (add unsafe 50% apply id)\n",
+        "theorem t (p : Prop) (h : p) : p := by aesop? (add unsafe 50% apply id)\n",
+        "theorem t (p : Prop) (h : p) : p := by aesop_cat (erase unsafe apply id)\n",
         "@[aesop unsafe 50% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
         "@[simp, aesop unsafe 20% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
         "attribute [local aesop unsafe 20% apply] Nat.le_succ\n",
@@ -919,6 +924,10 @@ def test_the_gate_allows_unsafe_only_as_aesops_rule_phase():
         "theorem t : True := by exact (unsafe trivial)\n": "unsafe",
         "def x : List Nat := [unsafe 0]\n": "unsafe",
         "def x : Nat := (add unsafe 0)\n": "unsafe",  # no probability or builder follows
+        # A clause only after an aesop tactic, and a probability only as N%, no space.
+        "def f := (add <| unsafe 5 % 2)\n": "unsafe",
+        "def f := foo (add unsafe 50% apply id)\n": "unsafe",
+        "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50 % apply id)\n": "unsafe",
         "@[aesop (rule_sets := [unsafe 50% apply])] theorem l : True := trivial\n": "unsafe",
         "def x : Nat := unsafeBaseIO (pure 0)\n": "unsafeBaseIO",
         "def x : Nat := (unsafeCast ())\n": "unsafeCast",
