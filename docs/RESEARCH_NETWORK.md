@@ -564,9 +564,10 @@ tools, the prompts and the delivery shapes.
   and S1's search counts in it. A
   builder's `find_declaration` surfaces the closest two notes on a weak (non-exact) hit,
   each with its author, beside `library_notes_are` (the same label), but only a note
-  that quotes, in backticks, a name equal to a query word, or a name holding a `.` or `_`
-  that prefixes a query word at a `.` or `_` (either way: `PiLp.toLp` and
-  `PiLp.toLp_apply`; a bare `Finset` meets only `Finset`), ranked first, or that shares
+  that quotes, in backticks, a name equal to a query word, or one of the two prefixing
+  the other at a `.` or `_` when the shorter holds a `.` or `_` itself (`PiLp.toLp` and
+  `PiLp.toLp_apply`, either way; a bare `Finset`, quoted or queried, meets only
+  `Finset`), ranked first, or that shares
   two of the query's words of three or more characters (its one such word, for a
   one-word query). Prose words such as "not", "this" and "pin" count toward those two
   but never match. A referee's `find_declaration` surfaces none.

@@ -164,6 +164,26 @@ def test_a_quoted_namespace_meets_only_an_equal_query_word(lab):
     assert surfaced("Finset") == [note]
 
 
+@pytest.mark.parametrize(
+    ("name", "word", "meets"),
+    [
+        ("Matrix.dotProduct", "Matrix.dotProduct_comm", True),
+        ("Matrix.dotProduct_comm", "Matrix.dotProduct", True),
+        ("PiLp.toLp", "PiLp.toLp_apply", True),
+        ("Matrix.vecMul", "Matrix.vecMul_mul", True),
+        ("Matrix.vecMul_mul", "Matrix.vecMul", True),
+        ("Finset", "Finset", True),
+        # A bare name, quoted or queried, meets no longer name under it.
+        ("Finset", "Finset.sum_comm", False),
+        ("Finset.card_le", "Finset", False),
+        ("Matrix.vecMul_mul", "Matrix", False),
+        ("Matrix.dot", "Matrix.dotProduct", False),
+    ],
+)
+def test_a_prefix_meets_only_when_the_shorter_name_is_qualified(name, word, meets):
+    assert notes_module._names_meet(name, word) == meets
+
+
 def test_the_checked_in_seed_covers_the_s1_audit_findings():
     seeded = " ".join(notes_module.seed_notes(S1_DIGEST))
     assert "Matrix.dotProduct" in seeded and "Perron" in seeded and len(seeded) < 3 * 2000
