@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import sqlalchemy
 from commons_helpers import set_status, society_lab
 from test_commons_sources import publish
 from test_execution_responses import message
@@ -274,6 +275,21 @@ async def test_wait_tool_parks_on_events_and_shows_the_long_pole(lab):
     assert rejected["error"]["code"] == "INVALID_ARGUMENTS"
 
 
+async def test_an_s1_peer_wait_resumed_mid_call_is_answered_not_fatal(lab):
+    """Merge audit: an S1 checkpoint saved during wait(for="peer") re-dispatches that call on
+    resume. The current schema has no such wait, so it is answered with a recoverable
+    rejection, as a removed tool is, instead of a fatal INVALID_TOOL_ARGUMENTS."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context)
+    legacy = {"for": "peer", "ids": [beta.branch_id], "timeout_seconds": 60}
+    rejected = await call(tools, "wait", legacy)
+    assert set(rejected) == {"error"} and rejected["error"]["code"] == "TOOL_UNAVAILABLE"
+    assert rejected["error"]["details"] == {"available_waits": ["tasks", "events"]}
+    assert "for='events'" in rejected["error"]["remediation"]
+    assert service.get_record("task", context["task_id"], author).get("handoff_intent") is None
+
+
 def test_the_waiters_own_moves_do_not_wake_it_and_a_peers_do(lab):
     service, author, exp, _, (alpha, beta) = society_lab(lab)
     goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
@@ -311,6 +327,42 @@ def test_the_waiters_own_moves_do_not_wake_it_and_a_peers_do(lab):
         "reason": "platform test",
         "branch_id": None,
     }
+
+
+@pytest.mark.parametrize("mover", ["peer", "own"])
+def test_a_wait_anchors_on_what_the_agents_last_request_showed(lab, mover):
+    """Merge audit: news that commits after the agent's last request was sent (while it
+    generated, or while earlier tools of its response ran) and before its wait registers is
+    still unseen, so it wakes the wait: a watched node's new claimant, and a long pole a peer
+    moved. The waiter's own moves in that response stay no news."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)  # the waiter, on alpha
+    peer = beta if mover == "peer" else agent
+    goal = service.query_nodes(exp["id"], alpha, node_type="goal")["items"][0]
+    first, second = lemma(service, exp, peer, "First"), lemma(service, exp, peer, "Second")
+    for target in (first, second):
+        service.link_nodes(
+            exp["id"], goal["id"], "depends_on", target["id"], alpha, f"l-{target['id']}"
+        )
+    anchor = service.anchor_request(context["task_id"], context["holder"], context["fence"], agent)
+    assert set(anchor["long_pole_ids"]) == {first["id"], second["id"]}
+    service.claim_node(second["id"], "claim", peer, "claims-during-generation")
+    service.abandon_node(first["id"], "Dead end.", peer, "moves-during-generation")
+
+    def wait(ids, key):
+        with worker_effects(agent, context["task_id"], context["holder"], context["fence"]):
+            waited = service.request_event_wait(context["task_id"], ids, 600, agent, key)
+        return {**waited["intent"]["peer_wait"], "min_sleep_until": 0}
+
+    watched, unwatched = wait([second["id"]], "watch"), wait([], "no-watch")
+    assert watched["event_after"] == unwatched["event_after"] == anchor["event_sequence"]
+    if mover == "peer":
+        assert set(unwatched["long_pole_ids"]) == {first["id"], second["id"]}
+        assert reason(service, watched, agent) == "watched_event"
+        assert reason(service, unwatched, agent) == "long_pole_changed"
+    else:
+        assert unwatched["long_pole_ids"] == [second["id"]]
+        assert reason(service, watched, agent) == reason(service, unwatched, agent) == "waiting"
 
 
 def test_the_long_pole_is_recomputed_only_when_the_graph_changes(lab, monkeypatch):
@@ -838,29 +890,94 @@ def manifest_for(exp, author, roots, **limits):
     )
 
 
-@pytest.mark.parametrize("state", ["queued", "running"])
+@pytest.mark.parametrize("state", [None, "queued", "running"])
 async def test_another_live_task_of_the_experiment_keeps_the_run_going(lab, monkeypatch, state):
     """The idle stop does not assume one runner: a task this run does not own, queued or
-    running (another runner's or worker's), may still wake a waiter."""
+    running (another runner's or worker's), may still wake a waiter. Without one the run
+    stops idle well within the same timeout (merge audit: an idle stop takes over 3 s)."""
     monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
     service, author, exp, branches, _ = society_lab(lab)
     root = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
     )
-    other = service.create_task(
-        TaskCreate(branch_id=branches[1]["id"], objective="Elsewhere"), author, "other"
-    )
-    if state == "running":
-        service.acquire_task(other["id"], "another-runner", 60, OPERATOR, "lease-other")
-    assert service.get_record("task", other["id"], author)["status"] == state
+    if state:
+        other = service.create_task(
+            TaskCreate(branch_id=branches[1]["id"], objective="Elsewhere"), author, "other"
+        )
+        if state == "running":
+            service.acquire_task(other["id"], "another-runner", 60, OPERATOR, "lease-other")
+        assert service.get_record("task", other["id"], author)["status"] == state
     payloads = []
     runner, client = society_runner(service, waiting_route(payloads, 3600))
     try:
-        report = await runner.run(manifest_for(exp, author, [root], timeout_seconds=2))
+        report = await runner.run(manifest_for(exp, author, [root], timeout_seconds=10))
     finally:
         await client.close()
-    assert report["stop_reason"] == "TEAM_TIMEOUT" and len(payloads) == 1
+    assert report["stop_reason"] == ("TEAM_TIMEOUT" if state else "SOCIETY_IDLE")
+    assert len(payloads) == 1
     assert service.get_record("task", root["id"], author)["ready_continuation"]
+
+
+async def test_a_recruit_beyond_max_tasks_stops_the_idle_run_at_the_task_limit(lab, monkeypatch):
+    """Merge audit: a recruit this run may not start (max_tasks reached) is no live work, so
+    once the rest of the society waits the run stops TEAM_TASK_LIMIT instead of sleeping to
+    TEAM_TIMEOUT; the recruit stays queued for a later run."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            helper = {"brief": "Help.", "title": "Helper", "detached": True}
+            return [tool_call("recruit", helper, "r-1")]
+        if phase == 1:
+            wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+            return [tool_call("wait", wait, "w-1")]
+        return [message("Root done.")]
+
+    route, phases = scripted_society_route(root_steps, {"Help": lambda p, o: [message("ok")]})
+    runner, client = society_runner(service, route)
+    started = asyncio.get_running_loop().time()
+    try:
+        report = await runner.run(manifest_for(exp, author, [root], max_tasks=1))
+    finally:
+        await client.close()
+    assert report["stop_reason"] == "TEAM_TASK_LIMIT" and phases == {"root": 2, "referee": 0}
+    assert asyncio.get_running_loop().time() - started < 10
+    (helper,) = [
+        task for task in service.list_records("task", author, exp["id"]) if task["id"] != root["id"]
+    ]
+    assert helper["status"] == "queued" and helper["id"] in report["remaining_task_ids"]
+
+
+@pytest.mark.parametrize("woken", [False, True])
+async def test_another_runners_parked_waiter_counts_as_waiting(lab, monkeypatch, woken):
+    """Merge audit: a task another runner parked on a society wait is waiting, not live work,
+    once this run checks its wait the same way: two runners of one society each stop idle.
+    If its wait can wake (here a message reached it), its runner may act, so no idle stop."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (alpha, beta) = society_lab(lab)
+    theirs = service.create_task(
+        TaskCreate(branch_id=branches[1]["id"], objective="Theirs"), author, "theirs"
+    )
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 3600, waits=2))
+    try:
+        first = await runner.run(manifest_for(exp, author, [theirs]))
+        if woken:
+            service.send_society_message(alpha.branch_id, beta.branch_id, "Hi.", [], alpha, "m")
+        mine = service.create_task(
+            TaskCreate(branch_id=branches[0]["id"], objective="Mine"), author, "mine"
+        )
+        report = await runner.run(manifest_for(exp, author, [mine], timeout_seconds=10))
+    finally:
+        await client.close()
+    assert first["stop_reason"] == "SOCIETY_IDLE" and len(payloads) == 2
+    assert report["stop_reason"] == ("TEAM_TIMEOUT" if woken else "SOCIETY_IDLE")
+    for task in (mine, theirs):
+        assert service.get_record("task", task["id"], author)["ready_continuation"]
 
 
 async def test_a_due_synthesis_is_scheduled_before_an_idle_stop(lab, monkeypatch):
@@ -896,6 +1013,37 @@ async def test_a_due_synthesis_is_scheduled_before_an_idle_stop(lab, monkeypatch
     assert service.get_record("task", root["id"], author)["ready_continuation"]
 
 
+async def test_a_due_synthesis_refused_admission_is_not_scheduled(lab, monkeypatch):
+    """Merge audit: near the end of a budget, dollar admission refuses a due synthesis. The
+    tick schedules nothing, the run stops idle and writes its report instead of raising."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+
+    def discuss():
+        for title in ("Trace lemma", "Gap lemma", "Cut lemma", "Sum lemma"):
+            set_status(service, lemma(service, exp, beta, title)["id"], "abandoned")
+        request = ConfigureWorkforceRequest(
+            synthesis_interval_posts=4, admission_floor_usd="1000000"
+        )
+        service.configure_workforce(exp["id"], request, OPERATOR, "synthesis-on")
+
+    payloads = []
+    runner, client = society_runner(service, waiting_route(payloads, 3600, before_wait=discuss))
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    assert report["stop_reason"] == "SOCIETY_IDLE" and len(payloads) == 1
+    tasks = service.list_records("task", author, exp["id"])
+    assert not any(task.get("synthesis") for task in tasks)
+    assert service.get_record("artifact", report["artifact_id"], author)["artifact_kind"] == (
+        "team_run_report"
+    )
+
+
 async def test_the_wake_note_carries_the_watched_events_detail(lab, monkeypatch):
     monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
     service, author, exp, branches, (_, beta) = society_lab(lab)
@@ -927,6 +1075,45 @@ async def test_the_wake_note_carries_the_watched_events_detail(lab, monkeypatch)
     ]
 
 
+async def test_a_watched_event_during_the_waiters_last_request_wakes_it(lab, monkeypatch):
+    """Merge audit: the worker anchors each builder request just before it is sent, so a
+    claim on a watched node made while the final request generates wakes the wait it asks
+    for (its event_after is the request's, not the wait's registration)."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    node = lemma(service, exp, beta, "Watched")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    claimed = []
+
+    def during_generation():
+        claimed.append(service.claim_node(node["id"], "claim", beta, "beta-claims"))
+
+    payloads = []
+    route = waiting_route(payloads, 3600, ids=[node["id"]], before_wait=during_generation)
+    client = mock_client(route)
+    executor = ResearchTaskExecutor(
+        service,
+        prices=PRICES,
+        runtime_factory=lambda **kwargs: ResponsesRuntime(client=client, **kwargs),
+        limits=RuntimeLimits(max_turns=30),
+    )
+    try:
+        parked = await executor.execute(root["id"], author.project_id)
+        woke = await executor.execute(root["id"], author.project_id)
+    finally:
+        await client.close()
+    assert claimed and parked["status"] == "continuation" and woke["status"] == "completed"
+    assert wake_notes(payloads[1]) == [
+        {
+            "type": "wake",
+            "reason": "watched_event",
+            "detail": {"kind": "commons.node_claim", "aggregate_id": node["id"]},
+        }
+    ]
+
+
 def test_the_event_head_moves_only_on_events_that_can_wake_a_waiter(lab):
     """Final review B-I3: model-turn accounting and other experiments' commons events leave
     the head alone, so they cause no wake checks."""
@@ -948,6 +1135,52 @@ def test_the_event_head_moves_only_on_events_that_can_wake_a_waiter(lab):
     assert service.event_head(author, exp["id"]) > moved
     stranger = Principal(id="stranger", project_id="elsewhere", role="operator")
     assert service.event_head(stranger, exp["id"]) == 0
+
+
+def query_plans(service, run, marker):
+    """The SQLite plans of the statements containing ``marker`` that ``run()`` executes."""
+    queries = []
+
+    def capture(connection, cursor, statement, parameters, context, executemany):
+        if marker in statement:
+            queries.append((statement, parameters))
+
+    sqlalchemy.event.listen(service.db.engine, "before_cursor_execute", capture)
+    try:
+        run()
+    finally:
+        sqlalchemy.event.remove(service.db.engine, "before_cursor_execute", capture)
+    assert queries
+    with service.db.engine.connect() as connection:
+        return [
+            [row[-1] for row in connection.exec_driver_sql("EXPLAIN QUERY PLAN " + sql, params)]
+            for sql, params in queries
+        ]
+
+
+async def test_wait_queries_use_the_experiment_indexes(lab):
+    """Merge audit: a bound JSON path never matches an expression index, so the event head and
+    the graph checks inline theirs, and a scoped waiter's recruit lookup names its experiment."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    scoped = await scoped_waiter(service, author, exp, alpha)
+    set_status(service, lemma(service, exp, beta, "Moved")["id"], "abandoned")
+    indexed = "events_discussion_experiment_sequence (project_id=? AND kind=? AND <expr>=?"
+    (head,) = query_plans(service, lambda: service.event_head(author, exp["id"]), "UNION ALL")
+    assert sum(indexed in step for step in head) == len(continuation.WAKE_KINDS)
+    graph = query_plans(
+        service, lambda: service.peer_wait_status(scoped.ticket, scoped.recruit), "events.kind IN"
+    )
+    assert [plan for plan in graph if not any(indexed in step for step in plan)] == []
+    set_status(service, scoped.node["id"], "abandoned")  # delivered: its recruits are read
+    (children,) = query_plans(
+        service,
+        lambda: service.peer_wait_status(scoped.ticket, scoped.recruit),
+        "reply_to_parent_task_id",
+    )
+    assert any(
+        "records_project_kind_experiment_keyset (project_id=? AND kind=? AND <expr>=?)" in step
+        for step in children
+    )
 
 
 async def test_legacy_waits_still_resume_portably(lab, monkeypatch):
@@ -1048,6 +1281,80 @@ async def test_a_parked_scoped_recruit_wakes_when_a_peer_proves_its_node(lab, mo
     note = service.artifact_content(recruit["evidence_ids"][0], author).decode()
     assert note == research_worker.COMPLETION_NOTES["scope_proved"]
     assert service.get_record("task", root["id"], author)["status"] == "completed"
+
+
+async def test_a_scoped_recruit_parked_on_a_detached_helper_ends_when_its_node_is_proved(
+    lab, monkeypatch
+):
+    """Merge audit: the root waits for its until_proved recruit, which waits for tasks on a
+    detached helper parked on events. A peer then proves the recruit's node. The recruit
+    wakes without another request although its helper is pending, ends scope_proved, and
+    the root resumes: no false SOCIETY_IDLE with both stranded. The helper, not joined,
+    keeps its wait."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (alpha, _) = society_lab(lab)
+    agent, context = running(service, author, exp, alpha.branch_id)
+    tools = profile(service, agent, context, workspace=FakeWorkspace())
+    node = await call(tools, "commons_node", lemma_args())
+    await call(
+        tools, "commons_node", {"action": "set_lean_statement", "node_id": node["id"], **LEAN}
+    )
+    node = service.read_node(node["id"], agent)["node"]
+    finish_task(service, context["task_id"])
+    root = service.create_task(
+        TaskCreate(branch_id=branches[1]["id"], objective="Root"), author, "root"
+    )
+    proved, status = [], service.peer_wait_status
+
+    def proving(ticket, actor):
+        result = status(ticket, actor)
+        if result["reason"] == "waiting" and not proved:  # the helper parked, checked
+            proved.append(True)
+            digest = node["lean_statement_sha256"]
+            publish(service, node["id"], alpha, "complete", "peer", lean_statement_sha256=digest)
+        return result
+
+    monkeypatch.setattr(service, "peer_wait_status", proving)
+
+    def root_steps(phase, outputs):
+        if phase == 0:
+            brief = {"brief": "Prove it.", "title": "Prover", "focus_node_id": node["id"]}
+            return [tool_call("recruit", {**brief, "until_proved": True}, "r-1")]
+        if phase == 1:
+            return [tool_call("wait", {"for": "tasks", "ids": [outputs[0]["task_id"]]}, "w-1")]
+        return [message("Root done.")]
+
+    def prover_steps(phase, outputs):
+        if phase == 0:
+            side = {"brief": "Side lookup.", "title": "Side", "detached": True}
+            return [tool_call("recruit", side, "r-2")]
+        if phase == 1:
+            return [tool_call("wait", {"for": "tasks", "ids": [outputs[-1]["task_id"]]}, "w-2")]
+        return [message("Unneeded.")]
+
+    def side_steps(phase, outputs):
+        wait = {"for": "events", "ids": [], "timeout_seconds": 3600}
+        return [tool_call("wait", wait, "w-3")] if phase == 0 else [message("Side done.")]
+
+    route, phases = scripted_society_route(
+        root_steps, {"Prove it": prover_steps, "Side lookup": side_steps}
+    )
+    runner, client = society_runner(service, route)
+    try:
+        report = await runner.run(run_manifest(exp, author, root))
+    finally:
+        await client.close()
+    tasks = service.list_records("task", author, exp["id"])
+    prover = next(task for task in tasks if task.get("scope"))
+    side = next(task for task in tasks if task["objective"].startswith("Side lookup"))
+    assert proved and phases["Prove it"] == 2 and phases["root"] == 3
+    assert prover["status"] == "completed"
+    source = service.read_node(node["id"], alpha)["node"]["lean_source"]
+    assert prover["return_result"]["artifact_ids"][0] == source["artifact_id"]
+    assert service.get_record("task", root["id"], author)["status"] == "completed"
+    # Only the detached helper still waits, on events that nothing can now bring.
+    assert side["ready_continuation"]["reason"] == "wait_for_events"
+    assert report["stop_reason"] == "SOCIETY_IDLE"
 
 
 def waiter_and_peer(service, author, branches, peer="Busy"):

@@ -8,8 +8,8 @@ from .domain import Money, StrictModel
 
 
 class ConfigureWorkforceRequest(StrictModel):
-    # Optional count caps: legacy experiments default them to 10,000; in a society they are
-    # an operator guard that ignores referee tasks.
+    # Count caps: required for a legacy experiment (configure_workforce refuses a request
+    # without both, 422); optional in a society, as an operator guard that ignores referees.
     max_total_tasks: int | None = Field(default=None, ge=1, le=100_000)
     max_pending_tasks: int | None = Field(default=None, ge=1, le=100_000)
     expected_revision: int | None = Field(default=None, ge=1)

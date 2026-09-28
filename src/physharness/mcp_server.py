@@ -33,15 +33,15 @@ def _page(path, after=None, limit=20):
 @mcp.tool()
 def configure_workforce(
     experiment_id: str,
+    max_total_tasks: int | None,
+    max_pending_tasks: int | None,
     operation_id: str,
-    max_total_tasks: int | None = None,
-    max_pending_tasks: int | None = None,
     expected_revision: int | None = None,
     synthesis_interval_posts: int = 0,
     admission_floor_usd: str | None = None,
 ) -> dict:
-    """Set optional operator task caps, a society's optional admission floor in USD and the
-    synthesis cadence within the experiment envelope."""
+    """Set operator task caps (null only for a society), a society's optional admission floor
+    in USD and the synthesis cadence within the experiment envelope."""
     body = {
         "max_total_tasks": max_total_tasks,
         "max_pending_tasks": max_pending_tasks,

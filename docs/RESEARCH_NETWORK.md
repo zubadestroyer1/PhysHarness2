@@ -446,7 +446,9 @@ tools, the prompts and the delivery shapes.
     statement changed after recruitment. A parked recruit's wait watches its node, so
     each of these endings wakes it (`scope_delivered`), whether or not it still claims
     the node, and it ends without another request; with joined recruits of its own
-    pending, the wake waits for them (see below).
+    pending, the wake waits for them (see below). A recruit parked with `for="tasks"` wakes
+    the same way while the recruits it waits for are still pending, provided none of them
+    is joined: its detached recruits keep running, and nothing tells them it ended.
     A recruit whose node is proved or closed while it is still queued, or while its first
     request waits for rate admission, ends before that request is sent. Every later session,
     such as a wake from a wait, is checked the same way, but ends there only for its scope
@@ -474,16 +476,18 @@ tools, the prompts and the delivery shapes.
     `PHYSHARNESS_MODEL_PRICES`. That is the API for HTTP and MCP requests, and the worker
     (or `phys run-team`) for work its agents and supervisor start. Compose and the AWS task
     definitions give the API and the worker the same table. A model missing from the
-    admitting process's table counts 0, so only the floor applies to it; a worker whose
-    table lacks the model refuses to run it (`MODEL_PRICE_REQUIRED`).
+    admitting process's table counts 0, so only the floor applies to it: some dollars must
+    still remain above the floor, so nothing is admitted with the budget exhausted. A worker
+    whose table lacks the model refuses to run it (`MODEL_PRICE_REQUIRED`).
   - There is no floor by default: `None` reads as `0`. An operator sets one with
     `configure_workforce`.
   - Admission reserves nothing. The ledger still hard-stops every reservation at
     `max_cost`.
   - `max_total_tasks` and `max_pending_tasks` are an optional operator guard that ignores
-    referee tasks: unset, they cap nothing. Legacy experiments keep their count caps, and
-    `configure_workforce` refuses a floor for them (`ADMISSION_FLOOR_REQUIRES_SOCIETY`,
-    422).
+    referee tasks: unset, they cap nothing. Legacy experiments keep their count caps:
+    `configure_workforce` requires both for them (`WORKFORCE_CAPS_REQUIRED`, 422) and
+    refuses a floor (`ADMISSION_FLOOR_REQUIRES_SOCIETY`, 422). The MCP tool keeps its
+    legacy parameter order; a society passes `null` caps.
 - **Messages.** There are no labs (S1 audit #15). `message` reaches one branch, or, given
   a node id, whoever works on that node: its author and live claimants, never the sender,
   at most 8 (`NO_RECIPIENTS` when nobody else does). Each delivered copy counts against
@@ -510,6 +514,14 @@ tools, the prompts and the delivery shapes.
     once its own joined recruits have settled;
   - the timeout (default 1,800 s, at most 3,600 s).
 
+  Watched and long-pole news counts from the agent's last request, not from the wait's
+  registration: just before each builder request is sent, the worker records on the task
+  the latest event sequence and the long pole then (`request_anchor`), and a wait from that
+  request's response starts there. News that committed while the request generated, or
+  while earlier tools of the same response ran, therefore still wakes it; if another
+  branch changed the graph in that window, the long pole is compared with the anchored
+  one. The ticket carries both, so a native resume after a restart keeps them.
+
   The first 20 s are a minimum sleep (shorter only for a shorter timeout), so a burst of
   events wakes once. A graph or subscription limit hit while checking wakes the waiter
   with reason `wait_error` and the error code, instead of ending the run. The long pole is
@@ -534,9 +546,13 @@ tools, the prompts and the delivery shapes.
   30 s (a PostgreSQL event can commit behind one already seen); and at most once every
   2 s, except at its timeout. A run stops with `SOCIETY_IDLE` when all its agents wait and
   only their timeouts could wake them: no other task of the experiment is queued or
-  running (another runner's or worker's work could still wake them), every task wait has
+  running (another runner's or worker's work could still wake them), except a task
+  another runner parked on a society wait, which counts as waiting once this runner checks
+  its wait the same way, and a task this run may not start (`max_tasks`), which counts as
+  neither and makes the stop `TEAM_TASK_LIMIT`; every task wait has
   a live recruit, no verification receipt is queued, and a synthesis that is due has been
-  scheduled first. A second such observation at least 1 s after the first, with every
+  scheduled first. A due synthesis that admission refuses (the dollar floor or a task cap) is
+  logged and tried again at a later tick; it never ends the run. A second such observation at least 1 s after the first, with every
   wait checked again, confirms the stop. The constitution and the `wait` tool tell agents
   that a run whose agents all wait ends. The waits keep their tickets, so a later run
   resumes them.
@@ -621,7 +637,9 @@ module's output is its publisher's text. With modules inlined, its axiom report 
 the declarations of the referee's own text and counts the rest (`axioms_withheld`), since a
 «guillemet» declaration name can hold near-arbitrary text.
 A call to a tool outside the agent's profile returns a `TOOL_UNAVAILABLE` rejection
-that lists the available tools. Rejections count per native session whatever the name,
+that lists the available tools. So does S1's removed `wait(for="peer")`, which an S1
+checkpoint saved mid-call re-dispatches on resume; its rejection says to message the peer
+and wait for events. Rejections count per native session whatever the name,
 so a model that keeps inventing names reaches the stagnation warning after four and the
 stagnation handoff after eight. That warning is separate from the repeated-read warning,
 so neither silences the other. The finite supervisor runs the referee tasks its own

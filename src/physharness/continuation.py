@@ -10,7 +10,15 @@ from .domain import digest_json, utcnow
 from .errors import HarnessError
 from .execution.types import ExecutionError
 from .execution.workspace_archive import checked_path
-from .storage import BudgetRow, EventRow, LeaseRow, RecordRow, ReservationRow, record_json_text
+from .storage import (
+    BudgetRow,
+    EventRow,
+    LeaseRow,
+    RecordRow,
+    ReservationRow,
+    event_json_text,
+    record_json_text,
+)
 from .worker_authority import current_worker_effects
 
 EVENT_WAIT_MIN_SLEEP_SECONDS = 20  # Debounces a burst of events into one wake.
@@ -65,7 +73,7 @@ def _graph_events(experiment):
     return (
         EventRow.project_id == experiment.project_id,
         EventRow.kind.in_(LONG_POLE_KINDS),
-        EventRow.payload["experiment_id"].as_string() == experiment.id,
+        event_json_text("experiment_id") == experiment.id,
     )
 
 
@@ -1197,9 +1205,31 @@ class ContinuationMixin:
                 select(func.max(EventRow.sequence)).where(*_graph_events(experiment))
             )
             long_pole_ids = self._long_pole_ids_at(session, experiment, actor, graph_head)
+            # Watched and long-pole events wake from what the agent's last request could show
+            # it (its request anchor, merge audit), not from this registration: news that
+            # committed while that request generated, or while earlier tools of its response
+            # ran, is unseen. Without an anchor (no request yet), from now.
+            anchor = task.payload.get("request_anchor") or {}
+            event_after = anchor.get("event_sequence", self._discussion_max_sequence(session))
+            if (
+                anchor.get("long_pole_ids") is not None
+                and session.scalar(
+                    select(EventRow.sequence)
+                    .where(
+                        *_graph_events(experiment),
+                        EventRow.sequence > event_after,
+                        _not_by(actor.branch_id),
+                    )
+                    .limit(1)
+                )
+                is not None
+            ):
+                # Another branch changed the graph since: compare with the pole then. Else
+                # any change since is the waiter's own, which is not news.
+                long_pole_ids = anchor["long_pole_ids"]
             now = utcnow()
             # Updates wake from the acknowledged delivery position, as a peer wait's reply
-            # does; watched and long-pole events only from those after this request.
+            # does.
             reader = self._discussion_reader(session, experiment.id, actor)
             peer_wait = {
                 "kind": "events",
@@ -1209,7 +1239,7 @@ class ContinuationMixin:
                 "watch_node_ids": watched["commons_node"],
                 "watch_branch_ids": watched["branch"],
                 "after_sequence": reader.payload["ack_sequence"] if reader else 0,
-                "event_after": self._discussion_max_sequence(session),
+                "event_after": event_after,
                 "long_pole_ids": sorted(long_pole_ids),
                 "requested_at": now.isoformat(),
                 "deadline_at": now.timestamp() + timeout_seconds,
@@ -1254,6 +1284,43 @@ class ContinuationMixin:
                 session, experiment, actor, self._live_claims(session, experiment)
             )
         return {**result, "long_pole": long_pole}
+
+    def anchor_request(self, task_id, holder, fence, actor):
+        """Record on a society task what the request about to be sent can show its agent
+        (merge audit): the latest event sequence and the goal's long-pole ids (None past a
+        graph limit). An event wait registered from that request's response anchors on them.
+        Also the request's last check that the experiment is active and the lease current."""
+
+        def long_pole(session, experiment, head):
+            try:
+                return sorted(self._long_pole_ids_at(session, experiment, actor, head))
+            except HarnessError:
+                return None
+
+        def graph_head(session, experiment):
+            return session.scalar(
+                select(func.max(EventRow.sequence)).where(*_graph_events(experiment))
+            )
+
+        # The long pole comes from the memo, computed outside the lock for a new graph.
+        with self.db.sessions() as session:
+            experiment_id = self._get(session, "task", task_id, actor).payload["experiment_id"]
+            experiment = self._get(session, "experiment", experiment_id, actor)
+            head = graph_head(session, experiment)
+            ids = long_pole(session, experiment, head)
+        with self.db.transaction() as session:
+            # Under the experiment lock, so no commons event commits below the anchor.
+            experiment = self._active(session, experiment_id, actor)
+            self._fenced(session, task_id, holder, fence)
+            task = self._get(session, "task", task_id, actor)
+            if (locked_head := graph_head(session, experiment)) != head:
+                ids = long_pole(session, experiment, locked_head)
+            anchor = {
+                "event_sequence": self._discussion_max_sequence(session),
+                "long_pole_ids": ids,
+            }
+            self._replace(session, task, {"request_anchor": anchor})
+            return anchor
 
     def _wait_ended(self, session, peer_wait, actor):
         """The waiter's experiment, and whether it was cancelled or the waiting task ended."""
@@ -1379,6 +1446,13 @@ class ContinuationMixin:
             return status(True, "wait_error", {"code": error.code})
         return status(False, "waiting")
 
+    def scope_delivered(self, task_id, actor):
+        """Whether a scoped recruit can end now (``_scope_delivered``): a recruit parked on
+        its recruits wakes for it too, whether or not they have finished (merge audit)."""
+        self._research_role(actor)
+        with self.db.sessions() as session:
+            return self._scope_delivered(session, {"task_id": task_id}, actor)
+
     @staticmethod
     def _scope_delivered(session, peer_wait, actor):
         """Whether the waiter is a scoped recruit that can end now: its work is delivered
@@ -1396,8 +1470,9 @@ class ContinuationMixin:
             .where(
                 RecordRow.project_id == actor.project_id,
                 RecordRow.kind == "task",
-                RecordRow.payload["reply_to_parent_task_id"].as_string() == task.id,
-                RecordRow.payload["status"].as_string().not_in(["completed", "failed", "blocked"]),
+                record_json_text("experiment_id") == task.payload["experiment_id"],
+                record_json_text("reply_to_parent_task_id") == task.id,
+                record_json_text("status").not_in(["completed", "failed", "blocked"]),
             )
             .limit(1)
         )
@@ -1422,7 +1497,7 @@ class ContinuationMixin:
             .where(
                 EventRow.project_id == experiment.project_id,
                 EventRow.sequence > peer_wait["event_after"],
-                EventRow.payload["experiment_id"].as_string() == experiment.id,
+                event_json_text("experiment_id") == experiment.id,
                 or_(
                     and_(EventRow.kind.in_(NODE_WATCH_KINDS), EventRow.aggregate_id.in_(nodes)),
                     and_(EventRow.kind.in_(BRANCH_WATCH_KINDS), branch.in_(branches)),
@@ -1483,7 +1558,7 @@ class ContinuationMixin:
         supervisor checks parked event waits again only when it moves."""
         self._research_role(actor)
         project = EventRow.project_id == actor.project_id
-        experiment = EventRow.payload["experiment_id"].as_string() == experiment_id
+        experiment = event_json_text("experiment_id") == experiment_id
         # One indexed maximum per kind: events_discussion_experiment_sequence serves each.
         heads = union_all(
             *(

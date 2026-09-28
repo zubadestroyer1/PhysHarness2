@@ -277,7 +277,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 
 - **Root accepted:** an independent kernel receipt on the exact root statement triggers a bounded wrap-up (final synthesis, proof outline, write-up), then stop. This is already implemented as exact-target stop and bounded drain.
 - **Other stops:** budget exhausted, operator stop, or a stagnation policy (no new complete or verified source and no new receipt within a configured spend). Each produces an honest report of the frontier, obstacles and partial results.
-- **Idle stop (S1 remediation).** When every agent waits, nothing is admissible and no new event has arrived, the finite runner stops (`SOCIETY_IDLE`) instead of sleeping out the waits; the waits keep their tickets for a later run.
+- **Idle stop (S1 remediation).** When every agent waits, nothing is admissible and no new event has arrived, the finite runner stops (`SOCIETY_IDLE`, or `TEAM_TASK_LIMIT` when only tasks beyond its task limit remain) instead of sleeping out the waits; another runner's parked agents count as waiting, and the waits keep their tickets for a later run.
 
 ---
 

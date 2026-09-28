@@ -573,10 +573,12 @@ wake-event head moves (events that can wake a waiter; model-turn `resources.*` a
 moves it), its minimum sleep or deadline passes, or its last check is 30 s old, and at most once
 every 2 s except at its deadline. A woken wait runs without another check. It stops with
 `SOCIETY_IDLE` once every pending task waits, every event wait found nothing at the current head,
-no other task of the experiment is queued or running, every task wait has a live child, no parked
-scoped recruit's work is delivered, no verification receipt is queued, and a due synthesis has
-been scheduled; a second such observation at least 1 s later, with every wait checked again,
-confirms the stop.
+no other task of the experiment is queued or running (a task another runner parked on a society
+wait counts as waiting once its wait is checked the same way; a task this run may not start under
+`max_tasks` counts as neither, and the stop is then `TEAM_TASK_LIMIT`), every task wait has a live
+child, no parked scoped recruit's work is delivered, no verification receipt is queued, and a due
+synthesis has been scheduled (one that admission refuses is logged and retried at a later tick); a
+second such observation at least 1 s later, with every wait checked again, confirms the stop.
 
 When enabled, one independent verification worker at a time calls the existing canonical
 `process_verification` route under a verifier identity. It handles receipts on the selected

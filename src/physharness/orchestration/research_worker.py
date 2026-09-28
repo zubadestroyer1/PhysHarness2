@@ -73,6 +73,9 @@ EVENT_WAIT_MIN_RECHECK_SECONDS = 2
 # An idle stop needs a second idle observation this long after the first, with every event
 # wait checked again in between: an event that committed behind the head is then found.
 SOCIETY_IDLE_CONFIRM_SECONDS = 1
+# Admission refusals of a society's due synthesis (the dollar floor or a task cap): nothing is
+# scheduled, its sample stays pending, and a later tick tries again.
+SYNTHESIS_REFUSALS = frozenset({"ADMISSION_BUDGET", "TASK_TOTAL_CAP", "TASK_PENDING_CAP"})
 # Endings a resumed society session takes before its first request. result_returned is not
 # one: a resumed joined recruit reads its children's results first.
 SCOPE_ENDINGS = frozenset({"scope_proved", "scope_closed"})
@@ -1231,7 +1234,10 @@ class ResearchTaskExecutor:
                         branch_id=task["branch_id"],
                     ),
                 )
-                if not child_status["all_terminal"]:
+                # A scoped recruit whose work is delivered ends without its detached recruits.
+                if not child_status["all_terminal"] and not (
+                    task.get("scope") and self.service.scope_delivered(task_id, actor)
+                ):
                     return {"task_id": task_id, "status": "waiting", "code": "CHILDREN_PENDING"}
             if ready.get("peer_wait"):
                 waiter = Principal(
@@ -1469,9 +1475,13 @@ class ResearchTaskExecutor:
                 if event.kind == "generation_started":
                     # This is the last synchronous hook before responses.create. An
                     # artifact upload may have outlived the lease or experiment.
-                    with self.service.db.transaction() as session:
-                        self.service._active(session, experiment["id"], actor)
-                        self.service._fenced(session, task_id, holder, lease["fence"])
+                    if society and not referee:
+                        # Also what this request can show a builder: its waits anchor there.
+                        self.service.anchor_request(task_id, holder, lease["fence"], agent)
+                    else:
+                        with self.service.db.transaction() as session:
+                            self.service._active(session, experiment["id"], actor)
+                            self.service._fenced(session, task_id, holder, lease["fence"])
             except Exception:
                 if event.kind == "generation_started" and event.operation_id in reservations:
                     self.service.settle_resources(
@@ -2416,6 +2426,8 @@ class ResearchTeamRunner:
         # Each event wait's last check, (event head, wall time, reason, ready), until its task
         # runs: see wait_check_due (S1 #14). A woken wait runs without another check.
         wait_checks = {}
+        # Each scoped task wait's last undelivered scope check, (event head, wall time).
+        scope_checks = {}
         # The wall time of the first of two idle observations an idle stop needs, or None.
         idle_since = None
         stop_reason = None
@@ -2429,6 +2441,7 @@ class ResearchTeamRunner:
         scheduled_synthesis_ids = set()
         own_synthesis_ids = set()  # Scheduled by this run, not adopted from another.
         next_synthesis_tick = 0.0
+        synthesis_refused = None  # The last tick's admission refusal, logged once per streak.
 
         def platform_lineage_task_ids(tasks):
             """Tasks in lineages rooted at referee or parentless synthesis branches.
@@ -2520,14 +2533,59 @@ class ResearchTeamRunner:
                 )
             )
 
-        def all_waiting(pending, head, checked_after=0):
+        def scope_wakes(task, wall):
+            """Whether a scoped recruit parked on its recruits can end now, its work delivered
+            and no joined recruit pending (merge audit): checked again once the event head
+            moves or the last check is EVENT_WAIT_MAX_STALE_SECONDS old."""
+            if not experiment.get("society") or not task.get("scope"):
+                return False
+            last = scope_checks.get(task["id"])
+            if last and last[0] == head and wall - last[1] < EVENT_WAIT_MAX_STALE_SECONDS:
+                return False
+            if self.service.scope_delivered(task["id"], actor):
+                return True
+            scope_checks[task["id"]] = (head, wall)
+            return False
+
+        def check_wait(task, ticket, wall):
+            """A parked wait's wake status, read as its branch; an event wait's check is kept
+            in wait_checks."""
+            waiter = Principal(
+                id="team-peer-wait-reader",
+                project_id=actor.project_id,
+                role="agent",
+                experiment_id=experiment["id"],
+                branch_id=task["branch_id"],
+            )
+            status = self.service.peer_wait_status(ticket, waiter)
+            if ticket.get("kind") == "events":
+                wait_checks[task["id"]] = (head, wall, status["reason"], status["ready"])
+            return status
+
+        def society_wait(task):
+            """A queued task's society wait ticket (on events, or on recruits), or None."""
+            ticket = task.get("ready_continuation") or {}
+            peer_wait = ticket.get("peer_wait")
+            if task["status"] != "queued" or not ticket:
+                return None
+            if (peer_wait or {}).get("kind") == "events" or (
+                ticket.get("wait_task_ids") and not peer_wait
+            ):
+                return ticket
+            return None
+
+        def all_waiting(pending, head, checked_after=0, *, own=(), capped=()):
             """Whether the society is idle (S1 #14): every pending task waits, at least one on
             events; every event wait found nothing at this head (checked at or after
             ``checked_after``), which is still current; and in a fresh read of the store no
             other task of the experiment is queued or running, every task wait has a live
             recruit, no scoped recruit's work is delivered and no verification receipt is
             queued. Neither this run nor another runner, worker or verifier can then act, so
-            no event can come to wake it."""
+            no event can come to wake it. Two exceptions (merge audit): ``capped`` tasks, this
+            run's own that it may not start (``max_tasks``), neither act nor wait while they
+            stay queued; and a queued task outside this run's selection (``own``) that is
+            parked on a society wait counts as waiting once its wait is checked the same way,
+            since the runner that owns it can wake it only for what wakes this run's."""
             terminal = {"completed", "failed", "blocked"}
             tickets = {task["id"]: task.get("ready_continuation") or {} for task in pending}
             events = [
@@ -2548,17 +2606,34 @@ class ResearchTeamRunner:
                 return False
             tasks = list(self._records("task", actor, experiment["id"]))
             statuses = {task["id"]: task["status"] for task in tasks}
+            wall = utcnow().timestamp()
+            waiters = dict(tickets)
+            for task in tasks:
+                if task["status"] in terminal or (
+                    task["id"] in capped and task["status"] == "queued"
+                ):
+                    continue
+                if task["id"] in tickets:
+                    if (
+                        task["status"] != "queued"
+                        or task.get("ready_continuation") != tickets[task["id"]]
+                    ):
+                        return False
+                    continue
+                ticket = society_wait(task) if task["id"] not in own else None
+                if ticket is None:
+                    return False  # live work, this run's or another runner's or worker's
+                waiters[task["id"]] = ticket
+                if ticket.get("peer_wait"):
+                    last = wait_checks.get(task["id"])
+                    if wait_check_due(ticket["peer_wait"], last, wall):
+                        check_wait(task, ticket["peer_wait"], wall)
+                        last = wait_checks[task["id"]]
+                    if (last[0], last[2]) != (head, "waiting") or last[1] < checked_after:
+                        return False
             if not all(
-                task["status"] in terminal
-                or (
-                    task["id"] in tickets
-                    and task["status"] == "queued"
-                    and task.get("ready_continuation") == tickets[task["id"]]
-                )
-                for task in tasks
-            ) or not all(
                 any(statuses.get(child) not in {None, *terminal} for child in child_ids)
-                for child_ids in (t.get("wait_task_ids") for t in tickets.values())
+                for child_ids in (t.get("wait_task_ids") for t in waiters.values())
                 if child_ids
             ):
                 return False
@@ -2568,10 +2643,12 @@ class ResearchTeamRunner:
                 if task["status"] not in terminal
             }
             for task in tasks:
-                if task["id"] in events and task.get("scope") and task["id"] not in joined_pending:
+                # Event and task waits alike: a delivered recruit ends however its wait stands.
+                if task["id"] in waiters and task.get("scope") and task["id"] not in joined_pending:
                     node = self.service.get_record("commons_node", task["scope"]["node_id"], actor)
                     if scope_ending(task["scope"], node) is not None:
                         wait_checks.pop(task["id"], None)  # check it at once: it can end
+                        scope_checks.pop(task["id"], None)
                         return False
             return not any(
                 receipt["status"] == "queued"
@@ -2670,9 +2747,22 @@ class ResearchTeamRunner:
                         ]
                         > 0
                     ):
-                        synthesis = self.service.schedule_research_synthesis(
-                            experiment["id"], actor, f"run-synthesis:{manifest.run_id}:{new_id()}"
-                        )
+                        try:
+                            synthesis = self.service.schedule_research_synthesis(
+                                experiment["id"],
+                                actor,
+                                f"run-synthesis:{manifest.run_id}:{new_id()}",
+                            )
+                        except HarnessError as error:
+                            if error.code not in SYNTHESIS_REFUSALS or not experiment.get(
+                                "society"
+                            ):
+                                raise  # Legacy runs keep their behaviour.
+                            if error.code != synthesis_refused:
+                                log.info("Due synthesis not admitted: %s", error.code)
+                            synthesis, synthesis_refused = {"scheduled": False}, error.code
+                        else:
+                            synthesis_refused = None
                         if synthesis.get("scheduled"):
                             branch_parents = {
                                 branch["id"]: branch.get("parent_id")
@@ -2746,9 +2836,13 @@ class ResearchTeamRunner:
                         outcomes[task_id] = {"task_id": task_id, "status": task["status"]}
                         continue
                     ready_ticket = task.get("ready_continuation")
-                    if ready_ticket and any(
-                        task_states.get(child_id) not in {"completed", "failed", "blocked"}
-                        for child_id in ready_ticket.get("wait_task_ids", [])
+                    if (
+                        ready_ticket
+                        and any(
+                            task_states.get(child_id) not in {"completed", "failed", "blocked"}
+                            for child_id in ready_ticket.get("wait_task_ids", [])
+                        )
+                        and not scope_wakes(task, utcnow().timestamp())
                     ):
                         continue
                     if ready_ticket and ready_ticket.get("peer_wait"):
@@ -2759,22 +2853,7 @@ class ResearchTeamRunner:
                         if not (events and last is not None and last[3]):  # woken: run it
                             if events and not wait_check_due(ticket, last, wall):
                                 continue  # Nothing new since the last check.
-                            waiter = Principal(
-                                id="team-peer-wait-reader",
-                                project_id=actor.project_id,
-                                role="agent",
-                                experiment_id=experiment["id"],
-                                branch_id=task["branch_id"],
-                            )
-                            status = self.service.peer_wait_status(ticket, waiter)
-                            if events:
-                                wait_checks[task_id] = (
-                                    head,
-                                    wall,
-                                    status["reason"],
-                                    status["ready"],
-                                )
-                            if not status["ready"]:
+                            if not check_wait(task, ticket, wall)["ready"]:
                                 continue
                     is_referee = task.get("hat") == REFEREE_HAT
                     if not slots:
@@ -2807,6 +2886,7 @@ class ResearchTeamRunner:
                         continue
                     attempted.add(task_id)
                     wait_checks.pop(task_id, None)  # its next ticket is checked afresh
+                    scope_checks.pop(task_id, None)
                     if is_referee:
                         active_referees.add(task_id)
                     else:
@@ -2828,24 +2908,38 @@ class ResearchTeamRunner:
                         break
                     pending = [task for task in selected if task["id"] not in outcomes]
                     society = experiment.get("society")
+                    # A society's research tasks this run may not start (max_tasks): its idle
+                    # stop is then TEAM_TASK_LIMIT, as a legacy run's stop is.
+                    capped = {
+                        task["id"]
+                        for task in pending
+                        if society
+                        and task.get("hat") != REFEREE_HAT
+                        and task["id"] not in research_attempted
+                        and len(research_attempted) >= manifest.max_tasks
+                    }
+                    waiting = [task for task in pending if task["id"] not in capped]
+                    idle_scope = {"own": {task["id"] for task in selected}, "capped": capped}
                     if (
                         society
                         and idle_since is not None
-                        and all_waiting(pending, head, idle_since + SOCIETY_IDLE_CONFIRM_SECONDS)
+                        and all_waiting(
+                            waiting, head, idle_since + SOCIETY_IDLE_CONFIRM_SECONDS, **idle_scope
+                        )
                     ):
                         # A second idle observation, every wait checked again since the first.
                         if synthesis_ticked:
                             # Every agent waits with nothing admissible: stop rather than sleep
                             # out the timeouts. The tasks keep their tickets for a later run.
-                            stop_reason = "SOCIETY_IDLE"
+                            stop_reason = "TEAM_TASK_LIMIT" if capped else "SOCIETY_IDLE"
                             break
                         next_synthesis_tick = 0.0  # a synthesis due now is work: tick first
-                    elif society and all_waiting(pending, head):
+                    elif society and all_waiting(waiting, head, **idle_scope):
                         idle_since = idle_since or utcnow().timestamp()
                     else:
                         idle_since = None
                     if any(
-                        (task.get("ready_continuation") or {}).get("peer_wait") for task in pending
+                        (task.get("ready_continuation") or {}).get("peer_wait") for task in waiting
                     ):
                         # The prior handoff has settled its worker slot. Keep this
                         # finite supervisor alive for a message or absolute timeout.

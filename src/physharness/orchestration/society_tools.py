@@ -797,9 +797,12 @@ class SocietyDispatcher(ToolDispatcher):
 
     Models do emit unregistered names (a referee calling ``wait``, or
     ``multi_tool_use.parallel``); the base dispatcher's fatal error would end the runtime.
+    So is S1's removed ``wait(for="peer")``, which a checkpoint saved mid-call re-dispatches
+    on resume; the current schema would refuse it fatally (merge audit).
     """
 
     async def dispatch(self, name, arguments, operation_id):
+        error = None
         if name not in self._tools:
             error = HarnessError(
                 "TOOL_UNAVAILABLE",
@@ -808,6 +811,15 @@ class SocietyDispatcher(ToolDispatcher):
                 details={"available_tools": sorted(self._tools)},
                 operation_id=operation_id,
             )
+        elif name == "wait" and arguments.get("for") == "peer":
+            error = HarnessError(
+                "TOOL_UNAVAILABLE",
+                "wait(for='peer') was removed; wait takes for='tasks' or for='events'.",
+                remediation="Message the peer, then wait(for='events'): a reply to you wakes you.",
+                details={"available_waits": ["tasks", "events"]},
+                operation_id=operation_id,
+            )
+        if error is not None:
             log.warning(
                 "Research tool rejected: %s", error.code, extra={"operation_id": operation_id}
             )
