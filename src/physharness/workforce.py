@@ -361,7 +361,7 @@ class WorkforceMixin:
             limits = RuntimeLimits.model_validate(experiment.payload.get("runtime_limits") or {})
         except ValidationError:
             return 0  # The worker refuses these limits (INVALID_CONFIG) before any model call.
-        return _micro(price.cost(0, limits.max_output_tokens))
+        return _micro(price.reservation_cost(0, limits.max_output_tokens))
 
     def _admit_by_budget(self, session, experiment, policy, models):
         """Society work is admitted while the remaining dollars, less the operator's floor,
