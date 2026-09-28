@@ -843,12 +843,14 @@ REFUSED = {
     ),
     "open Lean in\ntheorem a : True := trivial\n": "Lean",
     "def t := _root_.IO.FS.writeFile\n": "_root_.IO.FS.writeFile",
-    "def t := «IO».FS.writeFile\n": "IO.FS.writeFile",
-    # A meta namespace anywhere in a name, escaped components read as written plainly.
+    # A meta namespace anywhere in a name.
     "def t := Std.IO.Process.setCwd\n": "Std.IO.Process.setCwd",
-    "def t := «_root_».«IO».FS.writeFile\n": "_root_.IO.FS.writeFile",
-    "def t := «_root_».IO.FS.writeFile\n": "_root_.IO.FS.writeFile",
     "theorem Foo.IO : True := trivial\n": "Foo.IO",
+    # Any escaped name in code, whatever it escapes: a published module needs none.
+    "def t := «IO».FS.writeFile\n": "«…»",
+    "def t := «_root_».«IO».FS.writeFile\n": "«…»",
+    "def t := «_root_».IO.FS.writeFile\n": "«…»",
+    "theorem Foo.bar : True := trivial\ntheorem h : Foo.bar := Foo.«bar»\n": "«…»",
     "#exit\n": "#exit",
 }
 ALLOWED = (
@@ -863,8 +865,9 @@ ALLOWED = (
     "set_option push_neg.use_distrib true in\nset_option simprocs false in\n"
     "set_option tactic.hygienic false in\nset_option backward.isDefEq.lazyWhnfCore false in\n"
     "theorem t : True := trivial\n",
-    # An ordinary dotted or escaped name passes.
-    "theorem Foo.bar : True := trivial\ndef EIOx : ℕ := 1\ntheorem h : Foo.bar := Foo.«bar»\n",
+    # An ordinary dotted name passes, and so does « in a string or comment.
+    "theorem Foo.bar : True := trivial\ndef EIOx : ℕ := 1\ntheorem h : Foo.bar := Foo.bar\n",
+    'def s := "«x»"\n-- «IO».FS.writeFile\n/- « -/ theorem t : True := trivial\n',
     '-- run_cmd, #eval\n/- macro_rules -/ theorem a : "run_cmd".length = 7 := rfl\n',
     "theorem x (init : Nat) : List.foldl (· + ·) init [] = init := rfl\n",
     "noncomputable section\nnamespace Foo\nopen Real\n"
@@ -879,6 +882,21 @@ def test_the_publication_gate_refuses_code_and_syntax_beyond_the_module():
         assert refused_command(f"import Mathlib\n\n{body}") is None, body
 
 
+def test_the_gate_refuses_any_escaped_name_the_scanner_reads_as_code():
+    """PR 37 final review: escaped names were matched by a pattern over the raw text, so a
+    stray « in a string or comment paired with the next » and hid the escaped name after it.
+    The scanner's own escaped-name tokens are refused instead, wherever they are code."""
+    for body in (
+        'def s := "«"\n#check «IO».FS.Handle',
+        "def a := 1 -- «\n#check «IO».FS.Handle",
+        "def c := (0 : Nat) /- « -/\n#check Std.«IO».Process.setCwd",
+        'def s := "«"\n#check «unsafeBaseIO»',
+        'def s := s!"{«IO».FS.Handle}"',  # an interpolation is code
+    ):
+        assert refused_command(f"import Mathlib\n{body}") == "«…»", body
+    assert "rename" in gate_remedy("«…»").lower() and "«»" in gate_remedy("«…»")
+
+
 def test_the_gate_allows_unsafe_only_as_aesops_rule_phase():
     """PR 37 re-audits: aesop's `unsafe` rule phase (87 Mathlib lines) is no declaration,
     but Lean's term `unsafe t` runs `t` through an unsafe helper, and bracketed it passed.
@@ -887,6 +905,11 @@ def test_the_gate_allows_unsafe_only_as_aesops_rule_phase():
     hints = (
         "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50% apply id)\n",
         "theorem t (p : Prop) (h : p) : p := by\n  aesop (add safe apply id, unsafe apply id)\n",
+        # After earlier clauses of the same call, and from aesop's other tactics.
+        "theorem t (p : Prop) (h : p) : p := by\n"
+        "  aesop (config := { terminal := true }) (add unsafe 50% apply id)\n",
+        "theorem t (p : Prop) (h : p) : p := by aesop? (add unsafe 50% apply id)\n",
+        "theorem t (p : Prop) (h : p) : p := by aesop_cat (erase unsafe apply id)\n",
         "@[aesop unsafe 50% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
         "@[simp, aesop unsafe 20% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
         "attribute [local aesop unsafe 20% apply] Nat.le_succ\n",
@@ -901,6 +924,10 @@ def test_the_gate_allows_unsafe_only_as_aesops_rule_phase():
         "theorem t : True := by exact (unsafe trivial)\n": "unsafe",
         "def x : List Nat := [unsafe 0]\n": "unsafe",
         "def x : Nat := (add unsafe 0)\n": "unsafe",  # no probability or builder follows
+        # A clause only after an aesop tactic, and a probability only as N%, no space.
+        "def f := (add <| unsafe 5 % 2)\n": "unsafe",
+        "def f := foo (add unsafe 50% apply id)\n": "unsafe",
+        "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50 % apply id)\n": "unsafe",
         "@[aesop (rule_sets := [unsafe 50% apply])] theorem l : True := trivial\n": "unsafe",
         "def x : Nat := unsafeBaseIO (pure 0)\n": "unsafeBaseIO",
         "def x : Nat := (unsafeCast ())\n": "unsafeCast",

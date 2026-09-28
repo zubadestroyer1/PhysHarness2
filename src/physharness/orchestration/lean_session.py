@@ -253,7 +253,7 @@ def _block_comment_end(source: str, index: int) -> int:
     return len(source)
 
 
-def _string_end(source: str, index: int, interpolated: bool) -> int:
+def _string_end(source: str, index: int, interpolated: bool, escapes=None) -> int:
     index += 1
     while index < len(source):
         character = source[index]
@@ -262,7 +262,7 @@ def _string_end(source: str, index: int, interpolated: bool) -> int:
         elif character == '"':
             return index + 1
         elif interpolated and character == "{":
-            index = _scan(source, index + 1, [], "}")
+            index = _scan(source, index + 1, [], "}", escapes)
         else:
             index += 1
     return len(source)
@@ -275,11 +275,13 @@ def _opaque(text: str) -> str:
     )
 
 
-def _scan(source: str, index: int, out: list, close: str | None) -> int:
+def _scan(source: str, index: int, out: list, close: str | None, escapes=None) -> int:
     """Copy code into ``out`` from ``index`` until an unmatched ``close`` (or the end).
 
     Comments become whitespace; string, character and raw-string literals, escaped
-    identifiers and syntax quotations become opaque tokens.
+    identifiers and syntax quotations become opaque tokens. ``escapes``, when given,
+    collects the text of each escaped identifier read as code (in interpolations and
+    quotations too).
     """
     depth = 0
     while index < len(source):
@@ -292,7 +294,7 @@ def _scan(source: str, index: int, out: list, close: str | None) -> int:
             end = _block_comment_end(source, index)
             out.append(" " + "\n" * source.count("\n", index, end))
         elif character == '"':
-            end = _string_end(source, index, _interpolation_prefix(source, index))
+            end = _string_end(source, index, _interpolation_prefix(source, index), escapes)
             out.append(_opaque(source[index:end]))
         elif (
             character == "r"
@@ -309,10 +311,12 @@ def _scan(source: str, index: int, out: list, close: str | None) -> int:
         elif character == "«":
             end = source.find("»", index + 1)
             end = len(source) if end < 0 else end + 1
+            if escapes is not None:
+                escapes.append(source[index:end])
             out.append(_opaque(source[index:end]))
         elif character == "`" and source.startswith(("`(", "``("), index):
             start = source.index("(", index) + 1
-            end = _scan(source, start, [], ")")
+            end = _scan(source, start, [], ")", escapes)
             out.append(_opaque(source[index:end]))
         else:
             if close is not None:
