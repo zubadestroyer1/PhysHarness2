@@ -480,9 +480,10 @@ tools, the prompts and the delivery shapes.
   - Admission reserves nothing. The ledger still hard-stops every reservation at
     `max_cost`.
   - `max_total_tasks` and `max_pending_tasks` are an optional operator guard that ignores
-    referee tasks: unset, they cap nothing. Legacy experiments keep their count caps, and
-    `configure_workforce` refuses a floor for them (`ADMISSION_FLOOR_REQUIRES_SOCIETY`,
-    422).
+    referee tasks: unset, they cap nothing. Legacy experiments keep their count caps:
+    `configure_workforce` requires both for them (`WORKFORCE_CAPS_REQUIRED`, 422) and
+    refuses a floor (`ADMISSION_FLOOR_REQUIRES_SOCIETY`, 422). The MCP tool keeps its
+    legacy parameter order; a society passes `null` caps.
 - **Messages.** There are no labs (S1 audit #15). `message` reaches one branch, or, given
   a node id, whoever works on that node: its author and live claimants, never the sender,
   at most 8 (`NO_RECIPIENTS` when nobody else does). Each delivered copy counts against

@@ -18,6 +18,7 @@
 > - An event wait anchors on the agent's last request, not on its registration: the worker's `generation_started` hook records `request_anchor` (the event sequence under the experiment lock and the long pole then) on a builder's task, and `request_event_wait` takes `event_after` from it and, when another branch changed the graph since, its long pole as the baseline. A watched event or long-pole move during the waiter's final request or an earlier tool of its response now wakes it.
 > - Society admission for a model the admitting process has no price for (a $0 minimum reservation) now needs some dollars left above the floor, instead of admitting with the budget exhausted; priced admission is unchanged.
 > - `SocietyDispatcher` answers S1's removed `wait(for="peer")` (re-dispatched when an S1 checkpoint saved mid-call resumes) with a recoverable `TOOL_UNAVAILABLE` envelope, as it does a removed tool name, instead of a fatal `INVALID_TOOL_ARGUMENTS` that left the session `uncertain`.
+> - The legacy workforce contract is restored: `configure_workforce` refuses a non-society request without both count caps (`WORKFORCE_CAPS_REQUIRED`, 422) instead of storing the 10,000 defaults, and the MCP `configure_workforce` keeps its legacy parameter order (caps nullable, before `operation_id`).
 
 ## Global Constraints
 

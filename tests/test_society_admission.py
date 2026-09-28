@@ -1,6 +1,7 @@
 """Society admission is by remaining dollars; referees run in their own slot pool (S1 #16)."""
 
 import asyncio
+import inspect
 import json
 from collections import Counter
 from contextlib import suppress
@@ -194,8 +195,8 @@ def test_configure_workforce_accepts_only_a_floor(lab, monkeypatch):
     assert policy().get("admission_floor_usd") is None
     calls = []
     monkeypatch.setattr(mcp_server, "call", lambda *args: calls.append(args) or {})
-    mcp_server.configure_workforce("experiment", "op-1")
-    mcp_server.configure_workforce("experiment", "op-2", admission_floor_usd="0.25")
+    mcp_server.configure_workforce("experiment", None, None, "op-1")
+    mcp_server.configure_workforce("experiment", None, None, "op-2", admission_floor_usd="0.25")
     assert "admission_floor_usd" not in calls[0][2]
     assert calls[1][2]["admission_floor_usd"] == "0.25"
 
@@ -220,6 +221,34 @@ def test_legacy_admission_keeps_count_caps_and_refuses_a_floor(lab):
     with pytest.raises(HarnessError) as capped:
         service.create_task(TaskCreate(branch_id=branch["id"], objective="Two"), researcher, "two")
     assert capped.value.code == "TASK_TOTAL_CAP"
+
+
+def test_legacy_workforce_caps_stay_required(lab, monkeypatch):
+    """Merge audit: only a society may omit the count caps. A legacy request without both is
+    refused (422) and writes no policy, instead of storing the 10,000 defaults; the MCP tool
+    keeps its legacy parameter order."""
+    service, _, operator, experiment = started(lab)
+    for partial in ({}, {"max_total_tasks": 5}, {"max_pending_tasks": 5}):
+        request = ConfigureWorkforceRequest(**partial)
+        with pytest.raises(HarnessError) as refused:
+            service.configure_workforce(experiment["id"], request, operator, f"caps-{partial}")
+        assert (refused.value.code, refused.value.status) == ("WORKFORCE_CAPS_REQUIRED", 422)
+    assert service.list_records("workforce_policy", operator, experiment["id"]) == []
+    caps = ConfigureWorkforceRequest(max_total_tasks=5, max_pending_tasks=3)
+    assert service.configure_workforce(experiment["id"], caps, operator, "caps")["revision"] == 1
+    parameters = list(inspect.signature(mcp_server.configure_workforce).parameters)
+    assert parameters[:6] == [
+        "experiment_id",
+        "max_total_tasks",
+        "max_pending_tasks",
+        "operation_id",
+        "expected_revision",
+        "synthesis_interval_posts",
+    ]
+    calls = []
+    monkeypatch.setattr(mcp_server, "call", lambda *args: calls.append(args) or {})
+    mcp_server.configure_workforce("experiment", 5, 3, "op")
+    assert calls[0][2]["max_total_tasks"] == 5 and calls[0][3] == "op"
 
 
 # Runner slot pools ----------------------------------------------------------------------------

@@ -460,6 +460,18 @@ class WorkforceMixin:
                     remediation="Omit admission_floor_usd, or set max_total_tasks and "
                     "max_pending_tasks.",
                 )
+            if not experiment.payload.get("society") and None in (
+                request.max_total_tasks,
+                request.max_pending_tasks,
+            ):
+                # The legacy contract: only a society's count caps are optional (merge audit).
+                raise HarnessError(
+                    "WORKFORCE_CAPS_REQUIRED",
+                    "max_total_tasks and max_pending_tasks are required; only a society "
+                    "experiment may omit them.",
+                    status=422,
+                    remediation="Set both max_total_tasks and max_pending_tasks.",
+                )
             budget = session.get(BudgetRow, experiment_id)
             if budget is None:
                 raise HarnessError("NOT_FOUND", "Experiment ledger is missing.", status=404)
