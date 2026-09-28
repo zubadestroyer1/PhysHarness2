@@ -657,6 +657,7 @@ proof-acceptance policy.
 
 Apply database migrations `0003_discussion_indexes` and `0004_library_notes` before
 deployment. The new partial record indexes keep discussion lookups separate from
-unrelated receipt-query plans, and 0004 adds the library notes table.
+unrelated receipt-query plans, and 0004 adds the library notes table. A development
+SQLite database that `phys init` made gains the table at the next start instead.
 See the [implementation plan](superpowers/plans/2026-09-23-research-network.md) for
 ownership, tests and integration gates.

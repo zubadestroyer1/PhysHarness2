@@ -1,12 +1,17 @@
 import re
 
 import pytest
+import sqlalchemy as sa
+from alembic import command
 from commons_helpers import society_lab
+from test_infrastructure import migration_config
 
 from physharness import library_notes as notes_module
+from physharness.bootstrap import build_service
+from physharness.config import Settings
 from physharness.domain import new_id
 from physharness.errors import HarnessError
-from physharness.storage import LibraryNoteRow
+from physharness.storage import Base, LibraryNoteRow
 
 S1_DIGEST = "0c46de2450bd5a9b2584d513d3ad02a963a300c3b0e3510a3a22efbc5a11341f"
 NOTE = "`Foo.bar` was renamed `Foo.baz` at this pin."
@@ -114,3 +119,24 @@ def test_the_seed_holds_library_facts_never_proof_routes():
     for notes in notes_module._seed().values():
         for note in notes:
             assert not [route for route in routes if route in note.casefold()], note
+
+
+def test_a_phys_init_database_gains_the_notes_table_at_startup(tmp_path, monkeypatch):
+    monkeypatch.delenv("PHYSHARNESS_DATABASE_URL", raising=False)
+    url = f"sqlite:///{tmp_path / 'harness.db'}"
+    engine = sa.create_engine(url)
+    # What `phys init` made before migration 0004 added library_notes.
+    older = [table for table in Base.metadata.sorted_tables if table.name != "library_notes"]
+    Base.metadata.create_all(engine, tables=older)
+    engine.dispose()
+    settings = dict(auth_file=tmp_path / "absent", artifact_root=tmp_path / "artifacts")
+    service = build_service(Settings(database_url=url, **settings))
+    with service.db.sessions() as session:
+        assert session.scalars(sa.select(LibraryNoteRow)).all() == []
+    assert service.db.complete_development_schema() == []
+    # An Alembic-managed database is left to its migrations.
+    managed = f"sqlite:///{tmp_path / 'managed.db'}"
+    command.upgrade(migration_config(managed), "0003_discussion_indexes")
+    build_service(Settings(database_url=managed, **settings))
+    assert "library_notes" not in sa.inspect(sa.create_engine(managed)).get_table_names()
+    command.upgrade(migration_config(managed), "head")

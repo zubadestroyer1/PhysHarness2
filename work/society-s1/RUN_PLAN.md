@@ -37,7 +37,10 @@ per arm gives descriptive evidence only. It does not support a causal claim.
 Every arm gets the same dollar ceiling **B** (see [the budget table](#5-budget)), the same
 frozen target, masked reference, source freeze, workbench image, verifier bundle and
 price table. Each arm uses a fresh project and database, so no arm can retrieve another
-arm's work. The model families are the same: family A and family B.
+arm's work. The model families are the same: family A and family B. A SQLite database
+that `phys init` made before the S1 remediation gains the `library_notes` table when the
+API, a worker or a CLI command next starts; run `alembic upgrade head` on a PostgreSQL
+or other Alembic-managed database.
 
 | Arm | Experiment shape | Agents | Concurrency | Wall-clock ceiling |
 |---|---|---|---|---|

@@ -16,6 +16,7 @@
 > - `commons_read`'s thread digest quotes each post's text, and the platform's note for an author's abandonment names the author and quotes its reason.
 > - Library notes an agent appends are read only within its experiment (migration `0004`'s index now leads with `experiment_id`); the checked-in seed stays shared. A branch appends at most 20 notes and an experiment holds at most 200; `find_declaration` surfaces a note only when it shares two of the query's words; the `library_notes` read result carries `notes_are`.
 > - The library-note seed keeps only facts about the Mathlib pin, with no S1 search history (arm counts, failed uses), and `work/society-s1/RUN_PLAN.md` records that only society agents read library notes.
+> - A SQLite database that `phys init` made before migration `0004` gains the `library_notes` table at the next start (`Database.complete_development_schema`, from `build_service`); Alembic-managed and PostgreSQL databases keep to their migrations.
 
 ## Global Constraints
 
