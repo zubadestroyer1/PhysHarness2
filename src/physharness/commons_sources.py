@@ -31,6 +31,7 @@ from .orchestration.lean_session import (
     HEADER_OPTION_PREFIXES,
     HEADER_OPTIONS,
     _command_word,
+    _opaque,
     lean_code,
 )
 from .storage import RecordRow
@@ -120,9 +121,10 @@ _RUNS_TERMS = (
 # stays out: `trace.profiler.output` writes files.
 _MODULE_OPTIONS = (*HEADER_OPTIONS, "push_neg.use_distrib", "simprocs", "tactic.hygienic")
 _MODULE_OPTION_PREFIXES = (*HEADER_OPTION_PREFIXES, "backward.")
-# A metaprogram or IO action is written with names rooted in these namespaces, so a module
-# that names none defines no code for a tactic's configuration or an `evalConst` to run (the
-# backstop behind the denylists).
+# A metaprogram or IO action is written with names in these namespaces (`Std.IO.Process` is
+# one too), so a module that names none in any component defines no code for a tactic's
+# configuration or an `evalConst` to run: the backstop behind the denylists. A rare
+# `Foo.IO` is refused with them.
 _META_NAMESPACES = frozenset(("Lean", "IO", "EIO", "BaseIO"))
 _WORD = rf"[{_ID_FIRST}][{_ID_REST}!?]*"
 _TOKEN = re.compile(rf"#{_WORD}|@\[|(?<![{_ID_REST}.!?]){_WORD}(?:\.{_WORD})*")
@@ -130,7 +132,8 @@ _OPTION = re.compile(rf"\s+({_WORD}(?:\.{_WORD})*)")
 _BRACKET = re.compile(r"\s*\[")
 _LOCAL = re.compile(rf"(?<![{_ID_REST}.!?])local\s+$")
 _SCOPED = re.compile(rf"(?<![{_ID_REST}.!?])scoped(?:\s*\[[^\]]*\])?\s+$")
-_ESCAPED_META = re.compile("«(?:" + "|".join(sorted(_META_NAMESPACES)) + ")»")
+_ESCAPED = re.compile("«[^»]*»")
+_PLAIN = re.compile(rf"{_WORD}")
 _AESOP_PHASE = re.compile(
     rf"\s*(?:[0-9]+(?:\.[0-9]+)?\s*%|(?:apply|forward|destruct|constructors|cases|simp|unfold"
     rf"|tactic)(?![{_ID_REST}!?]))"
@@ -447,10 +450,19 @@ def _bracketed(code, start):
     return None
 
 
-def _meta_root(name):
-    """Whether a dotted name is rooted in ``_META_NAMESPACES`` (``_root_.`` aside)."""
-    parts = name.split(".")
-    return parts[parts[0] == "_root_" and len(parts) > 1] in _META_NAMESPACES
+def _meta_name(name):
+    """Whether any component of a dotted name is in ``_META_NAMESPACES``."""
+    return not _META_NAMESPACES.isdisjoint(name.split("."))
+
+
+def _unescaped(body, code):
+    """``code`` with each escaped name component of ``body`` (``«IO»``, ``«_root_»``, an
+    opaque token in ``lean_code``) written plainly, so a name reads as Lean resolves it; a
+    component that is no plain word reads as ``_escaped``."""
+    for escaped in set(_ESCAPED.findall(body)):
+        plain = escaped[1:-1] if _PLAIN.fullmatch(escaped[1:-1]) else "_escaped"
+        code = code.replace(_opaque(escaped), plain)
+    return code
 
 
 def refused_command(source):
@@ -460,8 +472,8 @@ def refused_command(source):
     rule phase), a name of an unsafe escape (a component starting with ``unsafe``), notation
     that is not ``local`` (``scoped notation`` is named
     so), a ``#`` command of ``_RUNS_TERMS``, a code attribute, a ``set_option`` outside the
-    module options, or a name rooted in ``_META_NAMESPACES``. ``gate_remedy`` says what to
-    write instead.
+    module options, or a name with a component in ``_META_NAMESPACES``, escaped components
+    read plainly. ``gate_remedy`` says what to write instead.
 
     These are denylists, so the last check is the backstop: no side effect is written
     without a Lean or IO name. It reads ``lean_code``, so comments and literals count for
@@ -471,6 +483,7 @@ def refused_command(source):
     code = lean_code(body)
     if body.strip() and not code:
         return "(a source too nested to scan)"
+    code = _unescaped(body, code)
     for match in _TOKEN.finditer(code):
         word, end = match.group(), match.end()
         if word.startswith("#"):
@@ -507,14 +520,10 @@ def refused_command(source):
         elif (
             word in _RUNS_CODE
             or word.startswith(_REGISTERS)
-            or _meta_root(word)
+            or _meta_name(word)
             or any(part.startswith(_UNSAFE_NAMES) for part in word.split("."))
         ):
             return word
-    for escaped in _ESCAPED_META.finditer(body):
-        prefix = body[: escaped.start()]
-        if not prefix.endswith(".") or prefix.endswith("_root_."):
-            return escaped.group()
     return None
 
 
@@ -547,7 +556,7 @@ def gate_remedy(command):
         return f"Drop {command}: an unsafe escape can run IO wherever the module is imported."
     if command.startswith("("):
         return "Simplify the nesting of its interpolated strings and syntax quotations."
-    if _meta_root(command.strip("«»")) or _ESCAPED_META.fullmatch(command):
+    if _meta_name(command):
         return (
             f"Drop {command}: a published module names nothing in the Lean, IO, EIO or BaseIO "
             "namespaces, so it holds no metaprogram or IO action."

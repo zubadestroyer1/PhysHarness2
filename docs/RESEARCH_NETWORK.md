@@ -279,10 +279,12 @@ tools, the prompts and the delivery shapes.
     - `set_option` of an option other than a node header's, `push_neg.use_distrib`,
       `simprocs`, `tactic.hygienic` and `backward.*` (so `set_option maxHeartbeats N in`
       stays, and `trace.*`, which can write files, goes: drop it);
-    - a name rooted in the `Lean`, `IO`, `EIO` or `BaseIO` namespaces (`_root_.IO…` too;
-      `Foo.IO` is fine). This is the backstop behind the denylists: no metaprogram or IO
-      action, for a tactic's configuration or an `evalConst` to run, is written without
-      such a name.
+    - a name with a `Lean`, `IO`, `EIO` or `BaseIO` component anywhere
+      (`Std.IO.Process.setCwd`, `_root_.IO…`), escaped components read plainly
+      (`«_root_».«IO».FS.writeFile` is `_root_.IO.FS.writeFile`). This is the backstop
+      behind the denylists: no metaprogram or IO action, for a tactic's configuration or
+      an `evalConst` to run, is written without such a name. A rare name such as `Foo.IO`
+      is refused with them.
 
     `set_lean_statement` refuses a header or statement the gate
     refuses: an importer's `sorry` stub and every publisher's statement check elaborate
