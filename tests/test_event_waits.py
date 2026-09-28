@@ -1191,6 +1191,89 @@ async def test_a_woken_session_is_anchored_at_the_event_its_wake_note_names(lab,
         await client.close()
 
 
+async def test_a_woken_wait_keeps_news_on_nodes_it_did_not_watch(lab, monkeypatch):
+    """Merge audit: the agent waits on X; then Y changes, and X's later event wakes it. Its
+    wake note names only X's event, so when it next waits on X and Y, Y's earlier event still
+    wakes it: only the named event counts as seen, not everything before it."""
+    monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
+    service, author, exp, branches, (_, beta) = society_lab(lab)
+    x, y = lemma(service, exp, beta, "X"), lemma(service, exp, beta, "Y")
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    watches, payloads = [[x["id"]], [x["id"], y["id"]], [x["id"], y["id"]]], []
+
+    async def route(request):
+        if request.url.path.endswith("/input_tokens"):
+            return httpx.Response(200, json={"object": "response.input_tokens", "input_tokens": 10})
+        payloads.append(json.loads(request.content))
+        count = len(payloads)
+        wait = {"for": "events", "ids": watches[count - 1], "timeout_seconds": 3600}
+        items = [tool_call("wait", wait, f"w-{count}")] if count <= len(watches) else []
+        return httpx.Response(
+            200, json=response(items or [message("done")], response_id=f"r-{count}")
+        )
+
+    agent = Principal(
+        id="checker",
+        project_id=author.project_id,
+        role="agent",
+        experiment_id=exp["id"],
+        branch_id=branches[0]["id"],
+    )
+
+    def woke_on():
+        task = service.get_record("task", root["id"], author)
+        status = service.peer_wait_status(task["ready_continuation"]["peer_wait"], agent)
+        return status["reason"], (status["detail"] or {}).get("aggregate_id")
+
+    executor, client = anchoring_executor(service, route)
+    try:
+        await executor.execute(root["id"], author.project_id)  # waits on X
+        service.claim_node(y["id"], "claim", beta, "claims-y")  # unwatched yet
+        service.claim_node(x["id"], "claim", beta, "claims-x")  # wakes the wait
+        await executor.execute(root["id"], author.project_id)  # waits on X and Y
+        assert wake_notes(payloads[1])[-1]["detail"]["aggregate_id"] == x["id"]
+        assert woke_on() == ("watched_event", y["id"])
+        await executor.execute(root["id"], author.project_id)
+        assert wake_notes(payloads[2])[-1]["detail"]["aggregate_id"] == y["id"]
+        assert woke_on() == ("waiting", None)  # neither named event wakes it again
+    finally:
+        await client.close()
+
+
+async def test_a_long_run_of_bare_waits_moves_the_anchor_to_the_named_event(lab):
+    """Merge audit: the seen events a woken anchor carries are bounded; past the bound it
+    moves on to the named event, as a later anchor would."""
+    service, author, exp, branches, _ = society_lab(lab)
+    root = service.create_task(
+        TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
+    )
+    agent = Principal(
+        id="worker",
+        project_id=author.project_id,
+        role="agent",
+        experiment_id=exp["id"],
+        branch_id=branches[0]["id"],
+    )
+    executor, client = anchoring_executor(service, waiting_route([], 1))
+    await client.close()
+
+    def anchor(seen):
+        ticket = {"kind": "events", "event_after": 5, "seen_sequences": seen}
+        woken = {"reason": "wait_for_events", "peer_wait": ticket}
+        wake = {"reason": "watched_event", "sequence": 99}
+        return executor._session_anchor(root["id"], agent, exp, woken, wake, recovering=False)
+
+    full = list(range(6, 6 + continuation.MAX_SEEN_EVENTS))
+    assert anchor(full[:-1]) == {
+        "event_sequence": 5,
+        "long_pole_ids": None,
+        "seen_sequences": [*full[:-1], 99],
+    }
+    assert anchor(full) == {"event_sequence": 99, "long_pole_ids": None}
+
+
 def test_the_event_head_moves_only_on_events_that_can_wake_a_waiter(lab):
     """Final review B-I3: model-turn accounting and other experiments' commons events leave
     the head alone, so they cause no wake checks."""

@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from ..commons_discourse import compact_update_lines
 from ..commons_review import REFEREE_HAT, is_referee_task
-from ..continuation import scope_ending, scope_restated
+from ..continuation import MAX_SEEN_EVENTS, scope_ending, scope_restated
 from ..domain import (
     ArtifactCreate,
     BranchCreate,
@@ -1064,23 +1064,26 @@ class ResearchTaskExecutor:
     def _session_anchor(self, task_id, agent, experiment, woken, wake_status, *, recovering):
         """What a builder session's first request can show (merge audit), before its prompt or
         wake note is built. A session resumed mid-flight keeps its last request's anchor. A
-        natively woken wait keeps its own (a task wait's: the last request's), advanced past
-        the watched event its wake note names, and shows the wake note's long pole: news
-        before the wake that the note does not name still wakes the next wait. Otherwise
-        (a fresh prompt) now."""
+        natively woken wait keeps its own (a task wait's: the last request's), shows the wake
+        note's long pole, and marks the watched event the note names as seen: the note names
+        the first event on the old wait's watches only, so news before it elsewhere still
+        wakes the next wait, and the named event never does. Otherwise (a fresh prompt) now."""
         persisted = self.service.get_record("task", task_id, agent).get("request_anchor")
         if recovering and persisted:
             return persisted
         if woken and woken["reason"] in WAIT_REASONS:
             ticket = woken.get("peer_wait") or {}
-            sequence = (
-                ticket.get("event_after")
-                if ticket.get("kind") == "events"
-                else (persisted or {}).get("event_sequence")
-            )
-            sequence = (wake_status or {}).get("sequence", sequence)
+            if ticket.get("kind") == "events":
+                sequence, seen = ticket.get("event_after"), list(ticket.get("seen_sequences", []))
+            else:
+                sequence, seen = (persisted or {}).get("event_sequence"), []
+            if (named := (wake_status or {}).get("sequence")) is not None:
+                seen.append(named)
+                if len(seen) > MAX_SEEN_EVENTS:  # a long run of bare waits: move on to it
+                    sequence, seen = named, []
             if sequence is not None:
-                return {"event_sequence": sequence, "long_pole_ids": None}  # set by wake_note
+                anchor = {"event_sequence": sequence, "long_pole_ids": None}  # set by wake_note
+                return {**anchor, "seen_sequences": seen} if seen else anchor
         return self.service.event_anchor(experiment["id"], agent)
 
     async def execute(self, task_id: str, project_id: str, *, stop_on_verified_target=True):
