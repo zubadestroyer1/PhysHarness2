@@ -24,6 +24,9 @@ from .worker_authority import current_worker_effects
 EVENT_WAIT_MIN_SLEEP_SECONDS = 20  # Debounces a burst of events into one wake.
 EVENT_WAIT_DEFAULT_SECONDS = 1800
 MAX_WATCH_IDS = 100
+# A woken wait's anchor stays at its predecessor's and marks the events its wake notes named
+# as seen, at most this many: past them it moves to the latest named event (merge audit).
+MAX_SEEN_EVENTS = 20
 # Events that wake an event wait: on a watched node (its aggregate), or by a watched branch
 # (its payload branch_id). Events that can move the goal's long pole are rechecked.
 NODE_WATCH_KINDS = (
@@ -1213,6 +1216,8 @@ class ContinuationMixin:
             # response ran, is unseen. Without an anchor (no request yet), from now.
             anchor = task.payload.get("request_anchor") or {}
             event_after = anchor.get("event_sequence", self._discussion_max_sequence(session))
+            # Later events a woken session's wake notes named: seen, so they never wake it.
+            seen = anchor.get("seen_sequences") or []
             if (
                 anchor.get("long_pole_ids") is not None
                 and session.scalar(
@@ -1242,6 +1247,7 @@ class ContinuationMixin:
                 "watch_branch_ids": watched["branch"],
                 "after_sequence": reader.payload["ack_sequence"] if reader else 0,
                 "event_after": event_after,
+                **({"seen_sequences": seen} if seen else {}),
                 "long_pole_ids": sorted(long_pole_ids),
                 "requested_at": now.isoformat(),
                 "deadline_at": now.timestamp() + timeout_seconds,
@@ -1500,6 +1506,7 @@ class ContinuationMixin:
         if not nodes and not branches:
             return None
         branch = EventRow.payload["branch_id"].as_string()
+        seen = peer_wait.get("seen_sequences") or []
 
         def rank(field):  # 0 when absent: no previous source, or an older event
             return case(RANKS, value=EventRow.payload[field].as_string(), else_=0)
@@ -1515,6 +1522,7 @@ class ContinuationMixin:
                     and_(EventRow.kind.in_(BRANCH_WATCH_KINDS), branch.in_(branches)),
                 ),
                 _not_by(peer_wait["branch_id"]),
+                *([EventRow.sequence.not_in(seen)] if seen else []),
                 or_(
                     EventRow.kind != "commons.node_claim",
                     EventRow.payload["new_claimant"].as_boolean().is_(True),
