@@ -875,28 +875,31 @@ def manifest_for(exp, author, roots, **limits):
     )
 
 
-@pytest.mark.parametrize("state", ["queued", "running"])
+@pytest.mark.parametrize("state", [None, "queued", "running"])
 async def test_another_live_task_of_the_experiment_keeps_the_run_going(lab, monkeypatch, state):
     """The idle stop does not assume one runner: a task this run does not own, queued or
-    running (another runner's or worker's), may still wake a waiter."""
+    running (another runner's or worker's), may still wake a waiter. Without one the run
+    stops idle well within the same timeout (merge audit: an idle stop takes over 3 s)."""
     monkeypatch.setattr(continuation, "EVENT_WAIT_MIN_SLEEP_SECONDS", 0)
     service, author, exp, branches, _ = society_lab(lab)
     root = service.create_task(
         TaskCreate(branch_id=branches[0]["id"], objective="Root"), author, "root"
     )
-    other = service.create_task(
-        TaskCreate(branch_id=branches[1]["id"], objective="Elsewhere"), author, "other"
-    )
-    if state == "running":
-        service.acquire_task(other["id"], "another-runner", 60, OPERATOR, "lease-other")
-    assert service.get_record("task", other["id"], author)["status"] == state
+    if state:
+        other = service.create_task(
+            TaskCreate(branch_id=branches[1]["id"], objective="Elsewhere"), author, "other"
+        )
+        if state == "running":
+            service.acquire_task(other["id"], "another-runner", 60, OPERATOR, "lease-other")
+        assert service.get_record("task", other["id"], author)["status"] == state
     payloads = []
     runner, client = society_runner(service, waiting_route(payloads, 3600))
     try:
-        report = await runner.run(manifest_for(exp, author, [root], timeout_seconds=2))
+        report = await runner.run(manifest_for(exp, author, [root], timeout_seconds=10))
     finally:
         await client.close()
-    assert report["stop_reason"] == "TEAM_TIMEOUT" and len(payloads) == 1
+    assert report["stop_reason"] == ("TEAM_TIMEOUT" if state else "SOCIETY_IDLE")
+    assert len(payloads) == 1
     assert service.get_record("task", root["id"], author)["ready_continuation"]
 
 
