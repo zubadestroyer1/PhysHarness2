@@ -1631,12 +1631,16 @@ class ResponsesRuntime:
             admission = await self.token_governor.admit(
                 key=session.id, tokens=estimate, priority=self.admission_priority
             )
-        if self.pre_generation_guard is not None and await self.pre_generation_guard():
-            self._release(admission)
-            return await self._complete_verified(session, state)
-        operation_id = identifier()
-        state["pending_operation"] = operation_id
-        await self._save(session, state)
+        try:
+            if self.pre_generation_guard is not None and await self.pre_generation_guard():
+                self._release(admission)
+                return await self._complete_verified(session, state)
+            operation_id = identifier()
+            state["pending_operation"] = operation_id
+            await self._save(session, state)
+        except BaseException:
+            self._release(admission)  # nothing was sent
+            raise
         if asyncio.get_running_loop().time() >= deadline:
             state["pending_operation"] = None
             self._release(admission)

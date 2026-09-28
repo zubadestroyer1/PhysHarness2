@@ -826,8 +826,8 @@ async def test_rate_limits_pause_the_governor_and_only_a_create_requeues(tmp_pat
     assert len({ident for url, ident in requests if not url.endswith("/input_tokens")}) == 1
     # The re-queue keeps the create's original queue time, so it keeps its age.
     assert admitted[1][0]["enqueued"] == admitted[0][1].enqueued
-    # A full default bucket holds 15 s of tokens; settled at the 15 tokens used.
-    assert governor.snapshot()["level"] >= 249_985
+    # Each 429 spends the bucket; the settlement refunds the estimate beyond the 15 tokens used.
+    assert governor.snapshot()["level"] >= admitted[-1][1].tokens - 15
     await client.close()
 
 
@@ -933,14 +933,15 @@ async def test_governor_requeue_past_the_deadline_gives_up_definitely(tmp_path):
     (session_id,) = [row[0] for row in store.db.execute("SELECT id FROM runtime_sessions")]
     checkpoint = await runtime.checkpoint(session_id)
     # The 1.1 s pause outlasts the re-admission budget (deadline - 1 s): the give-up runs
-    # main's _abandon_refused (emit, then clear) and every admitted token comes back.
+    # main's _abandon_refused (emit, then clear). The 429 spent the bucket, and the release
+    # returned the whole admitted estimate (10 input + 4,096 output).
     assert error.value.code == "PROVIDER_RATE_LIMITED" and error.value.retryable
     assert (checkpoint.session.status, checkpoint.native_state["pending_operation"]) == (
         "failed",
         None,
     )
     assert events == ["generation_started", "provider_throttled", "generation_aborted"]
-    assert governor.snapshot()["level"] == 5_000
+    assert 4_106 <= governor.snapshot()["level"] < 4_110
     await client.close()
 
 
@@ -981,7 +982,8 @@ async def test_a_400_after_a_rate_limit_wait_aborts_once_as_request_invalid(tmp_
     assert (checkpoint.session.status, state["pending_operation"]) == ("failed", None)
     assert state["preflight_error"]["stage"] == "create"
     if governed:
-        assert governor.snapshot()["level"] == 5_000  # the re-admitted estimate came back
+        # The 429 spent the bucket; the re-admitted estimate came back.
+        assert 4_106 <= governor.snapshot()["level"] < 4_200
     await client.close()
 
 
@@ -1022,7 +1024,8 @@ async def test_immediate_rate_limit_give_up_still_pauses_the_governor(tmp_path, 
     # refusal still pauses and cuts the governor, before main's abandon (emit, then clear).
     assert error.value.code == "PROVIDER_RATE_LIMITED"
     assert 19 < snapshot["paused_seconds"] <= 20 and snapshot["effective_tokens_per_minute"] == 48
-    assert snapshot["level"] == 5_000
+    # The refusal spent the bucket; only a released admission (the create's) came back.
+    assert snapshot["level"] == (4_106 if refused == "create" else 0)
     assert order == (
         ["generation_started", "throttled", "generation_aborted", "release"]
         if refused == "create"

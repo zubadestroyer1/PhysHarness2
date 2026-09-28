@@ -245,7 +245,9 @@ Roots and joined children, which a parent waits on, are admitted first, then ref
 everything else. A waiting request ages one class per 30 s, so nothing starves.
 
 Every 429 pauses all admission for its wait. That includes a 429 the runtime gives up on at once
-because the wait would pass the deadline. A 429 also cuts the rate by 20%, but at most once per
+because the wait would pass the deadline. A 429 also spends whatever the bucket holds, since the
+provider's window is full whatever the bucket thinks, and nothing refills during the pause, so
+admission resumes at the rate instead of releasing a burst. A 429 also cuts the rate by 20%, but at most once per
 30 s (`CUT_COOLDOWN_SECONDS`). A 429 that arrives while admission is paused, or within 30 s of the
 last cut, only extends the pause if its wait is longer. A burst of refusals therefore cuts once,
 and isolated refusals from traffic the governor cannot see cannot ratchet the rate down. The rate
@@ -260,6 +262,7 @@ the deadline. Otherwise the give-up is definite, as without a governor:
 retryable `PROVIDER_RATE_LIMITED`. These exits return the admission, because they certainly sent
 nothing:
 - a target verified while queued;
+- a failed pre-generation guard or marker save;
 - a timeout before the send;
 - a failed `generation_started`;
 - a 400;
