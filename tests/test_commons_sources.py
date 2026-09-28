@@ -818,7 +818,12 @@ REFUSED = {
     ),
     "open Lean in\ntheorem a : True := trivial\n": "Lean",
     "def t := _root_.IO.FS.writeFile\n": "_root_.IO.FS.writeFile",
-    "def t := «IO».FS.writeFile\n": "«IO»",
+    "def t := «IO».FS.writeFile\n": "IO.FS.writeFile",
+    # A meta namespace anywhere in a name, escaped components read as written plainly.
+    "def t := Std.IO.Process.setCwd\n": "Std.IO.Process.setCwd",
+    "def t := «_root_».«IO».FS.writeFile\n": "_root_.IO.FS.writeFile",
+    "def t := «_root_».IO.FS.writeFile\n": "_root_.IO.FS.writeFile",
+    "theorem Foo.IO : True := trivial\n": "Foo.IO",
     "#exit\n": "#exit",
 }
 ALLOWED = (
@@ -833,8 +838,8 @@ ALLOWED = (
     "set_option push_neg.use_distrib true in\nset_option simprocs false in\n"
     "set_option tactic.hygienic false in\nset_option backward.isDefEq.lazyWhnfCore false in\n"
     "theorem t : True := trivial\n",
-    # Only a name rooted in a metaprogramming or IO namespace is refused.
-    "theorem Foo.IO : True := trivial\ndef EIOx : ℕ := 1\ntheorem h : Foo.IO := Foo.«IO»\n",
+    # An ordinary dotted or escaped name passes.
+    "theorem Foo.bar : True := trivial\ndef EIOx : ℕ := 1\ntheorem h : Foo.bar := Foo.«bar»\n",
     '-- run_cmd, #eval\n/- macro_rules -/ theorem a : "run_cmd".length = 7 := rfl\n',
     "theorem x (init : Nat) : List.foldl (· + ·) init [] = init := rfl\n",
     "noncomputable section\nnamespace Foo\nopen Real\n"
@@ -849,17 +854,36 @@ def test_the_publication_gate_refuses_code_and_syntax_beyond_the_module():
         assert refused_command(f"import Mathlib\n\n{body}") is None, body
 
 
-def test_the_gate_refuses_unsafe_only_as_a_declaration_modifier():
-    """PR 37 re-audit: aesop's `unsafe` rule phase (87 Mathlib lines) is no declaration."""
+def test_the_gate_allows_unsafe_only_as_aesops_rule_phase():
+    """PR 37 re-audits: aesop's `unsafe` rule phase (87 Mathlib lines) is no declaration,
+    but Lean's term `unsafe t` runs `t` through an unsafe helper, and bracketed it passed.
+    So `unsafe` passes only as the phase of an aesop clause; unsafe escapes such as
+    `unsafeBaseIO` are refused by name as a backstop."""
     hints = (
         "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50% apply id)\n",
+        "theorem t (p : Prop) (h : p) : p := by\n  aesop (add safe apply id, unsafe apply id)\n",
         "@[aesop unsafe 50% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
-        "attribute [aesop unsafe 20% apply] Nat.le_succ\n",
+        "@[simp, aesop unsafe 20% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
+        "attribute [local aesop unsafe 20% apply] Nat.le_succ\n",
     )
     for body in hints:
         assert refused_command(f"import Mathlib\n{body}") is None, body
-    for body in ("unsafe def f : Nat := 1\n", "@[inline] private unsafe def f : Nat := 1\n"):
-        assert refused_command(f"import Mathlib\n{body}") == "unsafe", body
+    refused = {
+        "unsafe def f : Nat := 1\n": "unsafe",
+        "@[inline] private unsafe def f : Nat := 1\n": "unsafe",
+        "def x : Nat := (unsafe 0)\n": "unsafe",
+        "def x : Nat := unsafe 0\n": "unsafe",
+        "theorem t : True := by exact (unsafe trivial)\n": "unsafe",
+        "def x : List Nat := [unsafe 0]\n": "unsafe",
+        "def x : Nat := (add unsafe 0)\n": "unsafe",  # no probability or builder follows
+        "@[aesop (rule_sets := [unsafe 50% apply])] theorem l : True := trivial\n": "unsafe",
+        "def x : Nat := unsafeBaseIO (pure 0)\n": "unsafeBaseIO",
+        "def x : Nat := (unsafeCast ())\n": "unsafeCast",
+        "def x := Foo.unsafeEIO\n": "Foo.unsafeEIO",
+    }
+    for body, command in refused.items():
+        assert refused_command(f"import Mathlib\n{body}") == command, body
+    assert "aesop" in gate_remedy("unsafe") and "unsafe" in gate_remedy("unsafeBaseIO")
 
 
 def test_each_refusal_names_its_workaround():
@@ -869,7 +893,7 @@ def test_each_refusal_names_its_workaround():
     assert "Drop" in gate_remedy("set_option trace.Meta.Tactic.simp")
     assert "trace.*" in gate_remedy("set_option trace.Meta.Tactic.simp")
     assert "#s" in gate_remedy("#eval")
-    assert "IO" in gate_remedy("IO.println")
+    assert "IO" in gate_remedy("IO.println") and "IO" in gate_remedy("Std.IO.Process.setCwd")
 
 
 def plant(service, node_id, **fields):
