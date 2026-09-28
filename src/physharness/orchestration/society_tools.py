@@ -803,7 +803,13 @@ class SocietyDispatcher(ToolDispatcher):
     on resume; the current schema would refuse it fatally (merge audit).
     """
 
+    # The worker's hook, called as each call starts: the first call of a response marks when
+    # the content of the next request is captured (merge audit).
+    before_dispatch = None
+
     async def dispatch(self, name, arguments, operation_id):
+        if self.before_dispatch is not None:
+            self.before_dispatch()
         error = None
         if name not in self._tools:
             error = HarnessError(
