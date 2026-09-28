@@ -13,6 +13,7 @@ from physharness.commons import _lean_digest
 from physharness.commons_models import NodeCreate
 from physharness.commons_sources import (
     MAX_COMMONS_MODULES,
+    Closures,
     Expansion,
     Module,
     gate_remedy,
@@ -513,6 +514,40 @@ def test_a_source_stands_only_on_the_lean_its_check_inlined(lab):
     assert state(x) == "complete"
     put(c, "c3")
     assert state(x) == "stale"
+
+
+def test_a_legacy_import_chain_is_judged_the_same_in_any_order():
+    """PR 37 re-audit: a depth bound was memoized with each verdict, so on a chain of 201
+    records without a closure, judging from the head staled every node and from the leaf
+    none. A long chain now stands either way, with no deep recursion; a replaced source
+    below stales everything above it, and a cycle stands on nothing."""
+
+    def chain(size, first="s0"):
+        return [
+            {
+                "id": f"n{i}",
+                "lean_source": {
+                    "sha256": f"s{i}" if i else first,
+                    "imports": [{"node_id": f"n{i - 1}", "sha256": f"s{i - 1}"}] if i else [],
+                },
+            }
+            for i in range(size)
+        ]
+
+    nodes = chain(10 * MAX_COMMONS_MODULES)
+    head_first, leaf_first = Closures.over(nodes), Closures.over(nodes)
+    assert all(head_first.stands(node) for node in reversed(nodes))
+    assert all(leaf_first.stands(node) for node in nodes)
+    replaced = chain(MAX_COMMONS_MODULES + 1, first="s0-new")
+    closures = Closures.over(replaced)
+    assert [closures.stands(node) for node in reversed(replaced)] == [False] * (
+        MAX_COMMONS_MODULES
+    ) + [True]
+    loop = [
+        {"id": a, "lean_source": {"sha256": a, "imports": [{"node_id": b, "sha256": b}]}}
+        for a, b in (("x", "y"), ("y", "x"))
+    ]
+    assert not any(Closures.over(loop).stands(node) for node in loop)
 
 
 # Commons imports: the inliner (S1 audit #12) ---------------------------------------------

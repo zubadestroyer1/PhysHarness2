@@ -269,7 +269,7 @@ class Closures:
     """
 
     def __init__(self, lookup):
-        self._lookup, self._stands = lookup, {}
+        self._lookup, self._stands, self._visiting = lookup, {}, set()
 
     @classmethod
     def over(cls, nodes):
@@ -292,26 +292,44 @@ class Closures:
 
         return cls(lookup)
 
-    def _child(self, entry):
-        """The node an import entry names, while its source is still the one recorded."""
-        child = self._lookup(entry["node_id"])
-        current = (child or {}).get("lean_source") or {}
-        return child if child is not None and current.get("sha256") == entry["sha256"] else None
-
-    def stands(self, node, depth=0):
-        if node["id"] in self._stands:
-            return self._stands[node["id"]]
-        self._stands[node["id"]] = False  # a cycle, or a chain too long to inline, fails
+    def _children(self, node):
+        """The nodes the source's check stood on, while each still holds the source it
+        recorded (None once one does not), and whether it recorded its whole closure."""
         source = node.get("lean_source") or {}
         recorded = source.get("closure")
-        entries = (source.get("imports") or ()) if recorded is None else recorded
-        children = map(self._child, entries)
-        stands = depth < MAX_COMMONS_MODULES and all(
-            child is not None and (recorded is not None or self.stands(child, depth + 1))
-            for child in children
-        )
-        self._stands[node["id"]] = stands
-        return stands
+        children = []
+        for entry in (source.get("imports") or ()) if recorded is None else recorded:
+            child = self._lookup(entry["node_id"])
+            if child is None or ((child.get("lean_source") or {}).get("sha256")) != entry["sha256"]:
+                return None, recorded is not None
+            children.append(child)
+        return children, recorded is not None
+
+    def stands(self, node):
+        """Whether the node's source still stands. A record without a closure is judged
+        through its imports' own records, depth first on an explicit stack, so a verdict
+        never depends on which node was judged first; a cycle stands on nothing."""
+        pending = [node]
+        while pending:
+            current = pending[-1]
+            key = current["id"]
+            if key in self._stands:
+                pending.pop()
+                continue
+            children, recorded = self._children(current)
+            if children is None or recorded:
+                self._stands[key] = children is not None
+                continue
+            waiting = [child for child in children if child["id"] not in self._stands]
+            if waiting and key not in self._visiting:
+                self._visiting.add(key)
+                if any(child["id"] in self._visiting for child in waiting):
+                    self._stands[key] = False  # an import cycle
+                else:
+                    pending.extend(waiting)
+                continue
+            self._stands[key] = all(self._stands.get(child["id"], False) for child in children)
+        return self._stands[node["id"]]
 
 
 def source_state(node: dict, closures: Closures) -> str:
