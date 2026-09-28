@@ -184,13 +184,15 @@ like any shell command, it can alter the checker, the reference or the imported 
 files the checker trusts. So the result is VM-attested evidence, not an acceptance receipt.
 
 The checker runs from its upload in the workspace (`.physharness/`); the workbench root,
-`/tmp` included, is read-only. A society task self-tests it once per process and image
-when it first provisions a workspace, and a failed self-test stops the task with
-`STATEMENT_CHECK_UNAVAILABLE`. The uploaded checker now lives under `/work/.physharness`,
-so (unlike its old `/tmp` staging) it persists into checkpoints and handoff archives. A
-workspace a handoff restores is already provisioned before `society_tools()` sets
-`checker_self_test`, so its self-test is skipped for that workspace's lifetime; this is
-accepted (rare, and the checker it inherited was already self-tested once).
+`/tmp` included, is read-only. Each check uploads the two checker files afresh and removes
+them after the run. So they stay out of checkpoints and handoff archives (they would take
+about a fifth of E2B's 64 KiB archive), and a file the agent planted there is overwritten
+before it runs. A society task self-tests the checker once per process and image before it
+first uses a workspace. That includes a workspace a handoff restored before
+`society_tools()` enabled the self-test, and a self-test that raised runs again on the
+next use. A failed self-test stops the task with `STATEMENT_CHECK_UNAVAILABLE`, and later
+tasks on that image provision no workspace. A failure never overrides a pass on another
+workspace of the same image, so tasks whose self-test passed keep working.
 
 The checker imports only the Lean modules it uses (`Lean.CoreM`, `Lean.Replay` and four
 utilities), not `Lean`. Lean maps a module's `.olean` from its file only on the module's

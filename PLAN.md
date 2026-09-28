@@ -169,7 +169,7 @@ Available hats: explorer, formalizer, referee, experimenter (numerics/simulation
 **Lean checking** (fast feedback is the biggest lever on formalization cost):
 - **A persistent Lean session per workspace** with the pinned Mathlib/Physlib imports already loaded, instead of re-importing on every check.
 - **Rich feedback on every check:** goal states, errors, and an axiom report.
-- **On failure,** the check can run automation (`simp`, `aesop`, `linarith`/`nlinarith`, `polyrith`, `positivity`, `norm_num`, `exact?`/`apply?`) and premise suggestions from library search on the failing goal, and returns what worked or came close (`automate=true`; off by default since S1, where it exhausted the 2 GiB workbench 14 of 14 times).
+- **On failure,** the check can run automation (`simp`, `aesop`, `linarith`/`nlinarith`, `polyrith`, `positivity`, `norm_num`, `exact?`/`apply?`) and premise suggestions from library search on the failing goal, and returns what worked or came close (`automate=true`). Its registered default is off since S1, where it exhausted the 2 GiB workbench 14 of 14 times, but strict tool schemas make the model always send `automate`, so only the tool description's memory warning steers it. Bounding the automation itself is still open (audit fix 3).
 - **Local compile success is never acceptance;** only the independent checker (§5.2) accepts.
 
 **Literature and online sources** (brokered from the trusted plane, never from the sandbox, which stays offline):

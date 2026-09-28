@@ -50,6 +50,7 @@
 > - **Task 1b was added.** The checker imports only the Lean modules it uses, not `Lean`, so an `import Lean` file no longer OOMs the 2 GiB workbench. The statement check assumes a pre-warmed VM (`work/society-s1/RUN_PLAN.md`, section 8).
 > - **Task 2:** the profile-write step catches `BaseException` and quarantines the container. Its real test, `test_real_login_shell_path`, checks the login-shell `PATH` and lists the raw image's `/etc/profile.d`.
 > - **The final review's fixes:** the routing arguments `message.to` and `wait.ids` resolve a prefix only among their own targets; a failed checker self-test provisions no later workspace; `TASK_PENDING_CAP` is retryable.
+> - **The merge audit's fixes (2026-09-27):** each check uploads the checker files and removes them after the run, so they stay out of the E2B archive and a planted driver is overwritten. The self-test runs on every use until it passes, so it also covers a handoff-restored workspace and a self-test that raised. A failure never downgrades another workspace's pass. S3 changes only the registered default: strict tool schemas make the model always send `automate`, so bounding automation (audit fix 3) remains open.
 >
 > See `docs/FORMAL_ENVIRONMENT.md` (Workbench v2) and `docs/RESEARCH_NETWORK.md` for the details.
 
