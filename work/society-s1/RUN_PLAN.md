@@ -428,17 +428,18 @@ B / (8 × $40) hours; arm 1 over B / $40 hours, and it usually stops earlier.
    no other task of the experiment is running or queued (this runner's, another runner's or
    a worker's; a task another runner parked on a society wait counts as waiting once this
    runner checks its wait, and a task this run may not start under `max_tasks` makes the
-   stop `TEAM_TASK_LIMIT` instead), every pending society task waits (on events, at least one, or on a recruit
-   that is still live), each event wait found nothing at the current wake-event head,
-   which has not moved since (model-turn accounting never moves it), no parked scoped
-   recruit's node is proved, closed or restated (whether it waits on events or on
-   recruits), and no verification receipt is queued.
-   A due synthesis that dollar admission refuses near the end of the budget is logged and
-   retried at a later tick, never a crash of the run. A second such observation at least 1 s after the first, with every wait checked
-   again, confirms it. The runner then stops rather than sleep out those timeouts (up to
-   3,600 s) or burn wall clock until W; the constitution and the `wait` tool tell agents
-   that such a run ends. The waits keep their tickets, so a later `run-team` resumes
-   them. Export and report as for any stop, and ask the user before resuming.
+   stop `TEAM_TASK_LIMIT` instead), every pending society task waits (on events, at least
+   one, or on a recruit that is still live), each event wait found nothing at the current
+   wake-event head, which has not moved since (model-turn accounting never moves it), no
+   parked scoped recruit's node is proved, closed or restated (whether it waits on events
+   or on recruits), and no verification receipt is queued. A due synthesis that dollar
+   admission refuses near the end of the budget is logged and retried at a later tick,
+   never a crash of the run. A second such observation at least 1 s after the first, with
+   every wait checked again, confirms it. The runner then stops rather than sleep out
+   those timeouts (up to 3,600 s) or burn wall clock until W; the constitution and the
+   `wait` tool tell agents that such a run ends. The waits keep their tickets, so a later
+   `run-team` resumes them. Export and report as for any stop, and ask the user before
+   resuming.
 
 Every stop produces an honest report of the frontier, obstacles and partial results
 (PLAN §4.7).
