@@ -376,6 +376,9 @@ experiments too.
 - The `provider_throttled` events.
 - Stored responses keep only `STORED_RESPONSE_FIELDS` plus `request_echo_sha256`.
 - A `tool_results` entry omits an unchanged `visible_output`.
+- Checkpointed native state has sorted object keys, since `RuntimeCheckpoint.build` copies it
+  through the digest's sorted serialization. A session continued from a reloaded checkpoint
+  therefore sends input items whose keys are sorted: the same content, but not `main`'s bytes.
 - `generation_started` carries `input_tokens_estimate` (the exact count or the margin-inclusive
   bound) and `input_tokens_counted`.
 - `preflight_error.stage` may be `create`, with the generation's operation ID, after a 400 from
