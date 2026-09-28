@@ -632,9 +632,12 @@ tools, the prompts and the delivery shapes.
   search history; `tests/test_library_notes.py` refuses the S1 targets' proof method
   and S1's search counts in it. A
   builder's `find_declaration` surfaces the closest two notes on a weak (non-exact) hit,
-  each with its author, beside `library_notes_are` (the same label), but only notes that
-  share two of the query's words of three or more characters (its one such word, for a
-  one-word query). A referee's `find_declaration` surfaces none.
+  each with its author, beside `library_notes_are` (the same label), but only a note
+  that quotes, in backticks, a name equal to a query word or prefixing it at a `.` or `_`
+  (either way: `PiLp.toLp` and `PiLp.toLp_apply`), ranked first, or that shares two of
+  the query's words of three or more characters, prose words such as "not", "this" and
+  "pin" excluded (its one such word, for a one-word query). A referee's
+  `find_declaration` surfaces none.
 
 Society workers get the consolidated profile in
 `src/physharness/orchestration/society_tools.py`. It has 24 tools in all; a worker's

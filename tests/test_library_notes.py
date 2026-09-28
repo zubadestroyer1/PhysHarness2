@@ -98,6 +98,45 @@ def test_a_surfaced_note_shares_two_query_words(lab):
     ]
 
 
+def seeded_surface(lab, monkeypatch):
+    """A lab reading the S1 pin's seed, and its builder's surfaced-notes lookup."""
+    service, _, _, _, (alpha, beta) = society_lab(lab)
+    seed = notes_module.seed_notes(S1_DIGEST)
+    monkeypatch.setattr(notes_module, "seed_notes", lambda digest: seed)
+
+    def surfaced(query):
+        found = service.library_notes(beta, query=query, limit=2, surfaced=True)["notes"]
+        return [n["text"] for n in found]
+
+    return service, alpha, seed, surfaced
+
+
+def test_a_query_for_a_lemma_about_a_noted_name_surfaces_its_note(lab, monkeypatch):
+    _, _, (dot, _, lp), surfaced = seeded_surface(lab, monkeypatch)
+    # A noted name that equals the query, or prefixes it (or it prefixes the name) at a
+    # `.` or `_` boundary, surfaces its note first.
+    for query in (
+        "Matrix.dotProduct_comm",
+        "dotProduct_assoc",
+        "Matrix.vecMul_pow_two",
+        "Matrix.vecMul",
+    ):
+        assert surfaced(query)[0] == dot, query
+    for query in ("PiLp.toLp_apply", "PiLp.ofLp_add"):
+        assert surfaced(query)[0] == lp, query
+    assert surfaced("Matrix.trace_mul") == []
+
+
+def test_prose_words_surface_no_note(lab, monkeypatch):
+    service, alpha, _, surfaced = seeded_surface(lab, monkeypatch)
+    for query in ("this pin", "is not the", "and not this"):
+        assert surfaced(query) == [], query
+    # Short Mathlib words still count.
+    note = "The `exp` and `log` simp lemmas need a positive argument."
+    service.append_library_note(note, alpha, "n1")
+    assert surfaced("exp log") == [note]
+
+
 def test_the_checked_in_seed_covers_the_s1_audit_findings():
     seeded = " ".join(notes_module.seed_notes(S1_DIGEST))
     assert "Matrix.dotProduct" in seeded and "Perron" in seeded and len(seeded) < 3 * 2000
