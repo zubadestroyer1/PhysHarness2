@@ -13,8 +13,10 @@ from physharness.commons import _lean_digest
 from physharness.commons_models import NodeCreate
 from physharness.commons_sources import (
     MAX_COMMONS_MODULES,
+    Closures,
     Expansion,
     Module,
+    gate_remedy,
     inline_commons,
     module_prefix,
     node_module,
@@ -460,6 +462,23 @@ def test_an_importer_goes_stale_once_its_import_is_replaced(lab):
     assert publish(service, b["id"], alpha, "complete", "a-b", lean_statement_sha256=db)["replaced"]
 
 
+def test_any_branch_replaces_a_complete_source_of_a_node_without_a_statement(lab):
+    """PR 37 re-audit: nothing outranks a complete source on a node with no elaborated Lean
+    statement (a definition), so the equal-rank lock let an unrelated first file hold the
+    node for good. Only a node another branch can outrank keeps the lock."""
+    service, author, exp, _, (alpha, beta) = society_lab(lab)
+    gamma = third_branch(service, author, exp)
+    node = service.create_node(
+        exp["id"], NodeCreate(node_type="definition", title="D", statement="D."), alpha, "d"
+    )
+    junk = "theorem unrelated : True := trivial\n"
+    assert publish(service, node["id"], beta, "complete", "junk", junk)["recorded"] is True
+    real = "import Mathlib\nnoncomputable def D : ℝ := 1\n"
+    replaced = publish(service, node["id"], gamma, "complete", "real", real)
+    assert (replaced["recorded"], replaced["replaced"]) == (True, True)
+    assert publish(service, node["id"], beta, "partial", "lower")["reason"] == "lower_rank"
+
+
 def test_a_source_stands_only_on_the_lean_its_check_inlined(lab):
     """A change two imports down stales the importer too. A source recording its check's
     closure stands on exactly that Lean, and an import's restatement changes none of it."""
@@ -495,6 +514,40 @@ def test_a_source_stands_only_on_the_lean_its_check_inlined(lab):
     assert state(x) == "complete"
     put(c, "c3")
     assert state(x) == "stale"
+
+
+def test_a_legacy_import_chain_is_judged_the_same_in_any_order():
+    """PR 37 re-audit: a depth bound was memoized with each verdict, so on a chain of 201
+    records without a closure, judging from the head staled every node and from the leaf
+    none. A long chain now stands either way, with no deep recursion; a replaced source
+    below stales everything above it, and a cycle stands on nothing."""
+
+    def chain(size, first="s0"):
+        return [
+            {
+                "id": f"n{i}",
+                "lean_source": {
+                    "sha256": f"s{i}" if i else first,
+                    "imports": [{"node_id": f"n{i - 1}", "sha256": f"s{i - 1}"}] if i else [],
+                },
+            }
+            for i in range(size)
+        ]
+
+    nodes = chain(10 * MAX_COMMONS_MODULES)
+    head_first, leaf_first = Closures.over(nodes), Closures.over(nodes)
+    assert all(head_first.stands(node) for node in reversed(nodes))
+    assert all(leaf_first.stands(node) for node in nodes)
+    replaced = chain(MAX_COMMONS_MODULES + 1, first="s0-new")
+    closures = Closures.over(replaced)
+    assert [closures.stands(node) for node in reversed(replaced)] == [False] * (
+        MAX_COMMONS_MODULES
+    ) + [True]
+    loop = [
+        {"id": a, "lean_source": {"sha256": a, "imports": [{"node_id": b, "sha256": b}]}}
+        for a, b in (("x", "y"), ("y", "x"))
+    ]
+    assert not any(Closures.over(loop).stands(node) for node in loop)
 
 
 # Commons imports: the inliner (S1 audit #12) ---------------------------------------------
@@ -734,7 +787,10 @@ REFUSED = {
     'run_cmd do\n  IO.FS.writeFile "/work/Checker.lean" ""\n': "run_cmd",
     'theorem a : True := trivial #eval IO.getEnv "HOME"\n': "#eval",
     "#guard 1 = 1\n": "#guard",
-    "theorem a (s : Finset Nat) : #s = s.card := rfl\n": "#s",
+    "#guard_msgs in\n#check 1\n": "#guard_msgs",
+    "#reduce (2 : Nat) ^ 64\n": "#reduce",
+    # Lean reads the longest token, so this is `#eval IO.getEnv "HOME"`.
+    '#evalIO.getEnv "HOME"\n': "#evalIO",
     "theorem a : True := by\n  run_tac pure ()\n": "run_tac",
     "example : True := by_elab do return default\n": "by_elab",
     'elab "x" : term => return default\n': "elab",
@@ -751,12 +807,15 @@ REFUSED = {
     '@[extern "c_fn"] opaque g : Nat\n': "@[extern]",
     "attribute [tactic foo] bar\n": "attribute [tactic]",
     'notation "⟪" x "⟫" => x + 1\n': "notation",
-    'scoped notation "⟪" x "⟫" => x + 1\n': "notation",
-    'scoped[Foo] infixl:65 " +++ " => Nat.add\n': "infixl",
+    'scoped notation "⟪" x "⟫" => x + 1\n': "scoped notation",
+    'scoped[Foo] infixl:65 " +++ " => Nat.add\n': "scoped infixl",
     'set_option trace.profiler.output "x" in\ntheorem a : True := trivial\n': (
         "set_option trace.profiler.output"
     ),
     "set_option debug.skipKernelTC true\n": "set_option debug.skipKernelTC",
+    "theorem t : True := by\n  set_option trace.Meta.Tactic.simp true in\n  trivial\n": (
+        "set_option trace.Meta.Tactic.simp"
+    ),
     "open Lean in\ntheorem a : True := trivial\n": "Lean",
     "def t := _root_.IO.FS.writeFile\n": "_root_.IO.FS.writeFile",
     "def t := «IO».FS.writeFile\n": "«IO»",
@@ -769,6 +828,13 @@ ALLOWED = (
     "set_option synthInstance.maxHeartbeats 100 in\nset_option linter.unusedVariables false\n",
     "attribute [local simp] Nat.add_comm\n@[simp, macro_inline, elab_as_elim] def g := 1\n",
     "#check Nat.add_comm\n#print axioms Nat.add_comm\ntheorem a : #v[1, 2].size = 2 := rfl\n",
+    # Mathlib's card notation is a term: only commands that evaluate are refused.
+    "open Finset in\ntheorem card_le (s : Finset ℕ) : #s ≤ #(s) := le_rfl\n",
+    "set_option push_neg.use_distrib true in\nset_option simprocs false in\n"
+    "set_option tactic.hygienic false in\nset_option backward.isDefEq.lazyWhnfCore false in\n"
+    "theorem t : True := trivial\n",
+    # Only a name rooted in a metaprogramming or IO namespace is refused.
+    "theorem Foo.IO : True := trivial\ndef EIOx : ℕ := 1\ntheorem h : Foo.IO := Foo.«IO»\n",
     '-- run_cmd, #eval\n/- macro_rules -/ theorem a : "run_cmd".length = 7 := rfl\n',
     "theorem x (init : Nat) : List.foldl (· + ·) init [] = init := rfl\n",
     "noncomputable section\nnamespace Foo\nopen Real\n"
@@ -781,6 +847,29 @@ def test_the_publication_gate_refuses_code_and_syntax_beyond_the_module():
         assert refused_command(f"import Lean\nimport Mathlib\n\n{body}") == command, body
     for body in ALLOWED:
         assert refused_command(f"import Mathlib\n\n{body}") is None, body
+
+
+def test_the_gate_refuses_unsafe_only_as_a_declaration_modifier():
+    """PR 37 re-audit: aesop's `unsafe` rule phase (87 Mathlib lines) is no declaration."""
+    hints = (
+        "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50% apply id)\n",
+        "@[aesop unsafe 50% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
+        "attribute [aesop unsafe 20% apply] Nat.le_succ\n",
+    )
+    for body in hints:
+        assert refused_command(f"import Mathlib\n{body}") is None, body
+    for body in ("unsafe def f : Nat := 1\n", "@[inline] private unsafe def f : Nat := 1\n"):
+        assert refused_command(f"import Mathlib\n{body}") == "unsafe", body
+
+
+def test_each_refusal_names_its_workaround():
+    """PR 37 re-audit: a refusal says what to write instead."""
+    assert "local notation" in gate_remedy("scoped notation")
+    assert "local infixl" in gate_remedy("infixl")
+    assert "Drop" in gate_remedy("set_option trace.Meta.Tactic.simp")
+    assert "trace.*" in gate_remedy("set_option trace.Meta.Tactic.simp")
+    assert "#s" in gate_remedy("#eval")
+    assert "IO" in gate_remedy("IO.println")
 
 
 def plant(service, node_id, **fields):
@@ -805,6 +894,7 @@ def test_a_module_that_runs_code_is_neither_published_nor_inlined(lab):
         "module": node["lean_module"],
         "reason": "refused_command",
         "command": "run_cmd",
+        "remediation": gate_remedy("run_cmd"),
     }
     assert service.read_node(node["id"], alpha)["node"]["lean_source"] is None
     # A source stored before the gate is refused when imported or fetched, too.

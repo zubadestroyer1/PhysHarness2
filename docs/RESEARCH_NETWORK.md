@@ -235,7 +235,10 @@ tools, the prompts and the delivery shapes.
     long pole, needs no referee and ends scoped recruits) rests on a statement check that
     judged the statement: a check that could not judge (a timeout, a failed or missing
     checker) leaves the file `partial` whatever its own report says, and the result names
-    it (`statement_check`), so the agent checks again. Only a node with no Lean statement,
+    it (`statement_check`) with a `remediation`: check again, except after a
+    `check_timeout` or an oversized file. The check recompiles the flattened file cold
+    within at most 240 s, so the same file fails the same way; the proof must get faster
+    or be split into imported lemmas. Only a node with no Lean statement,
     which has nothing to check, ranks `complete` on the file's own axiom report (no
     `sorry`, standard axioms only); the publication gate keeps a module from redefining
     that report, and such a source proves only a definition. A statement check that
@@ -246,22 +249,39 @@ tools, the prompts and the delivery shapes.
     syntax extension would change how their own lines read (a `sorry` that is none, a
     redefined `#print axioms`). `lean_check` and `record_lean_source` (whoever calls it)
     refuse a source that holds, outside comments and literals (`refused_command`, naming
-    the `command`): a `#` command other than `#check`, `#check_failure`, `#print`,
-    `#reduce` and `#synth` (so Mathlib's `#s` card notation too: write `#(s)`);
-    `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
-    `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
-    `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), `unsafe`, or any
-    `builtin_…`, `declare_…` or `register_…` command; `notation`, `notation3`, `infix`,
-    `infixl`, `infixr`, `prefix` or `postfix` unless `local` (Lean drops local notation
-    at the `end` of the section around the module; `scoped` is refused); a code attribute
-    in `@[…]` or `attribute […]` (`command_elab`, `term_elab`, `tactic`, `macro`, `init`,
-    `implemented_by`, `extern`, `env_linter`, `delab`, `app_unexpander`, `norm_num`,
-    `positivity`, `simproc`, `dsimproc`, `widget_module`, and any `builtin_…`, `…_elab`,
-    `…_parser`, `…_delab`, `…_unexpander`, `…_code_action`, `…_formatter` or
-    `…_parenthesizer` one); `set_option` of an option a node header may not set (so
-    `set_option maxHeartbeats N in` stays); and a name in the `Lean`, `IO`, `EIO` or
-    `BaseIO` namespaces, so no metaprogram or IO action is written for a tactic's
-    configuration to run. `set_lean_statement` refuses a header or statement the gate
+    the `command` and a `remediation`, what to write instead). The lists are denylists:
+    - a `#` command that evaluates or runs a term or another command, wherever it
+      appears: `#eval`, `#exit`, `#exec`, `#guard` (and `#guard_expr`, `#guard_msgs`),
+      `#html`, `#widget`, `#test`, `#sample`, `#time`, `#count_heartbeats`, `#help`,
+      `#find`, `#norm_num`, `#simp`, `#conv`, `#whnf`, `#reduce` (for its cost),
+      `#check_tactic`, `#check_simp`, `#lint`, `#list_linters`, `#leansearch`, `#loogle`,
+      `#moogle`, `#min_imports`, `#unfold?`, and any word that starts with one (Lean
+      reads `#evalx` as `#eval x`). Any other `#ident` is a term, such as Mathlib's `#s`
+      for a finset's card, and `#check`, `#print` and `#synth` are fine;
+    - `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
+      `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
+      `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), any `builtin_…`,
+      `declare_…` or `register_…` command, and `unsafe` outside brackets (a declaration
+      modifier; aesop's `unsafe` rule phase in `aesop (add unsafe …)` or
+      `@[aesop unsafe …]` is fine);
+    - `notation`, `notation3`, `infix`, `infixl`, `infixr`, `prefix` or `postfix` unless
+      `local`: Lean drops local notation at the `end` of the section around the module,
+      while global or `scoped` notation reaches the importer's lines (the remediation:
+      write it `local`);
+    - a code attribute in `@[…]` or `attribute […]` (`command_elab`, `term_elab`,
+      `tactic`, `macro`, `init`, `implemented_by`, `extern`, `env_linter`, `delab`,
+      `app_unexpander`, `norm_num`, `positivity`, `simproc`, `dsimproc`, `widget_module`,
+      and any `builtin_…`, `…_elab`, `…_parser`, `…_delab`, `…_unexpander`,
+      `…_code_action`, `…_formatter` or `…_parenthesizer` one);
+    - `set_option` of an option other than a node header's, `push_neg.use_distrib`,
+      `simprocs`, `tactic.hygienic` and `backward.*` (so `set_option maxHeartbeats N in`
+      stays, and `trace.*`, which can write files, goes: drop it);
+    - a name rooted in the `Lean`, `IO`, `EIO` or `BaseIO` namespaces (`_root_.IO…` too;
+      `Foo.IO` is fine). This is the backstop behind the denylists: no metaprogram or IO
+      action, for a tactic's configuration or an `evalConst` to run, is written without
+      such a name.
+
+    `set_lean_statement` refuses a header or statement the gate
     refuses: an importer's `sorry` stub and every publisher's statement check elaborate
     them. A source or statement stored before the gate that it refuses is refused when
     imported or fetched (`COMMONS_MODULE_REFUSED`), and publication against such a
@@ -282,9 +302,15 @@ tools, the prompts and the delivery shapes.
     per call over the graph. An importer inlines the live source either way, and its own
     check judges the file it gets.
   - Higher ranks replace lower ones, and an equal rank replaces its peer, except that a
-    complete or verified source of the current statement is replaced at its rank only by
-    its publisher or the node's author: other nodes' sources may import it and go stale
-    when it is replaced, so no other branch can churn equal-rank sources under them.
+    verified source of the current statement, or a complete one of an elaborated Lean
+    statement, is replaced at its rank only by its publisher or the node's author: other
+    nodes' sources may import it and go stale when it is replaced, so no other branch can
+    churn equal-rank sources under them (it can outrank a complete one with a verified
+    source). Nothing outranks a complete source of a node with no elaborated statement (a
+    definition, say), so there any branch replaces it at its rank: a lock would let the
+    first file, however unrelated, hold the node for good once its publisher and author
+    were gone. The trade-off is churn: each such replacement stales the importers' sources
+    until they republish.
   - Publishing claims the node: a check renews the branch's live claim, and only a
     publication claims afresh (on the branch's prior route), so a refused check never
     re-creates a lapsed or released claim. The source's imports become `depends_on` edges

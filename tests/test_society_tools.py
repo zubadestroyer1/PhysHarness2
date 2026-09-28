@@ -30,7 +30,7 @@ from physharness.commons_review import (
     REFEREE_DATA_NOTE,
     fence_author_data,
 )
-from physharness.commons_sources import Expansion, Module, remap
+from physharness.commons_sources import Expansion, Module, gate_remedy, remap
 from physharness.domain import (
     ArtifactCreate,
     LiteraturePolicy,
@@ -1480,6 +1480,7 @@ async def test_without_a_judging_statement_check_a_source_stays_partial(lab):
         "rank": "partial",
         "replaced": False,
         "statement_check": "statement_check_unavailable",
+        "remediation": "The statement check could not judge the file; check it again.",
     }
     node = service.read_node(created["id"], agent)["node"]
     assert node["lean_source"]["rank"] == "partial"
@@ -1490,6 +1491,16 @@ async def test_without_a_judging_statement_check_a_source_stays_partial(lab):
         "reason": "statement_check_unavailable",
         "axioms": None,
     }
+    # PR 37 re-audit: the check recompiles the file cold within its budget, so a file that
+    # timed out times out again; the agent is told to speed the proof up or split it.
+    workspace.lean.verdict = {**workspace.lean.verdict, "reason": "check_timeout"}
+    slow = await call(tools, "lean_check", {"source": PROOF + "\n", "node_id": created["id"]})
+    assert (slow["published"]["rank"], slow["published"]["statement_check"]) == (
+        "partial",
+        "check_timeout",
+    )
+    remedy = slow["published"]["remediation"]
+    assert "faster" in remedy and "split" in remedy and "check it again" not in remedy
 
 
 async def test_lean_check_publishes_only_what_the_statement_check_does_not_reject(lab):
@@ -2531,6 +2542,7 @@ async def test_lean_check_never_publishes_a_module_whose_code_would_run_in_impor
         "module": "Commons.N" + plain["id"][:8],
         "reason": "refused_command",
         "command": "run_cmd",
+        "remediation": gate_remedy("run_cmd"),
     }
     assert len(service.list_records("artifact", agent)) == before
     assert service.read_node(plain["id"], agent)["node"]["lean_source"] is None

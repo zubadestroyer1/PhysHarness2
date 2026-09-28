@@ -5,10 +5,10 @@ clean ``lean_check`` against the node publishes the checked file as the node's s
 ranked ``verified`` (the statement check passed on standard axioms), ``complete`` (no
 ``sorry`` on standard axioms, for a node with no Lean statement to check) or ``partial``
 (also when the statement check could not judge). A higher rank replaces a lower
-one; a complete or verified source of the node's current statement is replaced at its rank
-only by its publisher or the node's author (S1 audit #12). A node's first complete source
-of an elaborated Lean statement tells its other claimants to consider stopping their routes
-(S1 audit #22).
+one; a verified source of the node's current statement, or a complete one of an elaborated
+statement, is replaced at its rank only by its publisher or the node's author (S1 audit
+#12). A node's first complete source of an elaborated Lean statement tells its other
+claimants to consider stopping their routes (S1 audit #22).
 
 A file imports node modules with ``import Commons.N…``. The platform inlines them: each
 module's published source, or a ``sorry`` stub of an elaborated statement, goes into one
@@ -57,10 +57,14 @@ _SCOPE_NAME = re.compile(r"[ \t]+([\w.'!?]+)")
 _RUNS_CODE = frozenset(
     "run_cmd run_elab run_meta run_tac by_elab elab elab_rules macro macro_rules syntax "
     "declare_syntax_cat binder_predicate initialize builtin_initialize simproc dsimproc "
-    "simproc_decl dsimproc_decl unsafe".split()
+    "simproc_decl dsimproc_decl".split()
 )
 _REGISTERS = ("builtin_", "declare_", "register_")
-# Notation only as `local`, which ends with the section the inliner wraps the module in.
+# `unsafe` only outside brackets, as a declaration modifier: inside them it is aesop's rule
+# phase (`aesop (add unsafe 50% apply foo)`, `@[aesop unsafe …]`).
+_OPEN_BRACKETS, _CLOSE_BRACKETS = "([{⟨⦃", ")]}⟩⦄"
+# Notation only as `local`, which ends with the section the inliner wraps the module in;
+# global or `scoped` notation reaches the importer's own lines.
 _NOTATION = frozenset("notation notation3 infix infixl infixr prefix postfix".split())
 # Attributes (`@[…]`, `attribute […]`) that hand the elaborator code to run.
 _CODE_ATTRIBUTES = frozenset(
@@ -76,16 +80,52 @@ _CODE_ATTRIBUTE_SUFFIXES = (
     "_formatter",
     "_parenthesizer",
 )
-# The `#` commands that only report; `#eval` and the others run code or write files.
-_REPORTS = frozenset(("#check", "#check_failure", "#print", "#reduce", "#synth"))
-# A metaprogram or IO action is written with these namespaces' names, so a module that names
-# none defines no code for a tactic's configuration or an `evalConst` to run.
+# A denylist: the `#` commands that evaluate or run a term or another command (`#reduce`
+# for its cost), wherever they appear; any other `#ident` is a term, such as Mathlib's `#s`
+# for a finset's card. Lean reads the longest token, so `#evalx` is `#eval x`: a word that
+# starts with one of these is that command.
+_RUNS_TERMS = (
+    "#eval",
+    "#exit",
+    "#exec",
+    "#guard",
+    "#html",
+    "#widget",
+    "#test",
+    "#sample",
+    "#time",
+    "#count_heartbeats",
+    "#help",
+    "#find",
+    "#norm_num",
+    "#simp",
+    "#conv",
+    "#whnf",
+    "#reduce",
+    "#check_tactic",
+    "#check_simp",
+    "#lint",
+    "#list_linters",
+    "#leansearch",
+    "#loogle",
+    "#moogle",
+    "#min_imports",
+    "#unfold",
+)
+# Options a module may set besides a node header's: they only steer elaboration. `trace.*`
+# stays out: `trace.profiler.output` writes files.
+_MODULE_OPTIONS = (*HEADER_OPTIONS, "push_neg.use_distrib", "simprocs", "tactic.hygienic")
+_MODULE_OPTION_PREFIXES = (*HEADER_OPTION_PREFIXES, "backward.")
+# A metaprogram or IO action is written with names rooted in these namespaces, so a module
+# that names none defines no code for a tactic's configuration or an `evalConst` to run (the
+# backstop behind the denylists).
 _META_NAMESPACES = frozenset(("Lean", "IO", "EIO", "BaseIO"))
 _WORD = rf"[{_ID_FIRST}][{_ID_REST}!?]*"
 _TOKEN = re.compile(rf"#{_WORD}|@\[|(?<![{_ID_REST}.!?]){_WORD}(?:\.{_WORD})*")
 _OPTION = re.compile(rf"\s+({_WORD}(?:\.{_WORD})*)")
 _BRACKET = re.compile(r"\s*\[")
 _LOCAL = re.compile(rf"(?<![{_ID_REST}.!?])local\s+$")
+_SCOPED = re.compile(rf"(?<![{_ID_REST}.!?])scoped(?:\s*\[[^\]]*\])?\s+$")
 _ESCAPED_META = re.compile("«(?:" + "|".join(sorted(_META_NAMESPACES)) + ")»")
 
 
@@ -175,16 +215,22 @@ def blocking_rank(node: dict, rank: str, branch_id: str | None, state: str) -> s
     ``rank`` from ``branch_id``, else None. ``state`` is the node's ``source_state``: a
     stale source (of another statement, or whose imports changed since) counts as no
     source, so any source of the current statement replaces it. At equal rank the newer
-    source wins, except that a complete or verified source answers only to its publisher
-    and the node's author: other nodes' sources may import it, and each goes stale when it
-    is replaced, so another branch cannot churn equal-rank sources under them."""
+    source wins, except that a verified source, or a complete one of an elaborated Lean
+    statement, answers only to its publisher and the node's author: other nodes' sources
+    may import it, and each goes stale when it is replaced, so another branch cannot churn
+    equal-rank sources under them; it can outrank a complete one with a verified source.
+
+    Nothing outranks a complete source of a node with no elaborated statement (a
+    definition, say), so there any branch replaces it at its rank: a lock would let the
+    first file, however unrelated, hold the node once its publisher and author had gone.
+    The cost is churn: each such replacement stales its importers until they republish."""
     if state not in RANKS:
         return None
     current = node["lean_source"]
     held = current["rank"]
     if RANKS[rank] < RANKS[held] or (
         rank == held
-        and held in COMPLETE_RANKS
+        and (held == "verified" or held == "complete" and has_elaborated_statement(node))
         and branch_id not in (current.get("branch_id"), node.get("branch_id"))
     ):
         return held
@@ -223,7 +269,7 @@ class Closures:
     """
 
     def __init__(self, lookup):
-        self._lookup, self._stands = lookup, {}
+        self._lookup, self._stands, self._visiting = lookup, {}, set()
 
     @classmethod
     def over(cls, nodes):
@@ -246,26 +292,44 @@ class Closures:
 
         return cls(lookup)
 
-    def _child(self, entry):
-        """The node an import entry names, while its source is still the one recorded."""
-        child = self._lookup(entry["node_id"])
-        current = (child or {}).get("lean_source") or {}
-        return child if child is not None and current.get("sha256") == entry["sha256"] else None
-
-    def stands(self, node, depth=0):
-        if node["id"] in self._stands:
-            return self._stands[node["id"]]
-        self._stands[node["id"]] = False  # a cycle, or a chain too long to inline, fails
+    def _children(self, node):
+        """The nodes the source's check stood on, while each still holds the source it
+        recorded (None once one does not), and whether it recorded its whole closure."""
         source = node.get("lean_source") or {}
         recorded = source.get("closure")
-        entries = (source.get("imports") or ()) if recorded is None else recorded
-        children = map(self._child, entries)
-        stands = depth < MAX_COMMONS_MODULES and all(
-            child is not None and (recorded is not None or self.stands(child, depth + 1))
-            for child in children
-        )
-        self._stands[node["id"]] = stands
-        return stands
+        children = []
+        for entry in (source.get("imports") or ()) if recorded is None else recorded:
+            child = self._lookup(entry["node_id"])
+            if child is None or ((child.get("lean_source") or {}).get("sha256")) != entry["sha256"]:
+                return None, recorded is not None
+            children.append(child)
+        return children, recorded is not None
+
+    def stands(self, node):
+        """Whether the node's source still stands. A record without a closure is judged
+        through its imports' own records, depth first on an explicit stack, so a verdict
+        never depends on which node was judged first; a cycle stands on nothing."""
+        pending = [node]
+        while pending:
+            current = pending[-1]
+            key = current["id"]
+            if key in self._stands:
+                pending.pop()
+                continue
+            children, recorded = self._children(current)
+            if children is None or recorded:
+                self._stands[key] = children is not None
+                continue
+            waiting = [child for child in children if child["id"] not in self._stands]
+            if waiting and key not in self._visiting:
+                self._visiting.add(key)
+                if any(child["id"] in self._visiting for child in waiting):
+                    self._stands[key] = False  # an import cycle
+                else:
+                    pending.extend(waiting)
+                continue
+            self._stands[key] = all(self._stands.get(child["id"], False) for child in children)
+        return self._stands[node["id"]]
 
 
 def source_state(node: dict, closures: Closures) -> str:
@@ -325,6 +389,12 @@ def scope_closers(module, source):
     return [f"end {label}".rstrip() for label in reversed(stack)]
 
 
+def _nesting(code, index):
+    """How many brackets are open at ``index`` of ``code``."""
+    opened = sum(code.count(bracket, 0, index) for bracket in _OPEN_BRACKETS)
+    return opened - sum(code.count(bracket, 0, index) for bracket in _CLOSE_BRACKETS)
+
+
 def _bracketed(code, start):
     """The text from ``start`` to its unmatched ``]``, or None when there is none."""
     depth = 0
@@ -338,16 +408,24 @@ def _bracketed(code, start):
     return None
 
 
+def _meta_root(name):
+    """Whether a dotted name is rooted in ``_META_NAMESPACES`` (``_root_.`` aside)."""
+    parts = name.split(".")
+    return parts[parts[0] == "_root_" and len(parts) > 1] in _META_NAMESPACES
+
+
 def refused_command(source):
     """The first command, attribute, option or name in ``source`` after its imports that no
     published module may hold, or None (PR 37 review): a command or modifier that runs code
-    or extends syntax (``_RUNS_CODE``, ``_REGISTERS``), notation that is not ``local``, a
-    ``#`` command other than ``_REPORTS``, a code attribute, a ``set_option`` of an option a
-    node header may not set, or a name in ``_META_NAMESPACES``.
+    or extends syntax (``_RUNS_CODE``, ``_REGISTERS``, and ``unsafe`` outside brackets, where
+    it modifies a declaration), notation that is not ``local`` (``scoped notation`` is named
+    so), a ``#`` command of ``_RUNS_TERMS``, a code attribute, a ``set_option`` outside the
+    module options, or a name rooted in ``_META_NAMESPACES``. ``gate_remedy`` says what to
+    write instead.
 
-    It reads ``lean_code``, so comments and literals count for nothing; a source too nested
-    to scan is refused. ``#v[`` (a vector literal) is no command; Mathlib's ``#s`` for a
-    finset's card is refused with the commands (write ``#(s)`` or ``s.card``).
+    These are denylists, so the last check is the backstop: no side effect is written
+    without a Lean or IO name. It reads ``lean_code``, so comments and literals count for
+    nothing; a source too nested to scan is refused.
     """
     body = "\n".join(split_imports(source)[2])
     code = lean_code(body)
@@ -356,7 +434,7 @@ def refused_command(source):
     for match in _TOKEN.finditer(code):
         word, end = match.group(), match.end()
         if word.startswith("#"):
-            if word not in _REPORTS and not (word == "#v" and code.startswith("[", end)):
+            if word.startswith(_RUNS_TERMS):
                 return word
         elif word in ("@[", "attribute"):
             bracket = _BRACKET.match(code, end) if word == "attribute" else None
@@ -375,19 +453,57 @@ def refused_command(source):
         elif word == "set_option":
             option = _OPTION.match(code, end)
             name = option.group(1) if option else ""
-            if name not in HEADER_OPTIONS and not name.startswith(HEADER_OPTION_PREFIXES):
+            if name not in _MODULE_OPTIONS and not name.startswith(_MODULE_OPTION_PREFIXES):
                 return f"set_option {name}".rstrip()
         elif word in _NOTATION:
-            if not _LOCAL.search(code, max(0, match.start() - 64), match.start()):
+            before = max(0, match.start() - 64), match.start()
+            if _SCOPED.search(code, *before):
+                return f"scoped {word}"
+            if not _LOCAL.search(code, *before):
                 return word
-        elif (
-            word in _RUNS_CODE
-            or word.startswith(_REGISTERS)
-            or not _META_NAMESPACES.isdisjoint(word.split("."))
-        ):
+        elif word == "unsafe":
+            if _nesting(code, match.start()) <= 0:
+                return word
+        elif word in _RUNS_CODE or word.startswith(_REGISTERS) or _meta_root(word):
             return word
-    escaped = _ESCAPED_META.search(body)
-    return escaped.group() if escaped else None
+    for escaped in _ESCAPED_META.finditer(body):
+        prefix = body[: escaped.start()]
+        if not prefix.endswith(".") or prefix.endswith("_root_."):
+            return escaped.group()
+    return None
+
+
+def gate_remedy(command):
+    """What to write instead of a command ``refused_command`` named."""
+    if command.startswith("scoped ") or command in _NOTATION:
+        kind = command.removeprefix("scoped ")
+        return (
+            f"Write it as local {kind}: local notation ends with the module's section, so "
+            "no importer sees it; global and scoped notation reach the importer's own lines."
+        )
+    if command.startswith("set_option"):
+        return (
+            "Drop it: a module sets only the options a node header may, push_neg.use_distrib, "
+            "simprocs, tactic.hygienic and backward.*; trace.* options can write files."
+        )
+    if command.startswith("#"):
+        return (
+            f"Drop {command}: it evaluates or runs code wherever the module is imported. "
+            "#check, #print and #synth are fine, and so are terms such as a finset's #s."
+        )
+    if command.startswith(("@[", "attribute")):
+        return "Drop the attribute: it would hand every importer's elaborator code to run."
+    if command.startswith("("):
+        return "Simplify the nesting of its interpolated strings and syntax quotations."
+    if _meta_root(command.strip("«»")) or _ESCAPED_META.fullmatch(command):
+        return (
+            f"Drop {command}: a published module names nothing in the Lean, IO, EIO or BaseIO "
+            "namespaces, so it holds no metaprogram or IO action."
+        )
+    return (
+        f"Drop {command}: a published module runs no code and extends no syntax where it is "
+        "imported. Write tactics inline in the proof, and notation as local notation."
+    )
 
 
 def _refused_module(module, command):
@@ -396,15 +512,14 @@ def _refused_module(module, command):
         f"{module} holds {command}, which no published module may hold.",
         status=422,
         details={"module": module, "command": command},
-        remediation=_REPUBLISH,
+        remediation=f"Republish the module. {gate_remedy(command)} Or do not import it.",
     )
 
 
 _REPUBLISH = (
-    "Republish the module without #exit, without commands or attributes that run code or "
-    "extend syntax (only local notation, and set_option only for the options a node header "
-    "may set), and with every end matching a namespace or section it opened; or do not "
-    "import it."
+    "Republish the module without #exit and with every end matching a namespace or section "
+    "it opened (and with notation only local, no #eval-like command and no trace.* option); "
+    "or do not import it."
 )
 
 
@@ -691,7 +806,7 @@ class CommonsSourceMixin:
             if command is not None:
                 # Every importer would run it (the publication gate, whoever calls).
                 refused = {"recorded": False, "module": module, "reason": "refused_command"}
-                return {**refused, "command": command}
+                return {**refused, "command": command, "remediation": gate_remedy(command)}
             digest = _statement_digest(node)
             if digest is not None and record["lean_statement_sha256"] != digest:
                 return {"recorded": False, "module": module, "reason": "statement_changed"}
