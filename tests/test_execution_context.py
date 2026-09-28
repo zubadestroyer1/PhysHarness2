@@ -1596,6 +1596,54 @@ async def test_recall_output_after_native_handoff_uses_the_stored_policy(tmp_pat
     await second.close()
 
 
+async def test_a_recall_page_carried_across_a_handoff_is_elided_in_the_successor(tmp_path):
+    requests, store = [], SQLiteRuntimeStore(tmp_path / "sessions.db")
+    model, limits = ModelConfig(model="exact-model"), RuntimeLimits(max_total_tokens=None)
+
+    async def boundary(checkpoint):
+        return {"reason": "test_handoff"} if checkpoint.native_state.get("recall_pages") else None
+
+    first = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (1, 2, 3)],
+            response([recall_item("p4", "c1", 0)], "r4"),
+        ],
+        requests,
+    )
+    source = ResponsesRuntime(
+        store=store,
+        client=first,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        boundary_hook=boundary,
+        context_budget=ELIDE,
+    )
+    handed = await source.start("work", model, limits)
+    second = sdk_client(
+        [
+            *[response([call_item(f"c{i}")], f"r{i}") for i in (5, 6, 7)],
+            response([text_item("done")], "rt"),
+        ],
+        requests,
+    )
+    successor = ResponsesRuntime(
+        store=store,
+        client=second,
+        dispatcher=observe_dispatcher(big_result(2_000)),
+        context_budget=ELIDE,
+    )
+    await successor.start_from_handoff(
+        await source.checkpoint(handed.session.id), "continue", model, limits
+    )
+    page = json.loads(outputs_of(creates_of(requests)[-1])["p4"])
+    assert page["elided"] and page["recall"] == {
+        "tool": "recall_output",
+        "call_id": "c1",
+        "offset": 0,
+    }
+    await first.close()
+    await second.close()
+
+
 async def test_no_context_budget_keeps_requests_and_state_unchanged(tmp_path):
     requests = []
     client = sdk_client(

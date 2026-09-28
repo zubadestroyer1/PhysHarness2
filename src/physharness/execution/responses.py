@@ -1139,6 +1139,8 @@ class ResponsesRuntime:
             state["context_budget"] = deepcopy(prior["context_budget"])
         if "elision" in prior:  # the response counter is lineage-wide
             state["elision"] = deepcopy(prior["elision"])
+        if "recall_pages" in prior:  # the successor carries the pages in its input
+            state["recall_pages"] = deepcopy(prior["recall_pages"])
         await self._save(session, state)
         return await self._run(session, state, prompt)
 
@@ -1635,12 +1637,11 @@ class ResponsesRuntime:
             # refusal; nothing is marked or reserved yet.
             budget = deadline - asyncio.get_running_loop().time() - REQUEUE_MARGIN_SECONDS
             try:
-                admission = await asyncio.wait_for(
-                    self.token_governor.admit(
+                # Unlike wait_for(0), a timeout context still admits a grantable request.
+                async with asyncio.timeout(max(budget, 0.0)):
+                    admission = await self.token_governor.admit(
                         key=session.id, tokens=estimate, priority=self.admission_priority
-                    ),
-                    timeout=max(budget, 0.0),
-                )
+                    )
             except TimeoutError:
                 raise ExecutionError(
                     "PROVIDER_RATE_LIMITED",

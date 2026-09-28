@@ -987,6 +987,20 @@ async def test_a_400_after_a_rate_limit_wait_aborts_once_as_request_invalid(tmp_
     await client.close()
 
 
+async def test_a_grantable_first_admission_at_the_deadline_margin_still_sends(tmp_path):
+    # A full bucket admits at once, even with no budget left before the re-queue margin.
+    governor = TokenRateGovernor(tokens_per_minute=6_000_000)
+    client = rate_limited_client([(200, response([message("done")]), {})], [])
+    runtime = ResponsesRuntime(
+        store=SQLiteRuntimeStore(tmp_path / "s.db"), client=client, token_governor=governor
+    )
+    result = await runtime.start(
+        "x", ModelConfig(model="exact-model"), RuntimeLimits(timeout_seconds=1)
+    )
+    assert result.session.status == "completed"
+    await client.close()
+
+
 async def test_a_first_admission_past_the_deadline_is_a_retryable_rate_limit(tmp_path):
     governor = TokenRateGovernor(tokens_per_minute=60, burst_tokens=5_000)  # ~1 token/s
     await governor.admit(key="other", tokens=5_000, priority=0)  # drained by another runtime
