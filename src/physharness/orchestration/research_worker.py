@@ -1061,6 +1061,28 @@ class ResearchTaskExecutor:
                 )
         return reason
 
+    def _session_anchor(self, task_id, agent, experiment, woken, wake_status, *, recovering):
+        """What a builder session's first request can show (merge audit), before its prompt or
+        wake note is built. A session resumed mid-flight keeps its last request's anchor. A
+        natively woken wait keeps its own (a task wait's: the last request's), advanced past
+        the watched event its wake note names, and shows the wake note's long pole: news
+        before the wake that the note does not name still wakes the next wait. Otherwise
+        (a fresh prompt) now."""
+        persisted = self.service.get_record("task", task_id, agent).get("request_anchor")
+        if recovering and persisted:
+            return persisted
+        if woken and woken["reason"] in WAIT_REASONS:
+            ticket = woken.get("peer_wait") or {}
+            sequence = (
+                ticket.get("event_after")
+                if ticket.get("kind") == "events"
+                else (persisted or {}).get("event_sequence")
+            )
+            sequence = (wake_status or {}).get("sequence", sequence)
+            if sequence is not None:
+                return {"event_sequence": sequence, "long_pole_ids": None}  # set by wake_note
+        return self.service.event_anchor(experiment["id"], agent)
+
     async def execute(self, task_id: str, project_id: str, *, stop_on_verified_target=True):
         actor = Principal(id="research-controller", project_id=project_id, role="operator")
         task = self.service.get_record("task", task_id, actor)
@@ -1481,8 +1503,12 @@ class ResearchTaskExecutor:
                     # This is the last synchronous hook before responses.create. An
                     # artifact upload may have outlived the lease or experiment.
                     if society and not referee:
-                        # Also what this request can show a builder: its waits anchor there.
-                        self.service.anchor_request(task_id, holder, lease["fence"], agent)
+                        # A builder's waits anchor on what this request can show, captured
+                        # before its admission and reservation waits (view).
+                        self.service.anchor_request(
+                            task_id, holder, lease["fence"], view["anchor"], agent
+                        )
+                        view["anchor"] = None
                     else:
                         with self.service.db.transaction() as session:
                             self.service._active(session, experiment["id"], actor)
@@ -1731,6 +1757,8 @@ class ResearchTaskExecutor:
                 ).get("long_pole")
                 if long_pole:
                     wake["long_pole"] = long_pole
+                if view["anchor"] is not None:  # the long pole this request shows
+                    view["anchor"]["long_pole_ids"] = sorted(item["id"] for item in long_pole or [])
                 return canonical_json(wake)
 
             def collaboration_context():
@@ -1800,6 +1828,11 @@ class ResearchTaskExecutor:
             ).get("review_id")
 
             tool_context = {"task_id": task_id, "holder": holder, "fence": lease["fence"]}
+            # What a builder's next request can show (``event_anchor``), taken when its content
+            # is captured and recorded at generation_started (merge audit): at the session's
+            # start, then at the first tool call of each response, whose results the next
+            # request carries. Earlier is only a spare wake; later would lose one.
+            view = {"anchor": None}
             if society:
                 # Imported here: the society profile builds on this module's tool registrar.
                 from .society_tools import society_tools
@@ -1820,6 +1853,13 @@ class ResearchTaskExecutor:
                     workspace_tools=workspace_tools,
                     literature=literature,
                 )
+                if not referee:
+
+                    def capture_view():
+                        if view["anchor"] is None:
+                            view["anchor"] = self.service.event_anchor(experiment["id"], agent)
+
+                    dispatcher.before_dispatch = capture_view
             else:
                 dispatcher = research_tools(
                     self.service,
@@ -1967,6 +2007,15 @@ class ResearchTaskExecutor:
                     successor_model=model_config.model_dump(mode="json"),
                     successor_runtime_limits=runtime_limits.model_dump(mode="json"),
                     continuation_mode="native" if native_compatible else "portable",
+                )
+            if society and not referee:
+                view["anchor"] = self._session_anchor(
+                    task_id,
+                    agent,
+                    experiment,
+                    ready if native_compatible else None,
+                    wake_status,
+                    recovering=bool(recovering_successor or recovering_first_session),
                 )
             memory = PortableMemory(self.service)
             if not society:

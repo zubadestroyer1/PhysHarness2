@@ -593,13 +593,20 @@ tools, the prompts and the delivery shapes.
     once its own joined recruits have settled;
   - the timeout (default 1,800 s, at most 3,600 s).
 
-  Watched and long-pole news counts from the agent's last request, not from the wait's
-  registration: just before each builder request is sent, the worker records on the task
-  the latest event sequence and the long pole then (`request_anchor`), and a wait from that
-  request's response starts there. News that committed while the request generated, or
-  while earlier tools of the same response ran, therefore still wakes it; if another
-  branch changed the graph in that window, the long pole is compared with the anchored
-  one. The ticket carries both, so a native resume after a restart keeps them.
+  Watched and long-pole news counts from what the agent's last request could show, not
+  from the wait's registration. The worker takes the latest event sequence (under the
+  experiment lock) and the long pole when a builder request's content is captured: at the
+  session's start, before its prompt, and then at the first tool call of each response,
+  whose results the next request carries. It records them on the task (`request_anchor`)
+  as the request is sent, and a wait from that request's response starts there. News that
+  committed while the request waited for TPM admission or its dollar reservation,
+  generated, or while earlier tools of the same response ran, therefore still wakes it; if
+  another branch changed the graph since, the long pole is compared with the anchored one.
+  A woken wait resumes anchored at the watched event its wake note names (else at its own
+  anchor), with the note's long pole, so news before the wake that the note does not name
+  wakes the next wait, and the named event never does. A session resumed mid-flight keeps
+  its last request's anchor. An early anchor costs at most a spare wake. The ticket carries
+  both values, so a native resume after a restart keeps them.
 
   The first 20 s are a minimum sleep (shorter only for a shorter timeout), so a burst of
   events wakes once. A graph or subscription limit hit while checking wakes the waiter
