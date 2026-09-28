@@ -249,7 +249,9 @@ tools, the prompts and the delivery shapes.
     `#reduce` and `#synth` (so Mathlib's `#s` card notation too: write `#(s)`);
     `run_cmd`, `run_elab`, `run_meta`, `run_tac`, `by_elab`, `elab`, `elab_rules`,
     `macro`, `macro_rules`, `syntax`, `declare_syntax_cat`, `binder_predicate`,
-    `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), `unsafe`, or any
+    `initialize`, `simproc`, `dsimproc` (and their `_decl` forms), `unsafe` outside
+    brackets (a declaration modifier; aesop's `unsafe` rule phase in `aesop (add unsafe …)`
+    or `@[aesop unsafe …]` is fine), or any
     `builtin_…`, `declare_…` or `register_…` command; `notation`, `notation3`, `infix`,
     `infixl`, `infixr`, `prefix` or `postfix` unless `local` (Lean drops local notation
     at the `end` of the section around the module; `scoped` is refused); a code attribute

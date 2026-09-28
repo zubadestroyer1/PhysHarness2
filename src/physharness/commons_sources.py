@@ -57,8 +57,11 @@ _SCOPE_NAME = re.compile(r"[ \t]+([\w.'!?]+)")
 _RUNS_CODE = frozenset(
     "run_cmd run_elab run_meta run_tac by_elab elab elab_rules macro macro_rules syntax "
     "declare_syntax_cat binder_predicate initialize builtin_initialize simproc dsimproc "
-    "simproc_decl dsimproc_decl unsafe".split()
+    "simproc_decl dsimproc_decl".split()
 )
+# `unsafe` only outside brackets, as a declaration modifier: inside them it is aesop's rule
+# phase (`aesop (add unsafe 50% apply foo)`, `@[aesop unsafe …]`).
+_OPEN_BRACKETS, _CLOSE_BRACKETS = "([{⟨⦃", ")]}⟩⦄"
 _REGISTERS = ("builtin_", "declare_", "register_")
 # Notation only as `local`, which ends with the section the inliner wraps the module in.
 _NOTATION = frozenset("notation notation3 infix infixl infixr prefix postfix".split())
@@ -331,6 +334,12 @@ def scope_closers(module, source):
     return [f"end {label}".rstrip() for label in reversed(stack)]
 
 
+def _nesting(code, index):
+    """How many brackets are open at ``index`` of ``code``."""
+    opened = sum(code.count(bracket, 0, index) for bracket in _OPEN_BRACKETS)
+    return opened - sum(code.count(bracket, 0, index) for bracket in _CLOSE_BRACKETS)
+
+
 def _bracketed(code, start):
     """The text from ``start`` to its unmatched ``]``, or None when there is none."""
     depth = 0
@@ -347,7 +356,8 @@ def _bracketed(code, start):
 def refused_command(source):
     """The first command, attribute, option or name in ``source`` after its imports that no
     published module may hold, or None (PR 37 review): a command or modifier that runs code
-    or extends syntax (``_RUNS_CODE``, ``_REGISTERS``), notation that is not ``local``, a
+    or extends syntax (``_RUNS_CODE``, ``_REGISTERS``, and ``unsafe`` outside brackets, where
+    it modifies a declaration), notation that is not ``local``, a
     ``#`` command other than ``_REPORTS``, a code attribute, a ``set_option`` of an option a
     node header may not set, or a name in ``_META_NAMESPACES``.
 
@@ -385,6 +395,9 @@ def refused_command(source):
                 return f"set_option {name}".rstrip()
         elif word in _NOTATION:
             if not _LOCAL.search(code, max(0, match.start() - 64), match.start()):
+                return word
+        elif word == "unsafe":
+            if _nesting(code, match.start()) <= 0:
                 return word
         elif (
             word in _RUNS_CODE

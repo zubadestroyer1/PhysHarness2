@@ -800,6 +800,19 @@ def test_the_publication_gate_refuses_code_and_syntax_beyond_the_module():
         assert refused_command(f"import Mathlib\n\n{body}") is None, body
 
 
+def test_the_gate_refuses_unsafe_only_as_a_declaration_modifier():
+    """PR 37 re-audit: aesop's `unsafe` rule phase (87 Mathlib lines) is no declaration."""
+    hints = (
+        "theorem t (p : Prop) (h : p) : p := by aesop (add unsafe 50% apply id)\n",
+        "@[aesop unsafe 50% apply] theorem l (n : ℕ) : n ≤ n + 1 := by omega\n",
+        "attribute [aesop unsafe 20% apply] Nat.le_succ\n",
+    )
+    for body in hints:
+        assert refused_command(f"import Mathlib\n{body}") is None, body
+    for body in ("unsafe def f : Nat := 1\n", "@[inline] private unsafe def f : Nat := 1\n"):
+        assert refused_command(f"import Mathlib\n{body}") == "unsafe", body
+
+
 def plant(service, node_id, **fields):
     """Write fields straight into a node's row, as a record from before the gate reads."""
     with service.db.transaction() as session:
